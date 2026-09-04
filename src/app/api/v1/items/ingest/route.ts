@@ -1,0 +1,151 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/db';
+import { IngestItemPayload } from '@/types/tracker';
+
+export async function POST(req: NextRequest) {
+  try {
+    // 1. Authenticate via Tenant API Key
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+    const xApiKey = req.headers.get('x-api-key');
+
+    let apiKey = '';
+    if (authHeader?.startsWith('Bearer ')) {
+      apiKey = authHeader.replace('Bearer ', '').trim();
+    } else if (xApiKey) {
+      apiKey = xApiKey.trim();
+    }
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'Missing or malformed Authorization header. Use Bearer <api_key> or x-api-key' },
+        { status: 401 }
+      );
+    }
+
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, slug')
+      .eq('api_key', apiKey)
+      .single();
+
+    if (tenantErr || !tenant) {
+      return NextResponse.json({ error: 'Invalid API Key' }, { status: 401 });
+    }
+
+    // 2. Parse Body & Resolve Target Project
+    const body = await req.json();
+    const { project_slug, items } = body as {
+      project_slug: string;
+      items: IngestItemPayload[];
+    };
+
+    if (!project_slug || !Array.isArray(items) || items.length === 0) {
+      return NextResponse.json(
+        { error: 'Body must include "project_slug" and a non-empty "items" array' },
+        { status: 400 }
+      );
+    }
+
+    // Fetch Project Settings to validate types and statuses dynamically
+    const { data: project, error: projErr } = await supabaseAdmin
+      .from('projects')
+      .select('id, settings')
+      .eq('tenant_id', tenant.id)
+      .eq('slug', project_slug)
+      .single();
+
+    if (projErr || !project) {
+      return NextResponse.json({ error: `Project '${project_slug}' not found` }, { status: 404 });
+    }
+
+    const settings = project.settings || {};
+    const defaultStatus = settings.statuses?.[0]?.id || 'not_started';
+    const defaultType = settings.hierarchy?.[settings.hierarchy.length - 1]?.type || 'task';
+
+    // 3. Query existing maximum order_index to append sequentially
+    const { data: lastItem } = await supabaseAdmin
+      .from('work_items')
+      .select('order_index')
+      .eq('project_id', project.id)
+      .order('order_index', { ascending: false })
+      .limit(1)
+      .single();
+
+    let currentOrder = lastItem?.order_index ? lastItem.order_index + 1000.0 : 1000.0;
+
+    // 4. Batch Process Items
+    const insertedItems = [];
+    // Track batch external_ref_ids mapped to their resolved internal UUIDs for same-batch parent-child chaining
+    const batchRefMap = new Map<string, string>();
+
+    for (const item of items) {
+      // Resolve Parent ID if parent_ref_id is supplied
+      let resolvedParentId: string | null = null;
+      if (item.parent_ref_id) {
+        if (batchRefMap.has(item.parent_ref_id)) {
+          resolvedParentId = batchRefMap.get(item.parent_ref_id)!;
+        } else {
+          const { data: parentItem } = await supabaseAdmin
+            .from('work_items')
+            .select('id')
+            .eq('project_id', project.id)
+            .eq('external_ref_id', item.parent_ref_id)
+            .maybeSingle();
+
+          if (parentItem) {
+            resolvedParentId = parentItem.id;
+          }
+        }
+      }
+
+      const itemPayload = {
+        tenant_id: tenant.id,
+        project_id: project.id,
+        parent_id: resolvedParentId,
+        external_ref_id: item.external_ref_id || null,
+        item_type: item.item_type || defaultType,
+        status: item.status || defaultStatus,
+        title: item.title,
+        description: item.description || null,
+        assignee: item.assignee || null,
+        order_index: item.order_index ?? currentOrder,
+        metadata: item.metadata || {},
+        updated_at: new Date().toISOString()
+      };
+
+      currentOrder += 1000.0;
+
+      // Upsert by project_id and external_ref_id if provided; otherwise insert
+      if (item.external_ref_id) {
+        const { data: upserted, error: upsertErr } = await supabaseAdmin
+          .from('work_items')
+          .upsert(itemPayload, { onConflict: 'project_id, external_ref_id' })
+          .select()
+          .single();
+
+        if (upsertErr) throw upsertErr;
+        insertedItems.push(upserted);
+        if (upserted?.id && item.external_ref_id) {
+          batchRefMap.set(item.external_ref_id, upserted.id);
+        }
+      } else {
+        const { data: inserted, error: insertErr } = await supabaseAdmin
+          .from('work_items')
+          .insert(itemPayload)
+          .select()
+          .single();
+
+        if (insertErr) throw insertErr;
+        insertedItems.push(inserted);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      count: insertedItems.length,
+      items: insertedItems
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+  }
+}

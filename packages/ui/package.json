@@ -1,0 +1,49 @@
+{
+  "name": "@sunshade/ui",
+  "version": "0.1.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./tokens": {
+      "types": "./src/tokens/index.ts",
+      "default": "./src/tokens/index.ts"
+    },
+    "./components": {
+      "types": "./src/components/index.ts",
+      "default": "./src/components/index.ts"
+    },
+    "./fonts": {
+      "types": "./src/fonts/index.ts",
+      "default": "./src/fonts/index.ts"
+    },
+    "./tailwind": {
+      "types": "./src/tailwind/index.ts",
+      "default": "./src/tailwind/index.ts"
+    },
+    "./tailwind.preset": "./tailwind.preset.js"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.0"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*",
+    "react-native-web": "*"
+  },
+  "peerDependenciesMeta": {
+    "react-native": {
+      "optional": true
+    },
+    "react-native-web": {
+      "optional": true
+    },
+    "@sunshade/supabase": {
+      "optional": true
+    }
+  }
+}
