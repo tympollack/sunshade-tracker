@@ -10,7 +10,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "generate:assets": "node scripts/generate-assets.mjs"
   },
   "dependencies": {
     "@sunshade/ui": "file:./packages/ui",

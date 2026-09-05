@@ -25,6 +25,7 @@ import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
+import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 
 interface PageProps {
@@ -370,14 +371,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       {/* ── Top App Header ──────────────────────────────────────────────── */}
       <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 py-3 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center space-x-2">
-          <Link href="/" className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-sm">
-              ST
-            </div>
-            <span className="font-bold text-slate-100 tracking-tight hidden sm:block">
-              SunShade Tracker
-            </span>
-          </Link>
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1" />
           <span className="text-slate-700">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
