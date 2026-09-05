@@ -71,6 +71,11 @@ export interface WorkItemWithChildren extends WorkItem {
   children?: WorkItemWithChildren[];
 }
 
+export interface WorkItemNode extends WorkItem {
+  depth: number;
+  children?: WorkItemNode[];
+}
+
 export interface IngestItemPayload {
   external_ref_id?: string;
   title: string;
