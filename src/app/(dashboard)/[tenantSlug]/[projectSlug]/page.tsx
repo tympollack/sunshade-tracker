@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState, useCallback } from 'react';
+import { use, useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Layers,
@@ -19,7 +19,9 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { buildTree } from '@/lib/tree';
+import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -51,6 +53,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'spark' | 'schema'>('board');
   const [items, setItems] = useState<WorkItem[]>([]);
+  const treeItems = useMemo(() => buildTree(items), [items]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
     schema_version: '1.0',
     hierarchy: [
@@ -621,51 +624,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   No items in project. Ingest work items using Gemini Spark or the quick add form.
                 </div>
               ) : (
-                items.map((item) => {
-                  const parent = items.find((p) => p.id === item.parent_id);
-                  return (
-                    <div
-                      key={item.id}
-                      className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between"
-                    >
-                      <div className="flex items-center space-x-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-mono text-xs">
-                          {item.item_type}
-                        </span>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm font-semibold text-white">{item.title}</span>
-                            {item.external_ref_id && (
-                              <span className="text-xs font-mono text-slate-400">
-                                [{item.external_ref_id}]
-                              </span>
-                            )}
-                          </div>
-                          {parent && (
-                            <span className="text-xs text-slate-500">
-                              Child of: <strong className="text-slate-400">{parent.title}</strong>{' '}
-                              ({parent.external_ref_id || parent.item_type})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-3 text-xs">
-                        <span
-                          className="px-2 py-0.5 rounded-full font-medium"
-                          style={{
-                            backgroundColor: `${getStatusColor(item.status)}20`,
-                            color: getStatusColor(item.status),
-                            border: `1px solid ${getStatusColor(item.status)}40`,
-                          }}
-                        >
-                          {item.status}
-                        </span>
-                        <span className="text-slate-400 font-mono">order: {item.order_index}</span>
-                      </div>
-                    </div>
-                  );
-                })
+                treeItems.map((rootNode) => (
+                  <TreeNode
+                    key={rootNode.id}
+                    item={rootNode}
+                    getStatusColor={getStatusColor}
+                  />
+                ))
               )}
             </div>
           </div>
