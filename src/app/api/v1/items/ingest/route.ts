@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
       .select('id, settings')
       .eq('tenant_id', tenant.id)
       .eq('slug', project_slug)
+      .is('deleted_at', null) // only ingest into active projects
       .single();
 
     if (projErr || !project) {
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
       .from('work_items')
       .select('order_index')
       .eq('project_id', project.id)
+      .is('deleted_at', null)
       .order('order_index', { ascending: false })
       .limit(1)
       .single();
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
             .select('id')
             .eq('project_id', project.id)
             .eq('external_ref_id', item.parent_ref_id)
+            .is('deleted_at', null) // don't link to soft-deleted parents
             .maybeSingle();
 
           if (parentItem) {

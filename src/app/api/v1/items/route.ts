@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-import { authenticateApiKey } from '@/lib/auth-guard';
+import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
 import { WorkItem, WorkItemWithChildren } from '@/types/tracker';
 
 export async function GET(req: NextRequest) {
-  const auth = await authenticateApiKey(req);
+  const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
@@ -23,11 +23,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Resolve project
+  // Resolve project (active only — not soft-deleted)
   let projectQuery = supabaseAdmin
     .from('projects')
     .select('id, slug, name, settings')
-    .eq('tenant_id', authCtx.tenant.id);
+    .eq('tenant_id', authCtx.tenant.id)
+    .is('deleted_at', null);
 
   if (projectIdParam) {
     projectQuery = projectQuery.eq('id', projectIdParam);
@@ -41,12 +42,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
 
-  // Query work items
+  // Query active work items (exclude soft-deleted)
   let itemsQuery = supabaseAdmin
     .from('work_items')
     .select('*')
     .eq('tenant_id', authCtx.tenant.id)
     .eq('project_id', project.id)
+    .is('deleted_at', null)
     .order('order_index', { ascending: true });
 
   if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
@@ -109,7 +111,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await authenticateApiKey(req);
+  const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
@@ -218,7 +220,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const auth = await authenticateApiKey(req);
+  const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
@@ -259,6 +261,53 @@ export async function PATCH(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, item: updated });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const auth = await authenticate(req);
+  if (auth.errorResponse) return auth.errorResponse;
+  const authCtx = auth.context;
+
+  try {
+    const body = await req.json();
+    const { id } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: '"id" is required' }, { status: 400 });
+    }
+
+    // Soft-delete: set deleted_at timestamp, do NOT destroy the row
+    const { data: softDeleted, error } = await supabaseAdmin
+      .from('work_items')
+      .update({
+        deleted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('tenant_id', authCtx.tenant.id) // Enforce tenant isolation
+      .is('deleted_at', null)             // Only delete active items
+      .select('id, deleted_at')
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    if (!softDeleted) {
+      return NextResponse.json(
+        { error: 'Item not found or already deleted' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      soft_deleted_id: id,
+      deleted_at: softDeleted.deleted_at,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
   }
