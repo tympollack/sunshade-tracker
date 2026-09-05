@@ -65,9 +65,14 @@ export async function middleware(request: NextRequest) {
   const isOnboardingRoute = pathname.startsWith('/onboarding');
 
   if (isPublicRoute) {
-    // If already authenticated and trying to reach /login, redirect to workspace
+    // If already authenticated and trying to reach /login, redirect to intended page or allow LoginPage to resolve workspace
     if (user && pathname.startsWith('/login')) {
-      return NextResponse.redirect(new URL('/onboarding', request.url));
+      const nextParam = request.nextUrl.searchParams.get('next');
+      if (nextParam && nextParam !== '/login' && nextParam !== '/onboarding') {
+        return NextResponse.redirect(new URL(nextParam, request.url));
+      }
+      // Pass through to LoginPage server component so resolvePostAuthDestination can redirect to their workspace
+      return supabaseResponse;
     }
     // For API routes, always pass through (route handlers do auth themselves)
     return supabaseResponse;

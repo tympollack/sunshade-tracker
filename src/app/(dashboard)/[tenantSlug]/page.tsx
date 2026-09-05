@@ -26,10 +26,13 @@ export default async function TenantRootPage({ params }: PageProps) {
     .select('id, slug')
     .eq('slug', tenantSlug)
     .is('deleted_at', null)
-    .single();
+    .maybeSingle();
 
   if (!tenant) {
-    redirect('/onboarding');
+    // If workspace does not exist, resolve the user's actual active workspace
+    const { resolvePostAuthDestination } = await import('@/lib/auth');
+    const destination = await resolvePostAuthDestination(user.id);
+    redirect(destination.pathname);
   }
 
   // Get first active project
@@ -40,12 +43,12 @@ export default async function TenantRootPage({ params }: PageProps) {
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (project) {
     redirect(`/${tenantSlug}/${project.slug}`);
   }
 
-  // Tenant exists but no projects yet
-  redirect('/onboarding');
+  // Tenant exists but no projects yet — route to workspace settings
+  redirect(`/${tenantSlug}/settings`);
 }

@@ -160,7 +160,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
             <button
               onClick={() => {
                 setOpen(false);
-                router.push('/onboarding');
+                router.push('/onboarding?new=true');
               }}
               className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors mt-1"
             >

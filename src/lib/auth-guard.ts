@@ -61,6 +61,41 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
       .maybeSingle();
 
     if (memberErr || !memberships) {
+      // 1. Fallback: check if the user is owner_id on the tenant directly
+      if (tenantSlugHint) {
+        const { data: ownedTenant } = await service
+          .from('tenants')
+          .select('*')
+          .eq('owner_id', user.id)
+          .eq('slug', tenantSlugHint)
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        if (ownedTenant) {
+          return {
+            context: { tenant: ownedTenant as Tenant, userId: user.id, role: 'owner' },
+            errorResponse: null,
+          };
+        }
+      }
+
+      // 2. Demo workspace allowance: 'sunshade' is the public demo workspace
+      if (tenantSlugHint === 'sunshade') {
+        const { data: demoTenant } = await service
+          .from('tenants')
+          .select('*')
+          .eq('slug', 'sunshade')
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        if (demoTenant) {
+          return {
+            context: { tenant: demoTenant as Tenant, userId: user.id, role: 'member' },
+            errorResponse: null,
+          };
+        }
+      }
+
       return {
         context: null,
         errorResponse: NextResponse.json(
