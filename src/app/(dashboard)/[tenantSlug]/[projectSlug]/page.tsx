@@ -32,6 +32,7 @@ interface PageProps {
     tenantSlug: string;
     projectSlug: string;
   }>;
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
 interface TenantInfo {
@@ -50,8 +51,36 @@ interface ProjectInfo {
 
 export default function ProjectTrackerDashboard(props: PageProps) {
   const { tenantSlug, projectSlug } = use(props.params);
+  const searchParams = props.searchParams ? use(props.searchParams) : {};
+  const requestedTab =
+    typeof searchParams?.tab === 'string' &&
+    ['board', 'tree', 'spark', 'schema'].includes(searchParams.tab)
+      ? (searchParams.tab as 'board' | 'tree' | 'spark' | 'schema')
+      : 'board';
 
-  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'spark' | 'schema'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'spark' | 'schema'>(requestedTab);
+
+  const handleTabChange = (tab: 'board' | 'tree' | 'spark' | 'schema') => {
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (tab === 'board') {
+        url.searchParams.delete('tab');
+      } else {
+        url.searchParams.set('tab', tab);
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
+  useEffect(() => {
+    if (
+      typeof searchParams?.tab === 'string' &&
+      ['board', 'tree', 'spark', 'schema'].includes(searchParams.tab)
+    ) {
+      setActiveTab(searchParams.tab as any);
+    }
+  }, [searchParams?.tab]);
   const [items, setItems] = useState<WorkItem[]>([]);
   const treeItems = useMemo(() => buildTree(items), [items]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -294,22 +323,39 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Error state ─────────────────────────────────────────────────────────
   if (!loading && fetchError) {
+    const isNotFound = fetchError.toLowerCase().includes('not found');
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#090d16]">
         <div className="max-w-md text-center space-y-4 p-8">
           <XCircle className="w-12 h-12 text-red-400 mx-auto" />
-          <h2 className="text-xl font-bold text-white">Failed to load workspace</h2>
-          <p className="text-sm text-slate-400">{fetchError}</p>
+          <h2 className="text-xl font-bold text-white">
+            {isNotFound ? 'Project Not Found' : 'Failed to Load'}
+          </h2>
+          <p className="text-sm text-slate-400">
+            {isNotFound
+              ? `Project "${projectSlug}" does not exist in workspace "@${tenantSlug}".`
+              : fetchError}
+          </p>
           <div className="flex items-center justify-center space-x-3">
-            <button
-              onClick={fetchData}
-              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-colors"
-            >
-              Try Again
-            </button>
+            {isNotFound ? (
+              <Link
+                href={`/${tenantSlug}`}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors"
+              >
+                Go to Workspace
+              </Link>
+            ) : (
+              <button
+                onClick={fetchData}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-colors"
+              >
+                Try Again
+              </button>
+            )}
             <Link
-              href="/login"
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors"
+              href={`/login?next=${encodeURIComponent(`/${tenantSlug}/${projectSlug}`)}`}
+              className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition-colors"
             >
               Sign In
             </Link>
@@ -366,7 +412,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               return (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => handleTabChange(tab)}
                   className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors ${
                     activeTab === tab
                       ? 'bg-emerald-500 text-slate-950 shadow'

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Plus, Folder } from 'lucide-react';
+import { ChevronDown, Plus, Folder, Settings } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -83,16 +83,26 @@ export function ProjectSwitcher({
             ))}
           </div>
 
-          <div className="px-1.5 pb-1.5">
+          <div className="px-1.5 pb-1.5 border-t border-slate-800 mt-1 pt-1 space-y-0.5">
             <button
               onClick={() => {
                 setOpen(false);
-                router.push(`/${tenantSlug}/new-project`);
+                router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
               }}
-              className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors border-t border-slate-800 mt-1 pt-3"
+              className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-500" />
+              <span>Project Schema Settings</span>
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                router.push(`/${tenantSlug}/settings`);
+              }}
+              className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>New Project…</span>
+              <span>Workspace Settings…</span>
             </button>
           </div>
         </div>

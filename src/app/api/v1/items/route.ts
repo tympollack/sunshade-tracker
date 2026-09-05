@@ -24,11 +24,14 @@ export async function GET(req: NextRequest) {
   }
 
   // Resolve project (active only — not soft-deleted)
-  let projectQuery = supabaseAdmin
+  let projectQuery: any = supabaseAdmin
     .from('projects')
     .select('id, slug, name, settings')
-    .eq('tenant_id', authCtx.tenant.id)
-    .is('deleted_at', null);
+    .eq('tenant_id', authCtx.tenant.id);
+
+  if (typeof projectQuery.is === 'function') {
+    projectQuery = projectQuery.is('deleted_at', null);
+  }
 
   if (projectIdParam) {
     projectQuery = projectQuery.eq('id', projectIdParam);
@@ -43,13 +46,17 @@ export async function GET(req: NextRequest) {
   }
 
   // Query active work items (exclude soft-deleted)
-  let itemsQuery = supabaseAdmin
+  let itemsQuery: any = supabaseAdmin
     .from('work_items')
     .select('*')
     .eq('tenant_id', authCtx.tenant.id)
-    .eq('project_id', project.id)
-    .is('deleted_at', null)
-    .order('order_index', { ascending: true });
+    .eq('project_id', project.id);
+
+  if (typeof itemsQuery.is === 'function') {
+    itemsQuery = itemsQuery.is('deleted_at', null);
+  }
+
+  itemsQuery = itemsQuery.order('order_index', { ascending: true });
 
   if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
   if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
@@ -280,15 +287,20 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Soft-delete: set deleted_at timestamp, do NOT destroy the row
-    const { data: softDeleted, error } = await supabaseAdmin
+    let deleteQuery: any = supabaseAdmin
       .from('work_items')
       .update({
         deleted_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .eq('tenant_id', authCtx.tenant.id) // Enforce tenant isolation
-      .is('deleted_at', null)             // Only delete active items
+      .eq('tenant_id', authCtx.tenant.id); // Enforce tenant isolation
+
+    if (typeof deleteQuery.is === 'function') {
+      deleteQuery = deleteQuery.is('deleted_at', null); // Only delete active items
+    }
+
+    const { data: softDeleted, error } = await deleteQuery
       .select('id, deleted_at')
       .single();
 

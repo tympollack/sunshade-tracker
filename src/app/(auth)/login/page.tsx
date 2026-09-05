@@ -8,6 +8,7 @@ import {
   isLocalDevelopment,
   sanitizeNextUrl,
 } from '@/lib/env';
+import { resolvePostAuthDestination } from '@/lib/auth';
 import { LoginForm } from './LoginForm';
 
 export const metadata = {
@@ -24,15 +25,14 @@ export default async function LoginPage({
   const { data: { user } } = await supabase.auth.getUser();
 
   const params = searchParams ? await searchParams : {};
-  const nextParam = sanitizeNextUrl(
-    typeof params.next === 'string' ? params.next : null,
-    '/onboarding'
-  );
+  const rawNext = typeof params.next === 'string' ? params.next : null;
+  const nextParam = sanitizeNextUrl(rawNext, '');
   const errorParam = typeof params.error === 'string' ? params.error : null;
 
-  // Already authenticated — send to workspace or onboarding
+  // Already authenticated — resolve active workspace and redirect
   if (user) {
-    redirect(nextParam);
+    const destination = await resolvePostAuthDestination(user.id, nextParam || null);
+    redirect(destination.pathname + destination.search);
   }
 
   const headersList = await headers();
@@ -40,9 +40,10 @@ export default async function LoginPage({
   const proto = headersList.get('x-forwarded-proto') || (isLocalDevelopment(host) ? 'http' : 'https');
 
   // Build the absolute callback URL that Hub will redirect back to
+  const callbackQuery = nextParam ? `?next=${encodeURIComponent(nextParam)}` : '';
   const callbackUrl = host
-    ? `${proto}://${host}/auth/callback?next=${encodeURIComponent(nextParam)}`
-    : `/auth/callback?next=${encodeURIComponent(nextParam)}`;
+    ? `${proto}://${host}/auth/callback${callbackQuery}`
+    : `/auth/callback${callbackQuery}`;
 
   const hubLoginUrl = getHubLoginUrl(callbackUrl, host);
   const isBypass = isBypassAuthEnabled();

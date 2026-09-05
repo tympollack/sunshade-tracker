@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Building2, ArrowRight, ArrowLeft, Check, Copy, ExternalLink,
@@ -31,8 +31,36 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // If the user already has a workspace, pass them straight through to it
+  // unless they explicitly arrived to create a new workspace (?new=true or ?create=true)
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const isExplicitNew = searchParams.get('new') === 'true' || searchParams.get('create') === 'true';
+    if (isExplicitNew) {
+      setCheckingExisting(false);
+      return;
+    }
+
+    fetch('/api/v1/tenants/me', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.workspaces && data.workspaces.length > 0) {
+          const primary = data.primary_workspace || data.workspaces[0];
+          const firstProj = primary.projects?.[0]?.slug;
+          const target = firstProj ? `/${primary.slug}/${firstProj}` : `/${primary.slug}`;
+          router.replace(target);
+        } else {
+          setCheckingExisting(false);
+        }
+      })
+      .catch(() => {
+        setCheckingExisting(false);
+      });
+  }, [router]);
 
   // Step 1 — Workspace
   const [orgName, setOrgName] = useState('');
@@ -116,6 +144,16 @@ export default function OnboardingPage() {
     { num: 2, label: 'First Project' },
     { num: 3, label: 'API Key' },
   ];
+
+  if (checkingExisting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#090d16]">
+        <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold animate-pulse text-sm">
+          ST
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#090d16]">
