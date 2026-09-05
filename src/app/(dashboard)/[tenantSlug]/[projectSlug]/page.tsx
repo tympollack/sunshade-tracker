@@ -60,6 +60,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'spark' | 'schema'>(requestedTab);
 
+  const handleTabChange = (tab: 'board' | 'tree' | 'spark' | 'schema') => {
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (tab === 'board') {
+        url.searchParams.delete('tab');
+      } else {
+        url.searchParams.set('tab', tab);
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
   useEffect(() => {
     if (
       typeof searchParams?.tab === 'string' &&
@@ -399,7 +412,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               return (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => handleTabChange(tab)}
                   className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors ${
                     activeTab === tab
                       ? 'bg-emerald-500 text-slate-950 shadow'

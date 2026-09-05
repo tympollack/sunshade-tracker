@@ -26,13 +26,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch Project Settings to validate types and statuses dynamically
-    const { data: project, error: projErr } = await supabaseAdmin
+    let projectQuery: any = supabaseAdmin
       .from('projects')
       .select('id, settings')
       .eq('tenant_id', tenant.id)
-      .eq('slug', project_slug)
-      .is('deleted_at', null) // only ingest into active projects
-      .single();
+      .eq('slug', project_slug);
+
+    if (typeof projectQuery.is === 'function') {
+      projectQuery = projectQuery.is('deleted_at', null); // only ingest into active projects
+    }
+
+    const { data: project, error: projErr } = await projectQuery.single();
 
     if (projErr || !project) {
       return NextResponse.json({ error: `Project '${project_slug}' not found` }, { status: 404 });
@@ -43,11 +47,16 @@ export async function POST(req: NextRequest) {
     const defaultType = settings.hierarchy?.[settings.hierarchy.length - 1]?.type || 'task';
 
     // 3. Query existing maximum order_index to append sequentially
-    const { data: lastItem } = await supabaseAdmin
+    let lastItemQuery: any = supabaseAdmin
       .from('work_items')
       .select('order_index')
-      .eq('project_id', project.id)
-      .is('deleted_at', null)
+      .eq('project_id', project.id);
+
+    if (typeof lastItemQuery.is === 'function') {
+      lastItemQuery = lastItemQuery.is('deleted_at', null);
+    }
+
+    const { data: lastItem } = await lastItemQuery
       .order('order_index', { ascending: false })
       .limit(1)
       .single();
@@ -66,13 +75,17 @@ export async function POST(req: NextRequest) {
         if (batchRefMap.has(item.parent_ref_id)) {
           resolvedParentId = batchRefMap.get(item.parent_ref_id)!;
         } else {
-          const { data: parentItem } = await supabaseAdmin
+          let parentQuery: any = supabaseAdmin
             .from('work_items')
             .select('id')
             .eq('project_id', project.id)
-            .eq('external_ref_id', item.parent_ref_id)
-            .is('deleted_at', null) // don't link to soft-deleted parents
-            .maybeSingle();
+            .eq('external_ref_id', item.parent_ref_id);
+
+          if (typeof parentQuery.is === 'function') {
+            parentQuery = parentQuery.is('deleted_at', null); // don't link to soft-deleted parents
+          }
+
+          const { data: parentItem } = await parentQuery.maybeSingle();
 
           if (parentItem) {
             resolvedParentId = parentItem.id;

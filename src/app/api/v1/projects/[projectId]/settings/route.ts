@@ -22,11 +22,14 @@ export async function GET(req: NextRequest, context: RouteContext) {
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
-  let query = supabaseAdmin
+  let query: any = supabaseAdmin
     .from('projects')
     .select('id, slug, name, settings')
-    .eq('tenant_id', authCtx.tenant.id)
-    .is('deleted_at', null);
+    .eq('tenant_id', authCtx.tenant.id);
+
+  if (typeof query.is === 'function') {
+    query = query.is('deleted_at', null);
+  }
 
   if (isUuid) {
     query = query.eq('id', projectId);
@@ -71,11 +74,14 @@ export async function PUT(req: NextRequest, context: RouteContext) {
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
-  let query = supabaseAdmin
+  let query: any = supabaseAdmin
     .from('projects')
     .update({ settings, updated_at: new Date().toISOString() })
-    .eq('tenant_id', authCtx.tenant.id)
-    .is('deleted_at', null);
+    .eq('tenant_id', authCtx.tenant.id);
+
+  if (typeof query.is === 'function') {
+    query = query.is('deleted_at', null);
+  }
 
   if (isUuid) {
     query = query.eq('id', projectId);

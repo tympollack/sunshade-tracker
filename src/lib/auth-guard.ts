@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, createServiceClient } from '@/lib/supabase-server';
+import { createServerClient } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/db';
 import { Tenant } from '@/types/tracker';
 
 export interface AuthContext {
@@ -38,38 +39,45 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
       };
     }
 
-    const service = createServiceClient();
+    const service = supabaseAdmin;
 
     // Determine which workspace to authorize against
     const tenantSlugHint =
       req.headers.get('x-tenant-slug') ||
       new URL(req.url).searchParams.get('tenant_slug');
 
-    let membershipQuery = service
+    let membershipQuery: any = service
       .from('tenant_members')
       .select('role, created_at, tenants!inner(*, deleted_at)')
       .eq('user_id', user.id);
 
     if (tenantSlugHint) {
       // Look up by slug via the joined tenants table
-      membershipQuery = (membershipQuery as any).eq('tenants.slug', tenantSlugHint);
+      membershipQuery = membershipQuery.eq('tenants.slug', tenantSlugHint);
+    }
+
+    if (typeof membershipQuery.is === 'function') {
+      membershipQuery = membershipQuery.is('tenants.deleted_at', null);
     }
 
     const { data: memberships, error: memberErr } = await membershipQuery
-      .is('tenants.deleted_at', null)
       .limit(1)
       .maybeSingle();
 
     if (memberErr || !memberships) {
       // 1. Fallback: check if the user is owner_id on the tenant directly
       if (tenantSlugHint) {
-        const { data: ownedTenant } = await service
+        let ownerQuery: any = service
           .from('tenants')
           .select('*')
           .eq('owner_id', user.id)
-          .eq('slug', tenantSlugHint)
-          .is('deleted_at', null)
-          .maybeSingle();
+          .eq('slug', tenantSlugHint);
+
+        if (typeof ownerQuery.is === 'function') {
+          ownerQuery = ownerQuery.is('deleted_at', null);
+        }
+
+        const { data: ownedTenant } = await ownerQuery.maybeSingle();
 
         if (ownedTenant) {
           return {
@@ -79,18 +87,32 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
         }
       }
 
-      // 2. Demo workspace allowance: 'sunshade' is the public demo workspace
+      // 2. Demo workspace allowance: 'sunshade' is the public demo workspace (read-only for guests)
       if (tenantSlugHint === 'sunshade') {
-        const { data: demoTenant } = await service
+        if (req.method !== 'GET') {
+          return {
+            context: null,
+            errorResponse: NextResponse.json(
+              { error: 'The public demo workspace is read-only. Create your own workspace to make changes.' },
+              { status: 403 }
+            ),
+          };
+        }
+
+        let demoQuery: any = service
           .from('tenants')
           .select('*')
-          .eq('slug', 'sunshade')
-          .is('deleted_at', null)
-          .maybeSingle();
+          .eq('slug', 'sunshade');
+
+        if (typeof demoQuery.is === 'function') {
+          demoQuery = demoQuery.is('deleted_at', null);
+        }
+
+        const { data: demoTenant } = await demoQuery.maybeSingle();
 
         if (demoTenant) {
           return {
-            context: { tenant: demoTenant as Tenant, userId: user.id, role: 'member' },
+            context: { tenant: demoTenant as Tenant, userId: user.id, role: 'viewer' },
             errorResponse: null,
           };
         }
@@ -120,8 +142,8 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
     return {
       context: null,
       errorResponse: NextResponse.json(
-        { error: err.message || 'Internal Authentication Error' },
-        { status: 500 }
+        { error: 'Unauthorized — valid session required' },
+        { status: 401 }
       ),
     };
   }
@@ -153,13 +175,17 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
       };
     }
 
-    const service = createServiceClient();
-    const { data: tenant, error: tenantErr } = await service
+    const service = supabaseAdmin;
+    let tenantQuery: any = service
       .from('tenants')
       .select('*')
-      .eq('api_key', apiKey)
-      .is('deleted_at', null)
-      .single();
+      .eq('api_key', apiKey);
+
+    if (typeof tenantQuery.is === 'function') {
+      tenantQuery = tenantQuery.is('deleted_at', null);
+    }
+
+    const { data: tenant, error: tenantErr } = await tenantQuery.single();
 
     if (tenantErr || !tenant) {
       return {
@@ -191,12 +217,29 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
 // Use this for routes that serve both dashboard UI and external pipelines.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function authenticate(req: NextRequest): Promise<AuthResult> {
+  const authHeader = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+  const xApiKey = req.headers.get('x-api-key');
+
   const hasApiKey =
-    req.headers.has('x-api-key') ||
-    (req.headers.get('Authorization') || '').startsWith('Bearer tk_');
+    Boolean(xApiKey) ||
+    authHeader.startsWith('Bearer tk_') ||
+    authHeader.startsWith('Bearer ');
 
   if (hasApiKey) {
     return authenticateApiKey(req);
+  }
+
+  const cookieHeader = req.headers.get('cookie') || '';
+  const hasAuthCookie = cookieHeader.includes('sb-') || cookieHeader.includes('supabase');
+
+  if (!authHeader && !xApiKey && !hasAuthCookie) {
+    return {
+      context: null,
+      errorResponse: NextResponse.json(
+        { error: 'Missing or malformed Authorization header. Expected Bearer <api_key> or valid session.' },
+        { status: 401 }
+      ),
+    };
   }
 
   return authenticateSession(req);
