@@ -110,12 +110,24 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Cascade soft-delete to all work items in this project
-    await supabaseAdmin
+    const { error: cascadeErr } = await supabaseAdmin
       .from('work_items')
       .update({ deleted_at: now, updated_at: now })
       .eq('project_id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .is('deleted_at', null);
+
+    if (cascadeErr) {
+      // Restore the project so we don't leave it in a partially-deleted state
+      await supabaseAdmin
+        .from('projects')
+        .update({ deleted_at: null, updated_at: now })
+        .eq('id', id);
+      return NextResponse.json(
+        { error: `Project restored: failed to cascade-delete items — ${cascadeErr.message}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

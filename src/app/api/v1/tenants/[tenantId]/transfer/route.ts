@@ -95,7 +95,7 @@ export async function POST(
     const now = new Date().toISOString();
 
     // Update tenants.owner_id (audit reference)
-    await service
+    const { error: tenantUpdateErr } = await service
       .from('tenants')
       .update({
         owner_id: new_owner_id,
@@ -107,21 +107,42 @@ export async function POST(
       })
       .eq('id', tenantId);
 
+    if (tenantUpdateErr) {
+      return NextResponse.json(
+        { error: `Failed to update tenant record: ${tenantUpdateErr.message}` },
+        { status: 500 }
+      );
+    }
+
     // Downgrade previous owner from 'owner' → 'admin' in tenant_members
-    await service
+    const { error: downgradeErr } = await service
       .from('tenant_members')
       .update({ role: 'admin' })
       .eq('tenant_id', tenantId)
       .eq('user_id', user.id);
 
+    if (downgradeErr) {
+      return NextResponse.json(
+        { error: `Failed to downgrade previous owner role: ${downgradeErr.message}` },
+        { status: 500 }
+      );
+    }
+
     // Upsert new owner into tenant_members as 'owner'
     // If they're already a member, upgrade their role; otherwise insert them.
-    await service
+    const { error: upsertErr } = await service
       .from('tenant_members')
       .upsert(
         { tenant_id: tenantId, user_id: new_owner_id, role: 'owner' },
         { onConflict: 'tenant_id, user_id' }
       );
+
+    if (upsertErr) {
+      return NextResponse.json(
+        { error: `Failed to set new owner membership: ${upsertErr.message}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

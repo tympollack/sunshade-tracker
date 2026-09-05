@@ -268,10 +268,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIngestResponse(null);
     try {
       const parsed = JSON.parse(sparkPayload);
-      // Ingest always uses the tenant API key (headless), not session
-      const res = await fetch('/api/v1/items/ingest', {
+      // Now uses session-based apiFetch — the ingest endpoint accepts both
+      // session cookies (dashboard) and Bearer API keys (headless pipelines)
+      const res = await apiFetch('/api/v1/items/ingest', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsed),
       });
       const data = await res.json();

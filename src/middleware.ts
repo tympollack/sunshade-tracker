@@ -57,9 +57,7 @@ export async function middleware(request: NextRequest) {
     pathname === '/' ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth/') ||
-    pathname.startsWith('/api/auth/') ||
-    pathname.startsWith('/api/health') ||
-    pathname.startsWith('/api/v1/items/ingest') || // headless ingest always uses API key
+    pathname.startsWith('/api/') || // All API routes handle their own auth (dual: session or API key)
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon');
 
@@ -71,10 +69,11 @@ export async function middleware(request: NextRequest) {
     if (user && pathname.startsWith('/login')) {
       return NextResponse.redirect(new URL('/onboarding', request.url));
     }
+    // For API routes, always pass through (route handlers do auth themselves)
     return supabaseResponse;
   }
 
-  // ─── Protected routes require a session ─────────────────────────────────
+  // ─── Protected UI routes require a session ──────────────────────────────
   if (!user) {
     // Preserve the intended destination for post-login redirect
     const loginUrl = new URL('/login', request.url);
