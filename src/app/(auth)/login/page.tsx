@@ -9,6 +9,7 @@ import {
   sanitizeNextUrl,
 } from '@/lib/env';
 import { resolvePostAuthDestination } from '@/lib/auth';
+import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { LoginForm } from './LoginForm';
 
 export const metadata = {
@@ -58,14 +59,7 @@ export default async function LoginPage({
       <div className="w-full max-w-md space-y-6">
         {/* Brand */}
         <div className="text-center space-y-3">
-          <Link href="/" className="inline-flex items-center space-x-2 group">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-sm group-hover:bg-emerald-500/30 transition-colors">
-              ST
-            </div>
-            <span className="font-bold text-white text-xl tracking-tight">
-              SunShade <span className="text-emerald-400">Tracker</span>
-            </span>
-          </Link>
+          <SunShadeLogo variant="stacked" size="lg" showTagline href="/" />
           <p className="text-sm text-slate-400">
             Enterprise work item tracking powered by the SunShade ecosystem
           </p>

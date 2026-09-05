@@ -7,6 +7,7 @@ import {
   Layers, Cpu, Paintbrush, BarChart3, Zap, CheckCircle2, Key
 } from 'lucide-react';
 import { SCHEMA_TEMPLATES, SchemaTemplate } from '@/lib/schema-templates';
+import { SunShadeEmblem } from '@/components/SunShadeLogo';
 
 type Step = 1 | 2 | 3;
 
@@ -148,8 +149,8 @@ export default function OnboardingPage() {
   if (checkingExisting) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#090d16]">
-        <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold animate-pulse text-sm">
-          ST
+        <div className="flex flex-col items-center gap-3">
+          <SunShadeEmblem size={44} className="animate-pulse" />
         </div>
       </div>
     );
@@ -159,10 +160,8 @@ export default function OnboardingPage() {
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#090d16]">
       <div className="w-full max-w-xl space-y-8">
         {/* Header */}
-        <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold mx-auto">
-            ST
-          </div>
+        <div className="text-center space-y-3">
+          <SunShadeEmblem size={48} className="mx-auto" />
           <h1 className="text-2xl font-extrabold text-white tracking-tight">
             Set up your workspace
           </h1>
