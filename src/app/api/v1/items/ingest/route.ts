@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
+import { SCHEMA_TEMPLATES } from '@/lib/schema-templates';
 import { IngestItemPayload } from '@/types/tracker';
 
 export async function POST(req: NextRequest) {
@@ -26,16 +27,41 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch Project Settings to validate types and statuses dynamically
-    const { data: project, error: projErr } = await supabaseAdmin
+    let { data: project } = await supabaseAdmin
       .from('projects')
       .select('id, settings')
       .eq('tenant_id', tenant.id)
       .eq('slug', project_slug)
       .is('deleted_at', null) // only ingest into active projects
-      .single();
+      .maybeSingle();
 
-    if (projErr || !project) {
-      return NextResponse.json({ error: `Project '${project_slug}' not found` }, { status: 404 });
+    if (!project) {
+      // Auto-provision project with default software template if it doesn't exist yet
+      const defaultSettings = SCHEMA_TEMPLATES[0].settings;
+      const projectName = project_slug
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+      const { data: newProj, error: createErr } = await supabaseAdmin
+        .from('projects')
+        .insert({
+          tenant_id: tenant.id,
+          name: projectName,
+          slug: project_slug,
+          description: `Auto-provisioned via ingest`,
+          app_id: 'tracker',
+          settings: defaultSettings,
+        })
+        .select('id, settings')
+        .single();
+
+      if (createErr || !newProj) {
+        return NextResponse.json(
+          { error: `Project '${project_slug}' not found and could not be auto-created: ${createErr?.message}` },
+          { status: 500 }
+        );
+      }
+      project = newProj;
     }
 
     const settings = project.settings || {};
