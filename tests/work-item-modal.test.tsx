@@ -69,8 +69,8 @@ describe('WorkItemModal component', () => {
     expect(screen.getByDisplayValue('Implement Dark Theme')).toBeDefined();
     expect(screen.getByDisplayValue('Ensure dark mode colors meet WCAG standards')).toBeDefined();
     expect(screen.getByDisplayValue('THEME-01')).toBeDefined();
-    expect(screen.getByText('priority:')).toBeDefined();
-    expect(screen.getByText('High')).toBeDefined();
+    expect(screen.getByText('priority')).toBeDefined();
+    expect(screen.getByDisplayValue('High')).toBeDefined();
   });
 
   it('calls onSave with modified fields when save is clicked', async () => {
