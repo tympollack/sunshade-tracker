@@ -29,7 +29,7 @@ import {
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { buildTree } from '@/lib/tree';
 import { calculateOrderIndex } from '@/lib/fractional-index';
-import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
+import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
@@ -38,6 +38,7 @@ import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
+import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 
 interface PageProps {
   params: Promise<{
@@ -98,10 +99,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
     schema_version: '1.0',
     hierarchy: [
-      { type: 'project', label: 'Project', level: 1, allowed_parents: [] },
-      { type: 'epic', label: 'Epic', level: 2, allowed_parents: ['project'] },
-      { type: 'story', label: 'Story', level: 3, allowed_parents: ['epic'] },
-      { type: 'task', label: 'Task', level: 4, allowed_parents: ['story', 'epic'] },
+      { type: 'project', label: 'Project', level: 1, allowed_parents: [], color: '#c084fc' },
+      { type: 'epic', label: 'Epic', level: 2, allowed_parents: ['project'], color: '#38bdf8' },
+      { type: 'story', label: 'Story', level: 3, allowed_parents: ['epic'], color: '#34d399' },
+      { type: 'task', label: 'Task', level: 4, allowed_parents: ['story', 'epic'], color: '#fbbf24' },
     ],
     statuses: [
       { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
@@ -111,6 +112,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     ],
     custom_fields: ['priority', 'complexity', 'timeline', 'commit_hash', 'source_type'],
   });
+  const [isSavingSchema, setIsSavingSchema] = useState(false);
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
   const [allProjects, setAllProjects] = useState<ProjectInfo[]>([]);
@@ -265,7 +267,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           if (detailRes.ok) {
             const detail = await detailRes.json();
             if (detail.settings) {
-              setProjectSettings(detail.settings);
+              const enrichedHierarchy = (detail.settings.hierarchy || []).map((h: any) => ({
+                ...h,
+                color: h.color || getDefaultLevelHex(h.level),
+              }));
+              const enrichedSettings: ProjectSettings = {
+                ...detail.settings,
+                hierarchy: enrichedHierarchy,
+              };
+              setProjectSettings(enrichedSettings);
               if (detail.settings.statuses?.length) {
                 setNewItemStatus((prev) => {
                   const exists = detail.settings.statuses.some((s: any) => s.id === prev);
@@ -309,6 +319,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       setIsRefreshing(false);
     }
   }, [apiFetch, tenantSlug, projectSlug]);
+
+  const handleSaveSchema = async (newSettings: ProjectSettings) => {
+    setIsSavingSchema(true);
+    try {
+      const res = await apiFetch(`/api/v1/projects/${projectSlug}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ settings: newSettings }),
+      });
+      if (res.ok) {
+        setProjectSettings(newSettings);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        console.error('Failed to update schema:', err);
+      }
+    } catch (err) {
+      console.error('Network error updating schema:', err);
+    } finally {
+      setIsSavingSchema(false);
+    }
+  };
 
   useEffect(() => {
     fetchTenantInfo();
@@ -1118,26 +1148,37 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       <div className="flex items-center space-x-1.5 min-w-0">
                                         <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
                                         {/* Quick Level Selector */}
-                                        <select
-                                          value={item.item_type}
-                                          onChange={(e) => {
-                                            e.stopPropagation();
-                                            handleUpdateType(item.id, e.target.value);
-                                          }}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border focus:outline-none cursor-pointer transition-colors ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
-                                          title="Change hierarchy level"
-                                        >
-                                          {projectSettings.hierarchy.map((h) => (
-                                            <option
-                                              key={h.type}
-                                              value={h.type}
-                                              className="bg-slate-900 text-white font-sans"
-                                            >
-                                              {h.label}
-                                            </option>
-                                          ))}
-                                        </select>
+                                        <div className="relative inline-flex items-center">
+                                          <select
+                                            value={item.item_type}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              handleUpdateType(item.id, e.target.value);
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{
+                                              backgroundColor: '#090d16',
+                                              color: lvlColor.hex,
+                                              borderColor: `${lvlColor.hex}50`,
+                                            }}
+                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm"
+                                            title="Change hierarchy level"
+                                          >
+                                            {projectSettings.hierarchy.map((h) => (
+                                              <option
+                                                key={h.type}
+                                                value={h.type}
+                                                className="bg-slate-900 text-white font-sans"
+                                              >
+                                                {h.label}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <ChevronDown
+                                            className="w-2.5 h-2.5 absolute right-1.5 pointer-events-none"
+                                            style={{ color: lvlColor.hex }}
+                                          />
+                                        </div>
                                       </div>
 
                                       <div className="flex items-center space-x-1 shrink-0">
@@ -1415,34 +1456,95 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             </div>
 
             <div className="grid md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
-                <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
-                  Hierarchy Levels
-                </h4>
+              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
+                    Hierarchy Levels
+                  </h4>
+                  <span className="text-[10px] text-slate-500">Click swatch to pick</span>
+                </div>
                 <div className="space-y-1 text-xs">
-                  {projectSettings.hierarchy.map((h) => (
-                    <div key={h.type} className="flex items-center justify-between text-slate-400">
-                      <span>{h.label} (lvl {h.level})</span>
-                      <span className="font-mono text-emerald-400">
-                        parents: [{h.allowed_parents.join(', ') || 'none'}]
-                      </span>
-                    </div>
-                  ))}
+                  {projectSettings.hierarchy.map((h, idx) => {
+                    const currentHex = h.color || getDefaultLevelHex(h.level);
+                    return (
+                      <div
+                        key={h.type}
+                        className="flex items-center justify-between py-1 border-b border-slate-900 last:border-0"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <label className="relative inline-flex items-center justify-center cursor-pointer group">
+                            <input
+                              type="color"
+                              value={currentHex}
+                              onChange={(e) => {
+                                const newHierarchy = [...projectSettings.hierarchy];
+                                newHierarchy[idx] = { ...newHierarchy[idx], color: e.target.value };
+                                const newSettings = { ...projectSettings, hierarchy: newHierarchy };
+                                setProjectSettings(newSettings);
+                                handleSaveSchema(newSettings);
+                              }}
+                              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                            />
+                            <span
+                              className="w-3.5 h-3.5 rounded border border-white/20 shadow-sm transition-transform group-hover:scale-110"
+                              style={{ backgroundColor: currentHex }}
+                              title={`Change color for ${h.label} (${currentHex})`}
+                            />
+                          </label>
+                          <span className="font-medium text-slate-200">{h.label}</span>
+                          <span className="text-[10px] font-mono text-slate-500">(lvl {h.level})</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[11px] font-mono text-slate-400">{currentHex}</span>
+                          <span className="text-[10px] font-mono text-emerald-400/90 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/40">
+                            [{h.allowed_parents.join(', ') || 'root'}]
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
-                <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
-                  Project Statuses
-                </h4>
+              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
+                    Project Statuses
+                  </h4>
+                  <span className="text-[10px] text-slate-500">Click swatch to pick</span>
+                </div>
                 <div className="space-y-1 text-xs">
-                  {projectSettings.statuses.map((s: StatusDefinition) => (
-                    <div key={s.id} className="flex items-center justify-between">
+                  {projectSettings.statuses.map((s: StatusDefinition, idx: number) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between py-1 border-b border-slate-900 last:border-0"
+                    >
                       <div className="flex items-center space-x-2">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                        <label className="relative inline-flex items-center justify-center cursor-pointer group">
+                          <input
+                            type="color"
+                            value={s.color}
+                            onChange={(e) => {
+                              const newStatuses = [...projectSettings.statuses];
+                              newStatuses[idx] = { ...newStatuses[idx], color: e.target.value };
+                              const newSettings = { ...projectSettings, statuses: newStatuses };
+                              setProjectSettings(newSettings);
+                              handleSaveSchema(newSettings);
+                            }}
+                            className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                          />
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-white/20 shadow-sm transition-transform group-hover:scale-110"
+                            style={{ backgroundColor: s.color }}
+                            title={`Change color for ${s.label} (${s.color})`}
+                          />
+                        </label>
                         <span className="text-slate-300">{s.label}</span>
                       </div>
-                      <span className="font-mono text-slate-500">{s.id}</span>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[11px] font-mono text-slate-400">{s.color}</span>
+                        <span className="font-mono text-slate-500">{s.id}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1466,12 +1568,21 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
-                Raw JSON Definition
-              </h4>
-              <pre className="p-4 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto">
-                {JSON.stringify(projectSettings, null, 2)}
-              </pre>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
+                    JSON Schema Definition & Editor
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Collapse/expand JSON tree branches, click any color swatch next to hex values to open a color picker, or switch to raw JSON to edit directly.
+                  </p>
+                </div>
+              </div>
+              <JsonSchemaEditor
+                settings={projectSettings}
+                onSave={handleSaveSchema}
+                isSaving={isSavingSchema}
+              />
             </div>
           </div>
         )}
