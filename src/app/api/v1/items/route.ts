@@ -38,7 +38,23 @@ export async function GET(req: NextRequest) {
   }
 
   // 2. All projects / Workspace-wide portfolio querying
-  if (allProjectsParam || projectSlug === 'all' || projectIdParam === 'all') {
+  let isPortfolio = allProjectsParam;
+  if (!isPortfolio && (projectSlug === 'all' || projectIdParam === 'all')) {
+    // Check if an actual project named 'all' exists for this tenant
+    const { data: projectNamedAll } = await supabaseAdmin
+      .from('projects')
+      .select('id')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('slug', 'all')
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!projectNamedAll) {
+      isPortfolio = true;
+    }
+  }
+
+  if (isPortfolio) {
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
       .select('*')
@@ -57,6 +73,68 @@ export async function GET(req: NextRequest) {
     }
 
     const items = (rawItems || []) as WorkItem[];
+
+    if (format === 'tree') {
+      const itemMap = new Map<string, WorkItemWithChildren>();
+      const roots: WorkItemWithChildren[] = [];
+
+      items.forEach((item) => {
+        itemMap.set(item.id, { ...item, children: [] });
+      });
+
+      items.forEach((item) => {
+        const node = itemMap.get(item.id)!;
+        if (item.parent_id && itemMap.has(item.parent_id)) {
+          itemMap.get(item.parent_id)!.children!.push(node);
+        } else {
+          roots.push(node);
+        }
+      });
+
+      return NextResponse.json({
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'tree',
+        count: items.length,
+        tree: roots,
+      });
+    }
+
+    if (format === 'board') {
+      const { data: projs } = await supabaseAdmin
+        .from('projects')
+        .select('id, slug, name, settings')
+        .eq('tenant_id', authCtx.tenant.id)
+        .is('deleted_at', null);
+
+      const statusMap = new Map<string, any>();
+      (projs || []).forEach((p: any) => {
+        (p.settings?.statuses || []).forEach((st: any) => {
+          if (!statusMap.has(st.id)) {
+            statusMap.set(st.id, st);
+          }
+        });
+      });
+
+      if (statusMap.size === 0) {
+        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8' });
+        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6' });
+        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981' });
+      }
+
+      const columns = Array.from(statusMap.values()).map((st) => ({
+        status: st,
+        items: items.filter((i) => i.status === st.id),
+      }));
+
+      return NextResponse.json({
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'board',
+        columns,
+      });
+    }
+
     return NextResponse.json({
       workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
       all_projects: true,

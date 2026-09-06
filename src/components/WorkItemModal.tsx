@@ -51,6 +51,8 @@ export function WorkItemModal({
   const [assignee, setAssignee] = useState('');
   const [externalRef, setExternalRef] = useState('');
   const [metadata, setMetadata] = useState<Record<string, any>>({});
+  const [metaDrafts, setMetaDrafts] = useState<Record<string, string>>({});
+  const [metaErrors, setMetaErrors] = useState<Record<string, string | null>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [newMetaKey, setNewMetaKey] = useState('');
@@ -67,7 +69,14 @@ export function WorkItemModal({
       setParentId(item.parent_id || '');
       setAssignee(item.assignee || '');
       setExternalRef(item.external_ref_id || '');
-      setMetadata(item.metadata ? { ...item.metadata } : {});
+      const rawMeta = item.metadata ? { ...item.metadata } : {};
+      setMetadata(rawMeta);
+      const drafts: Record<string, string> = {};
+      Object.entries(rawMeta).forEach(([k, v]) => {
+        drafts[k] = typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '');
+      });
+      setMetaDrafts(drafts);
+      setMetaErrors({});
       setShowAddMeta(false);
       setSaveError(null);
     }
@@ -85,7 +94,7 @@ export function WorkItemModal({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, title, description, status, itemType, parentId, assignee, externalRef, metadata]);
+  }, [isOpen, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
 
   if (!isOpen || !item) return null;
 
@@ -116,6 +125,11 @@ export function WorkItemModal({
 
   const handleSave = async () => {
     if (!title.trim()) return;
+    const hasErrors = Object.values(metaErrors).some(Boolean);
+    if (hasErrors) {
+      setSaveError('Please correct invalid metadata values before saving.');
+      return;
+    }
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -150,11 +164,34 @@ export function WorkItemModal({
   };
 
   const handleAddMetaField = () => {
-    if (!newMetaKey.trim()) return;
-    setMetadata((prev) => ({
+    const key = newMetaKey.trim();
+    if (!key) return;
+
+    let parsedVal: any = newMetaVal.trim();
+    if (parsedVal === 'true') parsedVal = true;
+    else if (parsedVal === 'false') parsedVal = false;
+    else if (parsedVal === 'null') parsedVal = null;
+    else if (!isNaN(Number(parsedVal)) && parsedVal !== '') parsedVal = Number(parsedVal);
+    else if (
+      (parsedVal.startsWith('{') && parsedVal.endsWith('}')) ||
+      (parsedVal.startsWith('[') && parsedVal.endsWith(']'))
+    ) {
+      try {
+        parsedVal = JSON.parse(parsedVal);
+      } catch {
+        // preserve as string
+      }
+    }
+
+    setMetadata((prev) => ({ ...prev, [key]: parsedVal }));
+    setMetaDrafts((prev) => ({
       ...prev,
-      [newMetaKey.trim()]: newMetaVal.trim(),
+      [key]:
+        typeof parsedVal === 'object' && parsedVal !== null
+          ? JSON.stringify(parsedVal, null, 2)
+          : String(parsedVal ?? ''),
     }));
+    setMetaErrors((prev) => ({ ...prev, [key]: null }));
     setNewMetaKey('');
     setNewMetaVal('');
     setShowAddMeta(false);
@@ -174,15 +211,65 @@ export function WorkItemModal({
     }
   };
 
-  const handleUpdateMetaField = (key: string, val: any) => {
-    setMetadata((prev) => ({
-      ...prev,
-      [key]: val,
-    }));
+  const handleUpdateMetaField = (key: string, rawText: string) => {
+    setMetaDrafts((prev) => ({ ...prev, [key]: rawText }));
+
+    const currentVal = metadata[key];
+    const isOriginalObject = typeof currentVal === 'object' && currentVal !== null;
+    const looksLikeJson = rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
+
+    if (isOriginalObject || looksLikeJson) {
+      try {
+        const parsed = JSON.parse(rawText);
+        setMetadata((prev) => ({ ...prev, [key]: parsed }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      } catch {
+        setMetaErrors((prev) => ({ ...prev, [key]: 'Invalid JSON format' }));
+      }
+      return;
+    }
+
+    if (typeof currentVal === 'number') {
+      const trimmed = rawText.trim();
+      if (trimmed === '') {
+        setMetadata((prev) => ({ ...prev, [key]: 0 }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      } else {
+        const num = Number(trimmed);
+        if (isNaN(num)) {
+          setMetaErrors((prev) => ({ ...prev, [key]: 'Must be a valid number' }));
+        } else {
+          setMetadata((prev) => ({ ...prev, [key]: num }));
+          setMetaErrors((prev) => ({ ...prev, [key]: null }));
+        }
+      }
+      return;
+    }
+
+    if (typeof currentVal === 'boolean') {
+      const boolVal = rawText === 'true';
+      setMetadata((prev) => ({ ...prev, [key]: boolVal }));
+      setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      return;
+    }
+
+    // Default string
+    setMetadata((prev) => ({ ...prev, [key]: rawText }));
+    setMetaErrors((prev) => ({ ...prev, [key]: null }));
   };
 
   const handleRemoveMetaField = (key: string) => {
     setMetadata((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setMetaDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setMetaErrors((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
@@ -441,18 +528,34 @@ export function WorkItemModal({
                 <p className="text-xs text-slate-600 italic py-1">No custom metadata attributes defined.</p>
               ) : (
                 Object.entries(metadata).map(([k, v]) => {
+                  const draftVal =
+                    metaDrafts[k] ??
+                    (typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? ''));
+                  const isObjectOrArray = typeof v === 'object' && v !== null;
                   const isMultiline =
-                    typeof v === 'string' &&
-                    (v.includes('\n') || v.length > 60 || k === 'agent_prompt');
+                    isObjectOrArray ||
+                    (typeof v === 'string' && (v.includes('\n') || v.length > 60 || k === 'agent_prompt'));
+                  const error = metaErrors[k];
+                  const typeLabel = isObjectOrArray
+                    ? Array.isArray(v)
+                      ? 'array'
+                      : 'object'
+                    : typeof v;
+
                   return (
                     <div
                       key={k}
-                      className="flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs hover:border-slate-700/80 transition-colors"
+                      className={`flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl bg-slate-950 border text-xs transition-colors ${
+                        error ? 'border-red-500/60 bg-red-950/10' : 'border-slate-800 hover:border-slate-700/80'
+                      }`}
                     >
                       <div className="flex items-center justify-between sm:w-36 shrink-0 pt-1">
-                        <span className="font-mono text-slate-400 font-semibold truncate" title={k}>
-                          {k}
-                        </span>
+                        <div className="flex flex-col min-w-0 pr-1">
+                          <span className="font-mono text-slate-300 font-semibold truncate" title={k}>
+                            {k}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">({typeLabel})</span>
+                        </div>
                         <button
                           type="button"
                           onClick={() => handleRemoveMetaField(k)}
@@ -462,23 +565,41 @@ export function WorkItemModal({
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      {isMultiline ? (
-                        <textarea
-                          rows={3}
-                          value={v === null ? '' : String(v)}
-                          onChange={(e) => handleUpdateMetaField(k, e.target.value)}
-                          className="flex-1 px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
-                          placeholder={`Enter ${k}...`}
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          value={v === null ? '' : String(v)}
-                          onChange={(e) => handleUpdateMetaField(k, e.target.value)}
-                          className="flex-1 px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500"
-                          placeholder={`Enter ${k}...`}
-                        />
-                      )}
+
+                      <div className="flex-1 flex flex-col space-y-1">
+                        {typeof v === 'boolean' ? (
+                          <select
+                            value={String(v)}
+                            onChange={(e) => handleUpdateMetaField(k, e.target.value)}
+                            className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
+                          >
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                          </select>
+                        ) : isMultiline ? (
+                          <textarea
+                            rows={isObjectOrArray ? 4 : 3}
+                            value={draftVal}
+                            onChange={(e) => handleUpdateMetaField(k, e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
+                            placeholder={`Enter ${k}...`}
+                          />
+                        ) : (
+                          <input
+                            type={typeof v === 'number' ? 'number' : 'text'}
+                            value={draftVal}
+                            onChange={(e) => handleUpdateMetaField(k, e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500"
+                            placeholder={`Enter ${k}...`}
+                          />
+                        )}
+                        {error && (
+                          <span className="text-[11px] text-red-400 font-mono flex items-center space-x-1">
+                            <span>⚠ {error}</span>
+                          </span>
+                        )}
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => handleRemoveMetaField(k)}

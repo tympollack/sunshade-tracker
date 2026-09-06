@@ -109,16 +109,18 @@ export function ProjectSwitcher({
           </div>
 
           <div className="px-1.5 pb-1.5 border-t border-slate-800 mt-1 pt-1 space-y-0.5">
-            <button
-              onClick={() => {
-                setOpen(false);
-                router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
-              }}
-              className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-            >
-              <Settings className="w-3.5 h-3.5 text-slate-500" />
-              <span>Project Schema Settings</span>
-            </button>
+            {currentProjectSlug !== 'all' && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
+                }}
+                className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+              >
+                <Settings className="w-3.5 h-3.5 text-slate-500" />
+                <span>Project Schema Settings</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 setOpen(false);

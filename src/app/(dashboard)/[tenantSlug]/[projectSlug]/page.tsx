@@ -61,6 +61,7 @@ interface ProjectInfo {
   id: string;
   slug: string;
   name: string;
+  settings?: ProjectSettings;
 }
 
 export default function ProjectTrackerDashboard(props: PageProps) {
@@ -164,6 +165,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [newItemAssignee, setNewItemAssignee] = useState('');
   const [newItemExtRef, setNewItemExtRef] = useState('');
   const [newItemProjectSlug, setNewItemProjectSlug] = useState('');
+  const [selectedSchemaProjectSlug, setSelectedSchemaProjectSlug] = useState('');
 
   // User & Workspace Members
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
@@ -242,6 +244,76 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     if (currentUser?.email) return `Me (${currentUser.email.split('@')[0]})`;
     return 'Me';
   }, [currentUser]);
+
+  const currentQuickAddProject = useMemo(() => {
+    if (!isAllProjects) return null;
+    return allProjects.find((p) => p.slug === newItemProjectSlug) || allProjects[0] || null;
+  }, [isAllProjects, allProjects, newItemProjectSlug]);
+
+  const quickAddHierarchy = useMemo(() => {
+    if (currentQuickAddProject?.settings?.hierarchy?.length) {
+      return currentQuickAddProject.settings.hierarchy.map((h: any) => ({
+        ...h,
+        color: h.color || getDefaultLevelHex(h.level),
+      }));
+    }
+    return projectSettings.hierarchy;
+  }, [currentQuickAddProject, projectSettings.hierarchy]);
+
+  const quickAddStatuses = useMemo(() => {
+    if (currentQuickAddProject?.settings?.statuses?.length) {
+      return currentQuickAddProject.settings.statuses;
+    }
+    return projectSettings.statuses;
+  }, [currentQuickAddProject, projectSettings.statuses]);
+
+  useEffect(() => {
+    if (isAllProjects && quickAddHierarchy.length > 0) {
+      if (!quickAddHierarchy.some((h: any) => h.type === newItemType)) {
+        setNewItemType(quickAddHierarchy[quickAddHierarchy.length - 1].type);
+      }
+    }
+    if (isAllProjects && quickAddStatuses.length > 0) {
+      if (!quickAddStatuses.some((s: any) => s.id === newItemStatus)) {
+        setNewItemStatus(quickAddStatuses[0].id);
+      }
+    }
+  }, [isAllProjects, quickAddHierarchy, quickAddStatuses, newItemType, newItemStatus]);
+
+  const modalProjectSettings = useMemo(() => {
+    if (!editingItem) return projectSettings;
+    const proj = allProjects.find(
+      (p) => p.id === editingItem.project_id || p.slug === editingItem.project_id
+    );
+    if (proj && proj.settings) {
+      return {
+        ...proj.settings,
+        hierarchy: (proj.settings.hierarchy || []).map((h: any) => ({
+          ...h,
+          color: h.color || getDefaultLevelHex(h.level),
+        })),
+      };
+    }
+    return projectSettings;
+  }, [editingItem, allProjects, projectSettings]);
+
+  const activeSchemaSettings = useMemo(() => {
+    if (isAllProjects) {
+      const p = allProjects.find(
+        (proj) => proj.slug === (selectedSchemaProjectSlug || allProjects[0]?.slug)
+      );
+      if (p && p.settings) {
+        return {
+          ...p.settings,
+          hierarchy: (p.settings.hierarchy || []).map((h: any) => ({
+            ...h,
+            color: h.color || getDefaultLevelHex(h.level),
+          })),
+        };
+      }
+    }
+    return projectSettings;
+  }, [isAllProjects, allProjects, selectedSchemaProjectSlug, projectSettings]);
 
   // Click outside for assignee dropdown
   useEffect(() => {
@@ -322,7 +394,68 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             setNewItemProjectSlug((prev) => prev || sData.projects[0].slug);
           }
         }
-        if (!isAllProjects) {
+        if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
+          setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
+          const mergedStatuses = new Map<string, any>();
+          const mergedHierarchy = new Map<string, any>();
+          const mergedFields = new Set<string>();
+          const mergedSprints: any[] = [];
+
+          sData.projects.forEach((proj: any) => {
+            (proj.settings?.statuses || []).forEach((st: any) => {
+              if (!mergedStatuses.has(st.id)) {
+                mergedStatuses.set(st.id, st);
+              }
+            });
+
+            (proj.settings?.hierarchy || []).forEach((h: any) => {
+              if (!mergedHierarchy.has(h.type)) {
+                mergedHierarchy.set(h.type, {
+                  ...h,
+                  color: h.color || getDefaultLevelHex(h.level),
+                });
+              }
+            });
+
+            (proj.settings?.custom_fields || []).forEach((f: string) => mergedFields.add(f));
+            (proj.settings?.sprint_settings?.sprints || []).forEach((s: any) => {
+              if (s.name && !mergedSprints.some((ms) => ms.name === s.name)) {
+                mergedSprints.push(s);
+              }
+            });
+          });
+
+          const finalStatuses =
+            mergedStatuses.size > 0
+              ? Array.from(mergedStatuses.values())
+              : [
+                  { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 0 },
+                  { id: 'in_progress', label: 'In Progress', color: '#3b82f6', order: 1 },
+                  { id: 'done', label: 'Done', color: '#10b981', order: 2 },
+                ];
+
+          const finalHierarchy =
+            mergedHierarchy.size > 0
+              ? Array.from(mergedHierarchy.values()).sort((a, b) => a.level - b.level)
+              : [
+                  { type: 'epic', label: 'Epic', level: 0, allowed_parents: [], color: '#a855f7' },
+                  { type: 'story', label: 'Story', level: 1, allowed_parents: ['epic'], color: '#3b82f6' },
+                  { type: 'task', label: 'Task', level: 2, allowed_parents: ['story', 'epic'], color: '#10b981' },
+                ];
+
+          const portfolioSettings: ProjectSettings = {
+            schema_version: '1.0',
+            statuses: finalStatuses,
+            hierarchy: finalHierarchy,
+            custom_fields: Array.from(mergedFields),
+            sprint_settings: {
+              default_sprint: 'all',
+              sprints: mergedSprints,
+            },
+          };
+
+          setProjectSettings(portfolioSettings);
+        } else if (!isAllProjects) {
           const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
           if (proj) {
             const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
@@ -390,15 +523,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
   }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
-  const handleSaveSchema = async (newSettings: ProjectSettings) => {
+  const handleSaveSchema = async (newSettings: ProjectSettings, targetSlugParam?: string) => {
+    const targetSlug =
+      targetSlugParam ||
+      (isAllProjects ? (selectedSchemaProjectSlug || allProjects[0]?.slug) : projectSlug);
+    if (!targetSlug || targetSlug === 'all') return;
     setIsSavingSchema(true);
     try {
-      const res = await apiFetch(`/api/v1/projects/${projectSlug}/settings`, {
+      const res = await apiFetch(`/api/v1/projects/${targetSlug}/settings`, {
         method: 'PUT',
         body: JSON.stringify({ settings: newSettings }),
       });
       if (res.ok) {
-        setProjectSettings(newSettings);
+        setAllProjects((prev) =>
+          prev.map((p) => (p.slug === targetSlug ? { ...p, settings: newSettings } : p))
+        );
+        if (!isAllProjects) {
+          setProjectSettings(newSettings);
+        } else {
+          fetchData();
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         console.error('Failed to update schema:', err);
@@ -952,7 +1096,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 onChange={(e) => setNewItemType(e.target.value)}
                 className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
               >
-                {projectSettings.hierarchy.map((h) => (
+                {quickAddHierarchy.map((h) => (
                   <option key={h.type} value={h.type}>
                     {h.label} (Level {h.level})
                   </option>
@@ -965,7 +1109,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 onChange={(e) => setNewItemStatus(e.target.value)}
                 className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
               >
-                {projectSettings.statuses.map((s: StatusDefinition) => (
+                {quickAddStatuses.map((s: StatusDefinition) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
                   </option>
@@ -1693,7 +1837,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   return acc + (isNaN(p) ? 0 : p);
                 }, 0);
                 const completedItems = sprintItems.filter((it) =>
-                  ['done', 'closed', 'completed'].includes(it.status)
+                  ['done', 'closed', 'complete', 'completed'].includes(it.status)
                 );
                 const progressPct =
                   sprintItems.length > 0
@@ -2043,6 +2187,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </p>
             </div>
 
+            {isAllProjects && allProjects.length > 0 && (
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-semibold text-white">Configuring Schema for Project:</span>
+                  <p className="text-[11px] text-slate-400">
+                    In workspace overview, select which project schema to inspect or modify.
+                  </p>
+                </div>
+                <select
+                  value={selectedSchemaProjectSlug || allProjects[0]?.slug}
+                  onChange={(e) => setSelectedSchemaProjectSlug(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  {allProjects.map((p) => (
+                    <option key={p.id} value={p.slug}>
+                      {p.name} ({p.slug})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid md:grid-cols-3 gap-4">
               <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -2052,7 +2218,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <span className="text-[10px] text-slate-500">Click swatch to pick</span>
                 </div>
                 <div className="space-y-1 text-xs">
-                  {projectSettings.hierarchy.map((h, idx) => {
+                  {activeSchemaSettings.hierarchy.map((h, idx) => {
                     const currentHex = h.color || getDefaultLevelHex(h.level);
                     return (
                       <div
@@ -2065,10 +2231,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               type="color"
                               value={currentHex}
                               onChange={(e) => {
-                                const newHierarchy = [...projectSettings.hierarchy];
+                                const newHierarchy = [...activeSchemaSettings.hierarchy];
                                 newHierarchy[idx] = { ...newHierarchy[idx], color: e.target.value };
-                                const newSettings = { ...projectSettings, hierarchy: newHierarchy };
-                                setProjectSettings(newSettings);
+                                const newSettings = { ...activeSchemaSettings, hierarchy: newHierarchy };
                                 handleSaveSchema(newSettings);
                               }}
                               className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
@@ -2102,7 +2267,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <span className="text-[10px] text-slate-500">Click swatch to pick</span>
                 </div>
                 <div className="space-y-1 text-xs">
-                  {projectSettings.statuses.map((s: StatusDefinition, idx: number) => (
+                  {activeSchemaSettings.statuses.map((s: StatusDefinition, idx: number) => (
                     <div
                       key={s.id}
                       className="flex items-center justify-between py-1 border-b border-slate-900 last:border-0"
@@ -2113,10 +2278,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             type="color"
                             value={s.color}
                             onChange={(e) => {
-                              const newStatuses = [...projectSettings.statuses];
+                              const newStatuses = [...activeSchemaSettings.statuses];
                               newStatuses[idx] = { ...newStatuses[idx], color: e.target.value };
-                              const newSettings = { ...projectSettings, statuses: newStatuses };
-                              setProjectSettings(newSettings);
+                              const newSettings = { ...activeSchemaSettings, statuses: newStatuses };
                               handleSaveSchema(newSettings);
                             }}
                             className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
@@ -2143,7 +2307,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   Custom Fields
                 </h4>
                 <div className="flex flex-wrap gap-1">
-                  {projectSettings.custom_fields.map((f) => (
+                  {(activeSchemaSettings.custom_fields || []).map((f: string) => (
                     <span
                       key={f}
                       className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
@@ -2167,7 +2331,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 </div>
               </div>
               <JsonSchemaEditor
-                settings={projectSettings}
+                settings={activeSchemaSettings}
                 onSave={handleSaveSchema}
                 isSaving={isSavingSchema}
               />
@@ -2183,7 +2347,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         onClose={() => setEditingItem(null)}
         onSave={handleSaveModalItem}
         onDelete={handleDeleteItem}
-        projectSettings={projectSettings}
+        projectSettings={modalProjectSettings}
         allItems={items}
         currentUser={currentUser ?? undefined}
         workspaceMembers={workspaceMembers}

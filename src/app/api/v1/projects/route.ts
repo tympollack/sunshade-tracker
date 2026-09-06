@@ -40,10 +40,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '"name" and "slug" are required' }, { status: 400 });
     }
 
+    const sanitizedSlug = slug.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    if (sanitizedSlug === 'all') {
+      return NextResponse.json(
+        { error: 'The project slug "all" is reserved for workspace overview.' },
+        { status: 400 }
+      );
+    }
+
     const newProject = {
       tenant_id: authCtx.tenant.id,
       name,
-      slug: slug.toLowerCase().replace(/[^a-z0-9-_]/g, '-'),
+      slug: sanitizedSlug,
       description: description || null,
       app_id: app_id || 'core',
       ...(settings ? { settings } : {}),
