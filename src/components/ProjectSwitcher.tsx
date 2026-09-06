@@ -25,9 +25,11 @@ export function ProjectSwitcher({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const isAll = currentProjectSlug === 'all';
+  const isAll =
+    (currentProjectSlug === 'all' || currentProjectSlug === 'portfolio') &&
+    !projects.some((p) => p.slug === currentProjectSlug);
   const currentProject = isAll
-    ? { id: 'all', slug: 'all', name: 'All Projects' }
+    ? { id: currentProjectSlug, slug: currentProjectSlug, name: 'All Projects' }
     : projects.find((p) => p.slug === currentProjectSlug);
 
   useEffect(() => {
@@ -109,7 +111,7 @@ export function ProjectSwitcher({
           </div>
 
           <div className="px-1.5 pb-1.5 border-t border-slate-800 mt-1 pt-1 space-y-0.5">
-            {currentProjectSlug !== 'all' && (
+            {!isAll && (
               <button
                 onClick={() => {
                   setOpen(false);

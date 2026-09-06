@@ -30,6 +30,7 @@ interface WorkItemModalProps {
   allItems: WorkItem[];
   currentUser?: { full_name?: string; email?: string };
   workspaceMembers?: { full_name: string; email?: string }[];
+  tenantSlug?: string;
 }
 
 export function WorkItemModal({
@@ -42,6 +43,7 @@ export function WorkItemModal({
   allItems,
   currentUser,
   workspaceMembers = [],
+  tenantSlug,
 }: WorkItemModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -58,6 +60,7 @@ export function WorkItemModal({
   const [newMetaKey, setNewMetaKey] = useState('');
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
+  const [copiedGetUrl, setCopiedGetUrl] = useState(false);
 
   // Sync form state when item changes
   useEffect(() => {
@@ -102,7 +105,10 @@ export function WorkItemModal({
   const currentHierarchyConfig = projectSettings.hierarchy.find((h) => h.type === itemType);
   const allowedParentTypes = currentHierarchyConfig?.allowed_parents || [];
   const eligibleParents = allItems.filter(
-    (other) => other.id !== item.id && allowedParentTypes.includes(other.item_type)
+    (other) =>
+      other.id !== item.id &&
+      other.project_id === item.project_id &&
+      allowedParentTypes.includes(other.item_type)
   );
 
   // Derive assignee options
@@ -197,11 +203,10 @@ export function WorkItemModal({
     setShowAddMeta(false);
   };
 
-  const [copiedGetUrl, setCopiedGetUrl] = useState(false);
-
   const handleCopyGetUrl = async () => {
     if (!item) return;
-    const url = `${window.location.origin}/api/v1/items?id=${item.id}`;
+    const tenantParam = tenantSlug ? `&tenant_slug=${encodeURIComponent(tenantSlug)}` : '';
+    const url = `${window.location.origin}/api/v1/items?id=${item.id}${tenantParam}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopiedGetUrl(true);
@@ -232,7 +237,7 @@ export function WorkItemModal({
     if (typeof currentVal === 'number') {
       const trimmed = rawText.trim();
       if (trimmed === '') {
-        setMetadata((prev) => ({ ...prev, [key]: 0 }));
+        setMetadata((prev) => ({ ...prev, [key]: null }));
         setMetaErrors((prev) => ({ ...prev, [key]: null }));
       } else {
         const num = Number(trimmed);
@@ -243,6 +248,23 @@ export function WorkItemModal({
           setMetaErrors((prev) => ({ ...prev, [key]: null }));
         }
       }
+      return;
+    }
+
+    if (currentVal === null) {
+      const trimmed = rawText.trim();
+      if (trimmed === '') {
+        setMetadata((prev) => ({ ...prev, [key]: null }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+        return;
+      }
+      if (rawText === 'true' || rawText === 'false') {
+        setMetadata((prev) => ({ ...prev, [key]: rawText === 'true' }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+        return;
+      }
+      setMetadata((prev) => ({ ...prev, [key]: rawText }));
+      setMetaErrors((prev) => ({ ...prev, [key]: null }));
       return;
     }
 

@@ -11,7 +11,14 @@ const OnboardSchema = z.object({
   /** First project name */
   project_name: z.string().min(2).max(80),
   /** First project slug */
-  project_slug: z.string().min(2).max(40).regex(/^[a-z0-9-]+$/),
+  project_slug: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9-]+$/)
+    .refine((s) => s !== 'all' && s !== 'portfolio', {
+      message: 'The project slugs "all" and "portfolio" are reserved for workspace overview.',
+    }),
   /** Schema template ID from SCHEMA_TEMPLATES */
   template_id: z.enum(['software', 'marketing', 'operations', 'custom']).default('software'),
   /** Billing tier — defaults to 'free' */
