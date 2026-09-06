@@ -107,7 +107,7 @@ export function WorkItemModal({
   const eligibleParents = allItems.filter(
     (other) =>
       other.id !== item.id &&
-      (!item.project_id || !other.project_id || other.project_id === item.project_id) &&
+      other.project_id === item.project_id &&
       allowedParentTypes.includes(other.item_type)
   );
 
@@ -234,7 +234,7 @@ export function WorkItemModal({
       return;
     }
 
-    if (typeof currentVal === 'number' || currentVal === null) {
+    if (typeof currentVal === 'number') {
       const trimmed = rawText.trim();
       if (trimmed === '') {
         setMetadata((prev) => ({ ...prev, [key]: null }));
@@ -248,6 +248,23 @@ export function WorkItemModal({
           setMetaErrors((prev) => ({ ...prev, [key]: null }));
         }
       }
+      return;
+    }
+
+    if (currentVal === null) {
+      const trimmed = rawText.trim();
+      if (trimmed === '') {
+        setMetadata((prev) => ({ ...prev, [key]: null }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+        return;
+      }
+      if (rawText === 'true' || rawText === 'false') {
+        setMetadata((prev) => ({ ...prev, [key]: rawText === 'true' }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+        return;
+      }
+      setMetadata((prev) => ({ ...prev, [key]: rawText }));
+      setMetaErrors((prev) => ({ ...prev, [key]: null }));
       return;
     }
 

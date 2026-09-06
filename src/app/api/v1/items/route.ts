@@ -39,14 +39,8 @@ export async function GET(req: NextRequest) {
 
   // 2. All projects / Workspace-wide portfolio querying
   let isPortfolio = allProjectsParam;
-  if (
-    !isPortfolio &&
-    (projectSlug === 'all' ||
-      projectSlug === 'portfolio' ||
-      projectIdParam === 'all' ||
-      projectIdParam === 'portfolio')
-  ) {
-    const checkSlug = projectSlug === 'portfolio' ? 'portfolio' : 'all';
+  if (!isPortfolio && (projectSlug === 'all' || projectSlug === 'portfolio')) {
+    const checkSlug = projectSlug;
     let checkQuery: any = supabaseAdmin
       .from('projects')
       .select('id')

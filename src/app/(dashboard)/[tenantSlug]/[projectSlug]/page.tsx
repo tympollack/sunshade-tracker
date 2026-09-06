@@ -66,7 +66,6 @@ interface ProjectInfo {
 
 export default function ProjectTrackerDashboard(props: PageProps) {
   const { tenantSlug, projectSlug } = use(props.params);
-  const isAllProjects = projectSlug === 'all' || projectSlug === 'portfolio';
   const searchParams = props.searchParams ? use(props.searchParams) : {};
   const requestedTab =
     typeof searchParams?.tab === 'string' &&
@@ -121,6 +120,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
   const [allProjects, setAllProjects] = useState<ProjectInfo[]>([]);
+  const isOverviewSlug = projectSlug === 'all' || projectSlug === 'portfolio';
+  const hasMatchingProject = useMemo(
+    () => allProjects.some((p) => p.slug === projectSlug),
+    [allProjects, projectSlug]
+  );
+  const isAllProjects = isOverviewSlug && !hasMatchingProject;
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
