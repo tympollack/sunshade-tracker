@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState, useCallback, useMemo } from 'react';
+import { use, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Layers,
@@ -18,15 +18,26 @@ import {
   Hash,
   Trash2,
   XCircle,
+  Pencil,
+  ChevronsLeftRight,
+  ChevronUp,
+  ChevronDown,
+  ChevronRight,
+  Minimize2,
+  GripVertical,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { buildTree } from '@/lib/tree';
+import { calculateOrderIndex } from '@/lib/fractional-index';
+import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
+import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
+import { WorkItemModal } from '@/components/WorkItemModal';
 
 interface PageProps {
   params: Promise<{
@@ -147,6 +158,45 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [newItemAssignee, setNewItemAssignee] = useState('');
   const [newItemExtRef, setNewItemExtRef] = useState('');
 
+  // User & Workspace Members
+  const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
+  const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
+  const [assigneeDropdownOpen, setAssigneeDropdownOpen] = useState(false);
+  const assigneeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Board View Controls
+  const [boardHeight, setBoardHeight] = useState<'compact' | 'standard' | 'full'>('standard');
+  const [collapsedSideways, setCollapsedSideways] = useState<Set<string>>(new Set());
+  const [collapsedUp, setCollapsedUp] = useState<Set<string>>(new Set());
+
+  // Filter States
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
+
+  // Drag & Drop
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{ colId: string; index: number } | null>(null);
+
+  // Edit Modal
+  const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
+
+  const myDisplayName = useMemo(() => {
+    if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
+    if (currentUser?.email) return `Me (${currentUser.email.split('@')[0]})`;
+    return 'Me';
+  }, [currentUser]);
+
+  // Click outside for assignee dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target as Node)) {
+        setAssigneeDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // ─── Session-authenticated fetch with workspace context ─────────────────
   const apiFetch = useCallback(
     (path: string, options?: RequestInit) =>
@@ -168,6 +218,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     const res = await apiFetch('/api/v1/tenants/me');
     if (res.ok) {
       const data = await res.json();
+      if (data.user) {
+        setCurrentUser(data.user);
+        const name = data.user.full_name
+          ? `Me (${data.user.full_name})`
+          : data.user.email
+          ? `Me (${data.user.email.split('@')[0]})`
+          : 'Me';
+        setNewItemAssignee((prev) => (!prev ? name : prev));
+      }
       // data.workspaces is an array of all the user's workspaces
       setAllWorkspaces(data.workspaces || []);
       // Identify the current workspace from the URL slug
@@ -182,6 +241,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           api_key_preview: ws.api_key_preview,
         });
         setAllProjects(ws.projects || []);
+        if (ws.members) {
+          setWorkspaceMembers(ws.members);
+        }
       }
     }
   }, [apiFetch, tenantSlug]);
@@ -202,7 +264,29 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
           if (detailRes.ok) {
             const detail = await detailRes.json();
-            if (detail.settings) setProjectSettings(detail.settings);
+            if (detail.settings) {
+              setProjectSettings(detail.settings);
+              if (detail.settings.statuses?.length) {
+                setNewItemStatus((prev) => {
+                  const exists = detail.settings.statuses.some((s: any) => s.id === prev);
+                  return exists ? prev : detail.settings.statuses[0].id;
+                });
+                setSelectedStatuses((prev) =>
+                  prev.length === 0 ? detail.settings.statuses.map((s: any) => s.id) : prev
+                );
+              }
+              if (detail.settings.hierarchy?.length) {
+                setNewItemType((prev) => {
+                  const exists = detail.settings.hierarchy.some((h: any) => h.type === prev);
+                  return exists
+                    ? prev
+                    : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
+                });
+                setSelectedLevels((prev) =>
+                  prev.length === 0 ? detail.settings.hierarchy.map((h: any) => h.type) : prev
+                );
+              }
+            }
           }
         }
       }
@@ -251,6 +335,38 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
   };
 
+  // ─── Update item hierarchy type / level ──────────────────────────────────
+  const handleUpdateType = async (itemId: string, newType: string) => {
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, item_type: newType } : it))
+    );
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: itemId, item_type: newType }),
+      });
+      if (!res.ok) fetchData();
+    } catch {
+      fetchData();
+    }
+  };
+
+  // ─── Save work item from modal ───────────────────────────────────────────
+  const handleSaveModalItem = async (itemId: string, updates: Partial<WorkItem>) => {
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, ...updates } : it))
+    );
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: itemId, ...updates }),
+      });
+      if (!res.ok) fetchData();
+    } catch {
+      fetchData();
+    }
+  };
+
   // ─── Delete item ─────────────────────────────────────────────────────────
   const handleDeleteItem = async (itemId: string) => {
     if (!confirm('Delete this item?')) return;
@@ -264,6 +380,138 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       fetchData();
     }
   };
+
+  // ─── Drag and Drop Handlers ──────────────────────────────────────────────
+  const handleDragStart = (e: React.DragEvent, item: WorkItem) => {
+    e.dataTransfer.setData('text/plain', item.id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedItemId(item.id);
+  };
+
+  const handleDragOverColumn = (e: React.DragEvent, colId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverTarget({ colId, index: -1 });
+  };
+
+  const handleDragOverCard = (e: React.DragEvent, colId: string, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverTarget({ colId, index });
+  };
+
+  const handleDragEnd = () => {
+    setDraggedItemId(null);
+    setDragOverTarget(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetColId: string, dropIndex?: number) => {
+    e.preventDefault();
+    const itemId = e.dataTransfer.getData('text/plain') || draggedItemId;
+    if (!itemId) return;
+
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const targetColItems = items.filter(
+      (it) => it.status === targetColId && it.id !== itemId
+    );
+
+    let insertAt = typeof dropIndex === 'number' && dropIndex >= 0 ? dropIndex : targetColItems.length;
+    if (insertAt > targetColItems.length) insertAt = targetColItems.length;
+
+    const prevItem = insertAt > 0 ? targetColItems[insertAt - 1] : null;
+    const nextItem = insertAt < targetColItems.length ? targetColItems[insertAt] : null;
+
+    const newOrder = calculateOrderIndex(prevItem?.order_index, nextItem?.order_index);
+
+    // Optimistic update
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === itemId ? { ...it, status: targetColId, order_index: newOrder } : it
+      )
+    );
+
+    setDraggedItemId(null);
+    setDragOverTarget(null);
+
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          id: itemId,
+          status: targetColId,
+          prev_order: prevItem?.order_index,
+          next_order: nextItem?.order_index,
+        }),
+      });
+      if (!res.ok) fetchData();
+    } catch {
+      fetchData();
+    }
+  };
+
+  // ─── Column Collapse Toggles ─────────────────────────────────────────────
+  const toggleCollapseSideways = (colId: string) => {
+    setCollapsedSideways((prev) => {
+      const next = new Set(prev);
+      if (next.has(colId)) next.delete(colId);
+      else next.add(colId);
+      return next;
+    });
+  };
+
+  const toggleCollapseUp = (colId: string) => {
+    setCollapsedUp((prev) => {
+      const next = new Set(prev);
+      if (next.has(colId)) next.delete(colId);
+      else next.add(colId);
+      return next;
+    });
+  };
+
+  const handleToggleCollapseAll = () => {
+    if (collapsedSideways.size > 0) {
+      setCollapsedSideways(new Set());
+    } else {
+      setCollapsedSideways(new Set(projectSettings.statuses.map((s) => s.id)));
+    }
+  };
+
+  // ─── Filter Options and Lookups ──────────────────────────────────────────
+  const statusFilterOptions: FilterOption[] = useMemo(() => {
+    return projectSettings.statuses.map((s) => ({
+      id: s.id,
+      label: s.label,
+      color: s.color,
+      count: items.filter((it) => it.status === s.id).length,
+    }));
+  }, [projectSettings.statuses, items]);
+
+  const levelFilterOptions: FilterOption[] = useMemo(() => {
+    return projectSettings.hierarchy.map((h) => ({
+      id: h.type,
+      label: h.label,
+      color: getHierarchyLevelColor(h.type, projectSettings.hierarchy).hex,
+      count: items.filter((it) => it.item_type === h.type).length,
+    }));
+  }, [projectSettings.hierarchy, items]);
+
+  const knownStatusIds = useMemo(
+    () => new Set(projectSettings.statuses.map((s) => s.id)),
+    [projectSettings.statuses]
+  );
+
+  const unmappedItems = useMemo(
+    () =>
+      items.filter(
+        (it) =>
+          !knownStatusIds.has(it.status) &&
+          (selectedLevels.length === 0 || selectedLevels.includes(it.item_type))
+      ),
+    [items, knownStatusIds, selectedLevels]
+  );
 
   // ─── Create item ─────────────────────────────────────────────────────────
   const handleCreateItem = async (e: React.FormEvent) => {
@@ -287,7 +535,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           setItems((prev) => [...prev, data.item]);
           setNewItemTitle('');
           setNewItemExtRef('');
-          setNewItemAssignee('');
         }
       }
     } catch (err) {
@@ -463,10 +710,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-6 max-w-[1700px] mx-auto w-full">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {/* Quick Add Form */}
             <form
               onSubmit={handleCreateItem}
@@ -481,10 +728,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   className="w-full px-3 py-1.5 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-sans transition-colors"
                 />
               </div>
+
+              {/* Item Hierarchy Type */}
               <select
                 value={newItemType}
                 onChange={(e) => setNewItemType(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono"
+                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
               >
                 {projectSettings.hierarchy.map((h) => (
                   <option key={h.type} value={h.type}>
@@ -492,10 +741,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   </option>
                 ))}
               </select>
+
+              {/* Item Status */}
               <select
                 value={newItemStatus}
                 onChange={(e) => setNewItemStatus(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono"
+                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
               >
                 {projectSettings.statuses.map((s: StatusDefinition) => (
                   <option key={s.id} value={s.id}>
@@ -503,13 +754,95 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   </option>
                 ))}
               </select>
-              <input
-                type="text"
-                placeholder="Assignee"
-                value={newItemAssignee}
-                onChange={(e) => setNewItemAssignee(e.target.value)}
-                className="w-28 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
-              />
+
+              {/* Assignee Dropdown Picker */}
+              <div className="relative" ref={assigneeDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setAssigneeDropdownOpen((v) => !v)}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors max-w-[190px]"
+                >
+                  <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate">{newItemAssignee || 'Unassigned'}</span>
+                  <ChevronDown
+                    className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${
+                      assigneeDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {assigneeDropdownOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
+                    <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Select Assignee
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewItemAssignee(myDisplayName);
+                        setAssigneeDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                        newItemAssignee === myDisplayName
+                          ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">{myDisplayName}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewItemAssignee('');
+                        setAssigneeDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                        !newItemAssignee
+                          ? 'bg-slate-800 text-white font-medium'
+                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span>Unassigned</span>
+                    </button>
+
+                    {workspaceMembers.length > 0 && (
+                      <div className="pt-1 border-t border-slate-800">
+                        <div className="px-2 py-0.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                          Workspace Members
+                        </div>
+                        {workspaceMembers
+                          .filter((m) => m.full_name && m.full_name !== myDisplayName)
+                          .map((m) => (
+                            <button
+                              key={m.user_id}
+                              type="button"
+                              onClick={() => {
+                                setNewItemAssignee(m.full_name);
+                                setAssigneeDropdownOpen(false);
+                              }}
+                              className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                                newItemAssignee === m.full_name
+                                  ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-bold">
+                                {m.full_name[0]?.toUpperCase() || 'M'}
+                              </div>
+                              <span className="truncate">{m.full_name}</span>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* External Ref ID */}
               <input
                 type="text"
                 placeholder="Ref (e.g. SPEC-01)"
@@ -517,6 +850,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 onChange={(e) => setNewItemExtRef(e.target.value)}
                 className="w-32 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
               />
+
               <button
                 type="submit"
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
@@ -526,114 +860,454 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </button>
             </form>
 
-            {/* Board columns */}
+            {/* Board Controls Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-1">
+              <div className="flex items-center flex-wrap gap-2">
+                <FilterMultiSelect
+                  label="Status"
+                  options={statusFilterOptions}
+                  selectedIds={selectedStatuses}
+                  onChange={setSelectedStatuses}
+                />
+                <FilterMultiSelect
+                  label="Level"
+                  options={levelFilterOptions}
+                  selectedIds={selectedLevels}
+                  onChange={setSelectedLevels}
+                />
+                {(selectedStatuses.length < projectSettings.statuses.length ||
+                  selectedLevels.length < projectSettings.hierarchy.length) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedStatuses(projectSettings.statuses.map((s) => s.id));
+                      setSelectedLevels(projectSettings.hierarchy.map((h) => h.type));
+                    }}
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors"
+                  >
+                    Reset Filters
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-3">
+                {/* Board Height Presets */}
+                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs">
+                  <span className="text-[10px] uppercase font-semibold text-slate-500 px-2">Height:</span>
+                  {(['compact', 'standard', 'full'] as const).map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setBoardHeight(h)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                        boardHeight === h
+                          ? 'bg-slate-800 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                      title={`${h.charAt(0).toUpperCase() + h.slice(1)} board height`}
+                    >
+                      {h.charAt(0).toUpperCase() + h.slice(1)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Collapse / Expand all */}
+                <button
+                  type="button"
+                  onClick={handleToggleCollapseAll}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs transition-colors flex items-center space-x-1.5"
+                  title="Toggle collapse all columns sideways"
+                >
+                  <ChevronsLeftRight className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{collapsedSideways.size > 0 ? 'Expand All' : 'Collapse All'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Board columns container */}
             {loading ? (
               <BoardSkeleton />
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start">
-                {projectSettings.statuses.map((col: StatusDefinition) => {
-                  const colItems = items.filter((it) => it.status === col.id);
-                  return (
-                    <div
-                      key={col.id}
-                      className="bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col min-h-[500px]"
-                    >
-                      <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: col.color }}
-                          />
-                          <span className="font-semibold text-xs tracking-wider uppercase text-slate-200">
+              <div
+                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none ${
+                  boardHeight === 'compact'
+                    ? 'h-[440px]'
+                    : boardHeight === 'full'
+                    ? 'h-[calc(100vh-250px)]'
+                    : 'h-[620px]'
+                }`}
+              >
+                {projectSettings.statuses
+                  .filter((col) => selectedStatuses.length === 0 || selectedStatuses.includes(col.id))
+                  .map((col: StatusDefinition) => {
+                    const colItems = items.filter(
+                      (it) =>
+                        it.status === col.id &&
+                        (selectedLevels.length === 0 || selectedLevels.includes(it.item_type))
+                    );
+
+                    const isCollapsedSideways = collapsedSideways.has(col.id);
+                    const isCollapsedUp = collapsedUp.has(col.id);
+
+                    // ── Case 1: Column Collapsed Sideways ──
+                    if (isCollapsedSideways) {
+                      return (
+                        <div
+                          key={col.id}
+                          onClick={() => toggleCollapseSideways(col.id)}
+                          onDragOver={(e) => handleDragOverColumn(e, col.id)}
+                          onDrop={(e) => handleDrop(e, col.id)}
+                          className={`w-14 min-w-[56px] max-w-[56px] shrink-0 h-full rounded-xl bg-slate-900/60 border cursor-pointer hover:border-slate-600 transition-all flex flex-col items-center justify-between py-4 shadow-sm group ${
+                            dragOverTarget?.colId === col.id
+                              ? 'border-emerald-500 bg-emerald-500/10'
+                              : 'border-slate-800/80'
+                          }`}
+                          title={`Click to expand ${col.label}`}
+                        >
+                          <div className="flex flex-col items-center space-y-2">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: col.color }}
+                            />
+                            <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
+                          </div>
+
+                          <div className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-300 whitespace-nowrap py-4">
                             {col.label}
+                          </div>
+
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                            {colItems.length}
                           </span>
                         </div>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
-                          {colItems.length}
+                      );
+                    }
+
+                    // ── Case 2: Column Collapsed Upward (Header only) ──
+                    if (isCollapsedUp) {
+                      return (
+                        <div
+                          key={col.id}
+                          className="w-80 min-w-[320px] max-w-[320px] shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col shadow-sm"
+                        >
+                          <div className="px-4 py-3 flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: col.color }}
+                              />
+                              <span className="font-semibold text-xs tracking-wider uppercase text-slate-200">
+                                {col.label}
+                              </span>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
+                                {colItems.length}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => toggleCollapseUp(col.id)}
+                                className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                                title="Expand column downward"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleCollapseSideways(col.id)}
+                                className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                                title="Collapse column sideways"
+                              >
+                                <Minimize2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // ── Case 3: Expanded Full Column ──
+                    return (
+                      <div
+                        key={col.id}
+                        onDragOver={(e) => handleDragOverColumn(e, col.id)}
+                        onDrop={(e) => handleDrop(e, col.id)}
+                        className={`w-80 min-w-[320px] max-w-[320px] shrink-0 bg-slate-900/40 border rounded-xl flex flex-col h-full shadow-sm transition-colors ${
+                          dragOverTarget?.colId === col.id && dragOverTarget?.index === -1
+                            ? 'border-emerald-500/70 bg-emerald-500/5'
+                            : 'border-slate-800/80'
+                        }`}
+                      >
+                        {/* Column Header */}
+                        <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-slate-950/40 rounded-t-xl">
+                          <div className="flex items-center space-x-2">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: col.color }}
+                            />
+                            <span className="font-semibold text-xs tracking-wider uppercase text-slate-200">
+                              {col.label}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
+                              {colItems.length}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center space-x-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleCollapseUp(col.id)}
+                              className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                              title="Collapse column upward"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleCollapseSideways(col.id)}
+                              className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                              title="Collapse column sideways"
+                            >
+                              <Minimize2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Column Item Cards Container */}
+                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
+                          {colItems.length === 0 ? (
+                            <div className="h-32 border border-dashed border-slate-800/90 rounded-lg flex items-center justify-center text-slate-600 text-xs">
+                              No items
+                            </div>
+                          ) : (
+                            colItems.map((item, index) => {
+                              const lvlColor = getHierarchyLevelColor(
+                                item.item_type,
+                                projectSettings.hierarchy
+                              );
+                              const isBeingDragged = draggedItemId === item.id;
+                              const isDragTarget =
+                                dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
+
+                              return (
+                                <div key={item.id} className="relative">
+                                  {/* Insertion Indicator line */}
+                                  {isDragTarget && (
+                                    <div className="h-1 bg-emerald-400 rounded-full my-1 shadow-lg shadow-emerald-400/50 animate-pulse" />
+                                  )}
+
+                                  <div
+                                    draggable
+                                    onDragStart={(e) => handleDragStart(e, item)}
+                                    onDragEnd={handleDragEnd}
+                                    onDragOver={(e) => handleDragOverCard(e, col.id, index)}
+                                    onDrop={(e) => {
+                                      e.stopPropagation();
+                                      handleDrop(e, col.id, index);
+                                    }}
+                                    onDoubleClick={() => setEditingItem(item)}
+                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 ${
+                                      isBeingDragged
+                                        ? 'opacity-40 border-dashed border-emerald-500'
+                                        : 'border-slate-800/90'
+                                    }`}
+                                  >
+                                    {/* Card Top: Level Selector Badge, Ref, Edit & Delete */}
+                                    <div className="flex items-center justify-between text-xs gap-2">
+                                      <div className="flex items-center space-x-1.5 min-w-0">
+                                        <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
+                                        {/* Quick Level Selector */}
+                                        <select
+                                          value={item.item_type}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            handleUpdateType(item.id, e.target.value);
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border focus:outline-none cursor-pointer transition-colors ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+                                          title="Change hierarchy level"
+                                        >
+                                          {projectSettings.hierarchy.map((h) => (
+                                            <option
+                                              key={h.type}
+                                              value={h.type}
+                                              className="bg-slate-900 text-white font-sans"
+                                            >
+                                              {h.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div className="flex items-center space-x-1 shrink-0">
+                                        {item.external_ref_id && (
+                                          <span className="font-mono text-slate-400 text-[10px] flex items-center space-x-0.5">
+                                            <Hash className="w-2.5 h-2.5 text-slate-500" />
+                                            <span>{item.external_ref_id}</span>
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingItem(item);
+                                          }}
+                                          className="p-1 rounded text-slate-600 hover:text-white hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
+                                          title="Edit work item"
+                                        >
+                                          <Pencil className="w-3 h-3" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteItem(item.id);
+                                          }}
+                                          className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
+                                          title="Delete item"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Card Title */}
+                                    <h4 className="text-sm font-medium text-slate-100 leading-snug">
+                                      {item.title}
+                                    </h4>
+
+                                    {/* Card Description */}
+                                    {item.description && (
+                                      <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                        {item.description}
+                                      </p>
+                                    )}
+
+                                    {/* Metadata tags */}
+                                    {item.metadata && Object.keys(item.metadata).length > 0 && (
+                                      <div className="flex flex-wrap gap-1 pt-0.5">
+                                        {Object.entries(item.metadata).map(([k, v]) => (
+                                          <span
+                                            key={k}
+                                            className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono"
+                                          >
+                                            {k}: {String(v)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {/* Card Bottom: Assignee & Quick Status Select */}
+                                    <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
+                                      <div className="flex items-center space-x-1.5 min-w-0">
+                                        <User className="w-3 h-3 text-slate-500 shrink-0" />
+                                        <span className="text-[11px] font-mono truncate text-slate-400 max-w-[120px]">
+                                          {item.assignee || 'unassigned'}
+                                        </span>
+                                      </div>
+                                      <select
+                                        value={item.status}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          handleUpdateStatus(item.id, e.target.value);
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none hover:border-slate-700 cursor-pointer"
+                                      >
+                                        {projectSettings.statuses.map((st: StatusDefinition) => (
+                                          <option key={st.id} value={st.id}>
+                                            → {st.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                {/* ── Uncategorized Fallback Column (ensures no item ever disappears) ── */}
+                {unmappedItems.length > 0 && (
+                  <div className="w-80 min-w-[320px] max-w-[320px] shrink-0 bg-slate-900/40 border border-amber-500/40 rounded-xl flex flex-col h-full shadow-sm">
+                    <div className="px-4 py-3 border-b border-amber-500/30 flex items-center justify-between shrink-0 bg-amber-500/10 rounded-t-xl">
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                        <span className="font-semibold text-xs tracking-wider uppercase text-amber-300">
+                          Uncategorized
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono">
+                          {unmappedItems.length}
                         </span>
                       </div>
+                      <span className="text-[10px] text-amber-400/80 italic">Unmapped status</span>
+                    </div>
 
-                      <div className="p-3 space-y-3 flex-1">
-                        {colItems.length === 0 ? (
-                          <div className="h-32 border border-dashed border-slate-800 rounded-lg flex items-center justify-center text-slate-600 text-xs">
-                            No items
-                          </div>
-                        ) : (
-                          colItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="p-3.5 rounded-lg bg-slate-950 border border-slate-800/90 hover:border-slate-700 transition-all space-y-2 shadow-sm group"
-                            >
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-mono text-[10px]">
-                                  {item.item_type}
+                    <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
+                      {unmappedItems.map((item, index) => {
+                        const lvlColor = getHierarchyLevelColor(
+                          item.item_type,
+                          projectSettings.hierarchy
+                        );
+                        return (
+                          <div
+                            key={item.id}
+                            onDoubleClick={() => setEditingItem(item)}
+                            className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 hover:border-amber-500/60 transition-all space-y-2.5 shadow-sm group"
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span
+                                className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+                              >
+                                {item.item_type}
+                              </span>
+                              <div className="flex items-center space-x-1">
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  {item.status}
                                 </span>
-                                <div className="flex items-center space-x-1.5">
-                                  {item.external_ref_id && (
-                                    <span className="font-mono text-slate-400 text-[10px] flex items-center space-x-1">
-                                      <Hash className="w-2.5 h-2.5" />
-                                      <span>{item.external_ref_id}</span>
-                                    </span>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteItem(item.id)}
-                                    className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all"
-                                    title="Delete item"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <h4 className="text-sm font-medium text-slate-100 leading-snug">
-                                {item.title}
-                              </h4>
-
-                              {item.description && (
-                                <p className="text-xs text-slate-400 line-clamp-2">
-                                  {item.description}
-                                </p>
-                              )}
-
-                              {item.metadata && Object.keys(item.metadata).length > 0 && (
-                                <div className="flex flex-wrap gap-1 pt-1">
-                                  {Object.entries(item.metadata).map(([k, v]) => (
-                                    <span
-                                      key={k}
-                                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono"
-                                    >
-                                      {k}: {String(v)}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
-                                <div className="flex items-center space-x-1">
-                                  <User className="w-3 h-3 text-slate-500" />
-                                  <span className="text-[11px] font-mono">
-                                    {item.assignee || 'unassigned'}
-                                  </span>
-                                </div>
-                                <select
-                                  value={item.status}
-                                  onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
-                                  className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none"
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingItem(item)}
+                                  className="p-1 rounded text-slate-500 hover:text-white"
+                                  title="Edit work item"
                                 >
-                                  {projectSettings.statuses.map((st: StatusDefinition) => (
-                                    <option key={st.id} value={st.id}>
-                                      → {st.label}
-                                    </option>
-                                  ))}
-                                </select>
+                                  <Pencil className="w-3 h-3" />
+                                </button>
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+
+                            <h4 className="text-sm font-medium text-slate-100">{item.title}</h4>
+
+                            <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
+                              <span className="text-[11px] font-mono text-slate-500">
+                                Assign status:
+                              </span>
+                              <select
+                                value=""
+                                onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
+                                className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none"
+                              >
+                                <option value="" disabled>
+                                  Move to column →
+                                </option>
+                                {projectSettings.statuses.map((st: StatusDefinition) => (
+                                  <option key={st.id} value={st.id}>
+                                    → {st.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -802,6 +1476,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           </div>
         )}
       </main>
+
+      {/* Work Item Detail / Edit Modal */}
+      <WorkItemModal
+        item={editingItem}
+        isOpen={!!editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={handleSaveModalItem}
+        onDelete={handleDeleteItem}
+        projectSettings={projectSettings}
+        allItems={items}
+        currentUser={currentUser ?? undefined}
+        workspaceMembers={workspaceMembers}
+      />
     </div>
   );
 }
