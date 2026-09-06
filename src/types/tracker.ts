@@ -3,6 +3,7 @@ export interface HierarchyLevel {
   label: string;
   level: number;
   allowed_parents: string[];
+  color?: string;
 }
 
 export interface StatusDefinition {

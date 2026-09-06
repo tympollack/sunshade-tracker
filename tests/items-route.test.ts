@@ -181,8 +181,24 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
           })),
         } as any;
       }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+            })),
+          })),
+        } as any;
+      }
       if (table === 'work_items') {
         return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: sampleItems[1], error: null }),
+              })),
+            })),
+          })),
           update: vi.fn((updates: any) => ({
             eq: vi.fn(() => ({
               eq: vi.fn(() => ({
@@ -221,5 +237,113 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     expect(json.success).toBe(true);
     expect(json.item.status).toBe('in_progress');
     expect(json.item.order_index).toBe(1500.0); // Fractional midpoint calculation
+  });
+
+  it('should persist external_ref_id on PATCH and reject duplicate in same project', async () => {
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    let selectCount = 0;
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        const b: any = { eq: vi.fn(() => b), single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }) };
+        return { select: vi.fn(() => b) } as any;
+      }
+      if (table === 'projects') {
+        const b: any = { eq: vi.fn(() => b), single: vi.fn().mockResolvedValue({ data: mockProject, error: null }) };
+        return { select: vi.fn(() => b) } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => {
+            selectCount++;
+            if (selectCount === 1) {
+              const b: any = {
+                eq: vi.fn(() => b),
+                single: vi.fn().mockResolvedValue({ data: sampleItems[1], error: null }),
+              };
+              return b;
+            }
+            const b: any = {
+              eq: vi.fn(() => b),
+              neq: vi.fn(() => b),
+              is: vi.fn(() => b),
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'other-item' }, error: null }),
+            };
+            return b;
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    // Attempting to use duplicate reference
+    const req = new NextRequest('http://localhost:3000/api/v1/items', {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'task-1',
+        external_ref_id: 'DUPLICATE-REF',
+      }),
+    });
+
+    const res = await patchItemHandler(req);
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error).toContain('already exists');
+  });
+
+  it('should reject invalid item_type on PATCH with 422', async () => {
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: sampleItems[1], error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items', {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'task-1',
+        item_type: 'nonexistent_type',
+      }),
+    });
+
+    const res = await patchItemHandler(req);
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.error).toContain("Invalid item_type 'nonexistent_type'");
   });
 });

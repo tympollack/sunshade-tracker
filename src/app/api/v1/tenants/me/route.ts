@@ -69,7 +69,63 @@ export async function GET(_req: NextRequest) {
       projectsByTenant[p.tenant_id].push(p);
     }
 
-    // Assemble workspaces with role + projects
+    // Fetch all members for all tenant IDs the user is a member of
+    const { data: allMembers } = await service
+      .from('tenant_members')
+      .select('id, tenant_id, user_id, role, created_at')
+      .in('tenant_id', tenantIds);
+
+    // Attempt to enrich member details from auth admin if available (with pagination)
+    const usersMap = new Map<string, any>();
+    try {
+      if (typeof service.auth?.admin?.listUsers === 'function') {
+        let page = 1;
+        const perPage = 100;
+        let hasMore = true;
+        while (hasMore && page <= 10) {
+          const { data: authUsers } = await service.auth.admin.listUsers({ page, perPage });
+          if (authUsers?.users?.length) {
+            for (const u of authUsers.users) {
+              usersMap.set(u.id, u);
+            }
+            if (authUsers.users.length < perPage) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
+        }
+      }
+    } catch {
+      // Ignore if service role cannot list users or not in admin context
+    }
+
+    const currentFullName =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      (user.email ? user.email.split('@')[0] : 'User');
+
+    // Group members by tenant without exposing fellow members' private account emails
+    const membersByTenant: Record<string, any[]> = {};
+    for (const mem of allMembers || []) {
+      if (!membersByTenant[mem.tenant_id]) membersByTenant[mem.tenant_id] = [];
+      const memUser = usersMap.get(mem.user_id);
+      membersByTenant[mem.tenant_id].push({
+        id: mem.id,
+        user_id: mem.user_id,
+        role: mem.role,
+        full_name:
+          memUser?.user_metadata?.full_name ||
+          memUser?.user_metadata?.name ||
+          (mem.user_id === user.id ? currentFullName : null) ||
+          (memUser?.email ? memUser.email.split('@')[0] : null) ||
+          'Member',
+      });
+    }
+
+    // Assemble workspaces with role + projects + members
     const workspaces = memberships.map((m: any) => {
       const tenant = m.tenants;
       return {
@@ -84,6 +140,7 @@ export async function GET(_req: NextRequest) {
         role: m.role,
         member_since: m.created_at,
         projects: projectsByTenant[tenant.id] || [],
+        members: membersByTenant[tenant.id] || [],
       };
     });
 
@@ -91,6 +148,7 @@ export async function GET(_req: NextRequest) {
       user: {
         id: user.id,
         email: user.email,
+        full_name: currentFullName,
       },
       workspaces,
       // Convenience: the first (primary) workspace
