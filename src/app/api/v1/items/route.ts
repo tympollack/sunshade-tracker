@@ -10,15 +10,143 @@ export async function GET(req: NextRequest) {
   const authCtx = auth.context;
 
   const { searchParams } = new URL(req.url);
+  const itemIdParam = searchParams.get('id');
   const projectSlug = searchParams.get('project_slug');
   const projectIdParam = searchParams.get('project_id');
+  const allProjectsParam = searchParams.get('all_projects') === 'true';
   const format = searchParams.get('format') || 'flat'; // 'flat' | 'tree' | 'board'
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
 
+  // 1. Single Item by ID lookup
+  if (itemIdParam) {
+    let itemQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('id', itemIdParam);
+
+    if (typeof itemQuery.is === 'function') {
+      itemQuery = itemQuery.is('deleted_at', null);
+    }
+
+    const { data: item, error: itemErr } = await itemQuery.single();
+    if (itemErr || !item) {
+      return NextResponse.json({ error: 'Work item not found' }, { status: 404 });
+    }
+    return NextResponse.json({ item });
+  }
+
+  // 2. All projects / Workspace-wide portfolio querying
+  let isPortfolio = allProjectsParam;
+  if (!isPortfolio && (projectSlug === 'all' || projectIdParam === 'all')) {
+    // Check if an actual project named 'all' exists for this tenant
+    const { data: projectNamedAll } = await supabaseAdmin
+      .from('projects')
+      .select('id')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('slug', 'all')
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!projectNamedAll) {
+      isPortfolio = true;
+    }
+  }
+
+  if (isPortfolio) {
+    let itemsQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id);
+
+    if (typeof itemsQuery.is === 'function') {
+      itemsQuery = itemsQuery.is('deleted_at', null);
+    }
+    itemsQuery = itemsQuery.order('order_index', { ascending: true });
+    if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
+    if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
+
+    const { data: rawItems, error: itemsErr } = await itemsQuery;
+    if (itemsErr) {
+      return NextResponse.json({ error: itemsErr.message }, { status: 500 });
+    }
+
+    const items = (rawItems || []) as WorkItem[];
+
+    if (format === 'tree') {
+      const itemMap = new Map<string, WorkItemWithChildren>();
+      const roots: WorkItemWithChildren[] = [];
+
+      items.forEach((item) => {
+        itemMap.set(item.id, { ...item, children: [] });
+      });
+
+      items.forEach((item) => {
+        const node = itemMap.get(item.id)!;
+        if (item.parent_id && itemMap.has(item.parent_id)) {
+          itemMap.get(item.parent_id)!.children!.push(node);
+        } else {
+          roots.push(node);
+        }
+      });
+
+      return NextResponse.json({
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'tree',
+        count: items.length,
+        tree: roots,
+      });
+    }
+
+    if (format === 'board') {
+      const { data: projs } = await supabaseAdmin
+        .from('projects')
+        .select('id, slug, name, settings')
+        .eq('tenant_id', authCtx.tenant.id)
+        .is('deleted_at', null);
+
+      const statusMap = new Map<string, any>();
+      (projs || []).forEach((p: any) => {
+        (p.settings?.statuses || []).forEach((st: any) => {
+          if (!statusMap.has(st.id)) {
+            statusMap.set(st.id, st);
+          }
+        });
+      });
+
+      if (statusMap.size === 0) {
+        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8' });
+        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6' });
+        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981' });
+      }
+
+      const columns = Array.from(statusMap.values()).map((st) => ({
+        status: st,
+        items: items.filter((i) => i.status === st.id),
+      }));
+
+      return NextResponse.json({
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'board',
+        columns,
+      });
+    }
+
+    return NextResponse.json({
+      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+      all_projects: true,
+      format: 'flat',
+      count: items.length,
+      items,
+    });
+  }
+
   if (!projectSlug && !projectIdParam) {
     return NextResponse.json(
-      { error: 'Specify "project_slug" or "project_id" in query params' },
+      { error: 'Specify "id", "project_slug", "project_id", or "all_projects=true" in query params' },
       { status: 400 }
     );
   }
