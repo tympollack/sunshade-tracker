@@ -277,6 +277,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       );
       if (settingsRes.ok) {
         const sData = await settingsRes.json();
+        if (Array.isArray(sData.projects)) {
+          setAllProjects(sData.projects);
+        }
         const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
         if (proj) {
           const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
@@ -774,7 +777,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
           {/* Refresh */}
           <button
-            onClick={fetchData}
+            onClick={() => {
+              fetchTenantInfo();
+              fetchData();
+            }}
             disabled={isRefreshing}
             className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors"
             title="Refresh"
