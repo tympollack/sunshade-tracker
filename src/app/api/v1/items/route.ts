@@ -39,17 +39,32 @@ export async function GET(req: NextRequest) {
 
   // 2. All projects / Workspace-wide portfolio querying
   let isPortfolio = allProjectsParam;
-  if (!isPortfolio && (projectSlug === 'all' || projectIdParam === 'all')) {
-    // Check if an actual project named 'all' exists for this tenant
-    const { data: projectNamedAll } = await supabaseAdmin
+  if (
+    !isPortfolio &&
+    (projectSlug === 'all' ||
+      projectSlug === 'portfolio' ||
+      projectIdParam === 'all' ||
+      projectIdParam === 'portfolio')
+  ) {
+    const checkSlug = projectSlug === 'portfolio' ? 'portfolio' : 'all';
+    let checkQuery: any = supabaseAdmin
       .from('projects')
       .select('id')
       .eq('tenant_id', authCtx.tenant.id)
-      .eq('slug', 'all')
-      .is('deleted_at', null)
-      .maybeSingle();
+      .eq('slug', checkSlug);
 
-    if (!projectNamedAll) {
+    if (typeof checkQuery.is === 'function') {
+      checkQuery = checkQuery.is('deleted_at', null);
+    }
+
+    const { data: projectNamedSentinel } =
+      typeof checkQuery.maybeSingle === 'function'
+        ? await checkQuery.maybeSingle()
+        : typeof checkQuery.single === 'function'
+        ? await checkQuery.single().catch(() => ({ data: null }))
+        : { data: null };
+
+    if (!projectNamedSentinel) {
       isPortfolio = true;
     }
   }

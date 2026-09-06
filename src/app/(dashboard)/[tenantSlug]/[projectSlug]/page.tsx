@@ -66,7 +66,7 @@ interface ProjectInfo {
 
 export default function ProjectTrackerDashboard(props: PageProps) {
   const { tenantSlug, projectSlug } = use(props.params);
-  const isAllProjects = projectSlug === 'all';
+  const isAllProjects = projectSlug === 'all' || projectSlug === 'portfolio';
   const searchParams = props.searchParams ? use(props.searchParams) : {};
   const requestedTab =
     typeof searchParams?.tab === 'string' &&
@@ -2351,6 +2351,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         allItems={items}
         currentUser={currentUser ?? undefined}
         workspaceMembers={workspaceMembers}
+        tenantSlug={tenantSlug}
       />
     </div>
   );
