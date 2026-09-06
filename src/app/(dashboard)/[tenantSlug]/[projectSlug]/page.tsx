@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Minimize2,
   GripVertical,
+  Calendar,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { buildTree } from '@/lib/tree';
@@ -64,16 +65,17 @@ interface ProjectInfo {
 
 export default function ProjectTrackerDashboard(props: PageProps) {
   const { tenantSlug, projectSlug } = use(props.params);
+  const isAllProjects = projectSlug === 'all';
   const searchParams = props.searchParams ? use(props.searchParams) : {};
   const requestedTab =
     typeof searchParams?.tab === 'string' &&
-    ['board', 'tree', 'spark', 'schema'].includes(searchParams.tab)
-      ? (searchParams.tab as 'board' | 'tree' | 'spark' | 'schema')
+    ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
+      ? (searchParams.tab as 'board' | 'tree' | 'sprint' | 'spark' | 'schema')
       : 'board';
 
-  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'spark' | 'schema'>(requestedTab);
+  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'sprint' | 'spark' | 'schema'>(requestedTab);
 
-  const handleTabChange = (tab: 'board' | 'tree' | 'spark' | 'schema') => {
+  const handleTabChange = (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema') => {
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
@@ -89,11 +91,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   useEffect(() => {
     if (
       typeof searchParams?.tab === 'string' &&
-      ['board', 'tree', 'spark', 'schema'].includes(searchParams.tab)
+      ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
     ) {
       setActiveTab(searchParams.tab as any);
     }
   }, [searchParams?.tab]);
+
+  const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [items, setItems] = useState<WorkItem[]>([]);
   const treeItems = useMemo(() => buildTree(items), [items]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -159,6 +163,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [newItemStatus, setNewItemStatus] = useState('not_started');
   const [newItemAssignee, setNewItemAssignee] = useState('');
   const [newItemExtRef, setNewItemExtRef] = useState('');
+  const [newItemProjectSlug, setNewItemProjectSlug] = useState('');
 
   // User & Workspace Members
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
@@ -185,10 +190,44 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return projectSettings.hierarchy.map((h) => h.type);
   }, [selectedLevels, projectSettings.hierarchy]);
 
+  // Derive all available sprints from projectSettings and items
+  const availableSprints = useMemo(() => {
+    const set = new Set<string>();
+    (projectSettings.sprint_settings?.sprints || []).forEach((s: any) => {
+      if (s.name) set.add(s.name);
+    });
+    items.forEach((it) => {
+      if (it.metadata?.sprint) {
+        set.add(String(it.metadata.sprint));
+      }
+    });
+    return Array.from(set).sort();
+  }, [items, projectSettings.sprint_settings]);
+
+  // Set default sprint based on projectSettings.sprint_settings
+  useEffect(() => {
+    if (projectSettings.sprint_settings?.default_sprint) {
+      const def = projectSettings.sprint_settings.default_sprint;
+      if (def === 'all') {
+        setSelectedSprint('all');
+      } else if (def === 'current') {
+        const curr = projectSettings.sprint_settings.sprints?.find((s: any) => s.is_current)?.name;
+        if (curr) {
+          setSelectedSprint(curr);
+        } else if (availableSprints.length > 0) {
+          setSelectedSprint(availableSprints[0]);
+        }
+      } else if (availableSprints.includes(def)) {
+        setSelectedSprint(def);
+      }
+    }
+  }, [projectSettings.sprint_settings, availableSprints]);
+
   // Reset filters when switching to a different project
   useEffect(() => {
     setSelectedStatuses(null);
     setSelectedLevels(null);
+    setSelectedSprint('all');
   }, [projectSlug]);
 
   // Drag & Drop
@@ -279,45 +318,50 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         const sData = await settingsRes.json();
         if (Array.isArray(sData.projects)) {
           setAllProjects(sData.projects);
+          if (sData.projects.length > 0) {
+            setNewItemProjectSlug((prev) => prev || sData.projects[0].slug);
+          }
         }
-        const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
-        if (proj) {
-          const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            if (detail.settings) {
-              const enrichedHierarchy = (detail.settings.hierarchy || []).map((h: any) => ({
-                ...h,
-                color: h.color || getDefaultLevelHex(h.level),
-              }));
-              const enrichedSettings: ProjectSettings = {
-                ...detail.settings,
-                hierarchy: enrichedHierarchy,
-              };
-              setProjectSettings(enrichedSettings);
-              if (detail.settings.statuses?.length) {
-                setNewItemStatus((prev) => {
-                  const exists = detail.settings.statuses.some((s: any) => s.id === prev);
-                  return exists ? prev : detail.settings.statuses[0].id;
-                });
-                setSelectedStatuses((prev) => {
-                  if (prev === null) return null;
-                  const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
-                  return prev.filter((id) => validIds.has(id));
-                });
-              }
-              if (detail.settings.hierarchy?.length) {
-                setNewItemType((prev) => {
-                  const exists = detail.settings.hierarchy.some((h: any) => h.type === prev);
-                  return exists
-                    ? prev
-                    : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
-                });
-                setSelectedLevels((prev) => {
-                  if (prev === null) return null;
-                  const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
-                  return prev.filter((t) => validTypes.has(t));
-                });
+        if (!isAllProjects) {
+          const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
+          if (proj) {
+            const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              if (detail.settings) {
+                const enrichedHierarchy = (detail.settings.hierarchy || []).map((h: any) => ({
+                  ...h,
+                  color: h.color || getDefaultLevelHex(h.level),
+                }));
+                const enrichedSettings: ProjectSettings = {
+                  ...detail.settings,
+                  hierarchy: enrichedHierarchy,
+                };
+                setProjectSettings(enrichedSettings);
+                if (detail.settings.statuses?.length) {
+                  setNewItemStatus((prev) => {
+                    const exists = detail.settings.statuses.some((s: any) => s.id === prev);
+                    return exists ? prev : detail.settings.statuses[0].id;
+                  });
+                  setSelectedStatuses((prev) => {
+                    if (prev === null) return null;
+                    const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
+                    return prev.filter((id) => validIds.has(id));
+                  });
+                }
+                if (detail.settings.hierarchy?.length) {
+                  setNewItemType((prev) => {
+                    const exists = detail.settings.hierarchy.some((h: any) => h.type === prev);
+                    return exists
+                      ? prev
+                      : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
+                  });
+                  setSelectedLevels((prev) => {
+                    if (prev === null) return null;
+                    const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
+                    return prev.filter((t) => validTypes.has(t));
+                  });
+                }
               }
             }
           }
@@ -325,7 +369,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       }
 
       // Fetch items (session-authenticated)
-      const itemsRes = await apiFetch(`/api/v1/items?project_slug=${projectSlug}`);
+      const itemsUrl = isAllProjects
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}`
+        : `/api/v1/items?project_slug=${projectSlug}`;
+      const itemsRes = await apiFetch(itemsUrl);
       if (itemsRes.ok) {
         const iData = await itemsRes.json();
         setItems(iData.items || []);
@@ -341,7 +388,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [apiFetch, tenantSlug, projectSlug]);
+  }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
   const handleSaveSchema = async (newSettings: ProjectSettings) => {
     setIsSavingSchema(true);
@@ -383,6 +430,34 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         // Revert on failure
         fetchData();
       }
+    } catch {
+      fetchData();
+    }
+  };
+
+  // ─── Update item sprint ──────────────────────────────────────────────────
+  const handleUpdateItemSprint = async (itemId: string, newSprint: string | null) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+
+    const newMetadata = { ...(item.metadata || {}) };
+    if (newSprint && newSprint !== '__none__') {
+      newMetadata.sprint = newSprint;
+    } else {
+      delete newMetadata.sprint;
+    }
+
+    // Optimistic update
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, metadata: newMetadata } : it))
+    );
+
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: itemId, metadata: newMetadata }),
+      });
+      if (!res.ok) fetchData();
     } catch {
       fetchData();
     }
@@ -497,13 +572,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       .filter((it) => it.status === targetColId && it.id !== itemId)
       .sort((a, b) => a.order_index - b.order_index);
 
-    // Visible items in the target column based on current hierarchy filters
+    // Visible items in the target column based on current hierarchy and sprint filters
     const visibleColItems = items
-      .filter(
-        (it) =>
-          it.status === targetColId &&
-          effectiveSelectedLevels.includes(it.item_type)
-      )
+      .filter((it) => {
+        if (it.status !== targetColId) return false;
+        if (!effectiveSelectedLevels.includes(it.item_type)) return false;
+        if (selectedSprint !== 'all') {
+          if (selectedSprint === '__none__') {
+            return !it.metadata?.sprint;
+          }
+          return it.metadata?.sprint === selectedSprint;
+        }
+        return true;
+      })
       .sort((a, b) => a.order_index - b.order_index);
 
     let prevItem: WorkItem | null = null;
@@ -612,24 +693,33 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const unmappedItems = useMemo(
     () =>
       items
-        .filter(
-          (it) =>
-            !knownStatusIds.has(it.status) &&
-            effectiveSelectedLevels.includes(it.item_type)
-        )
+        .filter((it) => {
+          if (knownStatusIds.has(it.status)) return false;
+          if (!effectiveSelectedLevels.includes(it.item_type)) return false;
+          if (selectedSprint !== 'all') {
+            if (selectedSprint === '__none__') {
+              return !it.metadata?.sprint;
+            }
+            return it.metadata?.sprint === selectedSprint;
+          }
+          return true;
+        })
         .sort((a, b) => a.order_index - b.order_index),
-    [items, knownStatusIds, effectiveSelectedLevels]
+    [items, knownStatusIds, effectiveSelectedLevels, selectedSprint]
   );
 
   // ─── Create item ─────────────────────────────────────────────────────────
   const handleCreateItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newItemTitle.trim()) return;
+    const targetProjectSlug = isAllProjects
+      ? (newItemProjectSlug || allProjects[0]?.slug || 'sunshade-tracker')
+      : projectSlug;
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'POST',
         body: JSON.stringify({
-          project_slug: projectSlug,
+          project_slug: targetProjectSlug,
           title: newItemTitle,
           item_type: newItemType,
           status: newItemStatus,
@@ -678,7 +768,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   // ─── Error state ─────────────────────────────────────────────────────────
-  if (!loading && fetchError) {
+  if (!loading && fetchError && !isAllProjects) {
     const isNotFound = fetchError.toLowerCase().includes('not found');
 
     return (
@@ -745,16 +835,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         <div className="flex items-center space-x-3">
           {/* View tabs */}
           <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs">
-            {(['board', 'tree', 'spark', 'schema'] as const).map((tab) => {
+            {(['board', 'tree', 'sprint', 'spark', 'schema'] as const).map((tab) => {
               const icons = {
                 board: <Kanban className="w-3.5 h-3.5" />,
                 tree: <GitFork className="w-3.5 h-3.5" />,
+                sprint: <Calendar className="w-3.5 h-3.5" />,
                 spark: <Cpu className="w-3.5 h-3.5" />,
                 schema: <Settings className="w-3.5 h-3.5" />,
               };
               const labels = {
                 board: 'Board',
                 tree: 'Hierarchy Tree',
+                sprint: 'Sprint Planning',
                 spark: 'Gemini Spark Ingestion',
                 schema: 'Dynamic Schema',
               };
@@ -830,6 +922,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               onSubmit={handleCreateItem}
               className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-wrap items-center gap-3"
             >
+              {isAllProjects && allProjects.length > 0 && (
+                <select
+                  value={newItemProjectSlug || allProjects[0]?.slug}
+                  onChange={(e) => setNewItemProjectSlug(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
+                >
+                  {allProjects.map((p) => (
+                    <option key={p.id} value={p.slug}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
               <div className="flex-1 min-w-[240px]">
                 <input
                   type="text"
@@ -986,13 +1092,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   selectedIds={effectiveSelectedLevels}
                   onChange={setSelectedLevels}
                 />
+                <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-[11px] font-medium text-slate-400">Sprint:</span>
+                  <select
+                    value={selectedSprint}
+                    onChange={(e) => setSelectedSprint(e.target.value)}
+                    className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+                  >
+                    <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
+                    <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
+                    {availableSprints.map((s) => (
+                      <option key={s} value={s} className="bg-slate-900 text-slate-200">
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
-                  effectiveSelectedLevels.length < projectSettings.hierarchy.length) && (
+                  effectiveSelectedLevels.length < projectSettings.hierarchy.length ||
+                  selectedSprint !== 'all') && (
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedStatuses(null);
                       setSelectedLevels(null);
+                      setSelectedSprint('all');
                     }}
                     className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors"
                   >
@@ -1052,11 +1177,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   .filter((col) => effectiveSelectedStatuses.includes(col.id))
                   .map((col: StatusDefinition) => {
                     const colItems = items
-                      .filter(
-                        (it) =>
-                          it.status === col.id &&
-                          effectiveSelectedLevels.includes(it.item_type)
-                      )
+                      .filter((it) => {
+                        if (it.status !== col.id) return false;
+                        if (!effectiveSelectedLevels.includes(it.item_type)) return false;
+                        if (selectedSprint !== 'all') {
+                          if (selectedSprint === '__none__') {
+                            return !it.metadata?.sprint;
+                          }
+                          return it.metadata?.sprint === selectedSprint;
+                        }
+                        return true;
+                      })
                       .sort((a, b) => a.order_index - b.order_index);
 
                     const isCollapsedSideways = collapsedSideways.has(col.id);
@@ -1220,13 +1351,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       handleDrop(e, col.id, index);
                                     }}
                                     onDoubleClick={() => setEditingItem(item)}
-                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 ${
+                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto custom-scrollbar ${
                                       isBeingDragged
                                         ? 'opacity-40 border-dashed border-emerald-500'
                                         : 'border-slate-800/90'
                                     }`}
                                   >
-                                    {/* Card Top: Level Selector Badge, Ref, Edit & Delete */}
+                                    {/* Card Top: Level Selector Badge, Project Badge, Ref, Edit & Delete */}
                                     <div className="flex items-center justify-between text-xs gap-2">
                                       <div className="flex items-center space-x-1.5 min-w-0">
                                         <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
@@ -1262,6 +1393,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                             style={{ color: lvlColor.hex }}
                                           />
                                         </div>
+
+                                        {isAllProjects && (
+                                          <span
+                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                            title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
+                                          >
+                                            {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+                                          </span>
+                                        )}
                                       </div>
 
                                       <div className="flex items-center space-x-1 shrink-0">
@@ -1311,14 +1451,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     {/* Metadata tags */}
                                     {item.metadata && Object.keys(item.metadata).length > 0 && (
                                       <div className="flex flex-wrap gap-1 pt-0.5">
-                                        {Object.entries(item.metadata).map(([k, v]) => (
-                                          <span
-                                            key={k}
-                                            className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono"
-                                          >
-                                            {k}: {String(v)}
-                                          </span>
-                                        ))}
+                                        {Object.entries(item.metadata).map(([k, v]) => {
+                                          const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+                                          const displayVal = rawVal.replace(/\s+/g, ' ').trim();
+                                          const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
+                                          return (
+                                            <span
+                                              key={k}
+                                              title={`${k}: ${rawVal}`}
+                                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
+                                            >
+                                              <span className="text-slate-500">{k}:</span> {truncated}
+                                            </span>
+                                          );
+                                        })}
                                       </div>
                                     )}
 
@@ -1382,14 +1528,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           <div
                             key={item.id}
                             onDoubleClick={() => setEditingItem(item)}
-                            className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 hover:border-amber-500/60 transition-all space-y-2.5 shadow-sm group"
+                            className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 hover:border-amber-500/60 transition-all space-y-2.5 shadow-sm group max-h-[380px] overflow-y-auto custom-scrollbar"
                           >
                             <div className="flex items-center justify-between text-xs">
-                              <span
-                                className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
-                              >
-                                {item.item_type}
-                              </span>
+                              <div className="flex items-center space-x-1.5">
+                                <span
+                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+                                >
+                                  {item.item_type}
+                                </span>
+                                {isAllProjects && (
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
+                                  >
+                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex items-center space-x-1">
                                 <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                   {item.status}
@@ -1406,6 +1562,31 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             </div>
 
                             <h4 className="text-sm font-medium text-slate-100">{item.title}</h4>
+
+                            {item.description && (
+                              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                {item.description}
+                              </p>
+                            )}
+
+                            {item.metadata && Object.keys(item.metadata).length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-0.5">
+                                {Object.entries(item.metadata).map(([k, v]) => {
+                                  const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+                                  const displayVal = rawVal.replace(/\s+/g, ' ').trim();
+                                  const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
+                                  return (
+                                    <span
+                                      key={k}
+                                      title={`${k}: ${rawVal}`}
+                                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
+                                    >
+                                      <span className="text-slate-500">{k}:</span> {truncated}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
 
                             <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
                               <span className="text-[11px] font-mono text-slate-500">
@@ -1474,7 +1655,331 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           </div>
         )}
 
-        {/* TAB 3: GEMINI SPARK INGESTION */}
+        {/* TAB 3: SPRINT / QUARTERLY PLANNING */}
+        {activeTab === 'sprint' && (
+          <div className="space-y-6">
+            {/* Header & Overview */}
+            <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <Calendar className="w-5 h-5 text-emerald-400" />
+                  <h3 className="text-lg font-semibold text-white">Sprint & Story Planning</h3>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Manage sprint allocations, story points, and sprint backlogs across your projects. Configured in project settings.
+                </p>
+              </div>
+
+              <div className="flex items-center flex-wrap gap-3">
+                <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center space-x-2">
+                  <span className="text-slate-500">Total Items:</span>
+                  <span className="font-mono font-bold text-white">{items.length}</span>
+                </div>
+                <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center space-x-2">
+                  <span className="text-slate-500">Planned Sprints:</span>
+                  <span className="font-mono font-bold text-emerald-400">
+                    {availableSprints.length}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Sprint Groups */}
+            <div className="space-y-6">
+              {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((sprintName) => {
+                const sprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
+                const totalPoints = sprintItems.reduce((acc, it) => {
+                  const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+                  return acc + (isNaN(p) ? 0 : p);
+                }, 0);
+                const completedItems = sprintItems.filter((it) =>
+                  ['done', 'closed', 'completed'].includes(it.status)
+                );
+                const progressPct =
+                  sprintItems.length > 0
+                    ? Math.round((completedItems.length / sprintItems.length) * 100)
+                    : 0;
+
+                const isCurrent =
+                  projectSettings.sprint_settings?.sprints?.find((s: any) => s.name === sprintName)?.is_current ??
+                  (availableSprints[0] === sprintName);
+
+                return (
+                  <div
+                    key={sprintName}
+                    className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+                  >
+                    {/* Sprint Header */}
+                    <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center space-x-3">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                        <h4 className="text-base font-semibold text-white flex items-center space-x-2">
+                          <span>{sprintName}</span>
+                          {isCurrent && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-sans font-medium border border-emerald-500/30">
+                              Current Active Sprint
+                            </span>
+                          )}
+                        </h4>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center space-x-4">
+                        {totalPoints > 0 && (
+                          <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
+                            <span className="text-slate-500">Points:</span>{' '}
+                            <span className="font-semibold text-emerald-400">{totalPoints}</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center space-x-2 min-w-[140px]">
+                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 transition-all rounded-full"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-mono text-slate-400">{progressPct}%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sprint Item List */}
+                    <div className="divide-y divide-slate-800/50">
+                      {sprintItems.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-500 italic">
+                          No stories or tasks in {sprintName}. Allocate backlog items below.
+                        </div>
+                      ) : (
+                        sprintItems.map((item) => {
+                          const lvlColor = getHierarchyLevelColor(
+                            item.item_type,
+                            projectSettings.hierarchy
+                          );
+                          const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+
+                          return (
+                            <div
+                              key={item.id}
+                              onDoubleClick={() => setEditingItem(item)}
+                              className="p-3.5 hover:bg-slate-800/30 transition-colors flex flex-wrap items-center justify-between gap-3 group"
+                            >
+                              <div className="flex items-center space-x-3 min-w-0 flex-1">
+                                <span
+                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+                                >
+                                  {item.item_type}
+                                </span>
+
+                                {isAllProjects && (
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
+                                  >
+                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+                                  </span>
+                                )}
+
+                                {item.external_ref_id && (
+                                  <span className="text-xs font-mono text-slate-400 shrink-0">
+                                    {item.external_ref_id}
+                                  </span>
+                                )}
+
+                                <span
+                                  className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
+                                  onClick={() => setEditingItem(item)}
+                                >
+                                  {item.title}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center space-x-3 shrink-0">
+                                {points !== undefined && (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                    {String(points)} pts
+                                  </span>
+                                )}
+
+                                <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
+                                  <User className="w-3 h-3 text-slate-500" />
+                                  <span>{item.assignee || 'Unassigned'}</span>
+                                </span>
+
+                                {/* Status Select */}
+                                <select
+                                  value={item.status}
+                                  onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
+                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
+                                >
+                                  {projectSettings.statuses.map((st: StatusDefinition) => (
+                                    <option key={st.id} value={st.id}>
+                                      {st.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {/* Move to sprint */}
+                                <select
+                                  value={sprintName}
+                                  onChange={(e) => handleUpdateItemSprint(item.id, e.target.value)}
+                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer"
+                                  title="Change sprint"
+                                >
+                                  <option value="__none__">Move to Backlog</option>
+                                  {availableSprints.map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingItem(item)}
+                                  className="p-1 rounded text-slate-500 hover:text-white transition-colors"
+                                  title="Edit work item"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Backlog (Unassigned) Swimlane */}
+              {(() => {
+                const backlogItems = items.filter((it) => !it.metadata?.sprint);
+                const backlogPoints = backlogItems.reduce((acc, it) => {
+                  const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+                  return acc + (isNaN(p) ? 0 : p);
+                }, 0);
+
+                return (
+                  <div className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm">
+                    <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center space-x-3">
+                        <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                        <h4 className="text-base font-semibold text-white">
+                          Product Backlog (Unassigned)
+                        </h4>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
+                        </span>
+                      </div>
+
+                      {backlogPoints > 0 && (
+                        <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
+                          <span className="text-slate-500">Points:</span>{' '}
+                          <span className="font-semibold text-slate-300">{backlogPoints}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="divide-y divide-slate-800/50">
+                      {backlogItems.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-500 italic">
+                          Backlog is empty! All items are assigned to active sprints.
+                        </div>
+                      ) : (
+                        backlogItems.map((item) => {
+                          const lvlColor = getHierarchyLevelColor(
+                            item.item_type,
+                            projectSettings.hierarchy
+                          );
+                          const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+
+                          return (
+                            <div
+                              key={item.id}
+                              onDoubleClick={() => setEditingItem(item)}
+                              className="p-3.5 hover:bg-slate-800/30 transition-colors flex flex-wrap items-center justify-between gap-3 group"
+                            >
+                              <div className="flex items-center space-x-3 min-w-0 flex-1">
+                                <span
+                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+                                >
+                                  {item.item_type}
+                                </span>
+
+                                {isAllProjects && (
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
+                                  >
+                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+                                  </span>
+                                )}
+
+                                {item.external_ref_id && (
+                                  <span className="text-xs font-mono text-slate-400 shrink-0">
+                                    {item.external_ref_id}
+                                  </span>
+                                )}
+
+                                <span
+                                  className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
+                                  onClick={() => setEditingItem(item)}
+                                >
+                                  {item.title}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center space-x-3 shrink-0">
+                                {points !== undefined && (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                    {String(points)} pts
+                                  </span>
+                                )}
+
+                                <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
+                                  <User className="w-3 h-3 text-slate-500" />
+                                  <span>{item.assignee || 'Unassigned'}</span>
+                                </span>
+
+                                {/* Assign to sprint */}
+                                <select
+                                  value=""
+                                  onChange={(e) => handleUpdateItemSprint(item.id, e.target.value)}
+                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer"
+                                >
+                                  <option value="" disabled>Assign to Sprint →</option>
+                                  {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingItem(item)}
+                                  className="p-1 rounded text-slate-500 hover:text-white transition-colors"
+                                  title="Edit work item"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: GEMINI SPARK INGESTION */}
         {activeTab === 'spark' && (
           <div className="grid md:grid-cols-2 gap-6">
             <div className="p-6 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-4">

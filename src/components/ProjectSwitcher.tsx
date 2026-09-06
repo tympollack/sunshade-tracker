@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Plus, Folder, Settings } from 'lucide-react';
+import { ChevronDown, Plus, Folder, Settings, Layers } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -25,7 +25,10 @@ export function ProjectSwitcher({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const currentProject = projects.find((p) => p.slug === currentProjectSlug);
+  const isAll = currentProjectSlug === 'all';
+  const currentProject = isAll
+    ? { id: 'all', slug: 'all', name: 'All Projects' }
+    : projects.find((p) => p.slug === currentProjectSlug);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -47,7 +50,11 @@ export function ProjectSwitcher({
             : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
         }`}
       >
-        <Folder className="w-3 h-3 text-emerald-400" />
+        {isAll ? (
+          <Layers className="w-3 h-3 text-emerald-400" />
+        ) : (
+          <Folder className="w-3 h-3 text-emerald-400" />
+        )}
         <span className="max-w-[120px] truncate">{currentProject?.name || currentProjectSlug}</span>
         <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -61,6 +68,24 @@ export function ProjectSwitcher({
           </div>
 
           <div className="p-1.5 space-y-0.5">
+            {/* All Projects Overview option */}
+            <button
+              onClick={() => {
+                setOpen(false);
+                router.push(`/${tenantSlug}/all`);
+              }}
+              className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs text-left transition-colors ${
+                isAll
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <Layers className={`w-3.5 h-3.5 flex-shrink-0 ${isAll ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span className="truncate font-medium">All Projects (Overview)</span>
+              {isAll && (
+                <span className="ml-auto text-[10px] text-emerald-500 font-semibold">Active</span>
+              )}
+            </button>
             {projects.map((project) => (
               <button
                 key={project.id}

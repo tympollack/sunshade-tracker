@@ -10,15 +10,65 @@ export async function GET(req: NextRequest) {
   const authCtx = auth.context;
 
   const { searchParams } = new URL(req.url);
+  const itemIdParam = searchParams.get('id');
   const projectSlug = searchParams.get('project_slug');
   const projectIdParam = searchParams.get('project_id');
+  const allProjectsParam = searchParams.get('all_projects') === 'true';
   const format = searchParams.get('format') || 'flat'; // 'flat' | 'tree' | 'board'
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
 
+  // 1. Single Item by ID lookup
+  if (itemIdParam) {
+    let itemQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('id', itemIdParam);
+
+    if (typeof itemQuery.is === 'function') {
+      itemQuery = itemQuery.is('deleted_at', null);
+    }
+
+    const { data: item, error: itemErr } = await itemQuery.single();
+    if (itemErr || !item) {
+      return NextResponse.json({ error: 'Work item not found' }, { status: 404 });
+    }
+    return NextResponse.json({ item });
+  }
+
+  // 2. All projects / Workspace-wide portfolio querying
+  if (allProjectsParam || projectSlug === 'all' || projectIdParam === 'all') {
+    let itemsQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id);
+
+    if (typeof itemsQuery.is === 'function') {
+      itemsQuery = itemsQuery.is('deleted_at', null);
+    }
+    itemsQuery = itemsQuery.order('order_index', { ascending: true });
+    if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
+    if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
+
+    const { data: rawItems, error: itemsErr } = await itemsQuery;
+    if (itemsErr) {
+      return NextResponse.json({ error: itemsErr.message }, { status: 500 });
+    }
+
+    const items = (rawItems || []) as WorkItem[];
+    return NextResponse.json({
+      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+      all_projects: true,
+      format: 'flat',
+      count: items.length,
+      items,
+    });
+  }
+
   if (!projectSlug && !projectIdParam) {
     return NextResponse.json(
-      { error: 'Specify "project_slug" or "project_id" in query params' },
+      { error: 'Specify "id", "project_slug", "project_id", or "all_projects=true" in query params' },
       { status: 400 }
     );
   }
