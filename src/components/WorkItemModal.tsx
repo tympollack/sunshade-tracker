@@ -22,7 +22,7 @@ interface WorkItemModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (id: string, updates: Partial<WorkItem>) => Promise<void> | void;
-  onDelete: (id: string) => Promise<void> | void;
+  onDelete: (id: string) => Promise<boolean | void> | boolean | void;
   projectSettings: ProjectSettings;
   allItems: WorkItem[];
   currentUser?: { full_name?: string; email?: string };
@@ -49,6 +49,7 @@ export function WorkItemModal({
   const [externalRef, setExternalRef] = useState('');
   const [metadata, setMetadata] = useState<Record<string, any>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [newMetaKey, setNewMetaKey] = useState('');
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
@@ -65,6 +66,7 @@ export function WorkItemModal({
       setExternalRef(item.external_ref_id || '');
       setMetadata(item.metadata ? { ...item.metadata } : {});
       setShowAddMeta(false);
+      setSaveError(null);
     }
   }, [item, projectSettings]);
 
@@ -112,6 +114,7 @@ export function WorkItemModal({
   const handleSave = async () => {
     if (!title.trim()) return;
     setIsSaving(true);
+    setSaveError(null);
     try {
       await onSave(item.id, {
         title: title.trim(),
@@ -124,15 +127,22 @@ export function WorkItemModal({
         metadata,
       });
       onClose();
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to save changes');
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (confirm(`Delete "${item.title}"? This cannot be undone.`)) {
-      await onDelete(item.id);
-      onClose();
+    setIsSaving(true);
+    try {
+      const deleted = await onDelete(item.id);
+      if (deleted !== false) {
+        onClose();
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -197,6 +207,13 @@ export function WorkItemModal({
 
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {saveError && (
+            <div className="p-3 bg-red-950/70 border border-red-800/60 rounded-xl text-red-300 text-xs flex items-center space-x-2 animate-in fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+              <span>{saveError}</span>
+            </div>
+          )}
+
           {/* Title */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">

@@ -233,11 +233,44 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { id, title, description, status, item_type, assignee, metadata, prev_order, next_order, parent_id } = body;
+    const {
+      id,
+      title,
+      description,
+      status,
+      item_type,
+      assignee,
+      metadata,
+      prev_order,
+      next_order,
+      parent_id,
+      external_ref_id,
+    } = body;
 
     if (!id) {
       return NextResponse.json({ error: '"id" is required' }, { status: 400 });
     }
+
+    // Fetch existing item to check project and current state
+    const { data: existingItem, error: fetchErr } = await supabaseAdmin
+      .from('work_items')
+      .select('id, project_id, item_type, status, parent_id, external_ref_id')
+      .eq('id', id)
+      .eq('tenant_id', authCtx.tenant.id)
+      .single();
+
+    if (fetchErr || !existingItem) {
+      return NextResponse.json({ error: 'Work item not found' }, { status: 404 });
+    }
+
+    // Fetch project settings for schema and hierarchy validation
+    const { data: project } = await supabaseAdmin
+      .from('projects')
+      .select('id, settings')
+      .eq('id', existingItem.project_id)
+      .single();
+
+    const projectSettings = project?.settings;
 
     const updateFields: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -245,11 +278,117 @@ export async function PATCH(req: NextRequest) {
 
     if (title !== undefined) updateFields.title = title;
     if (description !== undefined) updateFields.description = description;
-    if (status !== undefined) updateFields.status = status;
-    if (item_type !== undefined) updateFields.item_type = item_type;
     if (assignee !== undefined) updateFields.assignee = assignee;
-    if (metadata !== undefined) updateFields.metadata = metadata;
-    if (parent_id !== undefined) updateFields.parent_id = parent_id;
+
+    if (metadata !== undefined) {
+      if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
+        return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
+      }
+      updateFields.metadata = metadata;
+    }
+
+    // Validate item_type
+    if (item_type !== undefined) {
+      if (projectSettings?.hierarchy?.length) {
+        const typeValid = projectSettings.hierarchy.some((h: any) => h.type === item_type);
+        if (!typeValid) {
+          return NextResponse.json(
+            {
+              error: `Invalid item_type '${item_type}'. Allowed types: [${projectSettings.hierarchy
+                .map((h: any) => h.type)
+                .join(', ')}]`,
+            },
+            { status: 422 }
+          );
+        }
+      }
+      updateFields.item_type = item_type;
+    }
+
+    // Validate status
+    if (status !== undefined) {
+      if (projectSettings?.statuses?.length) {
+        const statusValid = projectSettings.statuses.some((s: any) => s.id === status);
+        if (!statusValid) {
+          return NextResponse.json(
+            {
+              error: `Invalid status '${status}'. Allowed statuses: [${projectSettings.statuses
+                .map((s: any) => s.id)
+                .join(', ')}]`,
+            },
+            { status: 422 }
+          );
+        }
+      }
+      updateFields.status = status;
+    }
+
+    // Validate and persist external_ref_id
+    if (external_ref_id !== undefined) {
+      if (external_ref_id !== null && typeof external_ref_id === 'string' && external_ref_id.trim() !== '') {
+        const trimmedRef = external_ref_id.trim();
+        const { data: conflict } = await supabaseAdmin
+          .from('work_items')
+          .select('id')
+          .eq('tenant_id', authCtx.tenant.id)
+          .eq('project_id', existingItem.project_id)
+          .eq('external_ref_id', trimmedRef)
+          .neq('id', id)
+          .maybeSingle();
+
+        if (conflict) {
+          return NextResponse.json(
+            { error: `external_ref_id '${trimmedRef}' already exists in this project` },
+            { status: 409 }
+          );
+        }
+        updateFields.external_ref_id = trimmedRef;
+      } else {
+        updateFields.external_ref_id = null;
+      }
+    }
+
+    // Validate parent_id and hierarchy nesting
+    const effectiveType = item_type !== undefined ? item_type : existingItem.item_type;
+    const effectiveParentId = parent_id !== undefined ? parent_id : existingItem.parent_id;
+
+    if (effectiveParentId) {
+      if (effectiveParentId === id) {
+        return NextResponse.json({ error: 'Item cannot be its own parent' }, { status: 400 });
+      }
+
+      const { data: parentItem } = await supabaseAdmin
+        .from('work_items')
+        .select('id, item_type, project_id')
+        .eq('id', effectiveParentId)
+        .eq('tenant_id', authCtx.tenant.id)
+        .single();
+
+      if (!parentItem) {
+        return NextResponse.json({ error: `Parent item '${effectiveParentId}' not found` }, { status: 404 });
+      }
+
+      if (parentItem.project_id !== existingItem.project_id) {
+        return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
+      }
+
+      if (projectSettings?.hierarchy?.length) {
+        const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, projectSettings.hierarchy);
+        if (!nestCheck.valid) {
+          if (parent_id !== undefined) {
+            return NextResponse.json({ error: nestCheck.message }, { status: 422 });
+          }
+          // If caller changed item_type without specifying parent_id, auto-clear incompatible parent
+          updateFields.parent_id = null;
+        } else if (parent_id !== undefined) {
+          updateFields.parent_id = parent_id;
+        }
+      } else if (parent_id !== undefined) {
+        updateFields.parent_id = parent_id;
+      }
+    } else if (parent_id !== undefined) {
+      updateFields.parent_id = null;
+    }
 
     if (prev_order !== undefined || next_order !== undefined) {
       updateFields.order_index = calculateOrderIndex(prev_order, next_order);

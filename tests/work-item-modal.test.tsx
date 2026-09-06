@@ -108,4 +108,61 @@ describe('WorkItemModal component', () => {
       })
     );
   });
+
+  it('displays error banner and keeps modal open when save fails', async () => {
+    const handleSave = vi.fn().mockRejectedValue(new Error('Validation error: duplicate ref'));
+    const handleClose = vi.fn();
+
+    await act(async () => {
+      render(
+        <WorkItemModal
+          item={sampleItem}
+          isOpen={true}
+          onClose={handleClose}
+          onSave={handleSave}
+          onDelete={() => {}}
+          projectSettings={sampleSettings}
+          allItems={[sampleItem]}
+        />
+      );
+    });
+
+    const saveBtn = screen.getByText('Save Changes');
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(handleSave).toHaveBeenCalled();
+    // Modal did not close
+    expect(handleClose).not.toHaveBeenCalled();
+    // Error banner is visible
+    expect(screen.getByText('Validation error: duplicate ref')).toBeDefined();
+  });
+
+  it('delegates deletion to onDelete without prompting twice', async () => {
+    const handleDelete = vi.fn().mockResolvedValue(true);
+    const handleClose = vi.fn();
+
+    await act(async () => {
+      render(
+        <WorkItemModal
+          item={sampleItem}
+          isOpen={true}
+          onClose={handleClose}
+          onSave={() => {}}
+          onDelete={handleDelete}
+          projectSettings={sampleSettings}
+          allItems={[sampleItem]}
+        />
+      );
+    });
+
+    const deleteBtn = screen.getByTitle('Delete work item');
+    await act(async () => {
+      fireEvent.click(deleteBtn);
+    });
+
+    expect(handleDelete).toHaveBeenCalledWith('item-101');
+    expect(handleClose).toHaveBeenCalled();
+  });
 });

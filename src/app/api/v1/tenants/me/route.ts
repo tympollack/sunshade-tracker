@@ -75,14 +75,26 @@ export async function GET(_req: NextRequest) {
       .select('id, tenant_id, user_id, role, created_at')
       .in('tenant_id', tenantIds);
 
-    // Attempt to enrich member details from auth admin if available
+    // Attempt to enrich member details from auth admin if available (with pagination)
     const usersMap = new Map<string, any>();
     try {
       if (typeof service.auth?.admin?.listUsers === 'function') {
-        const { data: authUsers } = await service.auth.admin.listUsers();
-        if (authUsers?.users) {
-          for (const u of authUsers.users) {
-            usersMap.set(u.id, u);
+        let page = 1;
+        const perPage = 100;
+        let hasMore = true;
+        while (hasMore && page <= 10) {
+          const { data: authUsers } = await service.auth.admin.listUsers({ page, perPage });
+          if (authUsers?.users?.length) {
+            for (const u of authUsers.users) {
+              usersMap.set(u.id, u);
+            }
+            if (authUsers.users.length < perPage) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
           }
         }
       }
@@ -95,7 +107,7 @@ export async function GET(_req: NextRequest) {
       user.user_metadata?.name ||
       (user.email ? user.email.split('@')[0] : 'User');
 
-    // Group members by tenant
+    // Group members by tenant without exposing fellow members' private account emails
     const membersByTenant: Record<string, any[]> = {};
     for (const mem of allMembers || []) {
       if (!membersByTenant[mem.tenant_id]) membersByTenant[mem.tenant_id] = [];
@@ -104,7 +116,6 @@ export async function GET(_req: NextRequest) {
         id: mem.id,
         user_id: mem.user_id,
         role: mem.role,
-        email: memUser?.email || (mem.user_id === user.id ? user.email : null),
         full_name:
           memUser?.user_metadata?.full_name ||
           memUser?.user_metadata?.name ||

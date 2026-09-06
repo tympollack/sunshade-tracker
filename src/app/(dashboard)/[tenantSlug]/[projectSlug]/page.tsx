@@ -171,9 +171,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [collapsedSideways, setCollapsedSideways] = useState<Set<string>>(new Set());
   const [collapsedUp, setCollapsedUp] = useState<Set<string>>(new Set());
 
-  // Filter States
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
-  const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
+  // Filter States: null means unconfigured/all-selected (default), [] means explicitly none selected
+  const [selectedStatuses, setSelectedStatuses] = useState<string[] | null>(null);
+  const [selectedLevels, setSelectedLevels] = useState<string[] | null>(null);
+
+  const effectiveSelectedStatuses = useMemo(() => {
+    if (selectedStatuses !== null) return selectedStatuses;
+    return projectSettings.statuses.map((s) => s.id);
+  }, [selectedStatuses, projectSettings.statuses]);
+
+  const effectiveSelectedLevels = useMemo(() => {
+    if (selectedLevels !== null) return selectedLevels;
+    return projectSettings.hierarchy.map((h) => h.type);
+  }, [selectedLevels, projectSettings.hierarchy]);
+
+  // Reset filters when switching to a different project
+  useEffect(() => {
+    setSelectedStatuses(null);
+    setSelectedLevels(null);
+  }, [projectSlug]);
 
   // Drag & Drop
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
@@ -281,9 +297,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   const exists = detail.settings.statuses.some((s: any) => s.id === prev);
                   return exists ? prev : detail.settings.statuses[0].id;
                 });
-                setSelectedStatuses((prev) =>
-                  prev.length === 0 ? detail.settings.statuses.map((s: any) => s.id) : prev
-                );
+                setSelectedStatuses((prev) => {
+                  if (prev === null) return null;
+                  const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
+                  return prev.filter((id) => validIds.has(id));
+                });
               }
               if (detail.settings.hierarchy?.length) {
                 setNewItemType((prev) => {
@@ -292,9 +310,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ? prev
                     : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
                 });
-                setSelectedLevels((prev) =>
-                  prev.length === 0 ? detail.settings.hierarchy.map((h: any) => h.type) : prev
-                );
+                setSelectedLevels((prev) => {
+                  if (prev === null) return null;
+                  const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
+                  return prev.filter((t) => validTypes.has(t));
+                });
               }
             }
           }
@@ -367,13 +387,30 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Update item hierarchy type / level ──────────────────────────────────
   const handleUpdateType = async (itemId: string, newType: string) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+
+    // Check if current parent is valid for newType
+    const newHierarchyConfig = projectSettings.hierarchy.find((h) => h.type === newType);
+    const allowedParents = newHierarchyConfig?.allowed_parents || [];
+    let newParentId = item.parent_id;
+
+    if (item.parent_id) {
+      const parentItem = items.find((it) => it.id === item.parent_id);
+      if (parentItem && !allowedParents.includes(parentItem.item_type)) {
+        newParentId = null; // Clear incompatible parent
+      }
+    }
+
     setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, item_type: newType } : it))
+      prev.map((it) =>
+        it.id === itemId ? { ...it, item_type: newType, parent_id: newParentId } : it
+      )
     );
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'PATCH',
-        body: JSON.stringify({ id: itemId, item_type: newType }),
+        body: JSON.stringify({ id: itemId, item_type: newType, parent_id: newParentId }),
       });
       if (!res.ok) fetchData();
     } catch {
@@ -383,31 +420,39 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Save work item from modal ───────────────────────────────────────────
   const handleSaveModalItem = async (itemId: string, updates: Partial<WorkItem>) => {
-    setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, ...updates } : it))
-    );
-    try {
-      const res = await apiFetch('/api/v1/items', {
-        method: 'PATCH',
-        body: JSON.stringify({ id: itemId, ...updates }),
-      });
-      if (!res.ok) fetchData();
-    } catch {
-      fetchData();
+    const res = await apiFetch('/api/v1/items', {
+      method: 'PATCH',
+      body: JSON.stringify({ id: itemId, ...updates }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to save changes (${res.status})`);
     }
+    const data = await res.json();
+    setItems((prev) =>
+      prev
+        .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
+        .sort((a, b) => a.order_index - b.order_index)
+    );
   };
 
   // ─── Delete item ─────────────────────────────────────────────────────────
-  const handleDeleteItem = async (itemId: string) => {
-    if (!confirm('Delete this item?')) return;
+  const handleDeleteItem = async (itemId: string): Promise<boolean> => {
+    if (!confirm('Delete this item? This cannot be undone.')) return false;
     setItems((prev) => prev.filter((it) => it.id !== itemId));
     try {
-      await apiFetch('/api/v1/items', {
+      const res = await apiFetch('/api/v1/items', {
         method: 'DELETE',
         body: JSON.stringify({ id: itemId }),
       });
+      if (!res.ok) {
+        fetchData();
+        return false;
+      }
+      return true;
     } catch {
       fetchData();
+      return false;
     }
   };
 
@@ -444,23 +489,51 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
 
-    const targetColItems = items.filter(
-      (it) => it.status === targetColId && it.id !== itemId
-    );
+    // All items in the target column sorted by order_index, excluding the dragged item
+    const allColItems = items
+      .filter((it) => it.status === targetColId && it.id !== itemId)
+      .sort((a, b) => a.order_index - b.order_index);
 
-    let insertAt = typeof dropIndex === 'number' && dropIndex >= 0 ? dropIndex : targetColItems.length;
-    if (insertAt > targetColItems.length) insertAt = targetColItems.length;
+    // Visible items in the target column based on current hierarchy filters
+    const visibleColItems = items
+      .filter(
+        (it) =>
+          it.status === targetColId &&
+          effectiveSelectedLevels.includes(it.item_type)
+      )
+      .sort((a, b) => a.order_index - b.order_index);
 
-    const prevItem = insertAt > 0 ? targetColItems[insertAt - 1] : null;
-    const nextItem = insertAt < targetColItems.length ? targetColItems[insertAt] : null;
+    let prevItem: WorkItem | null = null;
+    let nextItem: WorkItem | null = null;
+
+    if (
+      typeof dropIndex === 'number' &&
+      dropIndex >= 0 &&
+      dropIndex < visibleColItems.length
+    ) {
+      const targetCard = visibleColItems[dropIndex];
+      const targetPos = allColItems.findIndex((it) => it.id === targetCard.id);
+      if (targetPos >= 0) {
+        prevItem = targetPos > 0 ? allColItems[targetPos - 1] : null;
+        nextItem = allColItems[targetPos];
+      } else {
+        prevItem = allColItems.length > 0 ? allColItems[allColItems.length - 1] : null;
+        nextItem = null;
+      }
+    } else {
+      prevItem = allColItems.length > 0 ? allColItems[allColItems.length - 1] : null;
+      nextItem = null;
+    }
 
     const newOrder = calculateOrderIndex(prevItem?.order_index, nextItem?.order_index);
 
-    // Optimistic update
+    // Optimistically update and keep items sorted by order_index
     setItems((prev) =>
-      prev.map((it) =>
-        it.id === itemId ? { ...it, status: targetColId, order_index: newOrder } : it
-      )
+      prev
+        .map((it) =>
+          it.id === itemId ? { ...it, status: targetColId, order_index: newOrder } : it
+        )
+        .sort((a, b) => a.order_index - b.order_index)
     );
 
     setDraggedItemId(null);
@@ -535,12 +608,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const unmappedItems = useMemo(
     () =>
-      items.filter(
-        (it) =>
-          !knownStatusIds.has(it.status) &&
-          (selectedLevels.length === 0 || selectedLevels.includes(it.item_type))
-      ),
-    [items, knownStatusIds, selectedLevels]
+      items
+        .filter(
+          (it) =>
+            !knownStatusIds.has(it.status) &&
+            effectiveSelectedLevels.includes(it.item_type)
+        )
+        .sort((a, b) => a.order_index - b.order_index),
+    [items, knownStatusIds, effectiveSelectedLevels]
   );
 
   // ─── Create item ─────────────────────────────────────────────────────────
@@ -896,22 +971,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <FilterMultiSelect
                   label="Status"
                   options={statusFilterOptions}
-                  selectedIds={selectedStatuses}
+                  selectedIds={effectiveSelectedStatuses}
                   onChange={setSelectedStatuses}
                 />
                 <FilterMultiSelect
                   label="Level"
                   options={levelFilterOptions}
-                  selectedIds={selectedLevels}
+                  selectedIds={effectiveSelectedLevels}
                   onChange={setSelectedLevels}
                 />
-                {(selectedStatuses.length < projectSettings.statuses.length ||
-                  selectedLevels.length < projectSettings.hierarchy.length) && (
+                {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
+                  effectiveSelectedLevels.length < projectSettings.hierarchy.length) && (
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedStatuses(projectSettings.statuses.map((s) => s.id));
-                      setSelectedLevels(projectSettings.hierarchy.map((h) => h.type));
+                      setSelectedStatuses(null);
+                      setSelectedLevels(null);
                     }}
                     className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors"
                   >
@@ -968,13 +1043,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 }`}
               >
                 {projectSettings.statuses
-                  .filter((col) => selectedStatuses.length === 0 || selectedStatuses.includes(col.id))
+                  .filter((col) => effectiveSelectedStatuses.includes(col.id))
                   .map((col: StatusDefinition) => {
-                    const colItems = items.filter(
-                      (it) =>
-                        it.status === col.id &&
-                        (selectedLevels.length === 0 || selectedLevels.includes(it.item_type))
-                    );
+                    const colItems = items
+                      .filter(
+                        (it) =>
+                          it.status === col.id &&
+                          effectiveSelectedLevels.includes(it.item_type)
+                      )
+                      .sort((a, b) => a.order_index - b.order_index);
 
                     const isCollapsedSideways = collapsedSideways.has(col.id);
                     const isCollapsedUp = collapsedUp.has(col.id);
