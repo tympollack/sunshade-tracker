@@ -3,6 +3,7 @@ export interface HierarchyLevel {
   label: string;
   level: number;
   allowed_parents: string[];
+  color?: string;
 }
 
 export interface StatusDefinition {
@@ -30,6 +31,8 @@ export interface Tenant {
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
+  /** Soft-delete timestamp. NULL = active. Set to ISO string when deleted. */
+  deleted_at?: string | null;
 }
 
 export interface Project {
@@ -42,6 +45,8 @@ export interface Project {
   settings: ProjectSettings;
   created_at: string;
   updated_at: string;
+  /** Soft-delete timestamp. NULL = active. Set to ISO string when deleted. */
+  deleted_at?: string | null;
 }
 
 export interface WorkItem {
@@ -59,10 +64,17 @@ export interface WorkItem {
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
+  /** Soft-delete timestamp. NULL = active. Set to ISO string when deleted. */
+  deleted_at?: string | null;
 }
 
 export interface WorkItemWithChildren extends WorkItem {
   children?: WorkItemWithChildren[];
+}
+
+export interface WorkItemNode extends WorkItem {
+  depth: number;
+  children?: WorkItemNode[];
 }
 
 export interface IngestItemPayload {
@@ -100,4 +112,20 @@ export interface ReorderItemPayload {
   previous_order_index?: number | null;
   next_order_index?: number | null;
   new_parent_id?: string | null;
+}
+
+/** Row from tracker.tenant_members */
+export interface TenantMember {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  /** 'owner' | 'admin' | 'member' */
+  role: string;
+  created_at: string;
+}
+
+/** Tenant enriched with the current user's membership role — returned by /api/v1/tenants/me */
+export interface TenantWithRole extends Tenant {
+  role: string;
+  member_since: string;
 }

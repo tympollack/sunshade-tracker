@@ -1,36 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. Authenticate via Tenant API Key
-    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
-    const xApiKey = req.headers.get('x-api-key');
-
-    let apiKey = '';
-    if (authHeader?.startsWith('Bearer ')) {
-      apiKey = authHeader.replace('Bearer ', '').trim();
-    } else if (xApiKey) {
-      apiKey = xApiKey.trim();
-    }
-
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'Missing or malformed Authorization header. Use Bearer <api_key> or x-api-key' },
-        { status: 401 }
-      );
-    }
-
-    const { data: tenant, error: tenantErr } = await supabaseAdmin
-      .from('tenants')
-      .select('id, slug')
-      .eq('api_key', apiKey)
-      .single();
-
-    if (tenantErr || !tenant) {
-      return NextResponse.json({ error: 'Invalid API Key' }, { status: 401 });
-    }
+    // 1. Authenticate — supports both session cookies (dashboard Spark tab)
+    //    and Bearer API keys (headless pipeline clients like Gemini Spark agents)
+    const auth = await authenticate(req);
+    if (auth.errorResponse) return auth.errorResponse;
+    const { tenant } = auth.context;
 
     // 2. Parse Body & Resolve Target Project
     const body = await req.json();
@@ -47,12 +26,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch Project Settings to validate types and statuses dynamically
-    const { data: project, error: projErr } = await supabaseAdmin
+    let projectQuery: any = supabaseAdmin
       .from('projects')
       .select('id, settings')
       .eq('tenant_id', tenant.id)
-      .eq('slug', project_slug)
-      .single();
+      .eq('slug', project_slug);
+
+    if (typeof projectQuery.is === 'function') {
+      projectQuery = projectQuery.is('deleted_at', null); // only ingest into active projects
+    }
+
+    const { data: project, error: projErr } = await projectQuery.single();
 
     if (projErr || !project) {
       return NextResponse.json({ error: `Project '${project_slug}' not found` }, { status: 404 });
@@ -63,10 +47,16 @@ export async function POST(req: NextRequest) {
     const defaultType = settings.hierarchy?.[settings.hierarchy.length - 1]?.type || 'task';
 
     // 3. Query existing maximum order_index to append sequentially
-    const { data: lastItem } = await supabaseAdmin
+    let lastItemQuery: any = supabaseAdmin
       .from('work_items')
       .select('order_index')
-      .eq('project_id', project.id)
+      .eq('project_id', project.id);
+
+    if (typeof lastItemQuery.is === 'function') {
+      lastItemQuery = lastItemQuery.is('deleted_at', null);
+    }
+
+    const { data: lastItem } = await lastItemQuery
       .order('order_index', { ascending: false })
       .limit(1)
       .single();
@@ -85,12 +75,17 @@ export async function POST(req: NextRequest) {
         if (batchRefMap.has(item.parent_ref_id)) {
           resolvedParentId = batchRefMap.get(item.parent_ref_id)!;
         } else {
-          const { data: parentItem } = await supabaseAdmin
+          let parentQuery: any = supabaseAdmin
             .from('work_items')
             .select('id')
             .eq('project_id', project.id)
-            .eq('external_ref_id', item.parent_ref_id)
-            .maybeSingle();
+            .eq('external_ref_id', item.parent_ref_id);
+
+          if (typeof parentQuery.is === 'function') {
+            parentQuery = parentQuery.is('deleted_at', null); // don't link to soft-deleted parents
+          }
+
+          const { data: parentItem } = await parentQuery.maybeSingle();
 
           if (parentItem) {
             resolvedParentId = parentItem.id;
@@ -115,11 +110,16 @@ export async function POST(req: NextRequest) {
 
       currentOrder += 1000.0;
 
-      // Upsert by project_id and external_ref_id if provided; otherwise insert
+      // Upsert by project_id and external_ref_id if provided; otherwise insert.
+      // Explicitly setting deleted_at: null restores any previously soft-deleted row
+      // with the same external_ref_id rather than silently updating a hidden record.
       if (item.external_ref_id) {
         const { data: upserted, error: upsertErr } = await supabaseAdmin
           .from('work_items')
-          .upsert(itemPayload, { onConflict: 'project_id, external_ref_id' })
+          .upsert(
+            { ...itemPayload, deleted_at: null }, // clear deleted_at to restore soft-deleted rows
+            { onConflict: 'project_id, external_ref_id' }
+          )
           .select()
           .single();
 

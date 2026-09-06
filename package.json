@@ -10,10 +10,12 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "generate:assets": "node scripts/generate-assets.mjs"
   },
   "dependencies": {
     "@sunshade/ui": "file:./packages/ui",
+    "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.49.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.475.0",

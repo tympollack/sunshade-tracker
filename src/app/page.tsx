@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Layers, Zap, Database, ShieldCheck, Terminal, Cpu, ArrowRight, GitFork, CheckCircle2 } from 'lucide-react';
+import { SunShadeLogo } from '@/components/SunShadeLogo';
 
 export default function LandingPage() {
   return (
@@ -7,17 +8,13 @@ export default function LandingPage() {
       {/* Navigation */}
       <header className="border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
-              ST
-            </div>
-            <span className="font-semibold tracking-tight text-white text-lg">
-              SunShade <span className="text-emerald-400">Tracker</span>
-            </span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800/50">
-              v1.0 Live
-            </span>
-          </div>
+          <SunShadeLogo
+            variant="horizontal"
+            size="sm"
+            showBadge
+            badgeText="v1.0 Live"
+            href="/"
+          />
           <div className="flex items-center space-x-4">
             <Link
               href="/sunshade/portfolio"

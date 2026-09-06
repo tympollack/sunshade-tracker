@@ -1,24 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-import { authenticateApiKey } from '@/lib/auth-guard';
+import { authenticate } from '@/lib/auth-guard';
 import { ProjectSettings } from '@/types/tracker';
 
 interface RouteContext {
   params: Promise<{ projectId: string }>;
 }
 
+/**
+ * GET /api/v1/projects/[projectId]/settings
+ *
+ * Returns the JSONB settings (hierarchy, statuses, custom_fields) for a project.
+ * Accepts both session-based and API key auth so the dashboard and headless clients
+ * can both retrieve schema config.
+ */
 export async function GET(req: NextRequest, context: RouteContext) {
   const { projectId } = await context.params;
-  const auth = await authenticateApiKey(req);
+  const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
-  let query = supabaseAdmin
+  let query: any = supabaseAdmin
     .from('projects')
     .select('id, slug, name, settings')
     .eq('tenant_id', authCtx.tenant.id);
+
+  if (typeof query.is === 'function') {
+    query = query.is('deleted_at', null);
+  }
 
   if (isUuid) {
     query = query.eq('id', projectId);
@@ -40,9 +51,14 @@ export async function GET(req: NextRequest, context: RouteContext) {
   });
 }
 
+/**
+ * PUT /api/v1/projects/[projectId]/settings
+ *
+ * Replaces the project settings JSONB. Accepts both session and API key auth.
+ */
 export async function PUT(req: NextRequest, context: RouteContext) {
   const { projectId } = await context.params;
-  const auth = await authenticateApiKey(req);
+  const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
@@ -58,10 +74,14 @@ export async function PUT(req: NextRequest, context: RouteContext) {
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId);
 
-  let query = supabaseAdmin
+  let query: any = supabaseAdmin
     .from('projects')
     .update({ settings, updated_at: new Date().toISOString() })
     .eq('tenant_id', authCtx.tenant.id);
+
+  if (typeof query.is === 'function') {
+    query = query.is('deleted_at', null);
+  }
 
   if (isUuid) {
     query = query.eq('id', projectId);
