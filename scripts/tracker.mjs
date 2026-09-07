@@ -42,8 +42,8 @@ function calculateOrderIndex(prevOrder, nextOrder) {
 function loadConfig() {
   const config = {
     baseUrl: process.env.TRACKER_BASE_URL || 'https://track.sunshade.icu',
-    apiKey: process.env.TRACKER_API_KEY || 'tk_live_pym-energy_aca7a776ac614dc4',
-    tenantSlug: process.env.TRACKER_TENANT || 'pym-energy',
+    apiKey: process.env.TRACKER_API_KEY || '',
+    tenantSlug: process.env.TRACKER_TENANT || '',
     projectSlug: process.env.TRACKER_PROJECT || 'sunshade-tracker',
   };
 
@@ -54,10 +54,10 @@ function loadConfig() {
       try {
         if (filename.endsWith('.json')) {
           const fileData = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-          if (fileData.baseUrl) config.baseUrl = fileData.baseUrl;
-          if (fileData.apiKey) config.apiKey = fileData.apiKey;
-          if (fileData.tenantSlug) config.tenantSlug = fileData.tenantSlug;
-          if (fileData.projectSlug) config.projectSlug = fileData.projectSlug;
+          if (fileData.baseUrl && !config.baseUrl) config.baseUrl = fileData.baseUrl;
+          if (fileData.apiKey && !config.apiKey) config.apiKey = fileData.apiKey;
+          if (fileData.tenantSlug && !config.tenantSlug) config.tenantSlug = fileData.tenantSlug;
+          if (fileData.projectSlug && !config.projectSlug) config.projectSlug = fileData.projectSlug;
         } else {
           const lines = fs.readFileSync(fullPath, 'utf8').split('\n');
           for (const line of lines) {
@@ -65,10 +65,10 @@ function loadConfig() {
             if (match) {
               const [, key, val] = match;
               const cleanVal = (val || '').trim().replace(/^['"]|['"]$/g, '');
-              if (key === 'TRACKER_BASE_URL') config.baseUrl = cleanVal;
-              if (key === 'TRACKER_API_KEY') config.apiKey = cleanVal;
-              if (key === 'TRACKER_TENANT') config.tenantSlug = cleanVal;
-              if (key === 'TRACKER_PROJECT') config.projectSlug = cleanVal;
+              if (key === 'TRACKER_BASE_URL' && !config.baseUrl) config.baseUrl = cleanVal;
+              if (key === 'TRACKER_API_KEY' && !config.apiKey) config.apiKey = cleanVal;
+              if (key === 'TRACKER_TENANT' && !config.tenantSlug) config.tenantSlug = cleanVal;
+              if (key === 'TRACKER_PROJECT' && !config.projectSlug) config.projectSlug = cleanVal;
             }
           }
         }
@@ -112,11 +112,27 @@ function parseArgs(rawArgs) {
   return { positional, options };
 }
 
-// ─── HTTP Client ──────────────────────────────────────────────────────────────
+// ─── HTTP Client & Security Origin Check ───────────────────────────────────────
 async function apiFetch(config, endpoint, options = {}) {
-  const url = endpoint.startsWith('http')
-    ? endpoint
-    : `${config.baseUrl.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
+  if (!config.apiKey) {
+    console.error('Error: Tracker API key is missing.');
+    console.error('Please set TRACKER_API_KEY environment variable, create .tracker.json (see .tracker.json.example), or pass --key.');
+    process.exit(1);
+  }
+
+  let targetUrl;
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+    const parsedTarget = new URL(endpoint);
+    const parsedBase = new URL(config.baseUrl);
+    if (parsedTarget.origin !== parsedBase.origin) {
+      console.error(`Security Error: Refusing to attach bearer credentials to external origin '${parsedTarget.origin}'.`);
+      console.error(`Destination origin must match configured baseUrl '${parsedBase.origin}'.`);
+      process.exit(1);
+    }
+    targetUrl = endpoint;
+  } else {
+    targetUrl = `${config.baseUrl.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
+  }
 
   const headers = {
     'Authorization': `Bearer ${config.apiKey}`,
@@ -129,7 +145,7 @@ async function apiFetch(config, endpoint, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(targetUrl, { ...options, headers });
   let data;
   const text = await res.text();
   try {
@@ -141,23 +157,48 @@ async function apiFetch(config, endpoint, options = {}) {
   return { status: res.status, ok: res.ok, data };
 }
 
+// ─── Project Cache & Lookup ───────────────────────────────────────────────────
+const projectCache = new Map();
+async function getProjectBySlug(config, slug) {
+  if (!slug) return null;
+  if (projectCache.has(slug)) return projectCache.get(slug);
+
+  const tenantParam = config.tenantSlug ? `?tenant_slug=${encodeURIComponent(config.tenantSlug)}` : '';
+  const res = await apiFetch(config, `/api/v1/projects${tenantParam}`);
+  if (res.ok && Array.isArray(res.data?.projects)) {
+    for (const p of res.data.projects) {
+      projectCache.set(p.slug, p);
+    }
+  }
+  return projectCache.get(slug) || null;
+}
+
 // ─── UUID Detection & Resolution ──────────────────────────────────────────────
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function resolveItem(config, idOrRef, projectSlug) {
   if (!idOrRef) return null;
 
-  // If it's a UUID, try direct get
+  const targetProjectSlug = projectSlug || config.projectSlug;
+  const project = targetProjectSlug ? await getProjectBySlug(config, targetProjectSlug) : null;
+
+  // If it's a UUID, verify it belongs to the intended project
   if (UUID_REGEX.test(idOrRef)) {
-    const res = await apiFetch(config, `/api/v1/items?id=${idOrRef}&tenant_slug=${config.tenantSlug}`);
+    const tenantParam = config.tenantSlug ? `&tenant_slug=${encodeURIComponent(config.tenantSlug)}` : '';
+    const res = await apiFetch(config, `/api/v1/items?id=${idOrRef}${tenantParam}`);
     if (res.ok && res.data?.item) {
-      return res.data.item;
+      const it = res.data.item;
+      if (!project || it.project_id === project.id) {
+        return it;
+      }
+      // Belongs to a different project
+      return null;
     }
   }
 
   // Look up by external_ref_id or fallback scan across project items
-  const proj = projectSlug || config.projectSlug;
-  const listRes = await apiFetch(config, `/api/v1/items?project_slug=${proj}`);
+  if (!targetProjectSlug) return null;
+  const listRes = await apiFetch(config, `/api/v1/items?project_slug=${encodeURIComponent(targetProjectSlug)}`);
   if (listRes.ok && Array.isArray(listRes.data?.items)) {
     const found = listRes.data.items.find(
       (it) => it.external_ref_id === idOrRef || it.id === idOrRef
@@ -222,7 +263,7 @@ async function cmdList(config, positional, options) {
   const projectSlug = options.project || config.projectSlug;
   const queryParts = [`project_slug=${encodeURIComponent(projectSlug)}`];
   if (options.status) queryParts.push(`status=${encodeURIComponent(options.status)}`);
-  if (options.type) queryParts.push(`type=${encodeURIComponent(options.type)}`);
+  if (options.type) queryParts.push(`item_type=${encodeURIComponent(options.type)}`);
 
   const res = await apiFetch(config, `/api/v1/items?${queryParts.join('&')}`);
   if (!res.ok) {
@@ -365,13 +406,53 @@ async function cmdUpdate(config, positional, options) {
     }
   }
 
-  // Handle order index / ordering
-  if (options.order) {
-    updatePayload.order_index = Number(options.order);
-  } else if (options['order-after']) {
-    const prevItem = await resolveItem(config, options['order-after'], projectSlug);
-    if (prevItem) {
-      updatePayload.prev_order = prevItem.order_index;
+  // Handle order index / ordering via fractional indexing (prev_order & next_order)
+  if (options.order && !options['order-after'] && !options['order-before']) {
+    console.warn('Warning: Direct --order index is not supported by the tracker API (which uses fractional prev_order / next_order). Use --order-after <id|ref> or --order-before <id|ref> to position an item.');
+  }
+
+  if (options['order-after'] || options['order-before']) {
+    const effectiveStatus = updatePayload.status || item.status;
+    const listRes = await apiFetch(config, `/api/v1/items?project_slug=${encodeURIComponent(projectSlug)}&status=${encodeURIComponent(effectiveStatus)}`);
+    if (!listRes.ok || !Array.isArray(listRes.data?.items)) {
+      console.error(`Failed to fetch project items for ordering (${listRes.status}):`, listRes.data);
+      process.exit(1);
+    }
+
+    const colItems = listRes.data.items
+      .filter((it) => it.id !== item.id)
+      .sort((a, b) => a.order_index - b.order_index);
+
+    if (options['order-after']) {
+      const prevTarget = await resolveItem(config, options['order-after'], projectSlug);
+      if (!prevTarget) {
+        console.error(`Error: Reference item '${options['order-after']}' for --order-after not found.`);
+        process.exit(1);
+      }
+      const prevPos = colItems.findIndex((it) => it.id === prevTarget.id);
+      if (prevPos === -1) {
+        updatePayload.prev_order = prevTarget.order_index;
+      } else {
+        updatePayload.prev_order = colItems[prevPos].order_index;
+        if (prevPos + 1 < colItems.length) {
+          updatePayload.next_order = colItems[prevPos + 1].order_index;
+        }
+      }
+    } else if (options['order-before']) {
+      const nextTarget = await resolveItem(config, options['order-before'], projectSlug);
+      if (!nextTarget) {
+        console.error(`Error: Reference item '${options['order-before']}' for --order-before not found.`);
+        process.exit(1);
+      }
+      const nextPos = colItems.findIndex((it) => it.id === nextTarget.id);
+      if (nextPos === -1) {
+        updatePayload.next_order = nextTarget.order_index;
+      } else {
+        updatePayload.next_order = colItems[nextPos].order_index;
+        if (nextPos > 0) {
+          updatePayload.prev_order = colItems[nextPos - 1].order_index;
+        }
+      }
     }
   }
 
@@ -402,7 +483,7 @@ async function cmdUpdate(config, positional, options) {
   console.log(`\n✓ Work item '${item.external_ref_id || item.id}' updated successfully:`);
   console.log(`  Status: ${res.data.item?.status}`);
   console.log(`  Title:  ${res.data.item?.title}`);
-  if (updatePayload.order_index || updatePayload.prev_order) {
+  if (updatePayload.prev_order !== undefined || updatePayload.next_order !== undefined) {
     console.log(`  Order:  ${res.data.item?.order_index}`);
   }
   console.log();
@@ -423,32 +504,54 @@ async function cmdComplete(config, positional, options) {
     process.exit(1);
   }
 
-  // Query all project items to find last complete order_index
-  const listRes = await apiFetch(config, `/api/v1/items?project_slug=${projectSlug}`);
-  let lastOrder = 1000.0;
-  if (listRes.ok && Array.isArray(listRes.data?.items)) {
-    const completeItems = listRes.data.items
-      .filter((it) => it.status === 'complete' && it.id !== item.id)
-      .sort((a, b) => a.order_index - b.order_index);
+  // Resolve project schema to detect terminal status
+  const project = await getProjectBySlug(config, projectSlug);
+  const statuses = project?.settings?.statuses || [];
 
-    if (completeItems.length > 0) {
-      lastOrder = completeItems[completeItems.length - 1].order_index;
+  let terminalStatus = options.status;
+  if (!terminalStatus) {
+    const foundTerminal = statuses.find((s) => /^(complete|completed|done|closed|finished)$/i.test(s.id));
+    if (foundTerminal) {
+      terminalStatus = foundTerminal.id;
+    } else if (statuses.length > 0) {
+      terminalStatus = statuses[statuses.length - 1].id;
+    } else {
+      terminalStatus = 'complete';
     }
   }
 
-  const newOrder = calculateOrderIndex(lastOrder, undefined);
+  // Query all project items to find items in terminal status
+  const listRes = await apiFetch(config, `/api/v1/items?project_slug=${encodeURIComponent(projectSlug)}`);
+  if (!listRes.ok || !Array.isArray(listRes.data?.items)) {
+    console.error(`Failed to fetch project items for completion ordering (${listRes.status}):`, listRes.data);
+    process.exit(1);
+  }
+
+  const completedItems = listRes.data.items
+    .filter((it) => it.status === terminalStatus && it.id !== item.id)
+    .sort((a, b) => a.order_index - b.order_index);
+
+  let prevOrder = undefined;
+  if (completedItems.length > 0) {
+    prevOrder = completedItems[completedItems.length - 1].order_index;
+  }
+
   const metadata = { ...(item.metadata || {}) };
   if (options.pr) metadata.pr_url = options.pr;
   if (options.commit) metadata.commit_hash = options.commit;
 
+  const patchBody = {
+    id: item.id,
+    status: terminalStatus,
+    metadata,
+  };
+  if (prevOrder !== undefined) {
+    patchBody.prev_order = prevOrder;
+  }
+
   const res = await apiFetch(config, '/api/v1/items', {
     method: 'PATCH',
-    body: {
-      id: item.id,
-      status: 'complete',
-      prev_order: lastOrder,
-      metadata,
-    },
+    body: patchBody,
   });
 
   if (!res.ok) {
@@ -457,8 +560,8 @@ async function cmdComplete(config, positional, options) {
   }
 
   console.log(`\n✓ Work item completed: [${item.external_ref_id || item.id}] ${item.title}`);
-  console.log(`  Status:      complete`);
-  console.log(`  Order Index: ${res.data.item?.order_index || newOrder}`);
+  console.log(`  Status:      ${res.data.item?.status || terminalStatus}`);
+  console.log(`  Order Index: ${res.data.item?.order_index}`);
   if (metadata.pr_url) console.log(`  PR:          ${metadata.pr_url}`);
   if (metadata.commit_hash) console.log(`  Commit:      ${metadata.commit_hash}`);
   console.log();
@@ -550,7 +653,8 @@ async function cmdIngest(config, positional, options) {
 
 // ─── Command: PROJECTS ────────────────────────────────────────────────────────
 async function cmdProjects(config, positional, options) {
-  const res = await apiFetch(config, `/api/v1/projects?tenant_slug=${config.tenantSlug}`);
+  const tenantParam = config.tenantSlug ? `?tenant_slug=${encodeURIComponent(config.tenantSlug)}` : '';
+  const res = await apiFetch(config, `/api/v1/projects${tenantParam}`);
   if (!res.ok) {
     console.error(`Failed to fetch projects (${res.status}):`, res.data);
     process.exit(1);
@@ -562,7 +666,7 @@ async function cmdProjects(config, positional, options) {
     return;
   }
 
-  console.log(`\nWorkspace: ${config.tenantSlug} (${projects.length} projects)`);
+  console.log(`\nWorkspace Projects (${projects.length} projects)`);
   console.log('─'.repeat(80));
   for (const p of projects) {
     console.log(`Project: ${p.name} (slug: ${p.slug}, id: ${p.id})`);
@@ -624,16 +728,31 @@ Commands:
 
 Global Options:
   --project <slug>     Target project slug (default: sunshade-tracker)
-  --tenant <slug>      Target tenant slug (default: pym-energy)
+  --tenant <slug>      Target tenant slug (defaults from config)
   --key <api-key>      Override API bearer token
   --base-url <url>     Override API base URL (default: https://track.sunshade.icu)
   --json, -j           Output raw JSON
 
+List Options:
+  --status <status>    Filter items by status
+  --type <type>        Filter items by item_type
+  --sprint <name>      Filter items by sprint metadata
+  --assignee <user>    Filter items by assignee
+
+Update Options:
+  --status <status>         Update item status
+  --order-after <id|ref>    Place item immediately after reference item
+  --order-before <id|ref>   Place item immediately before reference item
+  --assignee <user>         Update assignee (use 'none' to unassign)
+  --points <n>              Update story points
+  --sprint <name>           Update sprint
+
 Examples:
   node scripts/tracker.mjs get TASK-TRK-CARD-LIMITS
-  node scripts/tracker.mjs list --status in_progress
+  node scripts/tracker.mjs list --status in_progress --type task
   node scripts/tracker.mjs complete TASK-TRK-CARD-LIMITS --pr https://github.com/...
   node scripts/tracker.mjs update TASK-101 --status in_progress --assignee tympollack
+  node scripts/tracker.mjs update TASK-101 --order-after TASK-100
   node scripts/tracker.mjs create --title "New Task" --type task --points 3 --parent STORY-101
   node scripts/tracker.mjs ingest ./scratch/payload.json
 `);
@@ -714,4 +833,3 @@ if (isDirectExecution) {
     process.exit(1);
   });
 }
-

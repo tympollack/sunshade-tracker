@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://track.sunshade.icu",
+  "apiKey": "your_tracker_api_key_here",
+  "tenantSlug": "your_tenant_slug",
+  "projectSlug": "your_project_slug"
+}
