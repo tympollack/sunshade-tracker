@@ -121,20 +121,27 @@ export async function GET(req: NextRequest) {
         (p.settings?.statuses || []).forEach((st: any) => {
           if (!statusMap.has(st.id)) {
             statusMap.set(st.id, st);
+          } else {
+            const existing = statusMap.get(st.id);
+            if (typeof st.order === 'number' && (typeof existing.order !== 'number' || st.order < existing.order)) {
+              statusMap.set(st.id, { ...existing, order: st.order });
+            }
           }
         });
       });
 
       if (statusMap.size === 0) {
-        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8' });
-        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6' });
-        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981' });
+        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 0 });
+        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6', order: 1 });
+        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981', order: 2 });
       }
 
-      const columns = Array.from(statusMap.values()).map((st) => ({
-        status: st,
-        items: items.filter((i) => i.status === st.id),
-      }));
+      const columns = Array.from(statusMap.values())
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id))
+        .map((st) => ({
+          status: st,
+          items: items.filter((i) => i.status === st.id),
+        }));
 
       return NextResponse.json({
         workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },

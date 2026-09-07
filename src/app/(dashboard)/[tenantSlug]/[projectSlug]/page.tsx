@@ -27,7 +27,7 @@ import {
   GripVertical,
   Calendar,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
 import { buildTree } from '@/lib/tree';
 import { calculateOrderIndex } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
@@ -215,30 +215,38 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return Array.from(set).sort();
   }, [items, projectSettings.sprint_settings]);
 
-  // Set default sprint based on projectSettings.sprint_settings
+  const lastSprintInitializedProjectRef = useRef<string | null>(null);
+
+  // Set default sprint based on projectSettings.sprint_settings only on project initialization
   useEffect(() => {
+    if (lastSprintInitializedProjectRef.current === projectSlug) return;
     if (projectSettings.sprint_settings?.default_sprint) {
       const def = projectSettings.sprint_settings.default_sprint;
       if (def === 'all') {
         setSelectedSprint('all');
+        lastSprintInitializedProjectRef.current = projectSlug;
       } else if (def === 'current') {
         const curr = projectSettings.sprint_settings.sprints?.find((s: any) => s.is_current)?.name;
         if (curr) {
           setSelectedSprint(curr);
+          lastSprintInitializedProjectRef.current = projectSlug;
         } else if (availableSprints.length > 0) {
           setSelectedSprint(availableSprints[0]);
+          lastSprintInitializedProjectRef.current = projectSlug;
         }
       } else if (availableSprints.includes(def)) {
         setSelectedSprint(def);
+        lastSprintInitializedProjectRef.current = projectSlug;
       }
     }
-  }, [projectSettings.sprint_settings, availableSprints]);
+  }, [projectSlug, projectSettings.sprint_settings, availableSprints]);
 
   // Reset filters when switching to a different project
   useEffect(() => {
     setSelectedStatuses(null);
     setSelectedLevels(null);
     setSelectedSprint('all');
+    lastSprintInitializedProjectRef.current = null;
   }, [projectSlug]);
 
   // Drag & Drop
@@ -305,6 +313,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
     return projectSettings;
   }, [editingItem, allProjects, projectSettings]);
+
+  const getItemProjectSettings = useCallback((item: WorkItem | null | undefined): ProjectSettings => {
+    if (!item || !isAllProjects) return projectSettings;
+    const proj = allProjects.find(
+      (p) => p.id === item.project_id || p.slug === item.project_id
+    );
+    if (proj && proj.settings) {
+      return {
+        ...proj.settings,
+        hierarchy: (proj.settings.hierarchy || []).map((h: any) => ({
+          ...h,
+          color: h.color || getDefaultLevelHex(h.level),
+        })),
+        statuses: proj.settings.statuses || [],
+      };
+    }
+    return projectSettings;
+  }, [isAllProjects, allProjects, projectSettings]);
+
+  const getItemHierarchy = useCallback((item: WorkItem): HierarchyLevel[] => {
+    return getItemProjectSettings(item).hierarchy || projectSettings.hierarchy;
+  }, [getItemProjectSettings, projectSettings.hierarchy]);
+
+  const getItemStatuses = useCallback((item: WorkItem): StatusDefinition[] => {
+    return getItemProjectSettings(item).statuses || projectSettings.statuses;
+  }, [getItemProjectSettings, projectSettings.statuses]);
 
   const activeSchemaSettings = useMemo(() => {
     if (isAllProjects) {
@@ -414,6 +448,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             (proj.settings?.statuses || []).forEach((st: any) => {
               if (!mergedStatuses.has(st.id)) {
                 mergedStatuses.set(st.id, st);
+              } else {
+                const existing = mergedStatuses.get(st.id);
+                if (typeof st.order === 'number' && (typeof existing.order !== 'number' || st.order < existing.order)) {
+                  mergedStatuses.set(st.id, { ...existing, order: st.order });
+                }
               }
             });
 
@@ -423,6 +462,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   ...h,
                   color: h.color || getDefaultLevelHex(h.level),
                 });
+              } else {
+                const existing = mergedHierarchy.get(h.type);
+                if (typeof h.level === 'number' && (typeof existing.level !== 'number' || h.level < existing.level)) {
+                  mergedHierarchy.set(h.type, { ...existing, level: h.level });
+                }
               }
             });
 
@@ -436,7 +480,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
           const finalStatuses =
             mergedStatuses.size > 0
-              ? Array.from(mergedStatuses.values())
+              ? Array.from(mergedStatuses.values()).sort(
+                  (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id)
+                )
               : [
                   { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 0 },
                   { id: 'in_progress', label: 'In Progress', color: '#3b82f6', order: 1 },
@@ -445,7 +491,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
           const finalHierarchy =
             mergedHierarchy.size > 0
-              ? Array.from(mergedHierarchy.values()).sort((a, b) => a.level - b.level)
+              ? Array.from(mergedHierarchy.values()).sort(
+                  (a, b) => (a.level ?? 0) - (b.level ?? 0) || a.type.localeCompare(b.type)
+                )
               : [
                   { type: 'epic', label: 'Epic', level: 0, allowed_parents: [], color: '#a855f7' },
                   { type: 'story', label: 'Story', level: 1, allowed_parents: ['epic'], color: '#3b82f6' },
@@ -536,7 +584,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     const targetSlug =
       targetSlugParam ||
       (isAllProjects ? (selectedSchemaProjectSlug || allProjects[0]?.slug) : projectSlug);
-    if (!targetSlug || targetSlug === 'all') return;
+    if (!targetSlug || targetSlug === 'all') {
+      throw new Error('No target project specified for schema save.');
+    }
     setIsSavingSchema(true);
     try {
       const res = await apiFetch(`/api/v1/projects/${targetSlug}/settings`, {
@@ -555,9 +605,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       } else {
         const err = await res.json().catch(() => ({}));
         console.error('Failed to update schema:', err);
+        throw new Error(err.error || err.message || 'Failed to update schema');
       }
     } catch (err) {
       console.error('Network error updating schema:', err);
+      throw err;
     } finally {
       setIsSavingSchema(false);
     }
@@ -622,7 +674,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     if (!item) return;
 
     // Check if current parent is valid for newType
-    const newHierarchyConfig = projectSettings.hierarchy.find((h) => h.type === newType);
+    const itemHierarchy = getItemHierarchy(item);
+    const newHierarchyConfig = itemHierarchy.find((h) => h.type === newType);
     const allowedParents = newHierarchyConfig?.allowed_parents || [];
     let newParentId = item.parent_id;
 
@@ -1486,9 +1539,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             </div>
                           ) : (
                             colItems.map((item, index) => {
+                              const itemHierarchy = getItemHierarchy(item);
                               const lvlColor = getHierarchyLevelColor(
                                 item.item_type,
-                                projectSettings.hierarchy
+                                itemHierarchy
                               );
                               const isBeingDragged = draggedItemId === item.id;
                               const isDragTarget =
@@ -1538,7 +1592,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                             className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm"
                                             title="Change hierarchy level"
                                           >
-                                            {projectSettings.hierarchy.map((h) => (
+                                            {itemHierarchy.map((h) => (
                                               <option
                                                 key={h.type}
                                                 value={h.type}
@@ -1665,7 +1719,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         onClick={(e) => e.stopPropagation()}
                                         className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none hover:border-slate-700 cursor-pointer"
                                       >
-                                        {projectSettings.statuses.map((st: StatusDefinition) => (
+                                        {getItemStatuses(item).map((st: StatusDefinition) => (
                                           <option key={st.id} value={st.id}>
                                             → {st.label}
                                           </option>
@@ -1700,9 +1754,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                     <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
                       {unmappedItems.map((item, index) => {
+                        const itemHierarchy = getItemHierarchy(item);
                         const lvlColor = getHierarchyLevelColor(
                           item.item_type,
-                          projectSettings.hierarchy
+                          itemHierarchy
                         );
                         return (
                           <div
@@ -1780,7 +1835,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                 <option value="" disabled>
                                   Move to column →
                                 </option>
-                                {projectSettings.statuses.map((st: StatusDefinition) => (
+                                {getItemStatuses(item).map((st: StatusDefinition) => (
                                   <option key={st.id} value={st.id}>
                                     → {st.label}
                                   </option>
@@ -1927,9 +1982,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </div>
                       ) : (
                         sprintItems.map((item) => {
+                          const itemHierarchy = getItemHierarchy(item);
                           const lvlColor = getHierarchyLevelColor(
                             item.item_type,
-                            projectSettings.hierarchy
+                            itemHierarchy
                           );
                           const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
 
@@ -2010,7 +2066,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
                                   className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
                                 >
-                                  {projectSettings.statuses.map((st: StatusDefinition) => (
+                                  {getItemStatuses(item).map((st: StatusDefinition) => (
                                     <option key={st.id} value={st.id}>
                                       {st.label}
                                     </option>
@@ -2079,9 +2135,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </div>
                       ) : (
                         backlogItems.map((item) => {
+                          const itemHierarchy = getItemHierarchy(item);
                           const lvlColor = getHierarchyLevelColor(
                             item.item_type,
-                            projectSettings.hierarchy
+                            itemHierarchy
                           );
                           const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
 

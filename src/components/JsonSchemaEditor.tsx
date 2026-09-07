@@ -100,11 +100,17 @@ export function JsonSchemaEditor({
         setRawError(err.message || 'Invalid JSON syntax');
         return;
       }
+    } else {
+      setRawError(null);
     }
 
-    await onSave(payloadToSave);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    try {
+      await onSave(payloadToSave);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err: any) {
+      setRawError(err.message || 'Failed to save schema settings.');
+    }
   };
 
   // Handle reset to initial prop settings
