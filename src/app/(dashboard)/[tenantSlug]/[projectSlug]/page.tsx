@@ -1253,11 +1253,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   >
                     <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
                     <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
-                    {availableSprints.map((s) => (
-                      <option key={s} value={s} className="bg-slate-900 text-slate-200">
-                        {s}
-                      </option>
-                    ))}
+                    {availableSprints.map((s) => {
+                      const count = items.filter((it) => it.metadata?.sprint === s).length;
+                      const pts = items.filter((it) => it.metadata?.sprint === s).reduce((acc, it) => {
+                        const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+                        return acc + (isNaN(p) ? 0 : p);
+                      }, 0);
+                      return (
+                        <option key={s} value={s} className="bg-slate-900 text-slate-200">
+                          {s} ({count} {count === 1 ? 'item' : 'items'}{pts > 0 ? ` · ${pts} pts` : ''})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
@@ -1888,19 +1895,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             </span>
                           )}
                         </h4>
-                        <span className="text-xs text-slate-500 font-mono">
-                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}{totalPoints > 0 ? ` · ${totalPoints} pts` : ''}
                         </span>
                       </div>
 
                       <div className="flex items-center space-x-4">
-                        {totalPoints > 0 && (
-                          <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
-                            <span className="text-slate-500">Points:</span>{' '}
-                            <span className="font-semibold text-emerald-400">{totalPoints}</span>
-                          </div>
-                        )}
-
                         <div className="flex items-center space-x-2 min-w-[140px]">
                           <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
                             <div
@@ -2053,17 +2053,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         <h4 className="text-base font-semibold text-white">
                           Product Backlog (Unassigned)
                         </h4>
-                        <span className="text-xs text-slate-500 font-mono">
-                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}{backlogPoints > 0 ? ` · ${backlogPoints} pts` : ''}
                         </span>
                       </div>
-
-                      {backlogPoints > 0 && (
-                        <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
-                          <span className="text-slate-500">Points:</span>{' '}
-                          <span className="font-semibold text-slate-300">{backlogPoints}</span>
-                        </div>
-                      )}
                     </div>
 
                     <div className="divide-y divide-slate-800/50">
