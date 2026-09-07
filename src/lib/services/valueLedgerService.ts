@@ -68,7 +68,12 @@ export function computeEfficiencyMetrics(
   const activeProjectsCount = Math.max(0, Math.floor(opts.activeProjectsCount || 0));
   const totalItemsCount = Math.max(0, Math.floor(opts.totalItemsCount || 0));
   const rate = opts.hourlyRate ?? DEFAULT_HOURLY_RATE;
-  const velocity = opts.velocityFactor ?? DEFAULT_VELOCITY_FACTOR;
+  const velocity =
+    opts.velocityFactor !== undefined
+      ? opts.velocityFactor
+      : completedCount === 0
+      ? '0%'
+      : DEFAULT_VELOCITY_FACTOR;
 
   // ─── Itemized Yield Breakdown ──────────────────────────────────────────────
   // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week)
@@ -162,7 +167,7 @@ export function computeEfficiencyMetrics(
 export function formatEfficiencyStatementCSV(payload: EfficiencyMetricsPayload): string {
   const escape = (val: any) => {
     const s = String(val ?? '');
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    if (s.includes(',') || s.includes('"') || s.includes('\r') || s.includes('\n')) {
       return `"${s.replace(/"/g, '""')}"`;
     }
     return s;

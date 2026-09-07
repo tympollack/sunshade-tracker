@@ -115,21 +115,41 @@ describe('Value Realization Ledger Service', () => {
     expect(res.kpis.platformSubscriptionFee).toBe(0.0);
   });
 
-  it('formats CSV output accurately conforming to RFC-4180 rules', () => {
+  it('formats CSV output accurately conforming to RFC-4180 rules including carriage returns', () => {
     const res = computeEfficiencyMetrics({
       tenantSlug: 'test-slug',
-      tenantName: 'Test, Inc.',
+      tenantName: 'Test, Inc.\r\nSpecial Division',
       completedItemsCount: 4,
       activeProjectsCount: 1,
       totalItemsCount: 10,
     });
 
     const csv = formatEfficiencyStatementCSV(res);
-    expect(csv).toContain('"Test, Inc."');
+    expect(csv).toContain('"Test, Inc.\r\nSpecial Division"');
     expect(csv).toContain('Operational Yield & Efficiency Statement');
     expect(csv).toContain('Hierarchical Status Rollup');
     expect(csv).toContain('Platform Subscription Fee,$0.00');
     expect(csv).toContain('Net Realized Savings');
+  });
+
+  it('computes velocity factor dynamically based on completed count when not explicitly provided', () => {
+    // 0 completed items -> 0%
+    const zeroRes = computeEfficiencyMetrics({
+      tenantSlug: 'zero-slug',
+      completedItemsCount: 0,
+      activeProjectsCount: 2,
+      totalItemsCount: 10,
+    });
+    expect(zeroRes.kpis.velocityFactor).toBe('0%');
+
+    // 20 completed items -> +18% (8 + 10)
+    const twentyRes = computeEfficiencyMetrics({
+      tenantSlug: 'active-slug',
+      completedItemsCount: 20,
+      activeProjectsCount: 2,
+      totalItemsCount: 30,
+    });
+    expect(twentyRes.kpis.velocityFactor).toBe('+18%');
   });
 
   it('formats JSON output cleanly', () => {

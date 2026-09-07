@@ -9,6 +9,7 @@ import { formatEfficiencyStatementCSV } from '@/lib/services/valueLedgerService'
  * Query real-time operational drag rollups and efficiency metrics for the workspace.
  * Supports:
  * - Query param `?format=csv` for raw CSV export
+ * - Query param `?period=monthly` (default) or `?period=all-time`
  * - Query param `?tenant_slug=...` or header `x-tenant-slug` for tenant context
  * - Dual authentication (session cookies or Bearer API keys)
  */
@@ -21,18 +22,27 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const tenantSlugParam = searchParams.get('tenant_slug') || req.headers.get('x-tenant-slug');
 
-    // Default to the authenticated tenant slug if none or if matches
+    // Default to the authenticated tenant slug
     const targetSlug = tenantSlugParam || tenant.slug;
 
-    // Safety: ensure user cannot query another tenant's metrics unless they are authorized for it
-    if (targetSlug !== tenant.slug && auth.context.role !== 'owner') {
+    // Strict multi-tenant isolation: caller may ONLY access the workspace they authenticated against
+    if (targetSlug !== tenant.slug) {
       return NextResponse.json(
-        { error: `Unauthorized to access metrics for workspace '${targetSlug}'` },
+        { error: `Unauthorized: You do not have permission to access workspace '${targetSlug}'.` },
         { status: 403 }
       );
     }
 
-    const payload = await getTenantEfficiencyMetrics(targetSlug);
+    const periodParam = searchParams.get('period');
+    const period = periodParam === 'all-time' ? 'all-time' : 'monthly';
+    const startDate = searchParams.get('start_date') || undefined;
+    const endDate = searchParams.get('end_date') || undefined;
+
+    const payload = await getTenantEfficiencyMetrics(targetSlug, {
+      period,
+      startDate,
+      endDate,
+    });
 
     const format = searchParams.get('format');
     if (format === 'csv') {

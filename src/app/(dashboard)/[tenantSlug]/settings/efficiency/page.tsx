@@ -75,26 +75,27 @@ function EfficiencyStatementContent({ tenantSlug }: { tenantSlug: string }) {
     setLoading(true);
     setError(null);
     try {
-      // Fetch workspaces for navigation context
-      const workspacesRes = await fetch('/api/v1/tenants/me', {
-        headers: { 'x-tenant-slug': tenantSlug },
-      });
-      if (workspacesRes.ok) {
-        const wsData = await workspacesRes.json();
+      // Fetch navigation workspaces and efficiency metrics concurrently
+      const [workspacesRes, efficiencyRes] = await Promise.all([
+        fetch('/api/v1/tenants/me', {
+          headers: { 'x-tenant-slug': tenantSlug },
+        }).catch(() => null),
+        fetch(`/api/v1/tenants/efficiency?tenant_slug=${tenantSlug}`, {
+          headers: { 'x-tenant-slug': tenantSlug },
+        }),
+      ]);
+
+      if (workspacesRes && workspacesRes.ok) {
+        const wsData = await workspacesRes.json().catch(() => ({}));
         setAllWorkspaces(wsData.workspaces || []);
       }
 
-      // Fetch efficiency metrics
-      const res = await fetch(`/api/v1/tenants/efficiency?tenant_slug=${tenantSlug}`, {
-        headers: { 'x-tenant-slug': tenantSlug },
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `HTTP ${res.status}: Failed to load statement`);
+      if (!efficiencyRes.ok) {
+        const errJson = await efficiencyRes.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP ${efficiencyRes.status}: Failed to load statement`);
       }
 
-      const json: EfficiencyMetricsPayload = await res.json();
+      const json: EfficiencyMetricsPayload = await efficiencyRes.json();
       setData(json);
     } catch (err: any) {
       setError(err.message || 'Error loading efficiency statement');
