@@ -1316,7 +1316,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               <BoardSkeleton />
             ) : (
               <div
-                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none ${
+                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none overscroll-contain board-scroll-container ${
                   boardHeight === 'compact'
                     ? 'h-[440px]'
                     : boardHeight === 'full'
@@ -1471,7 +1471,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </div>
 
                         {/* Column Item Cards Container */}
-                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
+                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0 overscroll-contain board-column-scroll custom-scrollbar">
                           {colItems.length === 0 ? (
                             <div className="h-32 border border-dashed border-slate-800/90 rounded-lg flex items-center justify-center text-slate-600 text-xs">
                               No items
@@ -1503,7 +1503,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       handleDrop(e, col.id, index);
                                     }}
                                     onDoubleClick={() => setEditingItem(item)}
-                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto custom-scrollbar ${
+                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
                                       isBeingDragged
                                         ? 'opacity-40 border-dashed border-emerald-500'
                                         : 'border-slate-800/90'
@@ -1981,7 +1981,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                               <div className="flex items-center space-x-3 shrink-0">
                                 {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
                                     {String(points)} pts
                                   </span>
                                 )}
@@ -2133,7 +2133,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                               <div className="flex items-center space-x-3 shrink-0">
                                 {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
                                     {String(points)} pts
                                   </span>
                                 )}
