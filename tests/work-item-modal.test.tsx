@@ -162,6 +162,11 @@ describe('WorkItemModal component', () => {
       fireEvent.click(deleteBtn);
     });
 
+    const confirmDeleteBtn = screen.getByRole('button', { name: /Delete Item/i });
+    await act(async () => {
+      fireEvent.click(confirmDeleteBtn);
+    });
+
     expect(handleDelete).toHaveBeenCalledWith('item-101');
     expect(handleClose).toHaveBeenCalled();
   });

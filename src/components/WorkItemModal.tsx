@@ -20,6 +20,7 @@ import {
 import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
+import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -62,6 +63,7 @@ export function WorkItemModal({
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
   // Sync form state when item changes
   useEffect(() => {
@@ -356,7 +358,8 @@ export function WorkItemModal({
             </button>
 
             <button
-              onClick={handleDelete}
+              type="button"
+              onClick={() => setShowConfirmDelete(true)}
               className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
               title="Delete work item"
             >
@@ -715,6 +718,16 @@ export function WorkItemModal({
           </div>
         </div>
       </div>
+
+      {item && (
+        <ConfirmDeleteModal
+          isOpen={showConfirmDelete}
+          itemTitle={item.title}
+          itemRef={item.external_ref_id}
+          onClose={() => setShowConfirmDelete(false)}
+          onConfirm={handleDelete}
+        />
+      )}
     </div>
   );
 }

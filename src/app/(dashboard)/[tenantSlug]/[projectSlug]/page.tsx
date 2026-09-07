@@ -41,6 +41,7 @@ import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect'
 import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
+import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 
 interface PageProps {
   params: Promise<{
@@ -99,6 +100,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [searchParams?.tab]);
 
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
   const treeItems = useMemo(() => buildTree(items), [items]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -666,7 +668,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Delete item ─────────────────────────────────────────────────────────
   const handleDeleteItem = async (itemId: string): Promise<boolean> => {
-    if (!confirm('Delete this item? This cannot be undone.')) return false;
     setItems((prev) => prev.filter((it) => it.id !== itemId));
     try {
       const res = await apiFetch('/api/v1/items', {
@@ -1577,7 +1578,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            handleDeleteItem(item.id);
+                                            setDeleteConfirmItem(item);
                                           }}
                                           className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
                                           title="Delete item"
@@ -2406,6 +2407,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         currentUser={currentUser ?? undefined}
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
+      />
+
+      {/* Board Item Delete Confirmation Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteConfirmItem}
+        itemTitle={deleteConfirmItem?.title || ''}
+        itemRef={deleteConfirmItem?.external_ref_id}
+        onClose={() => setDeleteConfirmItem(null)}
+        onConfirm={async () => {
+          if (deleteConfirmItem) {
+            await handleDeleteItem(deleteConfirmItem.id);
+            if (editingItem?.id === deleteConfirmItem.id) {
+              setEditingItem(null);
+            }
+          }
+        }}
       />
     </div>
   );
