@@ -240,4 +240,75 @@ describe('WorkItemModal component', () => {
     expect(screen.queryByText(/Must be a valid number/)).toBeNull();
     expect(screen.getByDisplayValue('This is a text note')).toBeDefined();
   });
+
+  it('appends tenant_slug to copied GET URL when tenantSlug is provided', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+
+    render(
+      <WorkItemModal
+        item={sampleItem}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[sampleItem]}
+        tenantSlug="pym-energy"
+      />
+    );
+
+    const copyBtn = screen.getByTitle('Copy item GET API URL');
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(writeTextMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/items?id=item-101&tenant_slug=pym-energy')
+    );
+  });
+
+  it('allows clearing numeric metadata fields preserving null without coercing to zero', async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const itemWithPoints: WorkItem = {
+      ...sampleItem,
+      metadata: { points: 5 },
+    };
+
+    render(
+      <WorkItemModal
+        item={itemWithPoints}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={handleSave}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[itemWithPoints]}
+      />
+    );
+
+    const pointsInput = screen.getByDisplayValue('5');
+    await act(async () => {
+      fireEvent.change(pointsInput, { target: { value: '' } });
+    });
+
+    const saveBtn = screen.getByText('Save Changes');
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(handleSave).toHaveBeenCalledWith(
+      'item-101',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          points: null,
+        }),
+      })
+    );
+  });
 });
+
