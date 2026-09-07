@@ -21,6 +21,7 @@ import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -91,7 +92,7 @@ export function WorkItemModal({
   // Handle ESC key to close
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (!isOpen) return;
+      if (!isOpen || showConfirmDelete) return;
       if (e.key === 'Escape') {
         onClose();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -100,7 +101,7 @@ export function WorkItemModal({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
+  }, [isOpen, showConfirmDelete, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
 
   if (!isOpen || !item) return null;
 
@@ -131,6 +132,7 @@ export function WorkItemModal({
   );
 
   const levelColor = getHierarchyLevelColor(itemType, projectSettings.hierarchy);
+  const { prUrl: modalPrUrl, commitHash: modalCommitHash } = extractGitHubMetadata(metadata);
 
   const handleSave = async () => {
     if (!title.trim()) return;
@@ -321,17 +323,17 @@ export function WorkItemModal({
                 <span>{item.external_ref_id}</span>
               </span>
             )}
-            {(metadata.pr_url || metadata.pr) && (
+            {modalPrUrl && (
               <GitHubBadge
                 type="pr"
-                value={String(metadata.pr_url || metadata.pr)}
+                value={modalPrUrl}
               />
             )}
-            {(metadata.commit_hash || metadata.commit) && (
+            {modalCommitHash && (
               <GitHubBadge
                 type="commit"
-                value={String(metadata.commit_hash || metadata.commit)}
-                prUrl={metadata.pr_url ? String(metadata.pr_url) : undefined}
+                value={modalCommitHash}
+                prUrl={modalPrUrl}
               />
             )}
           </div>
@@ -637,12 +639,12 @@ export function WorkItemModal({
                             <span>⚠ {error}</span>
                           </span>
                         )}
-                        {(['pr_url', 'commit_hash', 'pr', 'commit'].includes(k.toLowerCase()) && draftVal) && (
+                        {(isGitHubMetadataKey(k) && draftVal) && (
                           <div className="pt-0.5">
                             <GitHubBadge
-                              type={k.toLowerCase().includes('commit') ? 'commit' : 'pr'}
+                              type={k.toLowerCase().includes('commit') || k.toLowerCase() === 'sha' ? 'commit' : 'pr'}
                               value={draftVal}
-                              prUrl={metadata.pr_url ? String(metadata.pr_url) : undefined}
+                              prUrl={modalPrUrl}
                               compact
                             />
                           </div>

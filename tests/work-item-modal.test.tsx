@@ -171,6 +171,51 @@ describe('WorkItemModal component', () => {
     expect(handleClose).toHaveBeenCalled();
   });
 
+  it('pressing Escape during delete confirmation closes only the confirmation modal and preserves unsaved edits', async () => {
+    const handleClose = vi.fn();
+
+    render(
+      <WorkItemModal
+        item={sampleItem}
+        isOpen={true}
+        onClose={handleClose}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[sampleItem]}
+      />
+    );
+
+    // Make an unsaved edit to title
+    const titleInput = screen.getByDisplayValue('Implement Dark Theme');
+    await act(async () => {
+      fireEvent.change(titleInput, { target: { value: 'Work in progress draft title' } });
+    });
+
+    // Click trash button to open ConfirmDeleteModal
+    const deleteBtn = screen.getByTitle('Delete work item');
+    await act(async () => {
+      fireEvent.click(deleteBtn);
+    });
+
+    // Verify ConfirmDeleteModal is open
+    expect(screen.getByText('Delete Work Item')).toBeDefined();
+
+    // Press Escape key
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+
+    // ConfirmDeleteModal is now closed
+    expect(screen.queryByText('Delete Work Item')).toBeNull();
+
+    // Parent WorkItemModal did NOT close
+    expect(handleClose).not.toHaveBeenCalled();
+
+    // Draft edit was preserved
+    expect(screen.getByDisplayValue('Work in progress draft title')).toBeDefined();
+  });
+
   it('excludes parent items from other projects in the parent picker dropdown', async () => {
     const parentSameProject: WorkItem = {
       id: 'epic-same',

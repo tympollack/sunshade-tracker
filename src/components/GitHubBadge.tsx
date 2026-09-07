@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   GitPullRequest,
   GitCommit,
@@ -23,8 +24,50 @@ interface GitHubStats {
   comments?: number;
 }
 
-// In-memory cache to avoid duplicate API requests across card renders
-const statsCache = new Map<string, GitHubStats>();
+interface CacheEntry {
+  data: GitHubStats;
+  fetchedAt: number;
+}
+
+// 60-second TTL for cached PR stats
+const CACHE_TTL_MS = 60 * 1000;
+const statsCache = new Map<string, CacheEntry>();
+const inFlightRequests = new Map<string, Promise<GitHubStats | null>>();
+
+function fetchPrStats(owner: string, repo: string, prNumber: string, cacheKey: string): Promise<GitHubStats | null> {
+  if (inFlightRequests.has(cacheKey)) {
+    return inFlightRequests.get(cacheKey)!;
+  }
+
+  const req = fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
+    headers: { Accept: 'application/vnd.github.v3+json' },
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error('API request failed');
+      return res.json();
+    })
+    .then((data): GitHubStats => {
+      const fetchedStats: GitHubStats = {
+        title: data.title,
+        state: data.state,
+        merged: Boolean(data.merged_at),
+        additions: data.additions,
+        deletions: data.deletions,
+        author: data.user?.login,
+        authorAvatar: data.user?.avatar_url,
+        comments: data.comments,
+      };
+      statsCache.set(cacheKey, { data: fetchedStats, fetchedAt: Date.now() });
+      return fetchedStats;
+    })
+    .catch(() => null)
+    .finally(() => {
+      inFlightRequests.delete(cacheKey);
+    });
+
+  inFlightRequests.set(cacheKey, req);
+  return req;
+}
 
 interface GitHubBadgeProps {
   type: 'pr' | 'commit';
@@ -37,7 +80,7 @@ interface GitHubBadgeProps {
 /**
  * Extracts owner and repo from a GitHub URL
  */
-function parseGitHubUrl(url: string): { owner: string; repo: string; prNumber?: string; commitHash?: string } | null {
+export function parseGitHubUrl(url: string): { owner: string; repo: string; prNumber?: string; commitHash?: string } | null {
   if (!url) return null;
   try {
     const parsed = new URL(url);
@@ -71,7 +114,14 @@ export function GitHubBadge({
   const [copied, setCopied] = useState(false);
   const [stats, setStats] = useState<GitHubStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; placeAbove: boolean } | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const badgeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Derive target URL and repo context
   let targetUrl = '';
@@ -117,54 +167,70 @@ export function GitHubBadge({
 
   const cacheKey = type === 'pr' && prNumber ? `${owner}/${repo}#${prNumber}` : null;
 
-  // Fetch GitHub stats on hover for PRs
+  // Fetch GitHub stats with stale-while-revalidate & duplicate suppression
   useEffect(() => {
     if (!isHovered || type !== 'pr' || !prNumber || !cacheKey) return;
 
-    if (statsCache.has(cacheKey)) {
-      setStats(statsCache.get(cacheKey)!);
-      return;
-    }
-
     let active = true;
-    setLoadingStats(true);
+    const cached = statsCache.get(cacheKey);
 
-    fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
-      headers: { Accept: 'application/vnd.github.v3+json' },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('API request failed');
-        return res.json();
-      })
-      .then((data) => {
-        if (!active) return;
-        const fetchedStats: GitHubStats = {
-          title: data.title,
-          state: data.state,
-          merged: Boolean(data.merged_at),
-          additions: data.additions,
-          deletions: data.deletions,
-          author: data.user?.login,
-          authorAvatar: data.user?.avatar_url,
-          comments: data.comments,
-        };
-        statsCache.set(cacheKey, fetchedStats);
-        setStats(fetchedStats);
-      })
-      .catch(() => {
-        // Fallback gracefully on rate limits / network errors
-      })
-      .finally(() => {
-        if (active) setLoadingStats(false);
+    if (cached) {
+      setStats(cached.data);
+      const isStale = Date.now() - cached.fetchedAt > CACHE_TTL_MS;
+      if (!isStale) {
+        return;
+      }
+      // Background revalidation
+      fetchPrStats(owner, repo, prNumber, cacheKey).then((fresh) => {
+        if (active && fresh) {
+          setStats(fresh);
+        }
       });
+    } else {
+      setLoadingStats(true);
+      fetchPrStats(owner, repo, prNumber, cacheKey)
+        .then((fresh) => {
+          if (active && fresh) {
+            setStats(fresh);
+          }
+        })
+        .finally(() => {
+          if (active) setLoadingStats(false);
+        });
+    }
 
     return () => {
       active = false;
     };
   }, [isHovered, type, prNumber, cacheKey, owner, repo]);
 
+  const updateCoordinates = () => {
+    if (!badgeRef.current) return;
+    const rect = badgeRef.current.getBoundingClientRect();
+    const popoverWidth = 288; // 18rem / w-72
+    const popoverHeight = 180;
+    const placeAbove = rect.top >= popoverHeight + 12;
+
+    const top = placeAbove
+      ? rect.top - 8
+      : rect.bottom + 8;
+
+    let left = rect.left;
+    if (typeof window !== 'undefined') {
+      if (left + popoverWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - popoverWidth - 12);
+      }
+      if (left < 12) {
+        left = 12;
+      }
+    }
+
+    setCoords({ top, left, placeAbove });
+  };
+
   const handleMouseEnter = () => {
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    updateCoordinates();
     setIsHovered(true);
   };
 
@@ -189,8 +255,139 @@ export function GitHubBadge({
 
   const isPr = type === 'pr';
 
+  const popoverContent = isHovered && coords && (
+    <div
+      className="fixed z-[9999] w-72 p-3.5 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-2xl text-xs space-y-2.5 animate-in fade-in zoom-in-95 duration-150 text-slate-100 cursor-default"
+      style={{
+        top: coords.top,
+        left: coords.left,
+        transform: coords.placeAbove ? 'translateY(-100%)' : 'none',
+      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Popover Header */}
+      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+        <div className="flex items-center space-x-1.5 min-w-0">
+          <Github className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span className="text-[11px] font-mono text-slate-300 truncate" title={`${owner}/${repo}`}>
+            {owner}/{repo}
+          </span>
+        </div>
+        <div className="flex items-center space-x-1 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title={type === 'commit' ? 'Copy commit SHA' : 'Copy PR URL'}
+          >
+            {copied ? (
+              <Check className="w-3 h-3 text-emerald-400" />
+            ) : (
+              <Copy className="w-3 h-3" />
+            )}
+          </button>
+          <a
+            href={targetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title="Open in GitHub"
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+      </div>
+
+      {/* Body */}
+      {isPr ? (
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="space-y-0.5 min-w-0">
+              <div className="flex items-center space-x-1.5">
+                <span className="font-semibold text-white font-mono">
+                  #{prNumber}
+                </span>
+                {stats?.merged ? (
+                  <span className="inline-flex items-center space-x-1 text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                    <GitMerge className="w-2.5 h-2.5" />
+                    <span>Merged</span>
+                  </span>
+                ) : stats?.state ? (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-sans capitalize border ${
+                      stats.state === 'open'
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-red-500/20 text-red-300 border-red-500/40'
+                    }`}
+                  >
+                    {stats.state}
+                  </span>
+                ) : null}
+              </div>
+              {stats?.title ? (
+                <p className="text-[11px] text-slate-200 line-clamp-2 leading-snug pt-0.5">
+                  {stats.title}
+                </p>
+              ) : loadingStats ? (
+                <div className="flex items-center space-x-1.5 text-[10px] text-slate-500 pt-1">
+                  <Loader2 className="w-3 h-3 animate-spin text-purple-400" />
+                  <span>Fetching GitHub stats...</span>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400 line-clamp-2 leading-snug pt-0.5 font-mono">
+                  Pull Request #{prNumber}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Stats additions / deletions */}
+          {stats && (stats.additions !== undefined || stats.deletions !== undefined) && (
+            <div className="flex items-center space-x-2 text-[10px] font-mono pt-1 border-t border-slate-800/60 text-slate-400">
+              {stats.additions !== undefined && (
+                <span className="text-emerald-400 font-medium">+{stats.additions}</span>
+              )}
+              {stats.deletions !== undefined && (
+                <span className="text-red-400 font-medium">-{stats.deletions}</span>
+              )}
+              {stats.author && (
+                <span className="text-slate-500 ml-auto">by @{stats.author}</span>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <div className="flex items-center space-x-1.5 font-mono text-[11px]">
+            <GitCommit className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-cyan-200 font-semibold">{commitHash ? commitHash.slice(0, 10) : displayLabel}</span>
+          </div>
+          <p className="text-[10px] text-slate-400 font-mono break-all bg-slate-950 p-1.5 rounded border border-slate-800">
+            {commitHash || value}
+          </p>
+        </div>
+      )}
+
+      {/* Footer Action */}
+      <div className="pt-1">
+        <a
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center justify-center space-x-1.5 transition-colors font-medium text-[11px]"
+        >
+          <span>View on GitHub</span>
+          <ExternalLink className="w-3 h-3" />
+        </a>
+      </div>
+    </div>
+  );
+
   return (
     <div
+      ref={badgeRef}
       className={`relative inline-block ${className}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -217,129 +414,8 @@ export function GitHubBadge({
         <ExternalLink className="w-2.5 h-2.5 opacity-40 group-hover:opacity-100 transition-opacity ml-0.5 shrink-0" />
       </a>
 
-      {/* Rich Hover Popover Preview */}
-      {isHovered && (
-        <div
-          className="absolute bottom-full left-0 mb-2 z-50 w-72 p-3.5 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-2xl text-xs space-y-2.5 animate-in fade-in zoom-in-95 duration-150 text-slate-100 cursor-default"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Popover Header */}
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <div className="flex items-center space-x-1.5 min-w-0">
-              <Github className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span className="text-[11px] font-mono text-slate-300 truncate" title={`${owner}/${repo}`}>
-                {owner}/{repo}
-              </span>
-            </div>
-            <div className="flex items-center space-x-1 shrink-0">
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                title={type === 'commit' ? 'Copy commit SHA' : 'Copy PR URL'}
-              >
-                {copied ? (
-                  <Check className="w-3 h-3 text-emerald-400" />
-                ) : (
-                  <Copy className="w-3 h-3" />
-                )}
-              </button>
-              <a
-                href={targetUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                title="Open in GitHub"
-              >
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </div>
-
-          {/* Body */}
-          {isPr ? (
-            <div className="space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-0.5 min-w-0">
-                  <div className="flex items-center space-x-1.5">
-                    <span className="font-semibold text-white font-mono">
-                      #{prNumber}
-                    </span>
-                    {stats?.merged ? (
-                      <span className="inline-flex items-center space-x-1 text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
-                        <GitMerge className="w-2.5 h-2.5" />
-                        <span>Merged</span>
-                      </span>
-                    ) : stats?.state ? (
-                      <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-sans capitalize border ${
-                          stats.state === 'open'
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : 'bg-red-500/20 text-red-300 border-red-500/40'
-                        }`}
-                      >
-                        {stats.state}
-                      </span>
-                    ) : null}
-                  </div>
-                  {stats?.title ? (
-                    <p className="text-[11px] text-slate-200 line-clamp-2 leading-snug pt-0.5">
-                      {stats.title}
-                    </p>
-                  ) : loadingStats ? (
-                    <div className="flex items-center space-x-1.5 text-[10px] text-slate-500 pt-1">
-                      <Loader2 className="w-3 h-3 animate-spin text-purple-400" />
-                      <span>Fetching GitHub stats...</span>
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-snug pt-0.5 font-mono">
-                      Pull Request #{prNumber}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Stats additions / deletions */}
-              {stats && (stats.additions !== undefined || stats.deletions !== undefined) && (
-                <div className="flex items-center space-x-2 text-[10px] font-mono pt-1 border-t border-slate-800/60 text-slate-400">
-                  {stats.additions !== undefined && (
-                    <span className="text-emerald-400 font-medium">+{stats.additions}</span>
-                  )}
-                  {stats.deletions !== undefined && (
-                    <span className="text-red-400 font-medium">-{stats.deletions}</span>
-                  )}
-                  {stats.author && (
-                    <span className="text-slate-500 ml-auto">by @{stats.author}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <div className="flex items-center space-x-1.5 font-mono text-[11px]">
-                <GitCommit className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="text-cyan-200 font-semibold">{commitHash ? commitHash.slice(0, 10) : displayLabel}</span>
-              </div>
-              <p className="text-[10px] text-slate-400 font-mono break-all bg-slate-950 p-1.5 rounded border border-slate-800">
-                {commitHash || value}
-              </p>
-            </div>
-          )}
-
-          {/* Footer Action */}
-          <div className="pt-1">
-            <a
-              href={targetUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center justify-center space-x-1.5 transition-colors font-medium text-[11px]"
-            >
-              <span>View on GitHub</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      )}
+      {/* Render popover into document.body to avoid clipping by overflow ancestors */}
+      {isMounted && typeof document !== 'undefined' && popoverContent && createPortal(popoverContent, document.body)}
     </div>
   );
 }

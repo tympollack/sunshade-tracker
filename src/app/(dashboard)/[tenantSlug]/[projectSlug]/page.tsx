@@ -42,6 +42,7 @@ import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { extractGitHubMetadata } from '@/lib/github-metadata';
 
 interface PageProps {
   params: Promise<{
@@ -1608,24 +1609,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     )}
 
                                     {/* Metadata tags */}
-                                    {item.metadata && Object.keys(item.metadata).length > 0 && (
-                                      <div className="flex flex-wrap gap-1 pt-0.5">
-                                        {(item.metadata.pr_url || item.metadata.pr) && (
-                                          <GitHubBadge
-                                            type="pr"
-                                            value={String(item.metadata.pr_url || item.metadata.pr)}
-                                          />
-                                        )}
-                                        {(item.metadata.commit_hash || item.metadata.commit) && (
-                                          <GitHubBadge
-                                            type="commit"
-                                            value={String(item.metadata.commit_hash || item.metadata.commit)}
-                                            prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
-                                          />
-                                        )}
-                                        {Object.entries(item.metadata)
-                                          .filter(([k]) => !['pr_url', 'pr', 'commit_hash', 'commit'].includes(k.toLowerCase()))
-                                          .map(([k, v]) => {
+                                    {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
+                                      const { prUrl, commitHash, isGitHubField } = extractGitHubMetadata(item.metadata);
+                                      const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => !isGitHubField(k));
+                                      const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
+                                      if (!hasAnyDisplay) return null;
+
+                                      return (
+                                        <div className="flex flex-wrap gap-1 pt-0.5">
+                                          {prUrl && (
+                                            <GitHubBadge
+                                              type="pr"
+                                              value={prUrl}
+                                            />
+                                          )}
+                                          {commitHash && (
+                                            <GitHubBadge
+                                              type="commit"
+                                              value={commitHash}
+                                              prUrl={prUrl}
+                                            />
+                                          )}
+                                          {nonGitHubEntries.map(([k, v]) => {
                                             const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
                                             const displayVal = rawVal.replace(/\s+/g, ' ').trim();
                                             const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
@@ -1639,8 +1644,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                               </span>
                                             );
                                           })}
-                                      </div>
-                                    )}
+                                        </div>
+                                      );
+                                    })()}
 
                                     {/* Card Bottom: Assignee & Quick Status Select */}
                                     <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
@@ -1955,21 +1961,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   </span>
                                 )}
 
-                                {(item.metadata?.pr_url || item.metadata?.pr) && (
-                                  <GitHubBadge
-                                    type="pr"
-                                    compact
-                                    value={String(item.metadata.pr_url || item.metadata.pr)}
-                                  />
-                                )}
-                                {(item.metadata?.commit_hash || item.metadata?.commit) && (
-                                  <GitHubBadge
-                                    type="commit"
-                                    compact
-                                    value={String(item.metadata.commit_hash || item.metadata.commit)}
-                                    prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
-                                  />
-                                )}
+                                {(() => {
+                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+                                  return (
+                                    <>
+                                      {prUrl && (
+                                        <GitHubBadge
+                                          type="pr"
+                                          compact
+                                          value={prUrl}
+                                        />
+                                      )}
+                                      {commitHash && (
+                                        <GitHubBadge
+                                          type="commit"
+                                          compact
+                                          value={commitHash}
+                                          prUrl={prUrl}
+                                        />
+                                      )}
+                                    </>
+                                  );
+                                })()}
 
                                 <span
                                   className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
@@ -2100,21 +2113,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   </span>
                                 )}
 
-                                {(item.metadata?.pr_url || item.metadata?.pr) && (
-                                  <GitHubBadge
-                                    type="pr"
-                                    compact
-                                    value={String(item.metadata.pr_url || item.metadata.pr)}
-                                  />
-                                )}
-                                {(item.metadata?.commit_hash || item.metadata?.commit) && (
-                                  <GitHubBadge
-                                    type="commit"
-                                    compact
-                                    value={String(item.metadata.commit_hash || item.metadata.commit)}
-                                    prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
-                                  />
-                                )}
+                                {(() => {
+                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+                                  return (
+                                    <>
+                                      {prUrl && (
+                                        <GitHubBadge
+                                          type="pr"
+                                          compact
+                                          value={prUrl}
+                                        />
+                                      )}
+                                      {commitHash && (
+                                        <GitHubBadge
+                                          type="commit"
+                                          compact
+                                          value={commitHash}
+                                          prUrl={prUrl}
+                                        />
+                                      )}
+                                    </>
+                                  );
+                                })()}
 
                                 <span
                                   className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
