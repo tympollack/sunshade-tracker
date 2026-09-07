@@ -1356,23 +1356,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               ? 'border-emerald-500 bg-emerald-500/10'
                               : 'border-slate-800/80'
                           }`}
-                          title={`Click to expand ${col.label}`}
+                          title={`${col.label}: ${colItems.length} items (click to expand)`}
                         >
                           <div className="flex flex-col items-center space-y-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: col.color }}
-                            />
+                            <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-slate-800/90 border border-slate-700/80 shadow-xs">
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: col.color }}
+                              />
+                              <span className="text-[10px] text-slate-200 font-mono font-medium leading-none">
+                                {colItems.length}
+                              </span>
+                            </div>
                             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
                           </div>
 
                           <div className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-300 whitespace-nowrap py-4">
                             {col.label}
                           </div>
-
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
-                            {colItems.length}
-                          </span>
                         </div>
                       );
                     }
