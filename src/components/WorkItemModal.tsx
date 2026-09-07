@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
+import { GitHubBadge } from '@/components/GitHubBadge';
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -317,6 +318,19 @@ export function WorkItemModal({
                 <Hash className="w-3 h-3 text-slate-500" />
                 <span>{item.external_ref_id}</span>
               </span>
+            )}
+            {(metadata.pr_url || metadata.pr) && (
+              <GitHubBadge
+                type="pr"
+                value={String(metadata.pr_url || metadata.pr)}
+              />
+            )}
+            {(metadata.commit_hash || metadata.commit) && (
+              <GitHubBadge
+                type="commit"
+                value={String(metadata.commit_hash || metadata.commit)}
+                prUrl={metadata.pr_url ? String(metadata.pr_url) : undefined}
+              />
             )}
           </div>
 
@@ -619,6 +633,16 @@ export function WorkItemModal({
                           <span className="text-[11px] text-red-400 font-mono flex items-center space-x-1">
                             <span>⚠ {error}</span>
                           </span>
+                        )}
+                        {(['pr_url', 'commit_hash', 'pr', 'commit'].includes(k.toLowerCase()) && draftVal) && (
+                          <div className="pt-0.5">
+                            <GitHubBadge
+                              type={k.toLowerCase().includes('commit') ? 'commit' : 'pr'}
+                              value={draftVal}
+                              prUrl={metadata.pr_url ? String(metadata.pr_url) : undefined}
+                              compact
+                            />
+                          </div>
                         )}
                       </div>
 

@@ -40,6 +40,7 @@ import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
+import { GitHubBadge } from '@/components/GitHubBadge';
 
 interface PageProps {
   params: Promise<{
@@ -1600,20 +1601,35 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     {/* Metadata tags */}
                                     {item.metadata && Object.keys(item.metadata).length > 0 && (
                                       <div className="flex flex-wrap gap-1 pt-0.5">
-                                        {Object.entries(item.metadata).map(([k, v]) => {
-                                          const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-                                          const displayVal = rawVal.replace(/\s+/g, ' ').trim();
-                                          const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
-                                          return (
-                                            <span
-                                              key={k}
-                                              title={`${k}: ${rawVal}`}
-                                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
-                                            >
-                                              <span className="text-slate-500">{k}:</span> {truncated}
-                                            </span>
-                                          );
-                                        })}
+                                        {(item.metadata.pr_url || item.metadata.pr) && (
+                                          <GitHubBadge
+                                            type="pr"
+                                            value={String(item.metadata.pr_url || item.metadata.pr)}
+                                          />
+                                        )}
+                                        {(item.metadata.commit_hash || item.metadata.commit) && (
+                                          <GitHubBadge
+                                            type="commit"
+                                            value={String(item.metadata.commit_hash || item.metadata.commit)}
+                                            prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
+                                          />
+                                        )}
+                                        {Object.entries(item.metadata)
+                                          .filter(([k]) => !['pr_url', 'pr', 'commit_hash', 'commit'].includes(k.toLowerCase()))
+                                          .map(([k, v]) => {
+                                            const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+                                            const displayVal = rawVal.replace(/\s+/g, ' ').trim();
+                                            const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
+                                            return (
+                                              <span
+                                                key={k}
+                                                title={`${k}: ${rawVal}`}
+                                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
+                                              >
+                                                <span className="text-slate-500">{k}:</span> {truncated}
+                                              </span>
+                                            );
+                                          })}
                                       </div>
                                     )}
 
@@ -1937,6 +1953,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   </span>
                                 )}
 
+                                {(item.metadata?.pr_url || item.metadata?.pr) && (
+                                  <GitHubBadge
+                                    type="pr"
+                                    compact
+                                    value={String(item.metadata.pr_url || item.metadata.pr)}
+                                  />
+                                )}
+                                {(item.metadata?.commit_hash || item.metadata?.commit) && (
+                                  <GitHubBadge
+                                    type="commit"
+                                    compact
+                                    value={String(item.metadata.commit_hash || item.metadata.commit)}
+                                    prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
+                                  />
+                                )}
+
                                 <span
                                   className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
                                   onClick={() => setEditingItem(item)}
@@ -2071,6 +2103,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   <span className="text-xs font-mono text-slate-400 shrink-0">
                                     {item.external_ref_id}
                                   </span>
+                                )}
+
+                                {(item.metadata?.pr_url || item.metadata?.pr) && (
+                                  <GitHubBadge
+                                    type="pr"
+                                    compact
+                                    value={String(item.metadata.pr_url || item.metadata.pr)}
+                                  />
+                                )}
+                                {(item.metadata?.commit_hash || item.metadata?.commit) && (
+                                  <GitHubBadge
+                                    type="commit"
+                                    compact
+                                    value={String(item.metadata.commit_hash || item.metadata.commit)}
+                                    prUrl={item.metadata.pr_url ? String(item.metadata.pr_url) : undefined}
+                                  />
                                 )}
 
                                 <span
