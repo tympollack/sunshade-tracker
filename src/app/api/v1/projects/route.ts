@@ -41,9 +41,9 @@ export async function POST(req: NextRequest) {
     }
 
     const sanitizedSlug = slug.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-    if (sanitizedSlug === 'all') {
+    if (sanitizedSlug === 'all' || sanitizedSlug === 'portfolio') {
       return NextResponse.json(
-        { error: 'The project slug "all" is reserved for workspace overview.' },
+        { error: `The project slug "${sanitizedSlug}" is reserved for workspace overview.` },
         { status: 400 }
       );
     }

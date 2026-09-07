@@ -165,4 +165,74 @@ describe('WorkItemModal component', () => {
     expect(handleDelete).toHaveBeenCalledWith('item-101');
     expect(handleClose).toHaveBeenCalled();
   });
+
+  it('excludes parent items from other projects in the parent picker dropdown', async () => {
+    const parentSameProject: WorkItem = {
+      id: 'epic-same',
+      tenant_id: 'tenant-1',
+      project_id: 'proj-1',
+      title: 'Same Project Epic',
+      item_type: 'epic',
+      status: 'in_progress',
+      order_index: 500,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const parentOtherProject: WorkItem = {
+      id: 'epic-other',
+      tenant_id: 'tenant-1',
+      project_id: 'proj-2',
+      title: 'Other Project Epic',
+      item_type: 'epic',
+      status: 'in_progress',
+      order_index: 600,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    render(
+      <WorkItemModal
+        item={sampleItem}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[sampleItem, parentSameProject, parentOtherProject]}
+      />
+    );
+
+    // Same project epic should be present as an option
+    expect(screen.queryByText(/Same Project Epic/)).toBeDefined();
+    // Other project epic must be completely absent from options
+    expect(screen.queryByText(/Other Project Epic/)).toBeNull();
+  });
+
+  it('allows text edits to null metadata without requiring numbers', async () => {
+    const itemWithNullMeta: WorkItem = {
+      ...sampleItem,
+      metadata: { custom_note: null },
+    };
+
+    render(
+      <WorkItemModal
+        item={itemWithNullMeta}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[itemWithNullMeta]}
+      />
+    );
+
+    const input = screen.getByPlaceholderText('Enter custom_note...');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'This is a text note' } });
+    });
+
+    // Should not display "Must be a valid number" error
+    expect(screen.queryByText(/Must be a valid number/)).toBeNull();
+    expect(screen.getByDisplayValue('This is a text note')).toBeDefined();
+  });
 });
