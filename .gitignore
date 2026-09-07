@@ -21,6 +21,7 @@ dist/
 # Local env files
 .env*.local
 .env
+.tracker*.json
 
 # Vercel
 .vercel

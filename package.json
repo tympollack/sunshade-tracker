@@ -11,7 +11,15 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:assets": "node scripts/generate-assets.mjs"
+    "generate:assets": "node scripts/generate-assets.mjs",
+    "tracker": "node scripts/tracker.mjs",
+    "tracker:get": "node scripts/tracker-get.mjs",
+    "tracker:list": "node scripts/tracker-list.mjs",
+    "tracker:create": "node scripts/tracker-create.mjs",
+    "tracker:update": "node scripts/tracker-update.mjs",
+    "tracker:complete": "node scripts/tracker-complete.mjs",
+    "tracker:delete": "node scripts/tracker-delete.mjs",
+    "tracker:ingest": "node scripts/tracker-ingest.mjs"
   },
   "dependencies": {
     "@sunshade/ui": "file:./packages/ui",
