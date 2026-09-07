@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   XCircle,
   Loader2,
+  TrendingUp,
+  Sparkles,
 } from 'lucide-react';
 import { UserMenu } from '@/components/UserMenu';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -329,6 +331,33 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                 <span className="text-xs text-slate-400">{tenantInfo?.role || 'Member'}</span>
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Operational Efficiency Statement Card */}
+        <div className="p-6 rounded-xl bg-gradient-to-r from-slate-900/80 via-slate-900/60 to-emerald-950/30 border border-emerald-500/30 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 text-emerald-400" />
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                  Operational Yield & Efficiency Statement
+                </h2>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  $0.00 Platform Fee
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 max-w-xl">
+                Audit self-administered efficiency dividends, hours reclaimed from automated rollups and drag transitions, and export formal ledger statements.
+              </p>
+            </div>
+            <Link
+              href={`/${tenantSlug}/settings/efficiency`}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors self-start sm:self-center flex-shrink-0"
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>View Statement</span>
+            </Link>
           </div>
         </div>
 
