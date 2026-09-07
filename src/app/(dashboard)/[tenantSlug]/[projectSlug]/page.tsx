@@ -40,6 +40,9 @@ import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
+import { GitHubBadge } from '@/components/GitHubBadge';
+import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { extractGitHubMetadata } from '@/lib/github-metadata';
 
 interface PageProps {
   params: Promise<{
@@ -98,6 +101,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [searchParams?.tab]);
 
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
   const treeItems = useMemo(() => buildTree(items), [items]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -665,7 +669,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Delete item ─────────────────────────────────────────────────────────
   const handleDeleteItem = async (itemId: string): Promise<boolean> => {
-    if (!confirm('Delete this item? This cannot be undone.')) return false;
     setItems((prev) => prev.filter((it) => it.id !== itemId));
     try {
       const res = await apiFetch('/api/v1/items', {
@@ -1251,11 +1254,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   >
                     <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
                     <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
-                    {availableSprints.map((s) => (
-                      <option key={s} value={s} className="bg-slate-900 text-slate-200">
-                        {s}
-                      </option>
-                    ))}
+                    {availableSprints.map((s) => {
+                      const count = items.filter((it) => it.metadata?.sprint === s).length;
+                      const pts = items.filter((it) => it.metadata?.sprint === s).reduce((acc, it) => {
+                        const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+                        return acc + (isNaN(p) ? 0 : p);
+                      }, 0);
+                      return (
+                        <option key={s} value={s} className="bg-slate-900 text-slate-200">
+                          {s} ({count} {count === 1 ? 'item' : 'items'}{pts > 0 ? ` · ${pts} pts` : ''})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
@@ -1314,7 +1324,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               <BoardSkeleton />
             ) : (
               <div
-                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none ${
+                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none overscroll-contain board-scroll-container ${
                   boardHeight === 'compact'
                     ? 'h-[440px]'
                     : boardHeight === 'full'
@@ -1355,23 +1365,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               ? 'border-emerald-500 bg-emerald-500/10'
                               : 'border-slate-800/80'
                           }`}
-                          title={`Click to expand ${col.label}`}
+                          title={`${col.label}: ${colItems.length} items (click to expand)`}
                         >
                           <div className="flex flex-col items-center space-y-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full"
-                              style={{ backgroundColor: col.color }}
-                            />
+                            <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-slate-800/90 border border-slate-700/80 shadow-xs">
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: col.color }}
+                              />
+                              <span className="text-[10px] text-slate-200 font-mono font-medium leading-none">
+                                {colItems.length}
+                              </span>
+                            </div>
                             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
                           </div>
 
                           <div className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-300 whitespace-nowrap py-4">
                             {col.label}
                           </div>
-
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
-                            {colItems.length}
-                          </span>
                         </div>
                       );
                     }
@@ -1468,7 +1479,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </div>
 
                         {/* Column Item Cards Container */}
-                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
+                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0 overscroll-contain board-column-scroll custom-scrollbar">
                           {colItems.length === 0 ? (
                             <div className="h-32 border border-dashed border-slate-800/90 rounded-lg flex items-center justify-center text-slate-600 text-xs">
                               No items
@@ -1500,7 +1511,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       handleDrop(e, col.id, index);
                                     }}
                                     onDoubleClick={() => setEditingItem(item)}
-                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto custom-scrollbar ${
+                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
                                       isBeingDragged
                                         ? 'opacity-40 border-dashed border-emerald-500'
                                         : 'border-slate-800/90'
@@ -1575,7 +1586,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            handleDeleteItem(item.id);
+                                            setDeleteConfirmItem(item);
                                           }}
                                           className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
                                           title="Delete item"
@@ -1598,24 +1609,44 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     )}
 
                                     {/* Metadata tags */}
-                                    {item.metadata && Object.keys(item.metadata).length > 0 && (
-                                      <div className="flex flex-wrap gap-1 pt-0.5">
-                                        {Object.entries(item.metadata).map(([k, v]) => {
-                                          const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-                                          const displayVal = rawVal.replace(/\s+/g, ' ').trim();
-                                          const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
-                                          return (
-                                            <span
-                                              key={k}
-                                              title={`${k}: ${rawVal}`}
-                                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
-                                            >
-                                              <span className="text-slate-500">{k}:</span> {truncated}
-                                            </span>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
+                                    {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
+                                      const { prUrl, commitHash, isGitHubField } = extractGitHubMetadata(item.metadata);
+                                      const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => !isGitHubField(k));
+                                      const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
+                                      if (!hasAnyDisplay) return null;
+
+                                      return (
+                                        <div className="flex flex-wrap gap-1 pt-0.5">
+                                          {prUrl && (
+                                            <GitHubBadge
+                                              type="pr"
+                                              value={prUrl}
+                                            />
+                                          )}
+                                          {commitHash && (
+                                            <GitHubBadge
+                                              type="commit"
+                                              value={commitHash}
+                                              prUrl={prUrl}
+                                            />
+                                          )}
+                                          {nonGitHubEntries.map(([k, v]) => {
+                                            const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+                                            const displayVal = rawVal.replace(/\s+/g, ' ').trim();
+                                            const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
+                                            return (
+                                              <span
+                                                key={k}
+                                                title={`${k}: ${rawVal}`}
+                                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
+                                              >
+                                                <span className="text-slate-500">{k}:</span> {truncated}
+                                              </span>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    })()}
 
                                     {/* Card Bottom: Assignee & Quick Status Select */}
                                     <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
@@ -1870,19 +1901,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             </span>
                           )}
                         </h4>
-                        <span className="text-xs text-slate-500 font-mono">
-                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}{totalPoints > 0 ? ` · ${totalPoints} pts` : ''}
                         </span>
                       </div>
 
                       <div className="flex items-center space-x-4">
-                        {totalPoints > 0 && (
-                          <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
-                            <span className="text-slate-500">Points:</span>{' '}
-                            <span className="font-semibold text-emerald-400">{totalPoints}</span>
-                          </div>
-                        )}
-
                         <div className="flex items-center space-x-2 min-w-[140px]">
                           <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
                             <div
@@ -1937,6 +1961,29 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   </span>
                                 )}
 
+                                {(() => {
+                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+                                  return (
+                                    <>
+                                      {prUrl && (
+                                        <GitHubBadge
+                                          type="pr"
+                                          compact
+                                          value={prUrl}
+                                        />
+                                      )}
+                                      {commitHash && (
+                                        <GitHubBadge
+                                          type="commit"
+                                          compact
+                                          value={commitHash}
+                                          prUrl={prUrl}
+                                        />
+                                      )}
+                                    </>
+                                  );
+                                })()}
+
                                 <span
                                   className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
                                   onClick={() => setEditingItem(item)}
@@ -1947,7 +1994,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                               <div className="flex items-center space-x-3 shrink-0">
                                 {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
                                     {String(points)} pts
                                   </span>
                                 )}
@@ -2019,17 +2066,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         <h4 className="text-base font-semibold text-white">
                           Product Backlog (Unassigned)
                         </h4>
-                        <span className="text-xs text-slate-500 font-mono">
-                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
+                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}{backlogPoints > 0 ? ` · ${backlogPoints} pts` : ''}
                         </span>
                       </div>
-
-                      {backlogPoints > 0 && (
-                        <div className="text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 font-mono">
-                          <span className="text-slate-500">Points:</span>{' '}
-                          <span className="font-semibold text-slate-300">{backlogPoints}</span>
-                        </div>
-                      )}
                     </div>
 
                     <div className="divide-y divide-slate-800/50">
@@ -2073,6 +2113,29 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   </span>
                                 )}
 
+                                {(() => {
+                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+                                  return (
+                                    <>
+                                      {prUrl && (
+                                        <GitHubBadge
+                                          type="pr"
+                                          compact
+                                          value={prUrl}
+                                        />
+                                      )}
+                                      {commitHash && (
+                                        <GitHubBadge
+                                          type="commit"
+                                          compact
+                                          value={commitHash}
+                                          prUrl={prUrl}
+                                        />
+                                      )}
+                                    </>
+                                  );
+                                })()}
+
                                 <span
                                   className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
                                   onClick={() => setEditingItem(item)}
@@ -2083,7 +2146,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                               <div className="flex items-center space-x-3 shrink-0">
                                 {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
                                     {String(points)} pts
                                   </span>
                                 )}
@@ -2357,6 +2420,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         currentUser={currentUser ?? undefined}
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
+      />
+
+      {/* Board Item Delete Confirmation Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteConfirmItem}
+        itemTitle={deleteConfirmItem?.title || ''}
+        itemRef={deleteConfirmItem?.external_ref_id}
+        onClose={() => setDeleteConfirmItem(null)}
+        onConfirm={async () => {
+          if (deleteConfirmItem) {
+            await handleDeleteItem(deleteConfirmItem.id);
+            if (editingItem?.id === deleteConfirmItem.id) {
+              setEditingItem(null);
+            }
+          }
+        }}
       />
     </div>
   );

@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
+import { GitHubBadge } from '@/components/GitHubBadge';
+import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -61,6 +64,7 @@ export function WorkItemModal({
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
   // Sync form state when item changes
   useEffect(() => {
@@ -88,7 +92,7 @@ export function WorkItemModal({
   // Handle ESC key to close
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (!isOpen) return;
+      if (!isOpen || showConfirmDelete) return;
       if (e.key === 'Escape') {
         onClose();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -97,7 +101,7 @@ export function WorkItemModal({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
+  }, [isOpen, showConfirmDelete, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
 
   if (!isOpen || !item) return null;
 
@@ -128,6 +132,7 @@ export function WorkItemModal({
   );
 
   const levelColor = getHierarchyLevelColor(itemType, projectSettings.hierarchy);
+  const { prUrl: modalPrUrl, commitHash: modalCommitHash } = extractGitHubMetadata(metadata);
 
   const handleSave = async () => {
     if (!title.trim()) return;
@@ -318,6 +323,19 @@ export function WorkItemModal({
                 <span>{item.external_ref_id}</span>
               </span>
             )}
+            {modalPrUrl && (
+              <GitHubBadge
+                type="pr"
+                value={modalPrUrl}
+              />
+            )}
+            {modalCommitHash && (
+              <GitHubBadge
+                type="commit"
+                value={modalCommitHash}
+                prUrl={modalPrUrl}
+              />
+            )}
           </div>
 
           <div className="flex items-center space-x-2 shrink-0">
@@ -342,7 +360,8 @@ export function WorkItemModal({
             </button>
 
             <button
-              onClick={handleDelete}
+              type="button"
+              onClick={() => setShowConfirmDelete(true)}
               className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
               title="Delete work item"
             >
@@ -620,6 +639,16 @@ export function WorkItemModal({
                             <span>⚠ {error}</span>
                           </span>
                         )}
+                        {(isGitHubMetadataKey(k) && draftVal) && (
+                          <div className="pt-0.5">
+                            <GitHubBadge
+                              type={k.toLowerCase().includes('commit') || k.toLowerCase() === 'sha' ? 'commit' : 'pr'}
+                              value={draftVal}
+                              prUrl={modalPrUrl}
+                              compact
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <button
@@ -691,6 +720,16 @@ export function WorkItemModal({
           </div>
         </div>
       </div>
+
+      {item && (
+        <ConfirmDeleteModal
+          isOpen={showConfirmDelete}
+          itemTitle={item.title}
+          itemRef={item.external_ref_id}
+          onClose={() => setShowConfirmDelete(false)}
+          onConfirm={handleDelete}
+        />
+      )}
     </div>
   );
 }
