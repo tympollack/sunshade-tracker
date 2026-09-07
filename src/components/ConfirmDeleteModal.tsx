@@ -6,7 +6,7 @@ import { Trash2, AlertTriangle, Loader2, X, Hash } from 'lucide-react';
 interface ConfirmDeleteModalProps {
   isOpen: boolean;
   itemTitle: string;
-  itemRef?: string;
+  itemRef?: string | null;
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
 }
