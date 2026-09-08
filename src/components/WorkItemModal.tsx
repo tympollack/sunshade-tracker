@@ -16,12 +16,17 @@ import {
   Copy,
   Check,
   Link2,
+  History,
+  Clock,
+  ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { WorkItem, ProjectSettings, StatusDefinition, AuditLogEntry } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
+
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -66,9 +71,38 @@ export function WorkItemModal({
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
+  // Activity Log tab state
+  const [activeTab, setActiveTab] = useState<'details' | 'activity'>('details');
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const lastFetchedItemIdRef = useRef<string | null>(null);
+
+  const fetchAuditLogs = async (itemId: string) => {
+    lastFetchedItemIdRef.current = itemId;
+    setIsLoadingLogs(true);
+    try {
+      const res = await fetch(`/api/v1/audit-logs?item_id=${itemId}`, {
+        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (lastFetchedItemIdRef.current === itemId) {
+          setAuditLogs(data.audit_logs || []);
+        }
+      }
+    } catch {
+      // Graceful ignore
+    } finally {
+      if (lastFetchedItemIdRef.current === itemId) {
+        setIsLoadingLogs(false);
+      }
+    }
+  };
+
   // Sync form state when item changes
   useEffect(() => {
     if (item) {
+      setActiveTab('details');
       setTitle(item.title || '');
       setDescription(item.description || '');
       setStatus(item.status || projectSettings.statuses[0]?.id || 'backlog');
@@ -86,6 +120,14 @@ export function WorkItemModal({
       setMetaErrors({});
       setShowAddMeta(false);
       setSaveError(null);
+
+      if (item.id) {
+        setAuditLogs([]);
+        fetchAuditLogs(item.id);
+      } else {
+        lastFetchedItemIdRef.current = null;
+        setAuditLogs([]);
+      }
     }
   }, [item, projectSettings]);
 
@@ -377,23 +419,203 @@ export function WorkItemModal({
           </div>
         </div>
 
+        {/* Modal Navigation Tabs */}
+        <div className="flex items-center border-b border-slate-800 px-6 bg-slate-950/40">
+          <button
+            type="button"
+            onClick={() => setActiveTab('details')}
+            className={`py-2.5 px-3 text-xs font-semibold border-b-2 flex items-center space-x-1.5 transition-colors ${
+              activeTab === 'details'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>Details</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('activity');
+              if (item?.id) fetchAuditLogs(item.id);
+            }}
+            className={`py-2.5 px-3 text-xs font-semibold border-b-2 flex items-center space-x-1.5 transition-colors ${
+              activeTab === 'activity'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Activity Log</span>
+            {auditLogs.length > 0 && (
+              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-full bg-slate-800 text-slate-300">
+                {auditLogs.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
-          {saveError && (
-            <div className="p-3 bg-red-950/70 border border-red-800/60 rounded-xl text-red-300 text-xs flex items-center space-x-2 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-              <span>{saveError}</span>
-            </div>
-          )}
+          {activeTab === 'activity' ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Clock className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Change History & Audit Trail
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => item?.id && fetchAuditLogs(item.id)}
+                  disabled={isLoadingLogs}
+                  className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  title="Refresh activity"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingLogs ? 'animate-spin text-emerald-400' : ''}`} />
+                </button>
+              </div>
 
-          {/* Title */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-              Title
-            </label>
-            <input
-              type="text"
-              value={title}
+              {isLoadingLogs && auditLogs.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-500">
+                  <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-emerald-400" />
+                  Loading activity log...
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <History className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs font-medium text-slate-400">No activity logged yet</p>
+                  <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                    Mutations, reassignments, and status transitions for this work item will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="relative pl-6 space-y-5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-800">
+                  {auditLogs.map((log) => {
+                    const actionBadge =
+                      log.action === 'create'
+                        ? { bg: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30', label: 'Created' }
+                        : log.action === 'delete'
+                        ? { bg: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'Deleted' }
+                        : log.action === 'restore'
+                        ? { bg: 'bg-purple-500/20 text-purple-400 border-purple-500/30', label: 'Restored' }
+                        : { bg: 'bg-sky-500/20 text-sky-400 border-sky-500/30', label: 'Updated' };
+
+                    const changedKeys = Object.keys(log.changed_fields || {});
+
+                    return (
+                      <div key={log.id} className="relative">
+                        {/* Timeline dot */}
+                        <div className="absolute -left-6 top-1.5 w-2.5 h-2.5 rounded-full bg-slate-900 border-2 border-emerald-500" />
+
+                        <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xs font-semibold text-white">
+                                {log.actor_name || 'User'}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 text-[10px] font-semibold rounded-md border ${actionBadge.bg}`}
+                              >
+                                {actionBadge.label}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {new Date(log.created_at).toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+
+                          {/* Field diffs */}
+                          {changedKeys.length > 0 && (
+                            <div className="space-y-1.5 pt-1 border-t border-slate-900">
+                              {changedKeys.map((key) => {
+                                const diff = log.changed_fields[key];
+                                if (!diff) return null;
+
+                                if (key === 'status') {
+                                  const beforeDef = projectSettings.statuses.find((s) => s.id === diff.before);
+                                  const afterDef = projectSettings.statuses.find((s) => s.id === diff.after);
+                                  return (
+                                    <div key={key} className="flex items-center space-x-2 text-xs">
+                                      <span className="text-slate-500 capitalize">Status:</span>
+                                      <span
+                                        className="px-2 py-0.5 rounded text-[11px] font-medium"
+                                        style={{ backgroundColor: `${beforeDef?.color || '#64748b'}25`, color: beforeDef?.color || '#cbd5e1' }}
+                                      >
+                                        {beforeDef?.label || diff.before || 'None'}
+                                      </span>
+                                      <ArrowRight className="w-3 h-3 text-slate-600" />
+                                      <span
+                                        className="px-2 py-0.5 rounded text-[11px] font-medium"
+                                        style={{ backgroundColor: `${afterDef?.color || '#10b981'}25`, color: afterDef?.color || '#10b981' }}
+                                      >
+                                        {afterDef?.label || diff.after}
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                if (key === 'assignee') {
+                                  return (
+                                    <div key={key} className="flex items-center space-x-2 text-xs text-slate-300">
+                                      <span className="text-slate-500">Assignee:</span>
+                                      <span className="font-mono text-slate-400">{diff.before || 'Unassigned'}</span>
+                                      <ArrowRight className="w-3 h-3 text-slate-600" />
+                                      <span className="font-mono text-emerald-400 font-semibold">{diff.after || 'Unassigned'}</span>
+                                    </div>
+                                  );
+                                }
+
+                                if (key === 'title') {
+                                  return (
+                                    <div key={key} className="text-xs text-slate-300">
+                                      <span className="text-slate-500">Title:</span>{' '}
+                                      <span className="line-through text-slate-500 mr-2">{String(diff.before || '')}</span>
+                                      <span className="text-white">{String(diff.after || '')}</span>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div key={key} className="flex items-center space-x-2 text-xs text-slate-400">
+                                    <span className="capitalize">{key.replace(/_/g, ' ')}:</span>
+                                    <span className="text-slate-300 truncate max-w-[240px]">
+                                      {typeof diff.after === 'object' ? JSON.stringify(diff.after) : String(diff.after ?? '')}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {saveError && (
+                <div className="p-3 bg-red-950/70 border border-red-800/60 rounded-xl text-red-300 text-xs flex items-center space-x-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>{saveError}</span>
+                </div>
+              )}
+
+              {/* Title */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full px-3.5 py-2 text-sm bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 transition-colors"
               placeholder="Work item title..."
@@ -693,32 +915,50 @@ export function WorkItemModal({
               </div>
             )}
           </div>
-        </div>
+        </>
+      )}
+    </div>
 
-        {/* Modal Footer */}
-        <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
-          <span className="text-[11px] text-slate-500 font-mono">
-            Press <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Ctrl+Enter</kbd> to save
-          </span>
-          <div className="flex items-center space-x-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-medium rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || !title.trim()}
-              className="px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
-            </button>
-          </div>
-        </div>
+    {/* Modal Footer */}
+    <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+      {activeTab === 'details' ? (
+        <span className="text-[11px] text-slate-500 font-mono">
+          Press <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Ctrl+Enter</kbd> to save
+        </span>
+      ) : (
+        <span className="text-[11px] text-slate-500 font-mono">
+          Viewing changelog history
+        </span>
+      )}
+      <div className="flex items-center space-x-2.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 text-xs font-medium rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          Close
+        </button>
+        {activeTab === 'details' ? (
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving || !title.trim()}
+            className="px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setActiveTab('details')}
+            className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center space-x-1.5 transition-colors"
+          >
+            <span>Edit Details</span>
+          </button>
+        )}
+      </div>
+    </div>
       </div>
 
       {item && (

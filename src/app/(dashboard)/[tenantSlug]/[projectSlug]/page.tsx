@@ -43,6 +43,8 @@ import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
+import { NotificationBell } from '@/components/NotificationBell';
+
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 
 interface PageProps {
@@ -259,6 +261,21 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // Edit Modal
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
+
+  // Handle email notification deep links (?item=<id|ref>)
+  const deepLinkedItemId = typeof searchParams?.item === 'string' ? searchParams.item : null;
+  const deepLinkHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (deepLinkedItemId && items.length > 0 && deepLinkHandledRef.current !== deepLinkedItemId) {
+      const matched = items.find(
+        (it) => it.id === deepLinkedItemId || it.external_ref_id === deepLinkedItemId
+      );
+      if (matched) {
+        deepLinkHandledRef.current = deepLinkedItemId;
+        setEditingItem(matched);
+      }
+    }
+  }, [deepLinkedItemId, items]);
 
   const myDisplayName = useMemo(() => {
     if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
@@ -1005,6 +1022,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
           </button>
+
+          {/* Notifications Inbox */}
+          <NotificationBell
+            tenantSlug={tenantSlug}
+            onOpenItem={(itemId) => {
+              const target = items.find((it) => it.id === itemId);
+              if (target) {
+                setEditingItem(target);
+              }
+            }}
+          />
 
           {/* User Menu */}
           {tenantInfo ? (

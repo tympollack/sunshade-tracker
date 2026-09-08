@@ -22,11 +22,15 @@ import {
   Loader2,
   TrendingUp,
   Sparkles,
+  Bell,
+  Mail,
 } from 'lucide-react';
 import { UserMenu } from '@/components/UserMenu';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
+import { NotificationBell } from '@/components/NotificationBell';
 import { SCHEMA_TEMPLATES } from '@/lib/schema-templates';
+
 
 interface PageProps {
   params: Promise<{
@@ -68,6 +72,16 @@ export default function WorkspaceSettingsPage(props: PageProps) {
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
 
+  // Notification Preferences state
+  const [notificationPrefs, setNotificationPrefs] = useState({
+    notify_in_app: true,
+    notify_email: true,
+    notify_on_assignment: true,
+    notify_on_status_change: true,
+  });
+  const [isSavingPrefs, setIsSavingPrefs] = useState(false);
+  const [prefsSavedMessage, setPrefsSavedMessage] = useState(false);
+
   const apiFetch = useCallback(
     (path: string, options?: RequestInit) =>
       fetch(path, {
@@ -91,6 +105,10 @@ export default function WorkspaceSettingsPage(props: PageProps) {
         const data = await res.json();
         const workspaces = data.workspaces || [];
         setAllWorkspaces(workspaces);
+
+        if (data.user?.notification_preferences) {
+          setNotificationPrefs(data.user.notification_preferences);
+        }
 
         // Strictly validate that tenantSlug matches an authorized workspace
         const current = workspaces.find((w: any) => w.slug === tenantSlug);
@@ -134,6 +152,37 @@ export default function WorkspaceSettingsPage(props: PageProps) {
     setCopiedFullKey(true);
     setTimeout(() => setCopiedFullKey(false), 2000);
   };
+
+  // Toggle notification preference
+  const handleTogglePref = async (key: string) => {
+    const previous = { ...notificationPrefs };
+    const updated = {
+      ...notificationPrefs,
+      [key]: !notificationPrefs[key as keyof typeof notificationPrefs],
+    };
+    setNotificationPrefs(updated);
+    setIsSavingPrefs(true);
+    try {
+      const res = await apiFetch('/api/v1/tenants/me', {
+        method: 'PATCH',
+        body: JSON.stringify({ notification_preferences: updated }),
+      });
+      if (res.ok) {
+        setPrefsSavedMessage(true);
+        setTimeout(() => setPrefsSavedMessage(false), 2500);
+      } else {
+        // Revert on server error
+        setNotificationPrefs(previous);
+      }
+    } catch (err) {
+      console.error('Failed to save notification preferences', err);
+      // Revert on network exception
+      setNotificationPrefs(previous);
+    } finally {
+      setIsSavingPrefs(false);
+    }
+  };
+
 
   // Regenerate API key workflow
   const handleRegenerateKey = async () => {
@@ -276,6 +325,8 @@ export default function WorkspaceSettingsPage(props: PageProps) {
             </span>
           )}
 
+          <NotificationBell tenantSlug={tenantSlug} />
+
           {tenantInfo && (
             <UserMenu
               tenantName={tenantInfo.name}
@@ -358,6 +409,126 @@ export default function WorkspaceSettingsPage(props: PageProps) {
               <TrendingUp className="w-3.5 h-3.5" />
               <span>View Statement</span>
             </Link>
+          </div>
+        </div>
+
+        {/* User Notification Preferences Card */}
+        <div className="p-6 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Bell className="w-5 h-5 text-sky-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
+                Notification Preferences
+              </h2>
+            </div>
+            {prefsSavedMessage && (
+              <span className="text-xs text-emerald-400 font-medium flex items-center space-x-1 animate-in fade-in">
+                <Check className="w-3.5 h-3.5" />
+                <span>Preferences saved</span>
+              </span>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-400">
+            Configure how and when you receive transactional updates for task assignments and status transitions.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* In-App Notifications Toggle */}
+            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-white">In-App Alerts</span>
+                <p className="text-[11px] text-slate-400">Show bell badge and inbox alerts</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationPrefs.notify_in_app}
+                onClick={() => handleTogglePref('notify_in_app')}
+                disabled={isSavingPrefs}
+                className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                  notificationPrefs.notify_in_app ? 'bg-emerald-500' : 'bg-slate-700'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                    notificationPrefs.notify_in_app ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Email Notifications Toggle */}
+            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-white">Email Notifications (Resend)</span>
+                <p className="text-[11px] text-slate-400">Receive transactional emails via Resend API</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationPrefs.notify_email}
+                onClick={() => handleTogglePref('notify_email')}
+                disabled={isSavingPrefs}
+                className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                  notificationPrefs.notify_email ? 'bg-emerald-500' : 'bg-slate-700'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                    notificationPrefs.notify_email ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Notify on Assignment Toggle */}
+            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-white">Assignment Alerts</span>
+                <p className="text-[11px] text-slate-400">Alert me when assigned to a work item</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationPrefs.notify_on_assignment}
+                onClick={() => handleTogglePref('notify_on_assignment')}
+                disabled={isSavingPrefs}
+                className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                  notificationPrefs.notify_on_assignment ? 'bg-emerald-500' : 'bg-slate-700'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                    notificationPrefs.notify_on_assignment ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Notify on Status Change Toggle */}
+            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+              <div className="space-y-0.5">
+                <span className="text-xs font-semibold text-white">Status Transition Alerts</span>
+                <p className="text-[11px] text-slate-400">Alert me when items change status</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={notificationPrefs.notify_on_status_change}
+                onClick={() => handleTogglePref('notify_on_status_change')}
+                disabled={isSavingPrefs}
+                className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                  notificationPrefs.notify_on_status_change ? 'bg-emerald-500' : 'bg-slate-700'
+                }`}
+              >
+                <div
+                  className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                    notificationPrefs.notify_on_status_change ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
 

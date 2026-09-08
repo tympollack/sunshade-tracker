@@ -10,6 +10,9 @@ import {
   handleBulkUpdateItems,
   handleBulkDeleteItems,
 } from '@/lib/bulk-items';
+import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
+import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
+
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -387,6 +390,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Record audit log for item creation
+    recordAuditLog({
+      tenant_id: authCtx.tenant.id,
+      project_id: projId,
+      item_id: created.id,
+      actor_id: authCtx.userId || null,
+      actor_name: authCtx.userId ? 'User' : 'API Client',
+      action: 'create',
+      changed_fields: {
+        created: { before: null, after: created },
+      },
+    }).catch(() => {});
+
+    // Dispatch notifications if assigned
+    if (created.assignee) {
+      resolveRecipient(authCtx.tenant.id, created.assignee)
+        .then((recipientUser) => {
+          if (recipientUser) {
+            return dispatchItemNotifications({
+              tenantId: authCtx.tenant.id,
+              tenantSlug: authCtx.tenant.slug,
+              projectId: projId,
+              projectSlug: project_slug,
+              item: created,
+              beforeItem: null,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userId ? 'User' : 'API Client',
+              recipientUser,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
     return NextResponse.json({ success: true, item: created }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
@@ -439,7 +476,7 @@ export async function PATCH(req: NextRequest) {
     // Fetch existing item to check project and current state
     const { data: existingItem, error: fetchErr } = await supabaseAdmin
       .from('work_items')
-      .select('id, project_id, item_type, status, parent_id, external_ref_id')
+      .select('*')
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .single();
@@ -591,6 +628,40 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Record audit diff if fields changed
+    const diff = computeChangedFields(existingItem, updated);
+    if (Object.keys(diff).length > 0) {
+      recordAuditLog({
+        tenant_id: authCtx.tenant.id,
+        project_id: existingItem.project_id,
+        item_id: id,
+        actor_id: authCtx.userId || null,
+        actor_name: authCtx.userId ? 'User' : 'API Client',
+        action: 'update',
+        changed_fields: diff,
+      }).catch(() => {});
+
+      const targetAssignee = updated.assignee || existingItem.assignee;
+      if (targetAssignee) {
+        resolveRecipient(authCtx.tenant.id, targetAssignee)
+          .then((recipientUser) => {
+            if (recipientUser) {
+              return dispatchItemNotifications({
+                tenantId: authCtx.tenant.id,
+                tenantSlug: authCtx.tenant.slug,
+                projectId: existingItem.project_id,
+                item: updated,
+                beforeItem: existingItem,
+                actorId: authCtx.userId || null,
+                actorName: authCtx.userId ? 'User' : 'API Client',
+                recipientUser,
+              });
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
     return NextResponse.json({ success: true, item: updated });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
@@ -640,7 +711,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { data: softDeleted, error } = await deleteQuery
-      .select('id, deleted_at')
+      .select('id, project_id, title, deleted_at')
       .single();
 
     if (error) {
@@ -654,6 +725,19 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    // Record audit log for soft-delete
+    recordAuditLog({
+      tenant_id: authCtx.tenant.id,
+      project_id: softDeleted.project_id,
+      item_id: id,
+      actor_id: authCtx.userId || null,
+      actor_name: authCtx.userId ? 'User' : 'API Client',
+      action: 'delete',
+      changed_fields: {
+        deleted_at: { before: null, after: softDeleted.deleted_at },
+      },
+    }).catch(() => {});
+
     return NextResponse.json({
       success: true,
       soft_deleted_id: id,
@@ -663,3 +747,4 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+

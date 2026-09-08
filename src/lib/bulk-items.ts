@@ -1,6 +1,9 @@
 import { supabaseAdmin } from '@/lib/db';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 import { validateHierarchyNesting } from '@/lib/fractional-index';
+import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
+import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
+
 
 export const MAX_BULK_ITEMS = 100;
 
@@ -504,11 +507,65 @@ export async function handleBulkCreateItems(
     };
   }
 
+  const items = (inserted || []) as WorkItem[];
+
+  // Record audit logs for bulk created items
+  if (items.length > 0) {
+    recordBulkAuditLogs(
+      items.map((it) => ({
+        tenant_id: tenantId,
+        project_id: it.project_id,
+        item_id: it.id,
+        action: 'create',
+        changed_fields: { created: { before: null, after: it } },
+      }))
+    ).catch(() => {});
+  }
+
   return {
     success: true,
-    count: inserted?.length || 0,
-    items: (inserted || []) as WorkItem[],
+    count: items.length,
+    items,
   };
+}
+
+/**
+ * Helper to dispatch item notifications for bulk mutations where status or assignee changed.
+ */
+async function dispatchBulkNotifications(
+  tenantId: string,
+  updatedItems: WorkItem[],
+  beforeLookup: (id: string) => any
+): Promise<void> {
+  const notificationCandidates = updatedItems.filter((updated) => {
+    const before = beforeLookup(updated.id);
+    if (!before) return false;
+    const statusChanged = before.status !== undefined && before.status !== null && before.status !== updated.status;
+    const assignmentChanged = updated.assignee !== undefined && updated.assignee !== null && updated.assignee !== before.assignee;
+    return statusChanged || assignmentChanged;
+  });
+
+  if (notificationCandidates.length === 0) return;
+
+  try {
+    const resolver = await getTenantMemberRecipients(tenantId);
+    for (const updated of notificationCandidates) {
+      const before = beforeLookup(updated.id);
+      const targetAssignee = updated.assignee || before?.assignee;
+      const recipient = resolver.resolve(targetAssignee);
+      if (recipient) {
+        dispatchItemNotifications({
+          tenantId,
+          projectId: updated.project_id,
+          item: updated,
+          beforeItem: before,
+          recipientUser: recipient,
+        }).catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    console.warn('[tracker:bulk-items] Failed to dispatch bulk notifications:', err?.message || err);
+  }
 }
 
 /**
@@ -729,10 +786,36 @@ export async function handleBulkUpdateItems(
       if (updErr) {
         return { success: false, updated_count: 0, items: [], error: updErr.message, status: 400 };
       }
+      const updatedList = (updatedRows || []) as WorkItem[];
+
+      // Record audit logs for uniform bulk updates
+      const auditEntries = updatedList
+        .map((updated) => {
+          const before = existingItems.find((e: any) => e.id === updated.id);
+          const diff = computeChangedFields(before, updated);
+          return {
+            tenant_id: tenantId,
+            project_id: updated.project_id,
+            item_id: updated.id,
+            action: 'update' as const,
+            changed_fields: diff,
+          };
+        })
+        .filter((entry) => Object.keys(entry.changed_fields).length > 0);
+
+      if (auditEntries.length > 0) {
+        recordBulkAuditLogs(auditEntries).catch(() => {});
+      }
+
+      // Dispatch notifications for uniform updates
+      dispatchBulkNotifications(tenantId, updatedList, (id) =>
+        existingItems.find((e: any) => e.id === id)
+      ).catch(() => {});
+
       return {
         success: true,
-        updated_count: updatedRows?.length || 0,
-        items: (updatedRows || []) as WorkItem[],
+        updated_count: updatedList.length,
+        items: updatedList,
       };
     }
 
@@ -762,6 +845,30 @@ export async function handleBulkUpdateItems(
       }
       if (r.data) updatedItems.push(r.data as WorkItem);
     }
+
+    // Record audit logs for updated items
+    const auditEntries = updatedItems
+      .map((updated) => {
+        const before = existingItems.find((e: any) => e.id === updated.id);
+        const diff = computeChangedFields(before, updated);
+        return {
+          tenant_id: tenantId,
+          project_id: updated.project_id,
+          item_id: updated.id,
+          action: 'update' as const,
+          changed_fields: diff,
+        };
+      })
+      .filter((entry) => Object.keys(entry.changed_fields).length > 0);
+
+    if (auditEntries.length > 0) {
+      recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
+    // Dispatch notifications for updated items
+    dispatchBulkNotifications(tenantId, updatedItems, (id) =>
+      existingItems.find((e: any) => e.id === id)
+    ).catch(() => {});
 
     return {
       success: true,
@@ -983,6 +1090,30 @@ export async function handleBulkUpdateItems(
       if (r.data) updatedItems.push(r.data as WorkItem);
     }
 
+    // Record audit logs for updated items
+    const auditEntries = updatedItems
+      .map((updated) => {
+        const before = existingMap.get(updated.id);
+        const diff = computeChangedFields(before, updated);
+        return {
+          tenant_id: tenantId,
+          project_id: updated.project_id,
+          item_id: updated.id,
+          action: 'update' as const,
+          changed_fields: diff,
+        };
+      })
+      .filter((entry) => Object.keys(entry.changed_fields).length > 0);
+
+    if (auditEntries.length > 0) {
+      recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
+    // Dispatch notifications for updated items
+    dispatchBulkNotifications(tenantId, updatedItems, (id) =>
+      existingMap.get(id)
+    ).catch(() => {});
+
     return {
       success: true,
       updated_count: updatedItems.length,
@@ -1040,7 +1171,7 @@ export async function handleBulkDeleteItems(
     query = query.is('deleted_at', null);
   }
 
-  const { data: deleted, error } = await query.select('id, deleted_at');
+  const { data: deleted, error } = await query.select('id, project_id, deleted_at');
   if (error) {
     return {
       success: false,
@@ -1051,7 +1182,20 @@ export async function handleBulkDeleteItems(
     };
   }
 
-  const deletedIds = (deleted || []).map((d: any) => d.id);
+  const deletedRows = (deleted || []) as Array<{ id: string; project_id: string; deleted_at: string }>;
+  if (deletedRows.length > 0) {
+    recordBulkAuditLogs(
+      deletedRows.map((d) => ({
+        tenant_id: tenantId,
+        project_id: d.project_id,
+        item_id: d.id,
+        action: 'delete' as const,
+        changed_fields: { deleted_at: { before: null, after: d.deleted_at } },
+      }))
+    ).catch(() => {});
+  }
+
+  const deletedIds = deletedRows.map((d) => d.id);
   return {
     success: true,
     deleted_count: deletedIds.length,
