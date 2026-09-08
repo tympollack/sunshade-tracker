@@ -62,7 +62,11 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Invalid JSON body' }, { status: 400 });
+    const isSyntaxError = err instanceof SyntaxError || err.name === 'SyntaxError';
+    return NextResponse.json(
+      { error: isSyntaxError ? 'Invalid JSON body' : (err.message || 'Internal server error') },
+      { status: isSyntaxError ? 400 : 500 }
+    );
   }
 }
 
@@ -84,7 +88,11 @@ export async function PATCH(req: NextRequest) {
       items: res.items,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Invalid JSON body' }, { status: 400 });
+    const isSyntaxError = err instanceof SyntaxError || err.name === 'SyntaxError';
+    return NextResponse.json(
+      { error: isSyntaxError ? 'Invalid JSON body' : (err.message || 'Internal server error') },
+      { status: isSyntaxError ? 400 : 500 }
+    );
   }
 }
 
@@ -108,6 +116,10 @@ export async function DELETE(req: NextRequest) {
       deleted_ids: res.deleted_ids,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Invalid JSON body' }, { status: 400 });
+    const isSyntaxError = err instanceof SyntaxError || err.name === 'SyntaxError';
+    return NextResponse.json(
+      { error: isSyntaxError ? 'Invalid JSON body' : (err.message || 'Internal server error') },
+      { status: isSyntaxError ? 400 : 500 }
+    );
   }
 }

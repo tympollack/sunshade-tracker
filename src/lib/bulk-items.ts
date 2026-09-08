@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/db';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 import { validateHierarchyNesting } from '@/lib/fractional-index';
 
+export const MAX_BULK_ITEMS = 100;
+
 export interface BulkGetParams {
   ids?: string[];
   refs?: string[];
@@ -69,6 +71,26 @@ export async function handleBulkGetItems(
   tenantId: string,
   params: BulkGetParams
 ): Promise<{ success: boolean; count: number; items: WorkItem[]; error?: string; status?: number }> {
+  if (params.ids && params.ids.length > MAX_BULK_ITEMS) {
+    return {
+      success: false,
+      count: 0,
+      items: [],
+      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+      status: 400,
+    };
+  }
+
+  if (params.refs && params.refs.length > MAX_BULK_ITEMS) {
+    return {
+      success: false,
+      count: 0,
+      items: [],
+      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+      status: 400,
+    };
+  }
+
   let resolvedProjectId = params.projectId;
   if (!resolvedProjectId && params.projectSlug) {
     let projQuery: any = supabaseAdmin
@@ -79,8 +101,42 @@ export async function handleBulkGetItems(
     if (typeof projQuery.is === 'function') {
       projQuery = projQuery.is('deleted_at', null);
     }
-    const { data: proj } = await projQuery.maybeSingle();
-    if (proj) resolvedProjectId = proj.id;
+    const { data: proj, error: projErr } = await projQuery.maybeSingle();
+    if (projErr) {
+      return { success: false, count: 0, items: [], error: projErr.message, status: 500 };
+    }
+    if (!proj) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Project with slug '${params.projectSlug}' not found`,
+        status: 404,
+      };
+    }
+    resolvedProjectId = proj.id;
+  } else if (resolvedProjectId) {
+    let projQuery: any = supabaseAdmin
+      .from('projects')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('id', resolvedProjectId);
+    if (typeof projQuery.is === 'function') {
+      projQuery = projQuery.is('deleted_at', null);
+    }
+    const { data: proj, error: projErr } = await projQuery.maybeSingle();
+    if (projErr) {
+      return { success: false, count: 0, items: [], error: projErr.message, status: 500 };
+    }
+    if (!proj) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Project with ID '${resolvedProjectId}' not found`,
+        status: 404,
+      };
+    }
   }
 
   let query: any = supabaseAdmin
@@ -94,6 +150,9 @@ export async function handleBulkGetItems(
 
   if (params.ids && params.ids.length > 0) {
     query = query.in('id', params.ids);
+    if (resolvedProjectId) {
+      query = query.eq('project_id', resolvedProjectId);
+    }
   } else if (params.refs && params.refs.length > 0) {
     query = query.in('external_ref_id', params.refs);
     if (resolvedProjectId) {
@@ -136,6 +195,16 @@ export async function handleBulkCreateItems(
       count: 0,
       items: [],
       error: 'Body must include a non-empty "items" array',
+      status: 400,
+    };
+  }
+
+  if (payload.items.length > MAX_BULK_ITEMS) {
+    return {
+      success: false,
+      count: 0,
+      items: [],
+      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
       status: 400,
     };
   }
@@ -200,11 +269,27 @@ export async function handleBulkCreateItems(
     return startOrder;
   }
 
-  const batchRefMap = new Map<string, string>();
+  // Pass 1: Pre-assign UUIDs to all items so same-batch forward and backward references can resolve
+  const preassignedItems = payload.items.map((it) => ({
+    ...it,
+    id: (it as any).id || crypto.randomUUID(),
+  }));
+
+  const batchRefMap = new Map<string, (typeof preassignedItems)[0]>();
+  const batchIdMap = new Map<string, (typeof preassignedItems)[0]>();
+
+  for (const it of preassignedItems) {
+    batchIdMap.set(it.id, it);
+    if (it.external_ref_id && typeof it.external_ref_id === 'string' && it.external_ref_id.trim()) {
+      batchRefMap.set(it.external_ref_id.trim(), it);
+    }
+  }
+
   const rowsToInsert: any[] = [];
 
-  for (let i = 0; i < payload.items.length; i++) {
-    const it = payload.items[i];
+  // Pass 2: Atomic validation of all items before inserting anything
+  for (let i = 0; i < preassignedItems.length; i++) {
+    const it = preassignedItems[i];
     if (!it.title || typeof it.title !== 'string' || it.title.trim() === '') {
       return {
         success: false,
@@ -230,9 +315,29 @@ export async function handleBulkCreateItems(
       };
     }
 
+    // Reject self-parenting
+    if (it.parent_id && it.parent_id === it.id) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Item "${it.title}" cannot be its own parent`,
+        status: 400,
+      };
+    }
+    if (it.parent_ref_id && it.external_ref_id && it.parent_ref_id.trim() === it.external_ref_id.trim()) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Item "${it.title}" cannot reference itself as parent`,
+        status: 400,
+      };
+    }
+
     const settings = itemProject.settings || {};
     const defaultStatus = settings.statuses?.[0]?.id || 'not_started';
-    const defaultType = settings.hierarchy?.[settings.hierarchy.length - 1]?.type || 'task';
+    const defaultType = settings.hierarchy?.[(settings.hierarchy?.length || 1) - 1]?.type || 'task';
 
     const resolvedStatus = it.status || defaultStatus;
     const resolvedType = it.item_type || defaultType;
@@ -260,23 +365,106 @@ export async function handleBulkCreateItems(
     }
 
     // Resolve parent_id (by direct ID or parent_ref_id)
-    let resolvedParentId = it.parent_id || null;
-    if (!resolvedParentId && it.parent_ref_id) {
-      if (batchRefMap.has(it.parent_ref_id)) {
-        resolvedParentId = batchRefMap.get(it.parent_ref_id)!;
+    let resolvedParentId: string | null = it.parent_id || null;
+    let resolvedParentType: string | null = null;
+    let resolvedParentProjectId: string | null = null;
+
+    if (it.parent_ref_id) {
+      const refKey = it.parent_ref_id.trim();
+      if (batchRefMap.has(refKey)) {
+        const parentBatchItem = batchRefMap.get(refKey)!;
+        resolvedParentId = parentBatchItem.id;
+        const parentProj = (parentBatchItem.project_id || parentBatchItem.project_slug)
+          ? await resolveProject(parentBatchItem.project_id, parentBatchItem.project_slug)
+          : defaultProject;
+        const parentSettings = parentProj?.settings || {};
+        const parentDefaultType = parentSettings.hierarchy?.[(parentSettings.hierarchy?.length || 1) - 1]?.type || 'task';
+        resolvedParentType = parentBatchItem.item_type || parentDefaultType;
+        resolvedParentProjectId = parentProj?.id || itemProject.id;
       } else {
         let parentQuery: any = supabaseAdmin
           .from('work_items')
-          .select('id')
-          .eq('project_id', itemProject.id)
-          .eq('external_ref_id', it.parent_ref_id);
+          .select('id, item_type, project_id')
+          .eq('tenant_id', tenantId)
+          .eq('external_ref_id', refKey);
 
         if (typeof parentQuery.is === 'function') {
           parentQuery = parentQuery.is('deleted_at', null);
         }
 
         const { data: parentItem } = await parentQuery.maybeSingle();
-        if (parentItem) resolvedParentId = parentItem.id;
+        if (!parentItem) {
+          return {
+            success: false,
+            count: 0,
+            items: [],
+            error: `Parent with reference '${refKey}' not found`,
+            status: 404,
+          };
+        }
+        resolvedParentId = parentItem.id;
+        resolvedParentType = parentItem.item_type;
+        resolvedParentProjectId = parentItem.project_id;
+      }
+    } else if (resolvedParentId) {
+      if (batchIdMap.has(resolvedParentId)) {
+        const parentBatchItem = batchIdMap.get(resolvedParentId)!;
+        const parentProj = (parentBatchItem.project_id || parentBatchItem.project_slug)
+          ? await resolveProject(parentBatchItem.project_id, parentBatchItem.project_slug)
+          : defaultProject;
+        const parentSettings = parentProj?.settings || {};
+        const parentDefaultType = parentSettings.hierarchy?.[(parentSettings.hierarchy?.length || 1) - 1]?.type || 'task';
+        resolvedParentType = parentBatchItem.item_type || parentDefaultType;
+        resolvedParentProjectId = parentProj?.id || itemProject.id;
+      } else {
+        let parentQuery: any = supabaseAdmin
+          .from('work_items')
+          .select('id, item_type, project_id')
+          .eq('tenant_id', tenantId)
+          .eq('id', resolvedParentId);
+
+        if (typeof parentQuery.is === 'function') {
+          parentQuery = parentQuery.is('deleted_at', null);
+        }
+
+        const { data: parentItem } = await parentQuery.maybeSingle();
+        if (!parentItem) {
+          return {
+            success: false,
+            count: 0,
+            items: [],
+            error: `Parent item '${resolvedParentId}' not found`,
+            status: 404,
+          };
+        }
+        resolvedParentType = parentItem.item_type;
+        resolvedParentProjectId = parentItem.project_id;
+      }
+    }
+
+    // Validate parent relationship
+    if (resolvedParentId) {
+      if (resolvedParentProjectId && resolvedParentProjectId !== itemProject.id) {
+        return {
+          success: false,
+          count: 0,
+          items: [],
+          error: 'Parent item must belong to the same project',
+          status: 400,
+        };
+      }
+
+      if (settings.hierarchy?.length && resolvedParentType) {
+        const nestCheck = validateHierarchyNesting(resolvedParentType, resolvedType, settings.hierarchy);
+        if (!nestCheck.valid) {
+          return {
+            success: false,
+            count: 0,
+            items: [],
+            error: nestCheck.message,
+            status: 422,
+          };
+        }
       }
     }
 
@@ -284,6 +472,7 @@ export async function handleBulkCreateItems(
     const now = new Date().toISOString();
 
     rowsToInsert.push({
+      id: it.id,
       tenant_id: tenantId,
       project_id: itemProject.id,
       parent_id: resolvedParentId,
@@ -329,9 +518,37 @@ export async function handleBulkUpdateItems(
   tenantId: string,
   payload: BulkUpdatePayload
 ): Promise<{ success: boolean; updated_count: number; items: WorkItem[]; error?: string; status?: number }> {
+  // Shared project settings cache
+  const projectSettingsCache = new Map<string, ProjectSettings>();
+  async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
+    if (projectSettingsCache.has(projectId)) return projectSettingsCache.get(projectId)!;
+    let projQuery: any = supabaseAdmin
+      .from('projects')
+      .select('id, settings')
+      .eq('tenant_id', tenantId)
+      .eq('id', projectId);
+    if (typeof projQuery.is === 'function') {
+      projQuery = projQuery.is('deleted_at', null);
+    }
+    const { data: proj } = await projQuery.maybeSingle();
+    const settings = proj?.settings || {};
+    projectSettingsCache.set(projectId, settings);
+    return settings;
+  }
+
   // Modality A: Uniform update on `ids` with `updates` object
   if (Array.isArray(payload.ids) && payload.ids.length > 0 && payload.updates && typeof payload.updates === 'object') {
     const { ids, updates } = payload;
+
+    if (ids.length > MAX_BULK_ITEMS) {
+      return {
+        success: false,
+        updated_count: 0,
+        items: [],
+        error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+        status: 400,
+      };
+    }
 
     // Fetch existing active items
     let fetchQuery: any = supabaseAdmin
@@ -360,10 +577,107 @@ export async function handleBulkUpdateItems(
     }
 
     const now = new Date().toISOString();
-    const updatedItems: WorkItem[] = [];
+    const plannedUpdates: Array<{ id: string; fields: Record<string, any> }> = [];
 
-    // Process updates for each matched item
+    // Pre-validate all items before any writes are made
     for (const item of existingItems) {
+      const projectSettings = await getProjectSettings(item.project_id);
+      const effectiveType = updates.item_type !== undefined ? updates.item_type : item.item_type;
+      const effectiveStatus = updates.status !== undefined ? updates.status : item.status;
+      const effectiveParentId = updates.parent_id !== undefined ? updates.parent_id : item.parent_id;
+
+      // Validate status
+      if (updates.status !== undefined && projectSettings?.statuses?.length) {
+        if (!projectSettings.statuses.some((s: any) => s.id === effectiveStatus)) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Item "${item.title || item.id}" has invalid status '${effectiveStatus}'. Allowed: [${projectSettings.statuses.map((s: any) => s.id).join(', ')}]`,
+            status: 422,
+          };
+        }
+      }
+
+      // Validate item_type
+      if (updates.item_type !== undefined && projectSettings?.hierarchy?.length) {
+        if (!projectSettings.hierarchy.some((h: any) => h.type === effectiveType)) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Item "${item.title || item.id}" has invalid item_type '${effectiveType}'. Allowed: [${projectSettings.hierarchy.map((h: any) => h.type).join(', ')}]`,
+            status: 422,
+          };
+        }
+      }
+
+      let targetParentId = updates.parent_id !== undefined ? updates.parent_id : item.parent_id;
+
+      // Validate parent hierarchy
+      if (effectiveParentId) {
+        if (effectiveParentId === item.id) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: 'Item cannot be its own parent',
+            status: 400,
+          };
+        }
+
+        let parentItem = existingItems.find((e: any) => e.id === effectiveParentId);
+        if (!parentItem) {
+          let parentQuery: any = supabaseAdmin
+            .from('work_items')
+            .select('id, item_type, project_id')
+            .eq('tenant_id', tenantId)
+            .eq('id', effectiveParentId);
+          if (typeof parentQuery.is === 'function') {
+            parentQuery = parentQuery.is('deleted_at', null);
+          }
+          const { data: p } = await parentQuery.maybeSingle();
+          parentItem = p;
+        }
+
+        if (!parentItem) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Parent item '${effectiveParentId}' not found`,
+            status: 404,
+          };
+        }
+
+        if (parentItem.project_id !== item.project_id) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: 'Parent item must belong to the same project',
+            status: 400,
+          };
+        }
+
+        if (projectSettings?.hierarchy?.length) {
+          const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, projectSettings.hierarchy);
+          if (!nestCheck.valid) {
+            if (updates.parent_id !== undefined) {
+              return {
+                success: false,
+                updated_count: 0,
+                items: [],
+                error: nestCheck.message,
+                status: 422,
+              };
+            }
+            // Auto-clear incompatible parent if type was changed without explicitly setting parent_id
+            targetParentId = null;
+          }
+        }
+      }
+
       const itemUpdate: Record<string, any> = {
         updated_at: now,
       };
@@ -373,29 +687,80 @@ export async function handleBulkUpdateItems(
       if (updates.status !== undefined) itemUpdate.status = updates.status;
       if (updates.item_type !== undefined) itemUpdate.item_type = updates.item_type;
       if (updates.assignee !== undefined) itemUpdate.assignee = updates.assignee;
-      if (updates.parent_id !== undefined) itemUpdate.parent_id = updates.parent_id;
+      if (updates.parent_id !== undefined || targetParentId !== item.parent_id) {
+        itemUpdate.parent_id = targetParentId;
+      }
       if (updates.order_index !== undefined) itemUpdate.order_index = updates.order_index;
 
       if (updates.metadata !== undefined) {
-        // Deep/shallow merge metadata so existing custom attributes are preserved
         itemUpdate.metadata = {
           ...(item.metadata || {}),
           ...updates.metadata,
         };
       }
 
-      const { data: updated, error: updErr } = await supabaseAdmin
+      plannedUpdates.push({ id: item.id, fields: itemUpdate });
+    }
+
+    // Check if updates across all items are completely uniform without per-item differences
+    const isCompletelyUniform =
+      updates.metadata === undefined &&
+      plannedUpdates.every((p) => {
+        const keys1 = Object.keys(p.fields).sort();
+        const keys2 = Object.keys(plannedUpdates[0].fields).sort();
+        return (
+          JSON.stringify(keys1) === JSON.stringify(keys2) &&
+          keys1.every((k) => k === 'updated_at' || p.fields[k] === plannedUpdates[0].fields[k])
+        );
+      });
+
+    if (isCompletelyUniform && plannedUpdates.length > 0) {
+      let updateQuery: any = supabaseAdmin
         .from('work_items')
-        .update(itemUpdate)
-        .eq('id', item.id)
+        .update(plannedUpdates[0].fields)
+        .in('id', ids)
+        .eq('tenant_id', tenantId);
+
+      if (typeof updateQuery.is === 'function') {
+        updateQuery = updateQuery.is('deleted_at', null);
+      }
+
+      const { data: updatedRows, error: updErr } = await updateQuery.select('*');
+      if (updErr) {
+        return { success: false, updated_count: 0, items: [], error: updErr.message, status: 400 };
+      }
+      return {
+        success: true,
+        updated_count: updatedRows?.length || 0,
+        items: (updatedRows || []) as WorkItem[],
+      };
+    }
+
+    // Execute concurrently using Promise.all to avoid serial request loops
+    const updatePromises = plannedUpdates.map(async ({ id, fields }) => {
+      return supabaseAdmin
+        .from('work_items')
+        .update(fields)
+        .eq('id', id)
         .eq('tenant_id', tenantId)
         .select('*')
         .single();
+    });
 
-      if (updErr) {
-        return { success: false, updated_count: updatedItems.length, items: updatedItems, error: updErr.message, status: 400 };
+    const results = await Promise.all(updatePromises);
+    const updatedItems: WorkItem[] = [];
+
+    for (const r of results) {
+      if (r.error) {
+        return {
+          success: false,
+          updated_count: updatedItems.length,
+          items: updatedItems,
+          error: r.error.message,
+          status: 400,
+        };
       }
-      if (updated) updatedItems.push(updated as WorkItem);
+      if (r.data) updatedItems.push(r.data as WorkItem);
     }
 
     return {
@@ -408,34 +773,163 @@ export async function handleBulkUpdateItems(
   // Modality B: Heterogeneous update array
   const itemList = payload.items || (Array.isArray(payload) ? (payload as any) : null);
   if (Array.isArray(itemList) && itemList.length > 0) {
-    const updatedItems: WorkItem[] = [];
-    const now = new Date().toISOString();
+    if (itemList.length > MAX_BULK_ITEMS) {
+      return {
+        success: false,
+        updated_count: 0,
+        items: [],
+        error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+        status: 400,
+      };
+    }
 
     for (let i = 0; i < itemList.length; i++) {
-      const it = itemList[i];
-      if (!it.id) {
+      if (!itemList[i]?.id) {
         return {
           success: false,
-          updated_count: updatedItems.length,
-          items: updatedItems,
+          updated_count: 0,
+          items: [],
           error: `Item at index ${i} is missing required "id"`,
           status: 400,
         };
       }
+    }
 
-      // Fetch existing item for safe metadata merging
-      let getQuery: any = supabaseAdmin
-        .from('work_items')
-        .select('*')
-        .eq('id', it.id)
-        .eq('tenant_id', tenantId);
+    const targetIds = itemList.map((it) => it.id);
 
-      if (typeof getQuery.is === 'function') {
-        getQuery = getQuery.is('deleted_at', null);
+    // Fetch existing active items
+    let getBatchQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .in('id', targetIds)
+      .eq('tenant_id', tenantId);
+
+    if (typeof getBatchQuery.is === 'function') {
+      getBatchQuery = getBatchQuery.is('deleted_at', null);
+    }
+
+    const { data: existingBatch, error: fetchErr } = await getBatchQuery;
+    if (fetchErr) {
+      return { success: false, updated_count: 0, items: [], error: fetchErr.message, status: 500 };
+    }
+
+    const existingMap = new Map<string, any>((existingBatch || []).map((e: any) => [e.id, e]));
+
+    // Check for missing items
+    for (const it of itemList) {
+      if (!existingMap.has(it.id)) {
+        return {
+          success: false,
+          updated_count: 0,
+          items: [],
+          error: `Item '${it.id}' not found`,
+          status: 404,
+        };
+      }
+    }
+
+    const now = new Date().toISOString();
+    const plannedUpdates: Array<{ id: string; fields: Record<string, any> }> = [];
+
+    // Pre-validate all items before any writes are made
+    for (const it of itemList) {
+      const existing = existingMap.get(it.id)!;
+      const projectSettings = await getProjectSettings(existing.project_id);
+
+      const effectiveType = it.item_type !== undefined ? it.item_type : existing.item_type;
+      const effectiveStatus = it.status !== undefined ? it.status : existing.status;
+      const effectiveParentId = it.parent_id !== undefined ? it.parent_id : existing.parent_id;
+
+      // Validate status
+      if (it.status !== undefined && projectSettings?.statuses?.length) {
+        if (!projectSettings.statuses.some((s: any) => s.id === effectiveStatus)) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Item "${existing.title || existing.id}" has invalid status '${effectiveStatus}'. Allowed: [${projectSettings.statuses.map((s: any) => s.id).join(', ')}]`,
+            status: 422,
+          };
+        }
       }
 
-      const { data: existing } = await getQuery.maybeSingle();
-      if (!existing) continue; // Skip or report
+      // Validate item_type
+      if (it.item_type !== undefined && projectSettings?.hierarchy?.length) {
+        if (!projectSettings.hierarchy.some((h: any) => h.type === effectiveType)) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Item "${existing.title || existing.id}" has invalid item_type '${effectiveType}'. Allowed: [${projectSettings.hierarchy.map((h: any) => h.type).join(', ')}]`,
+            status: 422,
+          };
+        }
+      }
+
+      let targetParentId = it.parent_id !== undefined ? it.parent_id : existing.parent_id;
+
+      // Validate parent hierarchy
+      if (effectiveParentId) {
+        if (effectiveParentId === existing.id) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: 'Item cannot be its own parent',
+            status: 400,
+          };
+        }
+
+        let parentItem = existingMap.get(effectiveParentId);
+        if (!parentItem) {
+          let parentQuery: any = supabaseAdmin
+            .from('work_items')
+            .select('id, item_type, project_id')
+            .eq('tenant_id', tenantId)
+            .eq('id', effectiveParentId);
+          if (typeof parentQuery.is === 'function') {
+            parentQuery = parentQuery.is('deleted_at', null);
+          }
+          const { data: p } = await parentQuery.maybeSingle();
+          parentItem = p;
+        }
+
+        if (!parentItem) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Parent item '${effectiveParentId}' not found`,
+            status: 404,
+          };
+        }
+
+        if (parentItem.project_id !== existing.project_id) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: 'Parent item must belong to the same project',
+            status: 400,
+          };
+        }
+
+        if (projectSettings?.hierarchy?.length) {
+          const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, projectSettings.hierarchy);
+          if (!nestCheck.valid) {
+            if (it.parent_id !== undefined) {
+              return {
+                success: false,
+                updated_count: 0,
+                items: [],
+                error: nestCheck.message,
+                status: 422,
+              };
+            }
+            targetParentId = null;
+          }
+        }
+      }
 
       const patchFields: Record<string, any> = {
         updated_at: now,
@@ -446,7 +940,9 @@ export async function handleBulkUpdateItems(
       if (it.status !== undefined) patchFields.status = it.status;
       if (it.item_type !== undefined) patchFields.item_type = it.item_type;
       if (it.assignee !== undefined) patchFields.assignee = it.assignee;
-      if (it.parent_id !== undefined) patchFields.parent_id = it.parent_id;
+      if (it.parent_id !== undefined || targetParentId !== existing.parent_id) {
+        patchFields.parent_id = targetParentId;
+      }
       if (it.external_ref_id !== undefined) patchFields.external_ref_id = it.external_ref_id;
       if (it.order_index !== undefined) patchFields.order_index = it.order_index;
 
@@ -457,18 +953,34 @@ export async function handleBulkUpdateItems(
         };
       }
 
-      const { data: updated, error: updErr } = await supabaseAdmin
+      plannedUpdates.push({ id: it.id, fields: patchFields });
+    }
+
+    // Execute concurrently using Promise.all to avoid serial request loops
+    const updatePromises = plannedUpdates.map(async ({ id, fields }) => {
+      return supabaseAdmin
         .from('work_items')
-        .update(patchFields)
-        .eq('id', it.id)
+        .update(fields)
+        .eq('id', id)
         .eq('tenant_id', tenantId)
         .select('*')
         .single();
+    });
 
-      if (updErr) {
-        return { success: false, updated_count: updatedItems.length, items: updatedItems, error: updErr.message, status: 400 };
+    const results = await Promise.all(updatePromises);
+    const updatedItems: WorkItem[] = [];
+
+    for (const r of results) {
+      if (r.error) {
+        return {
+          success: false,
+          updated_count: updatedItems.length,
+          items: updatedItems,
+          error: r.error.message,
+          status: 400,
+        };
       }
-      if (updated) updatedItems.push(updated as WorkItem);
+      if (r.data) updatedItems.push(r.data as WorkItem);
     }
 
     return {
@@ -500,6 +1012,16 @@ export async function handleBulkDeleteItems(
       deleted_count: 0,
       deleted_ids: [],
       error: 'Body must include a non-empty "ids" array of string UUIDs',
+      status: 400,
+    };
+  }
+
+  if (payload.ids.length > MAX_BULK_ITEMS) {
+    return {
+      success: false,
+      deleted_count: 0,
+      deleted_ids: [],
+      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
       status: 400,
     };
   }
