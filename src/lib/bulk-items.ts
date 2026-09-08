@@ -619,8 +619,11 @@ async function dispatchBulkNotifications(
       let pQuery: any = supabaseAdmin
         .from('projects')
         .select('id, slug')
-        .eq('tenant_id', tenantId)
-        .in('id', projectIds);
+        .eq('tenant_id', tenantId);
+
+      if (typeof pQuery?.in === 'function') {
+        pQuery = pQuery.in('id', projectIds);
+      }
       const { data: projs } = await pQuery;
       for (const p of projs || []) {
         if (p.id && p.slug) {
