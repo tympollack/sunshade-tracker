@@ -284,7 +284,11 @@ export async function POST(req: NextRequest) {
     // Dual-compatibility: handle bulk create if array or payload with items array
     if (Array.isArray(body) || (Array.isArray(body.items) && body.items.length > 0)) {
       const payload = Array.isArray(body) ? { items: body } : body;
-      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload);
+      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
       }
@@ -391,7 +395,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Record audit log for item creation
-    recordAuditLog({
+    await recordAuditLog({
       tenant_id: authCtx.tenant.id,
       project_id: projId,
       item_id: created.id,
@@ -444,7 +448,11 @@ export async function PATCH(req: NextRequest) {
       (Array.isArray(body.ids) && body.ids.length > 0) ||
       (Array.isArray(body.items) && body.items.length > 0)
     ) {
-      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body);
+      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
       }
@@ -631,7 +639,7 @@ export async function PATCH(req: NextRequest) {
     // Record audit diff if fields changed
     const diff = computeChangedFields(existingItem, updated);
     if (Object.keys(diff).length > 0) {
-      recordAuditLog({
+      await recordAuditLog({
         tenant_id: authCtx.tenant.id,
         project_id: existingItem.project_id,
         item_id: id,
@@ -726,7 +734,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Record audit log for soft-delete
-    recordAuditLog({
+    await recordAuditLog({
       tenant_id: authCtx.tenant.id,
       project_id: softDeleted.project_id,
       item_id: id,

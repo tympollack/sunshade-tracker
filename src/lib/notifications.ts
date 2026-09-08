@@ -128,8 +128,12 @@ export async function markNotificationsAsRead(
   userId: string,
   options: { id?: string; ids?: string[]; all?: boolean }
 ): Promise<boolean> {
-  // Prevent empty requests from accidentally marking all alerts read
-  if (!options.all && (!options.ids || options.ids.length === 0) && !options.id) {
+  const isAll = options.all === true;
+  const hasIds = Array.isArray(options.ids) && options.ids.length > 0;
+  const hasId = typeof options.id === 'string' && options.id.trim().length > 0;
+
+  // Prevent empty or invalid criteria requests from accidentally marking all alerts read
+  if (!isAll && !hasIds && !hasId) {
     return false;
   }
 
@@ -140,12 +144,12 @@ export async function markNotificationsAsRead(
       .eq('tenant_id', tenantId)
       .eq('user_id', userId);
 
-    if (options.all) {
+    if (isAll) {
       query = query.eq('read', false);
-    } else if (options.ids && options.ids.length > 0) {
-      query = query.in('id', options.ids);
-    } else if (options.id) {
-      query = query.eq('id', options.id);
+    } else if (hasIds) {
+      query = query.in('id', options.ids!);
+    } else if (hasId) {
+      query = query.eq('id', options.id!.trim());
     }
 
     const { error } = await query;
@@ -428,13 +432,10 @@ export async function getTenantMemberRecipients(
           notification_preferences: c.notification_preferences,
         };
       } else if (matchingByName.length > 1) {
-        console.warn(`[tracker:notifications] Ambiguous member match for name "${clean}"`);
-        const c = matchingByName[0];
-        return {
-          id: c.id,
-          email: c.email,
-          notification_preferences: c.notification_preferences,
-        };
+        console.warn(
+          `[tracker:notifications] Ambiguous member match for name "${clean}" (${matchingByName.length} candidates found). Suppressing notification delivery to avoid misdirected notifications.`
+        );
+        return null;
       }
 
       // 4. "Me (...)" inner name/handle match
@@ -468,13 +469,10 @@ export async function getTenantMemberRecipients(
           notification_preferences: c.notification_preferences,
         };
       } else if (matchingByPrefix.length > 1) {
-        console.warn(`[tracker:notifications] Ambiguous member match for prefix "${clean}"`);
-        const c = matchingByPrefix[0];
-        return {
-          id: c.id,
-          email: c.email,
-          notification_preferences: c.notification_preferences,
-        };
+        console.warn(
+          `[tracker:notifications] Ambiguous member match for prefix "${clean}" (${matchingByPrefix.length} candidates found). Suppressing notification delivery to avoid misdirected notifications.`
+        );
+        return null;
       }
 
       // 6. Fallback if assignee is already a valid UUID
@@ -549,6 +547,8 @@ export async function dispatchItemNotifications(
 
   const recipientUserId = recipientUser?.id || null;
 
+  const promises: Promise<any>[] = [];
+
   // 1. In-App Notifications (gated by notify_in_app AND specific event toggles)
   const sendInAppAssignment = assignmentChanged && prefs.notify_on_assignment;
   const sendInAppStatus = statusChanged && prefs.notify_on_status_change;
@@ -567,15 +567,17 @@ export async function dispatchItemNotifications(
       actionDesc = `updated status to "${newStatus}"`;
     }
 
-    // Fire and forget in-app alert
-    createInAppNotification({
-      tenant_id: tenantId,
-      user_id: recipientUserId,
-      actor_name: actor,
-      item_id: item.id,
-      item_title: item.title,
-      action: actionDesc,
-    }).catch((err) => console.warn('[tracker:notifications] in-app notification error:', err));
+    // Awaitable in-app alert
+    promises.push(
+      createInAppNotification({
+        tenant_id: tenantId,
+        user_id: recipientUserId,
+        actor_name: actor,
+        item_id: item.id,
+        item_title: item.title,
+        action: actionDesc,
+      }).catch((err) => console.warn('[tracker:notifications] in-app notification error:', err))
+    );
   }
 
   // 2. Email Notifications via Resend (gated by notify_email AND specific event toggles)
@@ -614,12 +616,18 @@ export async function dispatchItemNotifications(
       deepLinkUrl: deepLink,
     });
 
-    // Fire and forget email dispatch
-    sendResendEmail({
-      to: recipientUser.email,
-      subject,
-      html,
-      text: `${actor} ${actionText.replace(/<[^>]+>/g, '')} on "${item.title}". View item: ${deepLink}`,
-    }).catch((err) => console.warn('[tracker:resend] async email dispatch error:', err));
+    // Awaitable email dispatch
+    promises.push(
+      sendResendEmail({
+        to: recipientUser.email,
+        subject,
+        html,
+        text: `${actor} ${actionText.replace(/<[^>]+>/g, '')} on "${item.title}". View item: ${deepLink}`,
+      }).catch((err) => console.warn('[tracker:resend] async email dispatch error:', err))
+    );
+  }
+
+  if (promises.length > 0) {
+    await Promise.allSettled(promises);
   }
 }

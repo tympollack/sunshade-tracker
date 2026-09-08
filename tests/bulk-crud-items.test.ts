@@ -826,5 +826,198 @@ describe('Bulk Work Items API (/api/v1/items/bulk & /api/v1/items)', () => {
       expect(body.success).toBe(true);
       expect(body.deleted_count).toBe(1);
     });
+
+    it('rejects oversized payload attributes with 400 (titles, descriptions, refs, metadata, IDs)', async () => {
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'tenants') return setupAuthMock() as any;
+        if (table === 'projects') return setupProjectMock() as any;
+        return {} as any;
+      });
+
+      // 1. Oversized title in bulk create
+      const longTitle = 'a'.repeat(501);
+      const reqCreate = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer test_key' },
+        body: JSON.stringify({
+          project_slug: 'sunshade-tracker',
+          items: [{ title: longTitle }],
+        }),
+      });
+      const resCreate = await bulkCreateHandler(reqCreate);
+      expect(resCreate.status).toBe(400);
+      const jsonCreate = await resCreate.json();
+      expect(jsonCreate.error).toContain('title exceeds maximum allowed length');
+
+      // 2. Oversized metadata in bulk update
+      const bigMeta: Record<string, string> = { data: 'x'.repeat(55_000) };
+      const reqUpdate = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer test_key' },
+        body: JSON.stringify({
+          ids: [sampleItems[0].id],
+          updates: { metadata: bigMeta },
+        }),
+      });
+      const resUpdate = await bulkUpdateHandler(reqUpdate);
+      expect(resUpdate.status).toBe(400);
+      const jsonUpdate = await resUpdate.json();
+      expect(jsonUpdate.error).toContain('metadata size');
+    });
+
+    it('detects hierarchy cycles in heterogeneous bulk updates and rejects with 400', async () => {
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'tenants') return setupAuthMock() as any;
+        if (table === 'projects') return setupProjectMock() as any;
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn().mockResolvedValue({
+                    data: [
+                      { ...sampleItems[0], id: 'item-A', parent_id: null },
+                      { ...sampleItems[1], id: 'item-B', parent_id: null },
+                    ],
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      // Item A sets parent to B, Item B sets parent to A
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer test_key' },
+        body: JSON.stringify({
+          items: [
+            { id: 'item-A', parent_id: 'item-B' },
+            { id: 'item-B', parent_id: 'item-A' },
+          ],
+        }),
+      });
+
+      const res = await bulkUpdateHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Hierarchy cycle detected');
+    });
+
+    it('validates parent hierarchy against planned final state rather than stale state', async () => {
+      // In project settings, 'task' cannot be parent of 'task'. Only 'story' or 'epic' can.
+      // Suppose item-A is currently 'story' and item-B is 'task' (with parent item-A).
+      // In this batch, item-A is updated to 'task' (an invalid parent for task!).
+      const itemA = { ...sampleItems[0], id: 'item-A', item_type: 'story', parent_id: null };
+      const itemB = { ...sampleItems[1], id: 'item-B', item_type: 'task', parent_id: 'item-A' };
+
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'tenants') return setupAuthMock() as any;
+        if (table === 'projects') return setupProjectMock() as any;
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn().mockResolvedValue({
+                    data: [itemA, itemB],
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer test_key' },
+        body: JSON.stringify({
+          items: [
+            { id: 'item-A', item_type: 'task' }, // Change parent from story to task
+            { id: 'item-B', parent_id: 'item-A' }, // Explicitly keep/set item-A as parent
+          ],
+        }),
+      });
+
+      const res = await bulkUpdateHandler(req);
+      expect(res.status).toBe(422);
+      const json = await res.json();
+      expect(json.error).toContain('cannot be nested under');
+    });
+
+    it('rolls back successfully updated items when an item fails in a heterogeneous batch', async () => {
+      const rollbackSpy = vi.fn();
+
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'tenants') return setupAuthMock() as any;
+        if (table === 'projects') return setupProjectMock() as any;
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn().mockResolvedValue({
+                    data: [sampleItems[0], sampleItems[1]],
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => {
+              return {
+                eq: vi.fn((col1: string, val1: string) => ({
+                  eq: vi.fn(() => {
+                    // Check if this is a rollback update
+                    if (patch.title === sampleItems[0].title) {
+                      rollbackSpy(val1, patch);
+                      return Promise.resolve({ data: null, error: null });
+                    }
+                    return {
+                      select: vi.fn(() => ({
+                        single: vi.fn().mockImplementation(async () => {
+                          if (val1 === sampleItems[0].id) {
+                            return { data: { ...sampleItems[0], title: 'New 1' }, error: null };
+                          }
+                          // Second item update fails!
+                          return { data: null, error: { message: 'Database constraint violation' } };
+                        }),
+                      })),
+                    };
+                  }),
+                })),
+              };
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer test_key' },
+        body: JSON.stringify({
+          items: [
+            { id: sampleItems[0].id, title: 'New 1' },
+            { id: sampleItems[1].id, title: 'New 2' },
+          ],
+        }),
+      });
+
+      const res = await bulkUpdateHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Rolled back all partially applied changes');
+      expect(rollbackSpy).toHaveBeenCalledWith(sampleItems[0].id, expect.anything());
+    });
   });
 });

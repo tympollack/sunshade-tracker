@@ -129,4 +129,30 @@ describe('GitHubBadge component', () => {
     expect(screen.getAllByText('+42').length).toBeGreaterThan(0);
     expect(screen.getAllByText('-7').length).toBeGreaterThan(0);
   });
+
+  it('rejects path traversal or malicious segments without making API requests', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch');
+
+    render(
+      <div>
+        <GitHubBadge
+          type="pr"
+          value="https://github.com/../../etc/passwd/pull/123"
+        />
+        <GitHubBadge
+          type="pr"
+          value="https://github.com/owner/repo/pull/../123"
+        />
+      </div>
+    );
+
+    const links = screen.getAllByRole('link');
+    for (const link of links) {
+      await act(async () => {
+        fireEvent.mouseEnter(link.parentElement!);
+      });
+    }
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
