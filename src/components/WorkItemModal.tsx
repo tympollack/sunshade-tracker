@@ -75,8 +75,10 @@ export function WorkItemModal({
   const [activeTab, setActiveTab] = useState<'details' | 'activity'>('details');
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const lastFetchedItemIdRef = useRef<string | null>(null);
 
   const fetchAuditLogs = async (itemId: string) => {
+    lastFetchedItemIdRef.current = itemId;
     setIsLoadingLogs(true);
     try {
       const res = await fetch(`/api/v1/audit-logs?item_id=${itemId}`, {
@@ -84,12 +86,16 @@ export function WorkItemModal({
       });
       if (res.ok) {
         const data = await res.json();
-        setAuditLogs(data.audit_logs || []);
+        if (lastFetchedItemIdRef.current === itemId) {
+          setAuditLogs(data.audit_logs || []);
+        }
       }
     } catch {
       // Graceful ignore
     } finally {
-      setIsLoadingLogs(false);
+      if (lastFetchedItemIdRef.current === itemId) {
+        setIsLoadingLogs(false);
+      }
     }
   };
 
@@ -116,8 +122,10 @@ export function WorkItemModal({
       setSaveError(null);
 
       if (item.id) {
+        setAuditLogs([]);
         fetchAuditLogs(item.id);
       } else {
+        lastFetchedItemIdRef.current = null;
         setAuditLogs([]);
       }
     }

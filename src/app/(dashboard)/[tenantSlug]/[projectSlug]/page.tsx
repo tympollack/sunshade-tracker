@@ -262,6 +262,21 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   // Edit Modal
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
 
+  // Handle email notification deep links (?item=<id|ref>)
+  const deepLinkedItemId = typeof searchParams?.item === 'string' ? searchParams.item : null;
+  const deepLinkHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (deepLinkedItemId && items.length > 0 && deepLinkHandledRef.current !== deepLinkedItemId) {
+      const matched = items.find(
+        (it) => it.id === deepLinkedItemId || it.external_ref_id === deepLinkedItemId
+      );
+      if (matched) {
+        deepLinkHandledRef.current = deepLinkedItemId;
+        setEditingItem(matched);
+      }
+    }
+  }, [deepLinkedItemId, items]);
+
   const myDisplayName = useMemo(() => {
     if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
     if (currentUser?.email) return `Me (${currentUser.email.split('@')[0]})`;

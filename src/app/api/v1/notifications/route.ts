@@ -13,7 +13,8 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const limitParam = searchParams.get('limit');
-  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 30, 100) : 30;
+  const parsedLimit = limitParam ? parseInt(limitParam, 10) : 30;
+  const limit = Math.max(1, Math.min(isNaN(parsedLimit) ? 30 : parsedLimit, 100));
 
   const result = await getInAppNotifications(tenant.id, userId, limit);
 

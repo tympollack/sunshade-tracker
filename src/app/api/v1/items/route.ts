@@ -11,7 +11,7 @@ import {
   handleBulkDeleteItems,
 } from '@/lib/bulk-items';
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
-import { dispatchItemNotifications } from '@/lib/notifications';
+import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
 
 
 export async function GET(req: NextRequest) {
@@ -405,20 +405,23 @@ export async function POST(req: NextRequest) {
 
     // Dispatch notifications if assigned
     if (created.assignee) {
-      dispatchItemNotifications({
-        tenantId: authCtx.tenant.id,
-        tenantSlug: authCtx.tenant.slug,
-        projectId: projId,
-        projectSlug: project_slug,
-        item: created,
-        beforeItem: null,
-        actorId: authCtx.userId || null,
-        actorName: authCtx.userId ? 'User' : 'API Client',
-        recipientUser: {
-          id: created.assignee,
-          email: created.assignee.includes('@') ? created.assignee : undefined,
-        },
-      }).catch(() => {});
+      resolveRecipient(authCtx.tenant.id, created.assignee)
+        .then((recipientUser) => {
+          if (recipientUser) {
+            return dispatchItemNotifications({
+              tenantId: authCtx.tenant.id,
+              tenantSlug: authCtx.tenant.slug,
+              projectId: projId,
+              projectSlug: project_slug,
+              item: created,
+              beforeItem: null,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userId ? 'User' : 'API Client',
+              recipientUser,
+            });
+          }
+        })
+        .catch(() => {});
     }
 
     return NextResponse.json({ success: true, item: created }, { status: 201 });
@@ -638,21 +641,25 @@ export async function PATCH(req: NextRequest) {
         changed_fields: diff,
       }).catch(() => {});
 
-      dispatchItemNotifications({
-        tenantId: authCtx.tenant.id,
-        tenantSlug: authCtx.tenant.slug,
-        projectId: existingItem.project_id,
-        item: updated,
-        beforeItem: existingItem,
-        actorId: authCtx.userId || null,
-        actorName: authCtx.userId ? 'User' : 'API Client',
-        recipientUser: {
-          id: updated.assignee || existingItem.assignee,
-          email: (updated.assignee || existingItem.assignee)?.includes('@')
-            ? (updated.assignee || existingItem.assignee)
-            : undefined,
-        },
-      }).catch(() => {});
+      const targetAssignee = updated.assignee || existingItem.assignee;
+      if (targetAssignee) {
+        resolveRecipient(authCtx.tenant.id, targetAssignee)
+          .then((recipientUser) => {
+            if (recipientUser) {
+              return dispatchItemNotifications({
+                tenantId: authCtx.tenant.id,
+                tenantSlug: authCtx.tenant.slug,
+                projectId: existingItem.project_id,
+                item: updated,
+                beforeItem: existingItem,
+                actorId: authCtx.userId || null,
+                actorName: authCtx.userId ? 'User' : 'API Client',
+                recipientUser,
+              });
+            }
+          })
+          .catch(() => {});
+      }
     }
 
     return NextResponse.json({ success: true, item: updated });

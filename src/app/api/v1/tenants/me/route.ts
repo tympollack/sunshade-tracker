@@ -196,9 +196,26 @@ export async function PATCH(req: NextRequest) {
       ...(currentMeta.notification_preferences || {}),
     };
 
+    const ALLOWED_PREF_KEYS = [
+      'notify_in_app',
+      'notify_email',
+      'notify_on_assignment',
+      'notify_on_status_change',
+    ] as const;
+
+    const rawPrefs = body.notification_preferences;
+    const sanitizedIncoming: Partial<Record<typeof ALLOWED_PREF_KEYS[number], boolean>> = {};
+    if (rawPrefs && typeof rawPrefs === 'object' && !Array.isArray(rawPrefs)) {
+      for (const key of ALLOWED_PREF_KEYS) {
+        if (typeof rawPrefs[key] === 'boolean') {
+          sanitizedIncoming[key] = rawPrefs[key];
+        }
+      }
+    }
+
     const updatedPrefs = {
       ...currentPrefs,
-      ...(body.notification_preferences || {}),
+      ...sanitizedIncoming,
     };
 
     const { error: updateErr } = await supabase.auth.updateUser({

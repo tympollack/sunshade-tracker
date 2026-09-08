@@ -94,7 +94,24 @@ export async function getInAppNotifications(
     }
 
     const notifications = (data || []) as InAppNotification[];
-    const unread_count = notifications.filter((n) => !n.read).length;
+    let unread_count = notifications.filter((n) => !n.read).length;
+
+    // Run exact count query across all pages for unread count
+    try {
+      const countQuery: any = supabaseAdmin
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .eq('user_id', userId)
+        .eq('read', false);
+
+      const { count, error: countErr } = await countQuery;
+      if (!countErr && typeof count === 'number') {
+        unread_count = count;
+      }
+    } catch {
+      // Fall back to current page unread count if count query is not supported
+    }
 
     return { notifications, unread_count };
   } catch (err: any) {
@@ -111,6 +128,11 @@ export async function markNotificationsAsRead(
   userId: string,
   options: { id?: string; ids?: string[]; all?: boolean }
 ): Promise<boolean> {
+  // Prevent empty requests from accidentally marking all alerts read
+  if (!options.all && (!options.ids || options.ids.length === 0) && !options.id) {
+    return false;
+  }
+
   try {
     let query: any = supabaseAdmin
       .from('notifications')
@@ -184,6 +206,19 @@ export async function sendResendEmail(
 }
 
 /**
+ * HTML escape helper to prevent markup and script injection in email templates.
+ */
+export function escapeHtml(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * Builds a clean, branded HTML email template for SunShade Tracker notifications.
  */
 export function buildNotificationEmailHtml(params: {
@@ -196,7 +231,7 @@ export function buildNotificationEmailHtml(params: {
   deepLinkUrl: string;
 }): string {
   const refBadge = params.externalRefId
-    ? `<span style="display:inline-block;padding:2px 8px;font-size:11px;font-family:monospace;background:#1e293b;color:#38bdf8;border:1px solid #334155;border-radius:4px;margin-right:6px;">${params.externalRefId}</span>`
+    ? `<span style="display:inline-block;padding:2px 8px;font-size:11px;font-family:monospace;background:#1e293b;color:#38bdf8;border:1px solid #334155;border-radius:4px;margin-right:6px;">${escapeHtml(params.externalRefId)}</span>`
     : '';
 
   return `
@@ -205,7 +240,7 @@ export function buildNotificationEmailHtml(params: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${params.title}</title>
+  <title>${escapeHtml(params.title)}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#0b0f17;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f1f5f9;">
   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#0b0f17;padding:32px 16px;">
@@ -231,12 +266,12 @@ export function buildNotificationEmailHtml(params: {
           <tr>
             <td style="padding:28px 28px 20px 28px;">
               <div style="font-size:18px;font-weight:600;color:#ffffff;margin-bottom:12px;line-height:1.4;">
-                ${refBadge}${params.itemTitle}
+                ${refBadge}${escapeHtml(params.itemTitle)}
               </div>
 
               <div style="padding:14px 16px;background-color:#090d16;border:1px solid #1e293b;border-radius:8px;margin-bottom:20px;">
                 <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.5;">
-                  <strong style="color:#f8fafc;">${params.actorName}</strong> ${params.actionText}
+                  <strong style="color:#f8fafc;">${escapeHtml(params.actorName)}</strong> ${params.actionText}
                 </p>
                 ${params.detailsHtml ? `<div style="margin-top:8px;font-size:12px;color:#cbd5e1;">${params.detailsHtml}</div>` : ''}
               </div>
@@ -245,7 +280,7 @@ export function buildNotificationEmailHtml(params: {
               <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin:24px 0;">
                 <tr>
                   <td align="center" style="border-radius:8px;background-color:#10b981;">
-                    <a href="${params.deepLinkUrl}" target="_blank" style="display:inline-block;padding:12px 24px;font-size:13px;font-weight:600;color:#0b0f17;text-decoration:none;border-radius:8px;background-color:#10b981;">
+                    <a href="${escapeHtml(params.deepLinkUrl)}" target="_blank" style="display:inline-block;padding:12px 24px;font-size:13px;font-weight:600;color:#0b0f17;text-decoration:none;border-radius:8px;background-color:#10b981;">
                       View Work Item →
                     </a>
                   </td>
@@ -269,6 +304,202 @@ export function buildNotificationEmailHtml(params: {
 </body>
 </html>
   `.trim();
+}
+
+export interface ResolvedRecipient {
+  id: string; // Auth user UUID
+  email?: string;
+  notification_preferences?: NotificationPreferences;
+}
+
+export interface TenantRecipientResolver {
+  resolve: (assignee: string | null | undefined) => ResolvedRecipient | null;
+}
+
+/**
+ * Loads members and their notification preferences for a tenant once and returns
+ * an in-memory resolver. Useful for bulk mutations to avoid per-item database trips.
+ */
+export async function getTenantMemberRecipients(
+  tenantId: string
+): Promise<TenantRecipientResolver> {
+  const candidates: Array<{
+    id: string;
+    email?: string;
+    fullName?: string;
+    name?: string;
+    notification_preferences: NotificationPreferences;
+  }> = [];
+
+  try {
+    const membersTable: any = supabaseAdmin.from('tenant_members');
+    if (membersTable && typeof membersTable.select === 'function') {
+      const { data: members } = await membersTable
+        .select('user_id')
+        .eq('tenant_id', tenantId);
+
+      if (Array.isArray(members) && members.length > 0) {
+        for (const m of members) {
+          if (!m?.user_id) continue;
+          try {
+            if (typeof (supabaseAdmin as any).auth?.admin?.getUserById === 'function') {
+              const { data } = await (supabaseAdmin as any).auth.admin.getUserById(m.user_id);
+              if (data?.user) {
+                const u = data.user;
+                const userMeta = u.user_metadata || {};
+                candidates.push({
+                  id: u.id,
+                  email: u.email || undefined,
+                  fullName: userMeta.full_name || undefined,
+                  name: userMeta.name || undefined,
+                  notification_preferences: {
+                    ...DEFAULT_NOTIFICATION_PREFERENCES,
+                    ...(userMeta.notification_preferences || {}),
+                  },
+                });
+              }
+            } else {
+              candidates.push({
+                id: m.user_id,
+                notification_preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES },
+              });
+            }
+          } catch {
+            candidates.push({
+              id: m.user_id,
+              notification_preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES },
+            });
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[tracker:notifications] Failed to fetch tenant members for recipient resolution:', err?.message || err);
+  }
+
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  return {
+    resolve: (assignee: string | null | undefined): ResolvedRecipient | null => {
+      if (!assignee || typeof assignee !== 'string') return null;
+      const clean = assignee.trim();
+      if (!clean) return null;
+
+      // Extract name/handle if wrapped in "Me (...)"
+      let innerMe: string | null = null;
+      if (clean.startsWith('Me (') && clean.endsWith(')')) {
+        innerMe = clean.slice(4, -1).trim();
+      }
+
+      // 1. Direct UUID match in member candidates
+      const byId = candidates.find((c) => c.id === clean);
+      if (byId) {
+        return {
+          id: byId.id,
+          email: byId.email,
+          notification_preferences: byId.notification_preferences,
+        };
+      }
+
+      // 2. Exact email match (case-insensitive)
+      const cleanLower = clean.toLowerCase();
+      const byEmail = candidates.find(
+        (c) => c.email && c.email.toLowerCase() === cleanLower
+      );
+      if (byEmail) {
+        return {
+          id: byEmail.id,
+          email: byEmail.email,
+          notification_preferences: byEmail.notification_preferences,
+        };
+      }
+
+      // 3. Exact full_name or name match
+      const matchingByName = candidates.filter(
+        (c) =>
+          (c.fullName && c.fullName.toLowerCase() === cleanLower) ||
+          (c.name && c.name.toLowerCase() === cleanLower)
+      );
+      if (matchingByName.length === 1) {
+        const c = matchingByName[0];
+        return {
+          id: c.id,
+          email: c.email,
+          notification_preferences: c.notification_preferences,
+        };
+      } else if (matchingByName.length > 1) {
+        console.warn(`[tracker:notifications] Ambiguous member match for name "${clean}"`);
+        const c = matchingByName[0];
+        return {
+          id: c.id,
+          email: c.email,
+          notification_preferences: c.notification_preferences,
+        };
+      }
+
+      // 4. "Me (...)" inner name/handle match
+      if (innerMe) {
+        const innerLower = innerMe.toLowerCase();
+        const byInner = candidates.find(
+          (c) =>
+            (c.fullName && c.fullName.toLowerCase() === innerLower) ||
+            (c.name && c.name.toLowerCase() === innerLower) ||
+            (c.email && c.email.toLowerCase() === innerLower) ||
+            (c.email && c.email.split('@')[0].toLowerCase() === innerLower)
+        );
+        if (byInner) {
+          return {
+            id: byInner.id,
+            email: byInner.email,
+            notification_preferences: byInner.notification_preferences,
+          };
+        }
+      }
+
+      // 5. Email prefix match (e.g. "tym" for "tym@example.com")
+      const matchingByPrefix = candidates.filter(
+        (c) => c.email && c.email.split('@')[0].toLowerCase() === cleanLower
+      );
+      if (matchingByPrefix.length === 1) {
+        const c = matchingByPrefix[0];
+        return {
+          id: c.id,
+          email: c.email,
+          notification_preferences: c.notification_preferences,
+        };
+      } else if (matchingByPrefix.length > 1) {
+        console.warn(`[tracker:notifications] Ambiguous member match for prefix "${clean}"`);
+        const c = matchingByPrefix[0];
+        return {
+          id: c.id,
+          email: c.email,
+          notification_preferences: c.notification_preferences,
+        };
+      }
+
+      // 6. Fallback if assignee is already a valid UUID
+      if (UUID_REGEX.test(clean)) {
+        return {
+          id: clean,
+          notification_preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES },
+        };
+      }
+
+      // Unresolvable display label with no matching tenant member
+      return null;
+    },
+  };
+}
+
+/**
+ * Resolves an assignee string to an authenticated tenant user record.
+ */
+export async function resolveRecipient(
+  tenantId: string,
+  assignee: string | null | undefined
+): Promise<ResolvedRecipient | null> {
+  const resolver = await getTenantMemberRecipients(tenantId);
+  return resolver.resolve(assignee);
 }
 
 export interface DispatchItemNotificationsParams {
@@ -316,16 +547,23 @@ export async function dispatchItemNotifications(
   const projectPath = projectSlug || 'all';
   const deepLink = `${domain}/${encodeURIComponent(tenantPath)}/${encodeURIComponent(projectPath)}?item=${item.id}`;
 
-  const recipientUserId = recipientUser?.id || (newAssignee ? String(newAssignee) : null);
+  const recipientUserId = recipientUser?.id || null;
 
-  // 1. In-App Notifications
-  if (prefs.notify_in_app && recipientUserId) {
+  // 1. In-App Notifications (gated by notify_in_app AND specific event toggles)
+  const sendInAppAssignment = assignmentChanged && prefs.notify_on_assignment;
+  const sendInAppStatus = statusChanged && prefs.notify_on_status_change;
+  const shouldNotifyInApp =
+    prefs.notify_in_app &&
+    recipientUserId &&
+    (sendInAppAssignment || sendInAppStatus);
+
+  if (shouldNotifyInApp && recipientUserId) {
     let actionDesc = '';
-    if (statusChanged && assignmentChanged) {
+    if (sendInAppAssignment && sendInAppStatus) {
       actionDesc = `assigned you and changed status to "${newStatus}"`;
-    } else if (assignmentChanged) {
+    } else if (sendInAppAssignment) {
       actionDesc = `assigned you to this item`;
-    } else if (statusChanged) {
+    } else if (sendInAppStatus) {
       actionDesc = `updated status to "${newStatus}"`;
     }
 
@@ -340,24 +578,29 @@ export async function dispatchItemNotifications(
     }).catch((err) => console.warn('[tracker:notifications] in-app notification error:', err));
   }
 
-  // 2. Email Notifications via Resend
+  // 2. Email Notifications via Resend (gated by notify_email AND specific event toggles)
+  const sendEmailAssignment = assignmentChanged && prefs.notify_on_assignment;
+  const sendEmailStatus = statusChanged && prefs.notify_on_status_change;
   const shouldSendEmail =
     prefs.notify_email &&
     recipientUser?.email &&
-    ((assignmentChanged && prefs.notify_on_assignment) || (statusChanged && prefs.notify_on_status_change));
+    (sendEmailAssignment || sendEmailStatus);
 
   if (shouldSendEmail && recipientUser?.email) {
     let actionText = '';
     let detailsHtml = '';
 
-    if (statusChanged && assignmentChanged) {
-      actionText = `assigned you to this item and changed status to <span style="color:#10b981;font-weight:600;">${newStatus}</span>`;
-      detailsHtml = `<p style="margin:4px 0;">Status transition: <code>${beforeStatus || 'none'}</code> → <code>${newStatus}</code></p>`;
-    } else if (assignmentChanged) {
+    const safeNewStatus = escapeHtml(newStatus || '');
+    const safeBeforeStatus = escapeHtml(beforeStatus || 'none');
+
+    if (sendEmailAssignment && sendEmailStatus) {
+      actionText = `assigned you to this item and changed status to <span style="color:#10b981;font-weight:600;">${safeNewStatus}</span>`;
+      detailsHtml = `<p style="margin:4px 0;">Status transition: <code>${safeBeforeStatus}</code> → <code>${safeNewStatus}</code></p>`;
+    } else if (sendEmailAssignment) {
       actionText = `assigned you to this item`;
-    } else if (statusChanged) {
-      actionText = `changed status to <span style="color:#10b981;font-weight:600;">${newStatus}</span>`;
-      detailsHtml = `<p style="margin:4px 0;">Status transition: <code>${beforeStatus}</code> → <code>${newStatus}</code></p>`;
+    } else if (sendEmailStatus) {
+      actionText = `changed status to <span style="color:#10b981;font-weight:600;">${safeNewStatus}</span>`;
+      detailsHtml = `<p style="margin:4px 0;">Status transition: <code>${safeBeforeStatus}</code> → <code>${safeNewStatus}</code></p>`;
     }
 
     const subject = `[SunShade Tracker] ${item.external_ref_id ? `[${item.external_ref_id}] ` : ''}${item.title} - ${actor} updated item`;
@@ -376,7 +619,7 @@ export async function dispatchItemNotifications(
       to: recipientUser.email,
       subject,
       html,
-      text: `${actor} ${actionText} on "${item.title}". View item: ${deepLink}`,
+      text: `${actor} ${actionText.replace(/<[^>]+>/g, '')} on "${item.title}". View item: ${deepLink}`,
     }).catch((err) => console.warn('[tracker:resend] async email dispatch error:', err));
   }
 }

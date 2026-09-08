@@ -15,6 +15,8 @@ import {
   sendResendEmail,
   buildNotificationEmailHtml,
   dispatchItemNotifications,
+  resolveRecipient,
+  escapeHtml,
 } from '@/lib/notifications';
 import { GET as auditLogsGetHandler } from '@/app/api/v1/audit-logs/route';
 import {
@@ -310,6 +312,15 @@ describe('Audit Logging Engine & Notifications System', () => {
       expect(json.success).toBe(true);
       expect(mockUpdate).toHaveBeenCalledWith({ read: true });
     });
+
+    it('markNotificationsAsRead returns false and makes no DB update when no criteria is provided', async () => {
+      const mockFrom = vi.fn();
+      (supabaseAdmin.from as any) = mockFrom;
+
+      const result = await markNotificationsAsRead('tenant-123', 'user-456', {});
+      expect(result).toBe(false);
+      expect(mockFrom).not.toHaveBeenCalled();
+    });
   });
 
   describe('TASK-TRK-NOTIFICATIONS-RESEND: Email Dispatcher & Preferences Filtering', () => {
@@ -430,6 +441,113 @@ describe('Audit Logging Engine & Notifications System', () => {
 
       // In-app alert created
       expect(supabaseAdmin.from).toHaveBeenCalledWith('notifications');
+    });
+
+    it('escapes user input fields in HTML email templates to prevent XSS injection', () => {
+      const escaped = escapeHtml('<script>alert("xss")</script>&"test"');
+      expect(escaped).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;&amp;&quot;test&quot;');
+
+      const html = buildNotificationEmailHtml({
+        title: '<script>alert(1)</script>',
+        itemTitle: 'Item <img src=x onerror=alert(2)>',
+        externalRefId: 'REF"><script>',
+        actorName: 'Bob <b',
+        actionText: 'did something',
+        detailsHtml: '<p>Details</p>',
+        deepLinkUrl: 'https://track.sunshade.icu/item?id=1"onclick="alert(3)',
+      });
+
+      expect(html).not.toContain('<script>');
+      expect(html).toContain('&lt;script&gt;');
+      expect(html).toContain('&lt;img src=x onerror=alert(2)&gt;');
+    });
+
+    it('suppresses in-app notifications when the event toggle is disabled', async () => {
+      const mockInsert = vi.fn();
+      (supabaseAdmin.from as any).mockReturnValue({
+        insert: mockInsert,
+      });
+
+      const item: WorkItem = {
+        id: 'item-200',
+        tenant_id: 'tenant-123',
+        project_id: 'proj-123',
+        title: 'Feature Item',
+        item_type: 'task',
+        status: 'in_progress',
+        assignee: 'user-456',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const beforeItem: Partial<WorkItem> = {
+        status: 'not_started',
+        assignee: 'user-456', // No assignment change, only status change
+      };
+
+      await dispatchItemNotifications({
+        tenantId: 'tenant-123',
+        projectId: 'proj-123',
+        item,
+        beforeItem,
+        recipientUser: {
+          id: 'user-456',
+          notification_preferences: {
+            notify_in_app: true,
+            notify_email: false,
+            notify_on_status_change: false, // Disabled!
+            notify_on_assignment: true,
+          },
+        },
+      });
+
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
+
+    it('resolves display labels and email addresses to tenant member identities', async () => {
+      (supabaseAdmin.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ user_id: 'user-uuid-999' }],
+            error: null,
+          }),
+        }),
+      });
+
+      (supabaseAdmin as any).auth = {
+        admin: {
+          getUserById: vi.fn().mockResolvedValue({
+            data: {
+              user: {
+                id: 'user-uuid-999',
+                email: 'tym@sunshade.icu',
+                user_metadata: {
+                  full_name: 'Tym Pollack',
+                  notification_preferences: {
+                    notify_in_app: true,
+                    notify_email: false,
+                    notify_on_assignment: true,
+                    notify_on_status_change: true,
+                  },
+                },
+              },
+            },
+          }),
+        },
+      };
+
+      const resByName = await resolveRecipient('tenant-123', 'Tym Pollack');
+      expect(resByName).not.toBeNull();
+      expect(resByName?.id).toBe('user-uuid-999');
+      expect(resByName?.notification_preferences?.notify_email).toBe(false);
+
+      const resByMe = await resolveRecipient('tenant-123', 'Me (Tym Pollack)');
+      expect(resByMe?.id).toBe('user-uuid-999');
+
+      const resByPrefix = await resolveRecipient('tenant-123', 'tym');
+      expect(resByPrefix?.id).toBe('user-uuid-999');
     });
   });
 

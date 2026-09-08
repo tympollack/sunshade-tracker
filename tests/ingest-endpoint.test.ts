@@ -118,6 +118,7 @@ describe('Headless Ingest API Endpoint (POST /api/v1/items/ingest)', () => {
               eq: vi.fn(() => ({
                 maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'parent-uuid-1' }, error: null }),
               })),
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
             })),
           })),
           upsert: vi.fn((payload: any) => {

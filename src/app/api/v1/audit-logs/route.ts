@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const itemId = searchParams.get('item_id');
   const limitParam = searchParams.get('limit');
-  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 200) : 50;
+  const parsedLimit = limitParam ? parseInt(limitParam, 10) : 50;
+  const limit = Math.max(1, Math.min(isNaN(parsedLimit) ? 50 : parsedLimit, 200));
 
   if (!itemId) {
     return NextResponse.json(

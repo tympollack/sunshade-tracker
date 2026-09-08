@@ -155,6 +155,7 @@ export default function WorkspaceSettingsPage(props: PageProps) {
 
   // Toggle notification preference
   const handleTogglePref = async (key: string) => {
+    const previous = { ...notificationPrefs };
     const updated = {
       ...notificationPrefs,
       [key]: !notificationPrefs[key as keyof typeof notificationPrefs],
@@ -169,9 +170,14 @@ export default function WorkspaceSettingsPage(props: PageProps) {
       if (res.ok) {
         setPrefsSavedMessage(true);
         setTimeout(() => setPrefsSavedMessage(false), 2500);
+      } else {
+        // Revert on server error
+        setNotificationPrefs(previous);
       }
     } catch (err) {
       console.error('Failed to save notification preferences', err);
+      // Revert on network exception
+      setNotificationPrefs(previous);
     } finally {
       setIsSavingPrefs(false);
     }
