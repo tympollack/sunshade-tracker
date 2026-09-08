@@ -34,12 +34,28 @@ const CACHE_TTL_MS = 60 * 1000;
 const statsCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<GitHubStats | null>>();
 
+const GITHUB_SEGMENT_REGEX = /^[a-zA-Z0-9_.-]+$/;
+const GITHUB_PR_NUMBER_REGEX = /^\d+$/;
+const GITHUB_COMMIT_HASH_REGEX = /^[0-9a-fA-F]{7,40}$/;
+
+export function isValidGitHubOwnerOrRepo(segment: string): boolean {
+  if (!segment || typeof segment !== 'string') return false;
+  const trimmed = segment.trim();
+  if (trimmed === '.' || trimmed === '..') return false;
+  return GITHUB_SEGMENT_REGEX.test(trimmed);
+}
+
 function fetchPrStats(owner: string, repo: string, prNumber: string, cacheKey: string): Promise<GitHubStats | null> {
+  // Validate segments against path traversal / SSRF
+  if (!isValidGitHubOwnerOrRepo(owner) || !isValidGitHubOwnerOrRepo(repo) || !GITHUB_PR_NUMBER_REGEX.test(prNumber)) {
+    return Promise.resolve(null);
+  }
+
   if (inFlightRequests.has(cacheKey)) {
     return inFlightRequests.get(cacheKey)!;
   }
 
-  const req = fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
+  const req = fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(prNumber)}`, {
     headers: { Accept: 'application/vnd.github.v3+json' },
   })
     .then((res) => {
@@ -78,10 +94,12 @@ interface GitHubBadgeProps {
 }
 
 /**
- * Extracts owner and repo from a GitHub URL
+ * Extracts and validates owner and repo from a GitHub URL
  */
 export function parseGitHubUrl(url: string): { owner: string; repo: string; prNumber?: string; commitHash?: string } | null {
   if (!url) return null;
+  // Guard against path traversal sequences in the raw input URL
+  if (url.includes('..') || url.includes('%2e') || url.includes('%2E')) return null;
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.includes('github.com')) return null;
@@ -89,11 +107,18 @@ export function parseGitHubUrl(url: string): { owner: string; repo: string; prNu
     if (parts.length >= 2) {
       const owner = parts[0];
       const repo = parts[1];
+      if (!isValidGitHubOwnerOrRepo(owner) || !isValidGitHubOwnerOrRepo(repo)) {
+        return null;
+      }
       if (parts[2] === 'pull' && parts[3]) {
-        return { owner, repo, prNumber: parts[3] };
+        const cleanPr = parts[3].split(/[?#]/)[0];
+        if (!GITHUB_PR_NUMBER_REGEX.test(cleanPr)) return null;
+        return { owner, repo, prNumber: cleanPr };
       }
       if (parts[2] === 'commit' && parts[3]) {
-        return { owner, repo, commitHash: parts[3] };
+        const cleanHash = parts[3].split(/[?#]/)[0];
+        if (!GITHUB_COMMIT_HASH_REGEX.test(cleanHash)) return null;
+        return { owner, repo, commitHash: cleanHash };
       }
       return { owner, repo };
     }

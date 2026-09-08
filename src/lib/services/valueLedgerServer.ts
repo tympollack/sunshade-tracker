@@ -91,7 +91,7 @@ export async function getTenantEfficiencyMetrics(
   let endDate: string;
 
   if (isAllTime) {
-    startDate = options?.startDate || tenant.created_at || now.toISOString();
+    startDate = options?.startDate || tenant.created_at || new Date(0).toISOString();
     endDate = options?.endDate || now.toISOString();
   } else {
     // Current calendar month reporting window
@@ -104,7 +104,7 @@ export async function getTenantEfficiencyMetrics(
   // 4. Fetch work items for this tenant
   let itemsQuery: any = service
     .from('work_items')
-    .select('id, project_id, status, created_at, updated_at')
+    .select('id, project_id, status, created_at, updated_at, metadata')
     .eq('tenant_id', tenant.id);
 
   if (typeof itemsQuery.is === 'function') {
@@ -121,30 +121,76 @@ export async function getTenantEfficiencyMetrics(
   const startMs = new Date(startDate).getTime();
   const endMs = new Date(endDate).getTime();
 
-  // Evaluate completed items within the reporting period
-  const completedCount = itemList.filter((item: any) => {
+  // Find candidate completed items by project status configuration
+  const completedCandidates = itemList.filter((item: any) => {
     const rawStatus = String(item.status || '').toLowerCase().trim();
     const allowedStatuses =
       (item.project_id && projectCompletionMap.get(item.project_id)) ||
       DEFAULT_COMPLETION_STATUSES;
+    return allowedStatuses.has(rawStatus);
+  });
 
-    const isComplete = allowedStatuses.has(rawStatus);
-    if (!isComplete) return false;
+  // Query audit logs to resolve the actual timestamp of status transition into completion
+  const auditTransitionMap = new Map<string, number>();
+  if (completedCandidates.length > 0) {
+    try {
+      const candidateIds = completedCandidates.map((c: any) => c.id);
+      let auditQuery: any = service
+        .from('audit_logs')
+        .select('item_id, changed_fields, created_at')
+        .eq('tenant_id', tenant.id)
+        .in('item_id', candidateIds)
+        .order('created_at', { ascending: false });
 
-    // In monthly mode, filter completions by timestamp within the window
-    if (!isAllTime) {
-      const completionTime = item.updated_at
-        ? new Date(item.updated_at).getTime()
-        : item.created_at
-        ? new Date(item.created_at).getTime()
-        : null;
-
-      if (completionTime !== null) {
-        return completionTime >= startMs && completionTime <= endMs;
+      const { data: logs } = await auditQuery;
+      if (Array.isArray(logs)) {
+        for (const log of logs) {
+          if (!auditTransitionMap.has(log.item_id) && log.changed_fields?.status?.after) {
+            const afterStatus = String(log.changed_fields.status.after).toLowerCase().trim();
+            const item = completedCandidates.find((c: any) => c.id === log.item_id);
+            const allowed =
+              (item?.project_id && projectCompletionMap.get(item.project_id)) ||
+              DEFAULT_COMPLETION_STATUSES;
+            if (allowed.has(afterStatus) && log.created_at) {
+              auditTransitionMap.set(log.item_id, new Date(log.created_at).getTime());
+            }
+          }
+        }
       }
+    } catch {
+      // Fall through to metadata / creation timestamps if audit logs query fails or is not mocked
+    }
+  }
+
+  function getCompletionTimestamp(item: any): number | null {
+    // 1. Dedicated completed_at in metadata
+    if (item.metadata?.completed_at) {
+      const ms = new Date(item.metadata.completed_at).getTime();
+      if (!isNaN(ms)) return ms;
     }
 
-    return true;
+    // 2. Transition into completion status from audit trail
+    if (auditTransitionMap.has(item.id)) {
+      return auditTransitionMap.get(item.id)!;
+    }
+
+    // 3. Fallback: item created directly in completion status or legacy record
+    // We intentionally do not use general updated_at because unrelated edits shift completed items
+    if (item.created_at) {
+      const ms = new Date(item.created_at).getTime();
+      if (!isNaN(ms)) return ms;
+    }
+
+    return null;
+  }
+
+  // Filter completed items strictly within [startMs, endMs]
+  const completedCount = completedCandidates.filter((item: any) => {
+    const completionTime = getCompletionTimestamp(item);
+    if (completionTime !== null) {
+      return completionTime >= startMs && completionTime <= endMs;
+    }
+    return false;
   }).length;
 
   const totalItemsCount = itemList.length;

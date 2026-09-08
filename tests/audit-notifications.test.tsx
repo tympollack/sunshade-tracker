@@ -41,6 +41,11 @@ vi.mock('@/lib/auth-guard', () => ({
   authenticate: vi.fn(),
 }));
 
+const mockPush = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush, replace: vi.fn(), refresh: vi.fn() }),
+}));
+
 describe('Audit Logging Engine & Notifications System', () => {
   const mockTenant = { id: 'tenant-123', slug: 'sunshade-demo', name: 'SunShade Demo' };
   const mockUser = { id: 'user-456', email: 'dev@sunshade.icu', full_name: 'Dev User' };
@@ -583,6 +588,52 @@ describe('Audit Logging Engine & Notifications System', () => {
 
       const resByPrefix = await resolveRecipient('tenant-123', 'tym');
       expect(resByPrefix?.id).toBe('user-uuid-999');
+    });
+
+    it('suppresses notification delivery when multiple members match by name or prefix', async () => {
+      (supabaseAdmin.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ user_id: 'user-alex-1' }, { user_id: 'user-alex-2' }],
+            error: null,
+          }),
+        }),
+      });
+
+      (supabaseAdmin as any).auth = {
+        admin: {
+          getUserById: vi.fn().mockImplementation(async (id: string) => {
+            if (id === 'user-alex-1') {
+              return {
+                data: {
+                  user: {
+                    id: 'user-alex-1',
+                    email: 'alex.smith@example.com',
+                    user_metadata: { full_name: 'Alex Smith' },
+                  },
+                },
+              };
+            }
+            return {
+              data: {
+                user: {
+                  id: 'user-alex-2',
+                  email: 'alex.jones@example.com',
+                  user_metadata: { full_name: 'Alex Jones' },
+                },
+              },
+            };
+          }),
+        },
+      };
+
+      // Ambiguous name match ("Alex")
+      const resByName = await resolveRecipient('tenant-123', 'Alex');
+      expect(resByName).toBeNull();
+
+      // Ambiguous prefix match ("alex")
+      const resByPrefix = await resolveRecipient('tenant-123', 'alex');
+      expect(resByPrefix).toBeNull();
     });
 
     it('builds deep links using tenantSlug and projectSlug in dispatchItemNotifications', async () => {

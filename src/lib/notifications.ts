@@ -432,13 +432,10 @@ export async function getTenantMemberRecipients(
           notification_preferences: c.notification_preferences,
         };
       } else if (matchingByName.length > 1) {
-        console.warn(`[tracker:notifications] Ambiguous member match for name "${clean}"`);
-        const c = matchingByName[0];
-        return {
-          id: c.id,
-          email: c.email,
-          notification_preferences: c.notification_preferences,
-        };
+        console.warn(
+          `[tracker:notifications] Ambiguous member match for name "${clean}" (${matchingByName.length} candidates found). Suppressing notification delivery to avoid misdirected notifications.`
+        );
+        return null;
       }
 
       // 4. "Me (...)" inner name/handle match
@@ -472,13 +469,10 @@ export async function getTenantMemberRecipients(
           notification_preferences: c.notification_preferences,
         };
       } else if (matchingByPrefix.length > 1) {
-        console.warn(`[tracker:notifications] Ambiguous member match for prefix "${clean}"`);
-        const c = matchingByPrefix[0];
-        return {
-          id: c.id,
-          email: c.email,
-          notification_preferences: c.notification_preferences,
-        };
+        console.warn(
+          `[tracker:notifications] Ambiguous member match for prefix "${clean}" (${matchingByPrefix.length} candidates found). Suppressing notification delivery to avoid misdirected notifications.`
+        );
+        return null;
       }
 
       // 6. Fallback if assignee is already a valid UUID

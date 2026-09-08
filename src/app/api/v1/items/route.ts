@@ -395,7 +395,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Record audit log for item creation
-    recordAuditLog({
+    await recordAuditLog({
       tenant_id: authCtx.tenant.id,
       project_id: projId,
       item_id: created.id,
@@ -639,7 +639,7 @@ export async function PATCH(req: NextRequest) {
     // Record audit diff if fields changed
     const diff = computeChangedFields(existingItem, updated);
     if (Object.keys(diff).length > 0) {
-      recordAuditLog({
+      await recordAuditLog({
         tenant_id: authCtx.tenant.id,
         project_id: existingItem.project_id,
         item_id: id,
@@ -734,7 +734,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Record audit log for soft-delete
-    recordAuditLog({
+    await recordAuditLog({
       tenant_id: authCtx.tenant.id,
       project_id: softDeleted.project_id,
       item_id: id,

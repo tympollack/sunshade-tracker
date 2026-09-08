@@ -226,4 +226,146 @@ describe('Value Ledger Server Aggregator & API Route', () => {
     const text = await res.text();
     expect(text).toContain('Operational Yield & Efficiency Statement');
   });
+
+  it('derives completion time from audit trail transition rather than general updated_at', async () => {
+    // Item was created 3 months ago, marked done 2 months ago (in audit log), but updated today (e.g. title edited)
+    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString();
+    const twoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 15).toISOString();
+    const today = now.toISOString();
+
+    const editedCompletedItem = {
+      id: 'item-audit-test',
+      project_id: 'proj-001',
+      status: 'done',
+      created_at: threeMonthsAgo,
+      updated_at: today, // recently updated!
+    };
+
+    const mockAuditLog = {
+      item_id: 'item-audit-test',
+      changed_fields: {
+        status: { before: 'in_dev', after: 'done' },
+      },
+      created_at: twoMonthsAgo, // actual completion timestamp
+    };
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => ({
+                maybeSingle: async () => ({ data: mockTenant, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [mockProject1], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'work_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [editedCompletedItem], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'audit_logs') {
+        return {
+          select: () => ({
+            eq: () => ({
+              in: () => ({
+                order: () => Promise.resolve({ data: [mockAuditLog], error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({ is: () => Promise.resolve({ data: [], error: null }) }) }) };
+    });
+
+    // In current month (default), this item should NOT be counted even though updated_at is today!
+    const currentMonthResult = await getTenantEfficiencyMetrics('pym-energy', { period: 'monthly' });
+    expect(currentMonthResult.kpis.completedItemsCount).toBe(0);
+
+    // If querying the window for two months ago, it SHOULD be counted based on its audit log transition
+    const twoMonthsStart = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString();
+    const twoMonthsEnd = new Date(now.getFullYear(), now.getMonth() - 2 + 1, 0, 23, 59, 59, 999).toISOString();
+    const pastMonthResult = await getTenantEfficiencyMetrics('pym-energy', {
+      startDate: twoMonthsStart,
+      endDate: twoMonthsEnd,
+    });
+    expect(pastMonthResult.kpis.completedItemsCount).toBe(1);
+  });
+
+  it('enforces explicit startDate and endDate bounds even when period=all-time', async () => {
+    const itemJan = {
+      id: 'item-jan',
+      project_id: 'proj-001',
+      status: 'done',
+      created_at: '2026-01-15T12:00:00.000Z',
+      updated_at: '2026-01-15T12:00:00.000Z',
+    };
+    const itemMarch = {
+      id: 'item-mar',
+      project_id: 'proj-001',
+      status: 'done',
+      created_at: '2026-03-15T12:00:00.000Z',
+      updated_at: '2026-03-15T12:00:00.000Z',
+    };
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => ({
+                maybeSingle: async () => ({ data: mockTenant, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [mockProject1], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'work_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [itemJan, itemMarch], error: null }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({ in: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) }) }) };
+    });
+
+    // Bound all-time to only February to April
+    const boundedResult = await getTenantEfficiencyMetrics('pym-energy', {
+      period: 'all-time',
+      startDate: '2026-02-01T00:00:00.000Z',
+      endDate: '2026-03-31T23:59:59.999Z',
+    });
+
+    // itemJan is excluded, only itemMarch is included
+    expect(boundedResult.kpis.completedItemsCount).toBe(1);
+    expect(boundedResult.dateRange.startDate).toBe('2026-02-01T00:00:00.000Z');
+    expect(boundedResult.dateRange.endDate).toBe('2026-03-31T23:59:59.999Z');
+  });
 });

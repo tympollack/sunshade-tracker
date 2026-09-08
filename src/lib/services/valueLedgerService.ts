@@ -60,6 +60,18 @@ export const ECOSYSTEM_NOTE =
 /**
  * Pure calculation engine for deriving administrative drag hours reclaimed,
  * itemized yields, and realized financial value.
+ *
+ * Product Modeling Rationale:
+ * - Hourly Rate ($125/hr default): Calibrated to blended engineering/PM compensation benchmarks.
+ *   Fully configurable via query params or runtime options for customer-tailored audits.
+ * - Hierarchical Status Rollup (2.0 hrs/project/month): Modeled on ~30 minutes/week spent in manual
+ *   cross-team alignment, status reporting, and epic rollups eliminated by automated hierarchy tracking.
+ * - Backlog Triage & State Sync (0.05 hrs / 3 min per item): Calibrated against manual metadata syncing,
+ *   re-prioritization, and board maintenance.
+ * - Autonomous Dev & Review Cycles (0.20 hrs / 12 min per item): Accounts for context switching, PR linking,
+ *   and branch status reconciliation handled automatically.
+ *
+ * These metrics represent estimated administrative drag reduction and reclaimed engineering capacity.
  */
 export function computeEfficiencyMetrics(
   opts: ComputeMetricsOptions
