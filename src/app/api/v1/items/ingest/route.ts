@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
 import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
+import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
 
 
 export async function POST(req: NextRequest) {
@@ -224,6 +225,30 @@ export async function POST(req: NextRequest) {
 
     if (auditEntries.length > 0) {
       recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
+    // Dispatch notifications for assigned items
+    const assignedIngested = insertedItems.filter((it: any) => it.assignee);
+    if (assignedIngested.length > 0) {
+      getTenantMemberRecipients(tenant.id)
+        .then((resolver) => {
+          for (const it of assignedIngested) {
+            const prior = priorItemsMap.get(it.external_ref_id);
+            const recipient = resolver.resolve(it.assignee);
+            if (recipient) {
+              dispatchItemNotifications({
+                tenantId: tenant.id,
+                projectId: it.project_id,
+                item: it,
+                beforeItem: prior || null,
+                actorId: auth.context.userId || null,
+                actorName: auth.context.userId ? 'User' : 'Ingest Pipeline',
+                recipientUser: recipient,
+              }).catch(() => {});
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     return NextResponse.json({

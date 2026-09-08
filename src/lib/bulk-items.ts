@@ -522,6 +522,27 @@ export async function handleBulkCreateItems(
     ).catch(() => {});
   }
 
+  // Dispatch notifications for assigned created items
+  const assignedItems = items.filter((it) => it.assignee);
+  if (assignedItems.length > 0) {
+    getTenantMemberRecipients(tenantId)
+      .then((resolver) => {
+        for (const it of assignedItems) {
+          const recipient = resolver.resolve(it.assignee);
+          if (recipient) {
+            dispatchItemNotifications({
+              tenantId,
+              projectId: it.project_id,
+              item: it,
+              beforeItem: null,
+              recipientUser: recipient,
+            }).catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
+  }
+
   return {
     success: true,
     count: items.length,

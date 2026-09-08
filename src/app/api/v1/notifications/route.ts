@@ -37,6 +37,15 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Guard against empty criteria requests
+    if (!body.all && (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) && !body.id) {
+      return NextResponse.json(
+        { error: 'Missing filter criteria: must provide "id", "ids", or "all: true"' },
+        { status: 400 }
+      );
+    }
+
     const success = await markNotificationsAsRead(tenant.id, userId, {
       id: body.id,
       ids: body.ids,
