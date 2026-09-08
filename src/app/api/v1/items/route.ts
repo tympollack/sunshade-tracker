@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
 import { WorkItem, WorkItemWithChildren } from '@/types/tracker';
+import { mergeProjectStatuses } from '@/lib/portfolio-merge';
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -110,28 +111,22 @@ export async function GET(req: NextRequest) {
     }
 
     if (format === 'board') {
-      const { data: projs } = await supabaseAdmin
+      let projsQuery: any = supabaseAdmin
         .from('projects')
         .select('id, slug, name, settings')
-        .eq('tenant_id', authCtx.tenant.id)
-        .is('deleted_at', null);
+        .eq('tenant_id', authCtx.tenant.id);
 
-      const statusMap = new Map<string, any>();
-      (projs || []).forEach((p: any) => {
-        (p.settings?.statuses || []).forEach((st: any) => {
-          if (!statusMap.has(st.id)) {
-            statusMap.set(st.id, st);
-          }
-        });
-      });
-
-      if (statusMap.size === 0) {
-        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8' });
-        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6' });
-        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981' });
+      if (typeof projsQuery.is === 'function') {
+        projsQuery = projsQuery.is('deleted_at', null);
+      }
+      if (typeof projsQuery.order === 'function') {
+        projsQuery = projsQuery.order('slug', { ascending: true });
       }
 
-      const columns = Array.from(statusMap.values()).map((st) => ({
+      const { data: projs } = await projsQuery;
+      const sortedStatuses = mergeProjectStatuses(projs || []);
+
+      const columns = sortedStatuses.map((st) => ({
         status: st,
         items: items.filter((i) => i.status === st.id),
       }));
