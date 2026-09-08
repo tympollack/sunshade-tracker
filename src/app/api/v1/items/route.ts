@@ -3,6 +3,16 @@ import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
 import { WorkItem, WorkItemWithChildren } from '@/types/tracker';
+import { mergeProjectStatuses } from '@/lib/portfolio-merge';
+import {
+  handleBulkGetItems,
+  handleBulkCreateItems,
+  handleBulkUpdateItems,
+  handleBulkDeleteItems,
+} from '@/lib/bulk-items';
+import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
+import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
+
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -11,6 +21,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const itemIdParam = searchParams.get('id');
+  const idsParam = searchParams.get('ids');
   const projectSlug = searchParams.get('project_slug');
   const projectIdParam = searchParams.get('project_id');
   const allProjectsParam = searchParams.get('all_projects') === 'true';
@@ -18,7 +29,21 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
 
-  // 1. Single Item by ID lookup
+  // 1a. Bulk Items by IDs lookup
+  if (idsParam) {
+    const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean);
+    const bulkRes = await handleBulkGetItems(authCtx.tenant.id, { ids });
+    if (!bulkRes.success) {
+      return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+    }
+    return NextResponse.json({
+      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+      count: bulkRes.count,
+      items: bulkRes.items,
+    });
+  }
+
+  // 1b. Single Item by ID lookup
   if (itemIdParam) {
     let itemQuery: any = supabaseAdmin
       .from('work_items')
@@ -110,28 +135,22 @@ export async function GET(req: NextRequest) {
     }
 
     if (format === 'board') {
-      const { data: projs } = await supabaseAdmin
+      let projsQuery: any = supabaseAdmin
         .from('projects')
         .select('id, slug, name, settings')
-        .eq('tenant_id', authCtx.tenant.id)
-        .is('deleted_at', null);
+        .eq('tenant_id', authCtx.tenant.id);
 
-      const statusMap = new Map<string, any>();
-      (projs || []).forEach((p: any) => {
-        (p.settings?.statuses || []).forEach((st: any) => {
-          if (!statusMap.has(st.id)) {
-            statusMap.set(st.id, st);
-          }
-        });
-      });
-
-      if (statusMap.size === 0) {
-        statusMap.set('not_started', { id: 'not_started', label: 'Not Started', color: '#94a3b8' });
-        statusMap.set('in_progress', { id: 'in_progress', label: 'In Progress', color: '#3b82f6' });
-        statusMap.set('done', { id: 'done', label: 'Done', color: '#10b981' });
+      if (typeof projsQuery.is === 'function') {
+        projsQuery = projsQuery.is('deleted_at', null);
+      }
+      if (typeof projsQuery.order === 'function') {
+        projsQuery = projsQuery.order('slug', { ascending: true });
       }
 
-      const columns = Array.from(statusMap.values()).map((st) => ({
+      const { data: projs } = await projsQuery;
+      const sortedStatuses = mergeProjectStatuses(projs || []);
+
+      const columns = sortedStatuses.map((st) => ({
         status: st,
         items: items.filter((i) => i.status === st.id),
       }));
@@ -261,6 +280,24 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk create if array or payload with items array
+    if (Array.isArray(body) || (Array.isArray(body.items) && body.items.length > 0)) {
+      const payload = Array.isArray(body) ? { items: body } : body;
+      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json(
+        { success: true, count: bulkRes.count, items: bulkRes.items },
+        { status: 201 }
+      );
+    }
+
     const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, prev_order, next_order } = body;
 
     if (!title) {
@@ -357,6 +394,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Record audit log for item creation
+    await recordAuditLog({
+      tenant_id: authCtx.tenant.id,
+      project_id: projId,
+      item_id: created.id,
+      actor_id: authCtx.userId || null,
+      actor_name: authCtx.userId ? 'User' : 'API Client',
+      action: 'create',
+      changed_fields: {
+        created: { before: null, after: created },
+      },
+    }).catch(() => {});
+
+    // Dispatch notifications if assigned
+    if (created.assignee) {
+      resolveRecipient(authCtx.tenant.id, created.assignee)
+        .then((recipientUser) => {
+          if (recipientUser) {
+            return dispatchItemNotifications({
+              tenantId: authCtx.tenant.id,
+              tenantSlug: authCtx.tenant.slug,
+              projectId: projId,
+              projectSlug: project_slug,
+              item: created,
+              beforeItem: null,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userId ? 'User' : 'API Client',
+              recipientUser,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
     return NextResponse.json({ success: true, item: created }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
@@ -370,6 +441,28 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk update if body is an array, or has ids/items array
+    if (
+      Array.isArray(body) ||
+      (Array.isArray(body.ids) && body.ids.length > 0) ||
+      (Array.isArray(body.items) && body.items.length > 0)
+    ) {
+      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json({
+        success: true,
+        updated_count: bulkRes.updated_count,
+        items: bulkRes.items,
+      });
+    }
+
     const {
       id,
       title,
@@ -391,7 +484,7 @@ export async function PATCH(req: NextRequest) {
     // Fetch existing item to check project and current state
     const { data: existingItem, error: fetchErr } = await supabaseAdmin
       .from('work_items')
-      .select('id, project_id, item_type, status, parent_id, external_ref_id')
+      .select('*')
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .single();
@@ -543,6 +636,40 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Record audit diff if fields changed
+    const diff = computeChangedFields(existingItem, updated);
+    if (Object.keys(diff).length > 0) {
+      await recordAuditLog({
+        tenant_id: authCtx.tenant.id,
+        project_id: existingItem.project_id,
+        item_id: id,
+        actor_id: authCtx.userId || null,
+        actor_name: authCtx.userId ? 'User' : 'API Client',
+        action: 'update',
+        changed_fields: diff,
+      }).catch(() => {});
+
+      const targetAssignee = updated.assignee || existingItem.assignee;
+      if (targetAssignee) {
+        resolveRecipient(authCtx.tenant.id, targetAssignee)
+          .then((recipientUser) => {
+            if (recipientUser) {
+              return dispatchItemNotifications({
+                tenantId: authCtx.tenant.id,
+                tenantSlug: authCtx.tenant.slug,
+                projectId: existingItem.project_id,
+                item: updated,
+                beforeItem: existingItem,
+                actorId: authCtx.userId || null,
+                actorName: authCtx.userId ? 'User' : 'API Client',
+                recipientUser,
+              });
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
     return NextResponse.json({ success: true, item: updated });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
@@ -556,6 +683,21 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk delete if body is array or body.ids is array
+    if (Array.isArray(body) || (Array.isArray(body.ids) && body.ids.length > 0)) {
+      const payload = Array.isArray(body) ? { ids: body } : body;
+      const bulkRes = await handleBulkDeleteItems(authCtx.tenant.id, payload);
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json({
+        success: true,
+        deleted_count: bulkRes.deleted_count,
+        deleted_ids: bulkRes.deleted_ids,
+      });
+    }
+
     const { id } = body;
 
     if (!id) {
@@ -577,7 +719,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { data: softDeleted, error } = await deleteQuery
-      .select('id, deleted_at')
+      .select('id, project_id, title, deleted_at')
       .single();
 
     if (error) {
@@ -591,6 +733,19 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    // Record audit log for soft-delete
+    await recordAuditLog({
+      tenant_id: authCtx.tenant.id,
+      project_id: softDeleted.project_id,
+      item_id: id,
+      actor_id: authCtx.userId || null,
+      actor_name: authCtx.userId ? 'User' : 'API Client',
+      action: 'delete',
+      changed_fields: {
+        deleted_at: { before: null, after: softDeleted.deleted_at },
+      },
+    }).catch(() => {});
+
     return NextResponse.json({
       success: true,
       soft_deleted_id: id,
@@ -600,3 +755,4 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+

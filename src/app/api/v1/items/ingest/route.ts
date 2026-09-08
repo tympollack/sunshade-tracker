@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
+import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
+import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,7 +31,7 @@ export async function POST(req: NextRequest) {
     // Fetch Project Settings to validate types and statuses dynamically
     let projectQuery: any = supabaseAdmin
       .from('projects')
-      .select('id, settings')
+      .select('id, slug, settings')
       .eq('tenant_id', tenant.id)
       .eq('slug', project_slug);
 
@@ -65,8 +68,44 @@ export async function POST(req: NextRequest) {
 
     // 4. Batch Process Items
     const insertedItems = [];
+    const itemMutationSnapshots: Array<{ item: any; prior: any }> = [];
     // Track batch external_ref_ids mapped to their resolved internal UUIDs for same-batch parent-child chaining
     const batchRefMap = new Map<string, string>();
+
+    // Retrieve prior states for existing external_ref_ids to correctly classify audits
+    const extRefIds = (items || []).map((it) => it.external_ref_id).filter(Boolean) as string[];
+    const priorItemsMap = new Map<string, any>();
+
+    if (extRefIds.length > 0) {
+      try {
+        let priorQuery: any = supabaseAdmin
+          .from('work_items')
+          .select('*')
+          .eq('project_id', project.id);
+
+        if (typeof priorQuery?.in === 'function') {
+          priorQuery = priorQuery.in('external_ref_id', extRefIds);
+          const { data: priorRows } = await priorQuery;
+          for (const row of priorRows || []) {
+            if (row.external_ref_id) {
+              priorItemsMap.set(row.external_ref_id, row);
+            }
+          }
+        }
+      } catch {
+        // Fall back gracefully if prior state lookup is unavailable
+      }
+    }
+
+    const auditEntries: Array<{
+      tenant_id: string;
+      project_id: string;
+      item_id: string;
+      actor_id: string | null;
+      actor_name: string;
+      action: 'create' | 'update' | 'restore';
+      changed_fields: Record<string, any>;
+    }> = [];
 
     for (const item of items) {
       // Resolve Parent ID if parent_ref_id is supplied
@@ -114,6 +153,8 @@ export async function POST(req: NextRequest) {
       // Explicitly setting deleted_at: null restores any previously soft-deleted row
       // with the same external_ref_id rather than silently updating a hidden record.
       if (item.external_ref_id) {
+        const prior = priorItemsMap.get(item.external_ref_id) || null;
+
         const { data: upserted, error: upsertErr } = await supabaseAdmin
           .from('work_items')
           .upsert(
@@ -125,8 +166,43 @@ export async function POST(req: NextRequest) {
 
         if (upsertErr) throw upsertErr;
         insertedItems.push(upserted);
+        itemMutationSnapshots.push({ item: upserted, prior });
+
         if (upserted?.id && item.external_ref_id) {
           batchRefMap.set(item.external_ref_id, upserted.id);
+        }
+
+        // Classify audit action: create, restore, or update
+        let action: 'create' | 'update' | 'restore' = 'create';
+        let changed_fields: Record<string, any> = {};
+
+        if (!prior) {
+          action = 'create';
+          changed_fields = { created: { before: null, after: upserted } };
+        } else if (prior.deleted_at !== null) {
+          action = 'restore';
+          changed_fields = {
+            deleted_at: { before: prior.deleted_at, after: null },
+            ...computeChangedFields(prior, upserted),
+          };
+        } else {
+          action = 'update';
+          changed_fields = computeChangedFields(prior, upserted);
+        }
+
+        // Keep local cache up to date for subsequent items in batch
+        priorItemsMap.set(item.external_ref_id, upserted);
+
+        if (action === 'create' || action === 'restore' || Object.keys(changed_fields).length > 0) {
+          auditEntries.push({
+            tenant_id: tenant.id,
+            project_id: upserted.project_id,
+            item_id: upserted.id,
+            actor_id: auth.context.userId || null,
+            actor_name: auth.context.userId ? 'User' : 'Ingest Pipeline',
+            action,
+            changed_fields,
+          });
         }
       } else {
         const { data: inserted, error: insertErr } = await supabaseAdmin
@@ -137,6 +213,55 @@ export async function POST(req: NextRequest) {
 
         if (insertErr) throw insertErr;
         insertedItems.push(inserted);
+        itemMutationSnapshots.push({ item: inserted, prior: null });
+
+        auditEntries.push({
+          tenant_id: tenant.id,
+          project_id: inserted.project_id,
+          item_id: inserted.id,
+          actor_id: auth.context.userId || null,
+          actor_name: auth.context.userId ? 'User' : 'Ingest Pipeline',
+          action: 'create',
+          changed_fields: { created: { before: null, after: inserted } },
+        });
+      }
+    }
+
+    if (auditEntries.length > 0) {
+      await recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
+    // Dispatch notifications for assigned items with preserved pre-mutation prior snapshot
+    const assignedMutations = itemMutationSnapshots.filter((snap) => snap.item?.assignee);
+    if (assignedMutations.length > 0) {
+      try {
+        const resolver = await getTenantMemberRecipients(tenant.id);
+        const notificationPromises: Promise<any>[] = [];
+
+        for (const { item: it, prior } of assignedMutations) {
+          const recipient = resolver.resolve(it.assignee);
+          if (recipient) {
+            notificationPromises.push(
+              dispatchItemNotifications({
+                tenantId: tenant.id,
+                tenantSlug: tenant.slug,
+                projectId: it.project_id,
+                projectSlug: project.slug || project_slug,
+                item: it,
+                beforeItem: prior || null,
+                actorId: auth.context.userId || null,
+                actorName: auth.context.userId ? 'User' : 'Ingest Pipeline',
+                recipientUser: recipient,
+              })
+            );
+          }
+        }
+
+        if (notificationPromises.length > 0) {
+          await Promise.allSettled(notificationPromises);
+        }
+      } catch (notifErr) {
+        console.warn('[tracker:ingest] Notification dispatch error:', notifErr);
       }
     }
 

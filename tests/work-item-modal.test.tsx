@@ -162,8 +162,58 @@ describe('WorkItemModal component', () => {
       fireEvent.click(deleteBtn);
     });
 
+    const confirmDeleteBtn = screen.getByRole('button', { name: /Delete Item/i });
+    await act(async () => {
+      fireEvent.click(confirmDeleteBtn);
+    });
+
     expect(handleDelete).toHaveBeenCalledWith('item-101');
     expect(handleClose).toHaveBeenCalled();
+  });
+
+  it('pressing Escape during delete confirmation closes only the confirmation modal and preserves unsaved edits', async () => {
+    const handleClose = vi.fn();
+
+    render(
+      <WorkItemModal
+        item={sampleItem}
+        isOpen={true}
+        onClose={handleClose}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[sampleItem]}
+      />
+    );
+
+    // Make an unsaved edit to title
+    const titleInput = screen.getByDisplayValue('Implement Dark Theme');
+    await act(async () => {
+      fireEvent.change(titleInput, { target: { value: 'Work in progress draft title' } });
+    });
+
+    // Click trash button to open ConfirmDeleteModal
+    const deleteBtn = screen.getByTitle('Delete work item');
+    await act(async () => {
+      fireEvent.click(deleteBtn);
+    });
+
+    // Verify ConfirmDeleteModal is open
+    expect(screen.getByText('Delete Work Item')).toBeDefined();
+
+    // Press Escape key
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+
+    // ConfirmDeleteModal is now closed
+    expect(screen.queryByText('Delete Work Item')).toBeNull();
+
+    // Parent WorkItemModal did NOT close
+    expect(handleClose).not.toHaveBeenCalled();
+
+    // Draft edit was preserved
+    expect(screen.getByDisplayValue('Work in progress draft title')).toBeDefined();
   });
 
   it('excludes parent items from other projects in the parent picker dropdown', async () => {
@@ -175,6 +225,7 @@ describe('WorkItemModal component', () => {
       item_type: 'epic',
       status: 'in_progress',
       order_index: 500,
+      metadata: {},
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -186,6 +237,7 @@ describe('WorkItemModal component', () => {
       item_type: 'epic',
       status: 'in_progress',
       order_index: 600,
+      metadata: {},
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -235,4 +287,75 @@ describe('WorkItemModal component', () => {
     expect(screen.queryByText(/Must be a valid number/)).toBeNull();
     expect(screen.getByDisplayValue('This is a text note')).toBeDefined();
   });
+
+  it('appends tenant_slug to copied GET URL when tenantSlug is provided', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+
+    render(
+      <WorkItemModal
+        item={sampleItem}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={() => {}}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[sampleItem]}
+        tenantSlug="pym-energy"
+      />
+    );
+
+    const copyBtn = screen.getByTitle('Copy item GET API URL');
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(writeTextMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/items?id=item-101&tenant_slug=pym-energy')
+    );
+  });
+
+  it('allows clearing numeric metadata fields preserving null without coercing to zero', async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const itemWithPoints: WorkItem = {
+      ...sampleItem,
+      metadata: { points: 5 },
+    };
+
+    render(
+      <WorkItemModal
+        item={itemWithPoints}
+        isOpen={true}
+        onClose={() => {}}
+        onSave={handleSave}
+        onDelete={() => {}}
+        projectSettings={sampleSettings}
+        allItems={[itemWithPoints]}
+      />
+    );
+
+    const pointsInput = screen.getByDisplayValue('5');
+    await act(async () => {
+      fireEvent.change(pointsInput, { target: { value: '' } });
+    });
+
+    const saveBtn = screen.getByText('Save Changes');
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(handleSave).toHaveBeenCalledWith(
+      'item-101',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          points: null,
+        }),
+      })
+    );
+  });
 });
+

@@ -72,3 +72,14 @@ body {
   background: rgba(249, 115, 22, 0.85);
 }
 
+/* ==========================================================================
+   Scroll Isolation (Overscroll Containment for Board Canvas & Columns)
+   ========================================================================== */
+.board-scroll-container,
+.board-column-scroll,
+.overscroll-contain {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  overscroll-behavior-x: contain;
+}
+
