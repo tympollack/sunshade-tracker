@@ -129,3 +129,38 @@ export interface TenantWithRole extends Tenant {
   role: string;
   member_since: string;
 }
+
+/** Row from tracker.audit_logs */
+export interface AuditLogEntry {
+  id: string;
+  tenant_id: string;
+  project_id: string;
+  item_id: string;
+  actor_id?: string | null;
+  actor_name?: string | null;
+  action: 'create' | 'update' | 'delete' | 'restore';
+  changed_fields: Record<string, { before: any; after: any }>;
+  created_at: string;
+}
+
+/** Row from tracker.notifications */
+export interface InAppNotification {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  actor_name?: string | null;
+  item_id?: string | null;
+  item_title?: string | null;
+  action: string;
+  read: boolean;
+  created_at: string;
+}
+
+/** User notification preferences */
+export interface NotificationPreferences {
+  notify_in_app: boolean;
+  notify_email: boolean;
+  notify_on_assignment: boolean;
+  notify_on_status_change: boolean;
+}
+

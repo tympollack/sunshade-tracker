@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/db';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 import { validateHierarchyNesting } from '@/lib/fractional-index';
+import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
+
 
 export const MAX_BULK_ITEMS = 100;
 
@@ -504,10 +506,25 @@ export async function handleBulkCreateItems(
     };
   }
 
+  const items = (inserted || []) as WorkItem[];
+
+  // Record audit logs for bulk created items
+  if (items.length > 0) {
+    recordBulkAuditLogs(
+      items.map((it) => ({
+        tenant_id: tenantId,
+        project_id: it.project_id,
+        item_id: it.id,
+        action: 'create',
+        changed_fields: { created: { before: null, after: it } },
+      }))
+    ).catch(() => {});
+  }
+
   return {
     success: true,
-    count: inserted?.length || 0,
-    items: (inserted || []) as WorkItem[],
+    count: items.length,
+    items,
   };
 }
 
@@ -763,6 +780,25 @@ export async function handleBulkUpdateItems(
       if (r.data) updatedItems.push(r.data as WorkItem);
     }
 
+    // Record audit logs for updated items
+    const auditEntries = updatedItems
+      .map((updated) => {
+        const before = existingItems.find((e: any) => e.id === updated.id);
+        const diff = computeChangedFields(before, updated);
+        return {
+          tenant_id: tenantId,
+          project_id: updated.project_id,
+          item_id: updated.id,
+          action: 'update' as const,
+          changed_fields: diff,
+        };
+      })
+      .filter((entry) => Object.keys(entry.changed_fields).length > 0);
+
+    if (auditEntries.length > 0) {
+      recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
     return {
       success: true,
       updated_count: updatedItems.length,
@@ -983,6 +1019,25 @@ export async function handleBulkUpdateItems(
       if (r.data) updatedItems.push(r.data as WorkItem);
     }
 
+    // Record audit logs for updated items
+    const auditEntries = updatedItems
+      .map((updated) => {
+        const before = existingMap.get(updated.id);
+        const diff = computeChangedFields(before, updated);
+        return {
+          tenant_id: tenantId,
+          project_id: updated.project_id,
+          item_id: updated.id,
+          action: 'update' as const,
+          changed_fields: diff,
+        };
+      })
+      .filter((entry) => Object.keys(entry.changed_fields).length > 0);
+
+    if (auditEntries.length > 0) {
+      recordBulkAuditLogs(auditEntries).catch(() => {});
+    }
+
     return {
       success: true,
       updated_count: updatedItems.length,
@@ -1040,7 +1095,7 @@ export async function handleBulkDeleteItems(
     query = query.is('deleted_at', null);
   }
 
-  const { data: deleted, error } = await query.select('id, deleted_at');
+  const { data: deleted, error } = await query.select('id, project_id, deleted_at');
   if (error) {
     return {
       success: false,
@@ -1051,7 +1106,20 @@ export async function handleBulkDeleteItems(
     };
   }
 
-  const deletedIds = (deleted || []).map((d: any) => d.id);
+  const deletedRows = (deleted || []) as Array<{ id: string; project_id: string; deleted_at: string }>;
+  if (deletedRows.length > 0) {
+    recordBulkAuditLogs(
+      deletedRows.map((d) => ({
+        tenant_id: tenantId,
+        project_id: d.project_id,
+        item_id: d.id,
+        action: 'delete' as const,
+        changed_fields: { deleted_at: { before: null, after: d.deleted_at } },
+      }))
+    ).catch(() => {});
+  }
+
+  const deletedIds = deletedRows.map((d) => d.id);
   return {
     success: true,
     deleted_count: deletedIds.length,

@@ -144,11 +144,21 @@ export async function GET(_req: NextRequest) {
       };
     });
 
+    const userMetadata = user.user_metadata || {};
+    const notificationPreferences = {
+      notify_in_app: true,
+      notify_email: true,
+      notify_on_assignment: true,
+      notify_on_status_change: true,
+      ...(userMetadata.notification_preferences || {}),
+    };
+
     return NextResponse.json({
       user: {
         id: user.id,
         email: user.email,
         full_name: currentFullName,
+        notification_preferences: notificationPreferences,
       },
       workspaces,
       // Convenience: the first (primary) workspace
@@ -158,3 +168,61 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+
+/**
+ * PATCH /api/v1/tenants/me
+ *
+ * Updates current user settings (e.g. notification preferences) in auth metadata.
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const currentMeta = user.user_metadata || {};
+    const currentPrefs = {
+      notify_in_app: true,
+      notify_email: true,
+      notify_on_assignment: true,
+      notify_on_status_change: true,
+      ...(currentMeta.notification_preferences || {}),
+    };
+
+    const updatedPrefs = {
+      ...currentPrefs,
+      ...(body.notification_preferences || {}),
+    };
+
+    const { error: updateErr } = await supabase.auth.updateUser({
+      data: {
+        ...currentMeta,
+        notification_preferences: updatedPrefs,
+      },
+    });
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      notification_preferences: updatedPrefs,
+      user: {
+        id: user.id,
+        email: user.email,
+        notification_preferences: updatedPrefs,
+      },
+    });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
+  }
+}
+

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
+import { recordBulkAuditLogs } from '@/lib/audit-log';
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -138,6 +140,20 @@ export async function POST(req: NextRequest) {
         if (insertErr) throw insertErr;
         insertedItems.push(inserted);
       }
+    }
+
+    if (insertedItems.length > 0) {
+      recordBulkAuditLogs(
+        insertedItems.map((it: any) => ({
+          tenant_id: tenant.id,
+          project_id: it.project_id,
+          item_id: it.id,
+          actor_id: auth.context.userId || null,
+          actor_name: auth.context.userId ? 'User' : 'Ingest Pipeline',
+          action: 'create' as const,
+          changed_fields: { created: { before: null, after: it } },
+        }))
+      ).catch(() => {});
     }
 
     return NextResponse.json({

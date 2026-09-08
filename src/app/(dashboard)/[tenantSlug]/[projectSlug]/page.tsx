@@ -43,6 +43,8 @@ import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
+import { NotificationBell } from '@/components/NotificationBell';
+
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 
 interface PageProps {
@@ -1005,6 +1007,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
           </button>
+
+          {/* Notifications Inbox */}
+          <NotificationBell
+            tenantSlug={tenantSlug}
+            onOpenItem={(itemId) => {
+              const target = items.find((it) => it.id === itemId);
+              if (target) {
+                setEditingItem(target);
+              }
+            }}
+          />
 
           {/* User Menu */}
           {tenantInfo ? (

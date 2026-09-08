@@ -225,6 +225,7 @@ describe('WorkItemModal component', () => {
       item_type: 'epic',
       status: 'in_progress',
       order_index: 500,
+      metadata: {},
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -236,6 +237,7 @@ describe('WorkItemModal component', () => {
       item_type: 'epic',
       status: 'in_progress',
       order_index: 600,
+      metadata: {},
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
