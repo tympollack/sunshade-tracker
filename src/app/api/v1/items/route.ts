@@ -3,6 +3,12 @@ import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
 import { WorkItem, WorkItemWithChildren } from '@/types/tracker';
+import {
+  handleBulkGetItems,
+  handleBulkCreateItems,
+  handleBulkUpdateItems,
+  handleBulkDeleteItems,
+} from '@/lib/bulk-items';
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -11,6 +17,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const itemIdParam = searchParams.get('id');
+  const idsParam = searchParams.get('ids');
   const projectSlug = searchParams.get('project_slug');
   const projectIdParam = searchParams.get('project_id');
   const allProjectsParam = searchParams.get('all_projects') === 'true';
@@ -18,7 +25,21 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
 
-  // 1. Single Item by ID lookup
+  // 1a. Bulk Items by IDs lookup
+  if (idsParam) {
+    const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean);
+    const bulkRes = await handleBulkGetItems(authCtx.tenant.id, { ids });
+    if (!bulkRes.success) {
+      return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+    }
+    return NextResponse.json({
+      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+      count: bulkRes.count,
+      items: bulkRes.items,
+    });
+  }
+
+  // 1b. Single Item by ID lookup
   if (itemIdParam) {
     let itemQuery: any = supabaseAdmin
       .from('work_items')
@@ -261,6 +282,20 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk create if array or payload with items array
+    if (Array.isArray(body) || (Array.isArray(body.items) && body.items.length > 0)) {
+      const payload = Array.isArray(body) ? { items: body } : body;
+      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload);
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json(
+        { success: true, count: bulkRes.count, items: bulkRes.items },
+        { status: 201 }
+      );
+    }
+
     const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, prev_order, next_order } = body;
 
     if (!title) {
@@ -370,6 +405,24 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk update if body is an array, or has ids/items array
+    if (
+      Array.isArray(body) ||
+      (Array.isArray(body.ids) && body.ids.length > 0) ||
+      (Array.isArray(body.items) && body.items.length > 0)
+    ) {
+      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body);
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json({
+        success: true,
+        updated_count: bulkRes.updated_count,
+        items: bulkRes.items,
+      });
+    }
+
     const {
       id,
       title,
@@ -556,6 +609,21 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Dual-compatibility: handle bulk delete if body is array or body.ids is array
+    if (Array.isArray(body) || (Array.isArray(body.ids) && body.ids.length > 0)) {
+      const payload = Array.isArray(body) ? { ids: body } : body;
+      const bulkRes = await handleBulkDeleteItems(authCtx.tenant.id, payload);
+      if (!bulkRes.success) {
+        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+      }
+      return NextResponse.json({
+        success: true,
+        deleted_count: bulkRes.deleted_count,
+        deleted_ids: bulkRes.deleted_ids,
+      });
+    }
+
     const { id } = body;
 
     if (!id) {
