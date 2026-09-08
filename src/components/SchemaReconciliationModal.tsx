@@ -13,8 +13,15 @@ import {
   X,
 } from 'lucide-react';
 import { ProjectSettings, HierarchyLevel, StatusDefinition } from '@/types/tracker';
-import { SchemaDeviation, summarizeDeviations } from '@/lib/schema-deviation';
+import { SchemaDeviation, summarizeDeviations, DeviationSummary } from '@/lib/schema-deviation';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+
+export interface ProjectLike {
+  id: string;
+  slug: string;
+  name?: string;
+  settings?: ProjectSettings;
+}
 
 export interface SchemaReconciliationModalProps {
   isOpen: boolean;
@@ -25,6 +32,67 @@ export interface SchemaReconciliationModalProps {
   tenantSlug: string;
   onReconciled: () => Promise<void> | void;
   focusDeviationId?: string | null;
+  allProjects?: ProjectLike[];
+  isPortfolio?: boolean;
+}
+
+interface ProjectGroup {
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+  settings: ProjectSettings;
+  deviations: SchemaDeviation[];
+  levelDeviations: SchemaDeviation[];
+  statusDeviations: SchemaDeviation[];
+  nestingDeviations: SchemaDeviation[];
+  summary: DeviationSummary;
+}
+
+const MAX_BULK_ITEMS = 100;
+
+/**
+ * Sends batch updates in chunks no larger than MAX_BULK_ITEMS (100 items)
+ * and returns summary of succeeded/failed counts and any errors.
+ */
+async function runChunkedBulkUpdates(
+  itemIds: string[],
+  updates: Record<string, any>,
+  tenantSlug: string
+): Promise<{ succeededCount: number; failedCount: number; errors: string[] }> {
+  let succeededCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+
+  for (let i = 0; i < itemIds.length; i += MAX_BULK_ITEMS) {
+    const chunk = itemIds.slice(i, i + MAX_BULK_ITEMS);
+    try {
+      const res = await fetch('/api/v1/items/bulk', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-slug': tenantSlug,
+        },
+        body: JSON.stringify({
+          ids: chunk,
+          updates,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        errors.push(errData.error || `Bulk update failed with status ${res.status}`);
+        failedCount += chunk.length;
+      } else {
+        succeededCount += chunk.length;
+      }
+    } catch (err: any) {
+      errors.push(err.message || 'Network error during bulk update');
+      failedCount += chunk.length;
+    }
+  }
+
+  return { succeededCount, failedCount, errors };
 }
 
 export function SchemaReconciliationModal({
@@ -35,51 +103,134 @@ export function SchemaReconciliationModal({
   projectIdOrSlug,
   tenantSlug,
   onReconciled,
+  focusDeviationId,
+  allProjects,
+  isPortfolio = false,
 }: SchemaReconciliationModalProps) {
   const [activeSection, setActiveSection] = useState<'levels' | 'statuses' | 'nesting'>('levels');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Selected remap targets
-  const [remapLevelTarget, setRemapLevelTarget] = useState<string>('');
-  const [remapStatusTarget, setRemapStatusTarget] = useState<string>('');
+  // Filter projects in portfolio mode
+  const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('all');
 
-  const summary = useMemo(() => summarizeDeviations(deviations), [deviations]);
+  // Remap selection state keyed by group and type
+  const [remapTargets, setRemapTargets] = useState<Record<string, string>>({});
 
-  const levelDeviations = useMemo(
-    () => deviations.filter((d) => d.deviationType === 'unmapped_level'),
+  // Group deviations by project to isolate settings and mutations
+  const projectGroups = useMemo<ProjectGroup[]>(() => {
+    if (!deviations || deviations.length === 0) return [];
+
+    if (isPortfolio && allProjects && allProjects.length > 0) {
+      const pMap = new Map<string, ProjectLike>();
+      for (const p of allProjects) {
+        pMap.set(p.id, p);
+        pMap.set(p.slug, p);
+      }
+
+      const groupsByProjKey = new Map<string, { project: ProjectLike; devs: SchemaDeviation[] }>();
+
+      for (const d of deviations) {
+        const pKey = d.projectSlug || d.projectId || projectIdOrSlug || allProjects[0].slug;
+        const matchedProj = pMap.get(pKey) || allProjects[0];
+        const groupKey = matchedProj.slug || matchedProj.id;
+        if (!groupsByProjKey.has(groupKey)) {
+          groupsByProjKey.set(groupKey, { project: matchedProj, devs: [] });
+        }
+        groupsByProjKey.get(groupKey)!.devs.push(d);
+      }
+
+      const result: ProjectGroup[] = [];
+      for (const { project, devs } of groupsByProjKey.values()) {
+        const lvlDevs = devs.filter((d) => d.deviationType === 'unmapped_level');
+        const stDevs = devs.filter((d) => d.deviationType === 'unmapped_status');
+        const nestDevs = devs.filter((d) => d.deviationType === 'nesting_conflict');
+        result.push({
+          projectId: project.id,
+          projectSlug: project.slug,
+          projectName: project.name || project.slug,
+          settings: project.settings || projectSettings,
+          deviations: devs,
+          levelDeviations: lvlDevs,
+          statusDeviations: stDevs,
+          nestingDeviations: nestDevs,
+          summary: summarizeDeviations(devs),
+        });
+      }
+      return result;
+    }
+
+    // Default: Single project mode
+    const lvlDevs = deviations.filter((d) => d.deviationType === 'unmapped_level');
+    const stDevs = deviations.filter((d) => d.deviationType === 'unmapped_status');
+    const nestDevs = deviations.filter((d) => d.deviationType === 'nesting_conflict');
+    return [
+      {
+        projectId: projectIdOrSlug || 'default',
+        projectSlug: projectIdOrSlug || 'default',
+        projectName: projectIdOrSlug || 'Project',
+        settings: projectSettings,
+        deviations,
+        levelDeviations: lvlDevs,
+        statusDeviations: stDevs,
+        nestingDeviations: nestDevs,
+        summary: summarizeDeviations(deviations),
+      },
+    ];
+  }, [deviations, isPortfolio, allProjects, projectSettings, projectIdOrSlug]);
+
+  const filteredGroups = useMemo(() => {
+    if (selectedProjectFilter === 'all') return projectGroups;
+    return projectGroups.filter(
+      (g) => g.projectSlug === selectedProjectFilter || g.projectId === selectedProjectFilter
+    );
+  }, [projectGroups, selectedProjectFilter]);
+
+  const levelDeviationsCount = useMemo(
+    () => deviations.filter((d) => d.deviationType === 'unmapped_level').length,
     [deviations]
   );
-  const statusDeviations = useMemo(
-    () => deviations.filter((d) => d.deviationType === 'unmapped_status'),
+  const statusDeviationsCount = useMemo(
+    () => deviations.filter((d) => d.deviationType === 'unmapped_status').length,
     [deviations]
   );
-  const nestingDeviations = useMemo(
-    () => deviations.filter((d) => d.deviationType === 'nesting_conflict'),
+  const nestingDeviationsCount = useMemo(
+    () => deviations.filter((d) => d.deviationType === 'nesting_conflict').length,
     [deviations]
   );
 
-  // Auto-switch to active tab with deviations
+  // Auto-switch to active tab with deviations when opening
   useEffect(() => {
-    if (levelDeviations.length > 0) {
+    if (levelDeviationsCount > 0) {
       setActiveSection('levels');
-    } else if (statusDeviations.length > 0) {
+    } else if (statusDeviationsCount > 0) {
       setActiveSection('statuses');
-    } else if (nestingDeviations.length > 0) {
+    } else if (nestingDeviationsCount > 0) {
       setActiveSection('nesting');
     }
-  }, [levelDeviations.length, statusDeviations.length, nestingDeviations.length]);
+  }, [levelDeviationsCount, statusDeviationsCount, nestingDeviationsCount]);
 
-  // Set default remap targets
+  // Focus deviation: Navigate directly to the corresponding section and project
   useEffect(() => {
-    if (!remapLevelTarget && projectSettings.hierarchy?.length) {
-      setRemapLevelTarget(projectSettings.hierarchy[projectSettings.hierarchy.length - 1].type);
+    if (!focusDeviationId || !isOpen) return;
+    const targetDev = deviations.find(
+      (d) => d.id === focusDeviationId || d.itemId === focusDeviationId
+    );
+    if (!targetDev) return;
+
+    if (targetDev.deviationType === 'unmapped_level') {
+      setActiveSection('levels');
+    } else if (targetDev.deviationType === 'unmapped_status') {
+      setActiveSection('statuses');
+    } else if (targetDev.deviationType === 'nesting_conflict') {
+      setActiveSection('nesting');
     }
-    if (!remapStatusTarget && projectSettings.statuses?.length) {
-      setRemapStatusTarget(projectSettings.statuses[0].id);
+
+    if (isPortfolio && (targetDev.projectSlug || targetDev.projectId)) {
+      setSelectedProjectFilter(targetDev.projectSlug || targetDev.projectId!);
     }
-  }, [projectSettings, remapLevelTarget, remapStatusTarget]);
+  }, [focusDeviationId, isOpen, deviations, isPortfolio]);
 
   // Handle Escape key
   useEffect(() => {
@@ -101,41 +252,45 @@ export function SchemaReconciliationModal({
   };
 
   // ─── ACTION 1: 1-Click Extend Project Hierarchy ─────────────────────────
-  const handleExtendHierarchy = async (unmappedType: string) => {
-    if (!projectIdOrSlug) {
-      setActionError('Project ID or slug is required to update schema settings.');
+  const handleExtendHierarchy = async (
+    unmappedType: string,
+    targetIdentifier: string,
+    targetSettings: ProjectSettings
+  ) => {
+    const identifier = targetIdentifier || projectIdOrSlug;
+    if (!identifier) {
+      setActionError('Project identifier is required to update schema settings.');
       return;
     }
     clearAlerts();
     setIsSubmitting(true);
 
     try {
-      const currentHierarchy: HierarchyLevel[] = projectSettings.hierarchy || [];
-      const highestLevel = currentHierarchy.reduce(
-        (max, h) => (h.level > max ? h.level : max),
-        0
-      );
-      const lowestExistingType = currentHierarchy.length > 0
-        ? currentHierarchy[currentHierarchy.length - 1].type
-        : '';
+      const currentHierarchy: HierarchyLevel[] = targetSettings.hierarchy || [];
+      // Sort hierarchy by level to reliably locate the deepest level regardless of array order
+      const sortedHierarchy = [...currentHierarchy].sort((a, b) => a.level - b.level);
+      const deepestExistingLevel =
+        sortedHierarchy.length > 0 ? sortedHierarchy[sortedHierarchy.length - 1] : null;
+      const highestLevel = deepestExistingLevel ? deepestExistingLevel.level : 0;
+      const allowedParents = deepestExistingLevel ? [deepestExistingLevel.type] : [];
 
       const formattedLabel = unmappedType.charAt(0).toUpperCase() + unmappedType.slice(1);
       const nextLevelNum = highestLevel + 1;
 
       const newLevel: HierarchyLevel = {
-        type: unmappedType.toLowerCase(),
+        type: unmappedType,
         label: formattedLabel,
         level: nextLevelNum,
-        allowed_parents: lowestExistingType ? [lowestExistingType] : [],
+        allowed_parents: allowedParents,
         color: getDefaultLevelHex(nextLevelNum),
       };
 
       const updatedSettings: ProjectSettings = {
-        ...projectSettings,
+        ...targetSettings,
         hierarchy: [...currentHierarchy, newLevel],
       };
 
-      const res = await fetch(`/api/v1/projects/${encodeURIComponent(projectIdOrSlug)}/settings`, {
+      const res = await fetch(`/api/v1/projects/${encodeURIComponent(identifier)}/settings`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -159,33 +314,32 @@ export function SchemaReconciliationModal({
     }
   };
 
-  // ─── ACTION 2: Batch Remap Item Types ───────────────────────────────────
+  // ─── ACTION 2: Batch Remap Item Types with Chunking ──────────────────────
   const handleBatchRemapType = async (itemIds: string[], targetType: string) => {
     if (itemIds.length === 0 || !targetType) return;
     clearAlerts();
     setIsSubmitting(true);
 
     try {
-      const res = await fetch('/api/v1/items/bulk', {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-slug': tenantSlug,
-        },
-        body: JSON.stringify({
-          ids: itemIds,
-          updates: { item_type: targetType },
-        }),
-      });
+      const { succeededCount, failedCount, errors } = await runChunkedBulkUpdates(
+        itemIds,
+        { item_type: targetType },
+        tenantSlug
+      );
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to remap item types (${res.status})`);
+      if (failedCount === 0) {
+        setSuccessMessage(`Remapped ${succeededCount} item(s) to '${targetType}'!`);
+      } else if (succeededCount > 0) {
+        setActionError(
+          `Remapped ${succeededCount} item(s), but ${failedCount} item(s) failed: ${errors[0]}`
+        );
+      } else {
+        throw new Error(errors[0] || 'Failed to remap item types');
       }
 
-      setSuccessMessage(`Remapped ${itemIds.length} item(s) to '${targetType}'!`);
-      await onReconciled();
+      if (succeededCount > 0) {
+        await onReconciled();
+      }
     } catch (err: any) {
       setActionError(err.message || 'Error remapping item types');
     } finally {
@@ -194,16 +348,21 @@ export function SchemaReconciliationModal({
   };
 
   // ─── ACTION 3: 1-Click Extend Statuses ──────────────────────────────────
-  const handleExtendStatuses = async (unmappedStatus: string) => {
-    if (!projectIdOrSlug) {
-      setActionError('Project ID or slug is required to update schema settings.');
+  const handleExtendStatuses = async (
+    unmappedStatus: string,
+    targetIdentifier: string,
+    targetSettings: ProjectSettings
+  ) => {
+    const identifier = targetIdentifier || projectIdOrSlug;
+    if (!identifier) {
+      setActionError('Project identifier is required to update schema settings.');
       return;
     }
     clearAlerts();
     setIsSubmitting(true);
 
     try {
-      const currentStatuses: StatusDefinition[] = projectSettings.statuses || [];
+      const currentStatuses: StatusDefinition[] = targetSettings.statuses || [];
       const highestOrder = currentStatuses.reduce(
         (max, s) => (s.order > max ? s.order : max),
         0
@@ -215,18 +374,18 @@ export function SchemaReconciliationModal({
         .join(' ');
 
       const newStatus: StatusDefinition = {
-        id: unmappedStatus.toLowerCase(),
+        id: unmappedStatus,
         label: formattedLabel,
         color: '#94a3b8',
         order: highestOrder + 1000,
       };
 
       const updatedSettings: ProjectSettings = {
-        ...projectSettings,
+        ...targetSettings,
         statuses: [...currentStatuses, newStatus],
       };
 
-      const res = await fetch(`/api/v1/projects/${encodeURIComponent(projectIdOrSlug)}/settings`, {
+      const res = await fetch(`/api/v1/projects/${encodeURIComponent(identifier)}/settings`, {
         method: 'PUT',
         credentials: 'include',
         headers: {
@@ -250,33 +409,32 @@ export function SchemaReconciliationModal({
     }
   };
 
-  // ─── ACTION 4: Batch Remap Statuses ─────────────────────────────────────
+  // ─── ACTION 4: Batch Remap Statuses with Chunking ─────────────────────────
   const handleBatchRemapStatus = async (itemIds: string[], targetStatus: string) => {
     if (itemIds.length === 0 || !targetStatus) return;
     clearAlerts();
     setIsSubmitting(true);
 
     try {
-      const res = await fetch('/api/v1/items/bulk', {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-slug': tenantSlug,
-        },
-        body: JSON.stringify({
-          ids: itemIds,
-          updates: { status: targetStatus },
-        }),
-      });
+      const { succeededCount, failedCount, errors } = await runChunkedBulkUpdates(
+        itemIds,
+        { status: targetStatus },
+        tenantSlug
+      );
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to remap statuses (${res.status})`);
+      if (failedCount === 0) {
+        setSuccessMessage(`Remapped ${succeededCount} item(s) to status '${targetStatus}'!`);
+      } else if (succeededCount > 0) {
+        setActionError(
+          `Remapped ${succeededCount} item(s), but ${failedCount} item(s) failed: ${errors[0]}`
+        );
+      } else {
+        throw new Error(errors[0] || 'Failed to remap item statuses');
       }
 
-      setSuccessMessage(`Remapped ${itemIds.length} item(s) to status '${targetStatus}'!`);
-      await onReconciled();
+      if (succeededCount > 0) {
+        await onReconciled();
+      }
     } catch (err: any) {
       setActionError(err.message || 'Error remapping item statuses');
     } finally {
@@ -354,6 +512,44 @@ export function SchemaReconciliationModal({
           </button>
         </div>
 
+        {/* Portfolio Project Selector (when in portfolio mode and multiple projects exist) */}
+        {isPortfolio && (projectGroups.length > 1 || (allProjects && allProjects.length > 1)) && (
+          <div className="flex items-center space-x-1.5 px-6 py-2 border-b border-slate-800/80 bg-slate-950/30 overflow-x-auto text-xs">
+            <span className="text-slate-400 text-[11px] font-medium mr-1 shrink-0">Project:</span>
+            <button
+              type="button"
+              onClick={() => {
+                clearAlerts();
+                setSelectedProjectFilter('all');
+              }}
+              className={`px-2.5 py-1 rounded-md transition-colors shrink-0 ${
+                selectedProjectFilter === 'all'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold'
+                  : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              All Projects ({deviations.length})
+            </button>
+            {projectGroups.map((g) => (
+              <button
+                key={g.projectSlug}
+                type="button"
+                onClick={() => {
+                  clearAlerts();
+                  setSelectedProjectFilter(g.projectSlug);
+                }}
+                className={`px-2.5 py-1 rounded-md transition-colors shrink-0 ${
+                  selectedProjectFilter === g.projectSlug
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold'
+                    : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                {g.projectName} ({g.deviations.length})
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Section Tabs */}
         <div className="flex items-center space-x-2 px-6 pt-3 border-b border-slate-800 bg-slate-900/50">
           <button
@@ -368,7 +564,7 @@ export function SchemaReconciliationModal({
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Unmapped Levels ({levelDeviations.length})</span>
+            <span>Unmapped Levels ({levelDeviationsCount})</span>
           </button>
 
           <button
@@ -383,7 +579,7 @@ export function SchemaReconciliationModal({
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Unmapped Statuses ({statusDeviations.length})</span>
+            <span>Unmapped Statuses ({statusDeviationsCount})</span>
           </button>
 
           <button
@@ -398,7 +594,7 @@ export function SchemaReconciliationModal({
             }`}
           >
             <GitFork className="w-3.5 h-3.5" />
-            <span>Nesting Conflicts ({nestingDeviations.length})</span>
+            <span>Nesting Conflicts ({nestingDeviationsCount})</span>
           </button>
         </div>
 
@@ -418,7 +614,7 @@ export function SchemaReconciliationModal({
         )}
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-4 flex-1">
+        <div className="p-6 overflow-y-auto space-y-5 flex-1">
           {deviations.length === 0 ? (
             <div className="text-center py-12 space-y-3">
               <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
@@ -429,94 +625,146 @@ export function SchemaReconciliationModal({
             </div>
           ) : activeSection === 'levels' ? (
             /* ── SECTION: UNMAPPED HIERARCHY LEVELS ── */
-            <div className="space-y-4">
-              {levelDeviations.length === 0 ? (
+            <div className="space-y-6">
+              {filteredGroups.every((g) => g.levelDeviations.length === 0) ? (
                 <div className="text-center py-8 text-xs text-slate-500">
                   No unmapped hierarchy levels detected.
                 </div>
               ) : (
-                summary.unmappedLevels.map((lvl) => {
-                  const matchingItems = levelDeviations.filter((d) => d.currentValue === lvl);
+                filteredGroups.map((group) => {
+                  if (group.levelDeviations.length === 0) return null;
+
+                  const defaultTarget =
+                    group.settings.hierarchy?.[group.settings.hierarchy.length - 1]?.type || '';
+                  const remapLevelTarget =
+                    remapTargets[`lvl_${group.projectSlug}`] || defaultTarget;
+
                   return (
-                    <div
-                      key={lvl}
-                      className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3"
-                    >
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {lvl}
+                    <div key={group.projectSlug} className="space-y-3">
+                      {isPortfolio && (
+                        <div className="flex items-center space-x-2 pb-1 border-b border-slate-800">
+                          <span className="text-xs font-semibold text-slate-200">
+                            Project: {group.projectName}
                           </span>
-                          <span className="text-xs text-slate-300">
-                            found on <strong className="text-white">{matchingItems.length}</strong> item{matchingItems.length !== 1 ? 's' : ''}
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                            {group.projectSlug}
                           </span>
                         </div>
+                      )}
 
-                        {/* 1-Click Extend Project Hierarchy */}
-                        <button
-                          type="button"
-                          onClick={() => handleExtendHierarchy(lvl)}
-                          disabled={isSubmitting}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow"
-                          data-testid={`extend-hierarchy-btn-${lvl}`}
-                        >
-                          {isSubmitting ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Layers className="w-3.5 h-3.5" />
-                          )}
-                          <span>Extend Hierarchy (Add &quot;{lvl}&quot;)</span>
-                        </button>
-                      </div>
+                      {group.summary.unmappedLevels.map((lvl) => {
+                        const matchingItems = group.levelDeviations.filter(
+                          (d) => d.currentValue === lvl
+                        );
+                        const hasFocusedItem = matchingItems.some(
+                          (m) => m.id === focusDeviationId || m.itemId === focusDeviationId
+                        );
 
-                      {/* Items affected list preview */}
-                      <div className="max-h-32 overflow-y-auto space-y-1.5 pl-2 border-l-2 border-slate-800">
-                        {matchingItems.map((item) => (
+                        return (
                           <div
-                            key={item.itemId}
-                            className="text-xs flex items-center justify-between text-slate-400 hover:text-slate-200"
+                            key={lvl}
+                            className={`p-4 rounded-xl bg-slate-950/60 border transition-all space-y-3 ${
+                              hasFocusedItem
+                                ? 'border-amber-400/80 ring-1 ring-amber-400/50 shadow-lg shadow-amber-950/30'
+                                : 'border-slate-800'
+                            }`}
                           >
-                            <span className="truncate max-w-[340px]">
-                              {item.itemRef ? `[${item.itemRef}] ` : ''}
-                              {item.itemTitle}
-                            </span>
-                            <span className="text-[10px] font-mono text-slate-500">{item.itemId.slice(0, 8)}</span>
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  {lvl}
+                                </span>
+                                <span className="text-xs text-slate-300">
+                                  found on <strong className="text-white">{matchingItems.length}</strong>{' '}
+                                  item{matchingItems.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+
+                              {/* 1-Click Extend Project Hierarchy */}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleExtendHierarchy(lvl, group.projectSlug, group.settings)
+                                }
+                                disabled={isSubmitting}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow"
+                                data-testid={`extend-hierarchy-btn-${lvl}`}
+                              >
+                                {isSubmitting ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Layers className="w-3.5 h-3.5" />
+                                )}
+                                <span>Extend Hierarchy (Add &quot;{lvl}&quot;)</span>
+                              </button>
+                            </div>
+
+                            {/* Items affected list preview */}
+                            <div className="max-h-32 overflow-y-auto space-y-1.5 pl-2 border-l-2 border-slate-800">
+                              {matchingItems.map((item) => {
+                                const isItemFocused =
+                                  item.id === focusDeviationId || item.itemId === focusDeviationId;
+                                return (
+                                  <div
+                                    key={item.itemId}
+                                    className={`text-xs flex items-center justify-between p-1 rounded transition-colors ${
+                                      isItemFocused
+                                        ? 'bg-amber-500/20 text-amber-200 font-semibold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    <span className="truncate max-w-[340px]">
+                                      {item.itemRef ? `[${item.itemRef}] ` : ''}
+                                      {item.itemTitle}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      {item.itemId.slice(0, 8)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Batch Remap Option */}
+                            <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">Or remap items to:</span>
+                                <select
+                                  value={remapLevelTarget}
+                                  onChange={(e) =>
+                                    setRemapTargets((prev) => ({
+                                      ...prev,
+                                      [`lvl_${group.projectSlug}`]: e.target.value,
+                                    }))
+                                  }
+                                  className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                                >
+                                  {group.settings.hierarchy.map((h) => (
+                                    <option key={h.type} value={h.type}>
+                                      {h.label} ({h.type})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleBatchRemapType(
+                                    matchingItems.map((m) => m.itemId),
+                                    remapLevelTarget
+                                  )
+                                }
+                                disabled={isSubmitting || !remapLevelTarget}
+                                className="px-3 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                                data-testid="batch-remap-level-btn"
+                              >
+                                Remap {matchingItems.length} item{matchingItems.length !== 1 ? 's' : ''}
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-
-                      {/* Batch Remap Option */}
-                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-400">Or remap items to:</span>
-                          <select
-                            value={remapLevelTarget}
-                            onChange={(e) => setRemapLevelTarget(e.target.value)}
-                            className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-emerald-500"
-                          >
-                            {projectSettings.hierarchy.map((h) => (
-                              <option key={h.type} value={h.type}>
-                                {h.label} ({h.type})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleBatchRemapType(
-                              matchingItems.map((m) => m.itemId),
-                              remapLevelTarget
-                            )
-                          }
-                          disabled={isSubmitting || !remapLevelTarget}
-                          className="px-3 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
-                          data-testid="batch-remap-level-btn"
-                        >
-                          Remap {matchingItems.length} item{matchingItems.length !== 1 ? 's' : ''}
-                        </button>
-                      </div>
+                        );
+                      })}
                     </div>
                   );
                 })
@@ -524,91 +772,142 @@ export function SchemaReconciliationModal({
             </div>
           ) : activeSection === 'statuses' ? (
             /* ── SECTION: UNMAPPED STATUSES ── */
-            <div className="space-y-4">
-              {statusDeviations.length === 0 ? (
+            <div className="space-y-6">
+              {filteredGroups.every((g) => g.statusDeviations.length === 0) ? (
                 <div className="text-center py-8 text-xs text-slate-500">
                   No unmapped statuses detected.
                 </div>
               ) : (
-                summary.unmappedStatuses.map((st) => {
-                  const matchingItems = statusDeviations.filter((d) => d.currentValue === st);
+                filteredGroups.map((group) => {
+                  if (group.statusDeviations.length === 0) return null;
+
+                  const defaultTarget = group.settings.statuses?.[0]?.id || '';
+                  const remapStatusTarget =
+                    remapTargets[`st_${group.projectSlug}`] || defaultTarget;
+
                   return (
-                    <div
-                      key={st}
-                      className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3"
-                    >
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {st}
+                    <div key={group.projectSlug} className="space-y-3">
+                      {isPortfolio && (
+                        <div className="flex items-center space-x-2 pb-1 border-b border-slate-800">
+                          <span className="text-xs font-semibold text-slate-200">
+                            Project: {group.projectName}
                           </span>
-                          <span className="text-xs text-slate-300">
-                            found on <strong className="text-white">{matchingItems.length}</strong> item{matchingItems.length !== 1 ? 's' : ''}
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                            {group.projectSlug}
                           </span>
                         </div>
+                      )}
 
-                        <button
-                          type="button"
-                          onClick={() => handleExtendStatuses(st)}
-                          disabled={isSubmitting}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow"
-                          data-testid={`extend-status-btn-${st}`}
-                        >
-                          {isSubmitting ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Sliders className="w-3.5 h-3.5" />
-                          )}
-                          <span>Extend Statuses (Add &quot;{st}&quot;)</span>
-                        </button>
-                      </div>
+                      {group.summary.unmappedStatuses.map((st) => {
+                        const matchingItems = group.statusDeviations.filter(
+                          (d) => d.currentValue === st
+                        );
+                        const hasFocusedItem = matchingItems.some(
+                          (m) => m.id === focusDeviationId || m.itemId === focusDeviationId
+                        );
 
-                      <div className="max-h-32 overflow-y-auto space-y-1.5 pl-2 border-l-2 border-slate-800">
-                        {matchingItems.map((item) => (
+                        return (
                           <div
-                            key={item.itemId}
-                            className="text-xs flex items-center justify-between text-slate-400 hover:text-slate-200"
+                            key={st}
+                            className={`p-4 rounded-xl bg-slate-950/60 border transition-all space-y-3 ${
+                              hasFocusedItem
+                                ? 'border-amber-400/80 ring-1 ring-amber-400/50 shadow-lg shadow-amber-950/30'
+                                : 'border-slate-800'
+                            }`}
                           >
-                            <span className="truncate max-w-[340px]">
-                              {item.itemRef ? `[${item.itemRef}] ` : ''}
-                              {item.itemTitle}
-                            </span>
-                            <span className="text-[10px] font-mono text-slate-500">{item.itemId.slice(0, 8)}</span>
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-xs uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  {st}
+                                </span>
+                                <span className="text-xs text-slate-300">
+                                  found on <strong className="text-white">{matchingItems.length}</strong>{' '}
+                                  item{matchingItems.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleExtendStatuses(st, group.projectSlug, group.settings)
+                                }
+                                disabled={isSubmitting}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow"
+                                data-testid={`extend-status-btn-${st}`}
+                              >
+                                {isSubmitting ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Sliders className="w-3.5 h-3.5" />
+                                )}
+                                <span>Extend Statuses (Add &quot;{st}&quot;)</span>
+                              </button>
+                            </div>
+
+                            <div className="max-h-32 overflow-y-auto space-y-1.5 pl-2 border-l-2 border-slate-800">
+                              {matchingItems.map((item) => {
+                                const isItemFocused =
+                                  item.id === focusDeviationId || item.itemId === focusDeviationId;
+                                return (
+                                  <div
+                                    key={item.itemId}
+                                    className={`text-xs flex items-center justify-between p-1 rounded transition-colors ${
+                                      isItemFocused
+                                        ? 'bg-amber-500/20 text-amber-200 font-semibold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    <span className="truncate max-w-[340px]">
+                                      {item.itemRef ? `[${item.itemRef}] ` : ''}
+                                      {item.itemTitle}
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      {item.itemId.slice(0, 8)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">Or remap items to:</span>
+                                <select
+                                  value={remapStatusTarget}
+                                  onChange={(e) =>
+                                    setRemapTargets((prev) => ({
+                                      ...prev,
+                                      [`st_${group.projectSlug}`]: e.target.value,
+                                    }))
+                                  }
+                                  className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                                >
+                                  {group.settings.statuses.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.label} ({s.id})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleBatchRemapStatus(
+                                    matchingItems.map((m) => m.itemId),
+                                    remapStatusTarget
+                                  )
+                                }
+                                disabled={isSubmitting || !remapStatusTarget}
+                                className="px-3 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                                data-testid="batch-remap-status-btn"
+                              >
+                                Remap {matchingItems.length} item{matchingItems.length !== 1 ? 's' : ''}
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-400">Or remap items to:</span>
-                          <select
-                            value={remapStatusTarget}
-                            onChange={(e) => setRemapStatusTarget(e.target.value)}
-                            className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 font-mono text-xs focus:outline-none focus:border-emerald-500"
-                          >
-                            {projectSettings.statuses.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.label} ({s.id})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleBatchRemapStatus(
-                              matchingItems.map((m) => m.itemId),
-                              remapStatusTarget
-                            )
-                          }
-                          disabled={isSubmitting || !remapStatusTarget}
-                          className="px-3 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
-                          data-testid="batch-remap-status-btn"
-                        >
-                          Remap {matchingItems.length} item{matchingItems.length !== 1 ? 's' : ''}
-                        </button>
-                      </div>
+                        );
+                      })}
                     </div>
                   );
                 })
@@ -616,39 +915,66 @@ export function SchemaReconciliationModal({
             </div>
           ) : (
             /* ── SECTION: NESTING CONFLICTS ── */
-            <div className="space-y-4">
-              {nestingDeviations.length === 0 ? (
+            <div className="space-y-6">
+              {filteredGroups.every((g) => g.nestingDeviations.length === 0) ? (
                 <div className="text-center py-8 text-xs text-slate-500">
                   No nesting conflicts detected.
                 </div>
               ) : (
-                nestingDeviations.map((dev) => (
-                  <div
-                    key={dev.id}
-                    className="p-4 rounded-xl bg-slate-950/60 border border-rose-900/30 space-y-2.5"
-                  >
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div>
-                        <div className="text-xs font-semibold text-white">
-                          {dev.itemRef ? `[${dev.itemRef}] ` : ''}
-                          {dev.itemTitle}
-                        </div>
-                        <p className="text-xs text-rose-400 mt-0.5">{dev.message}</p>
-                      </div>
+                filteredGroups.map((group) => {
+                  if (group.nestingDeviations.length === 0) return null;
 
-                      <button
-                        type="button"
-                        onClick={() => handleDetachParent(dev.itemId)}
-                        disabled={isSubmitting}
-                        className="px-3 py-1.5 text-xs font-medium rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                        data-testid="detach-parent-btn"
-                      >
-                        <Unlink className="w-3.5 h-3.5" />
-                        <span>Detach Parent</span>
-                      </button>
+                  return (
+                    <div key={group.projectSlug} className="space-y-3">
+                      {isPortfolio && (
+                        <div className="flex items-center space-x-2 pb-1 border-b border-slate-800">
+                          <span className="text-xs font-semibold text-slate-200">
+                            Project: {group.projectName}
+                          </span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                            {group.projectSlug}
+                          </span>
+                        </div>
+                      )}
+
+                      {group.nestingDeviations.map((dev) => {
+                        const isDevFocused =
+                          dev.id === focusDeviationId || dev.itemId === focusDeviationId;
+                        return (
+                          <div
+                            key={dev.id}
+                            className={`p-4 rounded-xl bg-slate-950/60 border space-y-2.5 transition-all ${
+                              isDevFocused
+                                ? 'border-rose-500 ring-1 ring-rose-400/50 shadow-lg shadow-rose-950/30'
+                                : 'border-rose-900/30'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div>
+                                <div className="text-xs font-semibold text-white">
+                                  {dev.itemRef ? `[${dev.itemRef}] ` : ''}
+                                  {dev.itemTitle}
+                                </div>
+                                <p className="text-xs text-rose-400 mt-0.5">{dev.message}</p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDetachParent(dev.itemId)}
+                                disabled={isSubmitting}
+                                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                                data-testid="detach-parent-btn"
+                              >
+                                <Unlink className="w-3.5 h-3.5" />
+                                <span>Detach Parent</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

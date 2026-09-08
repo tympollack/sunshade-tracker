@@ -214,15 +214,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const [isReconciliationModalOpen, setIsReconciliationModalOpen] = useState(false);
   const [dismissedBoardDeviationBanner, setDismissedBoardDeviationBanner] = useState(false);
+  const [focusedDeviationId, setFocusedDeviationId] = useState<string | null>(null);
+  const [lastIngestedItemIds, setLastIngestedItemIds] = useState<string[] | null>(null);
 
   // Identify items hidden from the Kanban board columns due to unmapped levels or statuses
   const hiddenBoardItems = useMemo(() => {
-    return items.filter((it) => {
-      const hasUnmappedLevel = !effectiveSelectedLevels.includes(it.item_type);
-      const hasUnmappedStatus = !effectiveSelectedStatuses.includes(it.status);
-      return hasUnmappedLevel || hasUnmappedStatus;
-    });
-  }, [items, effectiveSelectedLevels, effectiveSelectedStatuses]);
+    const unmappedItemIds = new Set(
+      deviations
+        .filter((d) => d.deviationType === 'unmapped_level' || d.deviationType === 'unmapped_status')
+        .map((d) => d.itemId)
+    );
+    return items.filter((it) => unmappedItemIds.has(it.id));
+  }, [items, deviations]);
+
+  // Derive distinct affected items count from latest ingestion response
+  const ingestedAffectedItemCount = useMemo(() => {
+    if (!lastIngestedItemIds || lastIngestedItemIds.length === 0) return 0;
+    const ingestedIdSet = new Set(lastIngestedItemIds);
+    const affectedItemIds = new Set(
+      deviations.filter((d) => ingestedIdSet.has(d.itemId)).map((d) => d.itemId)
+    );
+    return affectedItemIds.size;
+  }, [lastIngestedItemIds, deviations]);
 
   // Derive all available sprints from projectSettings and items
   const availableSprints = useMemo(() => {
@@ -920,6 +933,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const handleRunSparkIngest = async () => {
     setIsIngesting(true);
     setIngestResponse(null);
+    setLastIngestedItemIds(null);
     try {
       const parsed = JSON.parse(sparkPayload);
       // Now uses session-based apiFetch — the ingest endpoint accepts both
@@ -930,9 +944,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       });
       const data = await res.json();
       setIngestResponse(data);
-      if (data.success) fetchData();
+      if (data.success) {
+        if (Array.isArray(data.items)) {
+          setLastIngestedItemIds(data.items.map((it: any) => it.id).filter(Boolean));
+        } else {
+          setLastIngestedItemIds([]);
+        }
+        fetchData();
+      } else {
+        setLastIngestedItemIds(null);
+      }
     } catch (err: any) {
       setIngestResponse({ error: err.message || 'Failed to parse/send payload' });
+      setLastIngestedItemIds(null);
     } finally {
       setIsIngesting(false);
     }
@@ -1917,7 +1941,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     item={rootNode}
                     getStatusColor={getStatusColor}
                     deviations={deviations}
-                    onOpenReconciliation={() => setIsReconciliationModalOpen(true)}
+                    onOpenReconciliation={(dev) => {
+                      setFocusedDeviationId(dev?.id || null);
+                      setIsReconciliationModalOpen(true);
+                    }}
                   />
                 ))
               )}
@@ -2344,7 +2371,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               <p className="text-xs text-slate-400">Live output from serverless endpoint execution:</p>
 
               {/* Ingestion Schema Deviations Feedback */}
-              {ingestResponse?.success && deviations.length > 0 && (
+              {ingestResponse?.success && ingestedAffectedItemCount > 0 && (
                 <div
                   className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-3 animate-in fade-in"
                   data-testid="spark-ingest-deviation-banner"
@@ -2352,12 +2379,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <div className="flex items-center space-x-2">
                     <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span>
-                      <strong className="text-amber-100">Ingestion Warning:</strong> {deviations.length} item{deviations.length !== 1 ? 's contain' : ' contains'} schema deviations (unmapped levels or statuses).
+                      <strong className="text-amber-100">Ingestion Warning:</strong> {ingestedAffectedItemCount} item{ingestedAffectedItemCount !== 1 ? 's contain' : ' contains'} schema deviations (unmapped levels or statuses).
                     </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsReconciliationModalOpen(true)}
+                    onClick={() => {
+                      setFocusedDeviationId(null);
+                      setIsReconciliationModalOpen(true);
+                    }}
                     className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold transition-colors shrink-0 cursor-pointer"
                   >
                     Review &amp; Reconcile
@@ -2577,11 +2607,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       {/* Schema Deviation Reconciliation Modal */}
       <SchemaReconciliationModal
         isOpen={isReconciliationModalOpen}
-        onClose={() => setIsReconciliationModalOpen(false)}
+        onClose={() => {
+          setIsReconciliationModalOpen(false);
+          setFocusedDeviationId(null);
+        }}
         deviations={deviations}
         projectSettings={projectSettings}
         projectIdOrSlug={isAllProjects ? selectedSchemaProjectSlug || allProjects[0]?.slug : projectSlug}
         tenantSlug={tenantSlug}
+        allProjects={allProjects}
+        isPortfolio={isAllProjects}
+        focusDeviationId={focusedDeviationId}
         onReconciled={async () => {
           await fetchTenantInfo();
           await fetchData();

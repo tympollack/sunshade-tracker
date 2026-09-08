@@ -10,6 +10,7 @@ export interface SchemaDeviation {
   itemTitle: string;
   projectId?: string;
   projectSlug?: string;
+  projectName?: string;
   deviationType: SchemaDeviationType;
   currentValue: string;
   expectedValues: string[];
@@ -55,24 +56,27 @@ export function detectSchemaDeviations(
     if (it?.id) itemMap.set(it.id, it);
   }
 
-  // Pre-resolve project settings cache if allProjects provided
-  const projectSettingsCache = new Map<string, ProjectSettings>();
+  // Pre-resolve project info cache if allProjects provided
+  const projectMap = new Map<string, ProjectLike>();
   if (allProjects && allProjects.length > 0) {
     for (const p of allProjects) {
-      if (p.settings) {
-        projectSettingsCache.set(p.id, p.settings);
-        projectSettingsCache.set(p.slug, p.settings);
-      }
+      projectMap.set(p.id, p);
+      projectMap.set(p.slug, p);
     }
   }
 
   for (const item of items) {
     if (!item) continue;
 
+    // Resolve owning project info if available
+    const owningProject = item.project_id
+      ? projectMap.get(item.project_id)
+      : (allProjects && allProjects.length === 1 ? allProjects[0] : undefined);
+
     // Resolve the effective settings for this specific item
     let settings = defaultSettings;
-    if (isAllProjects && item.project_id && projectSettingsCache.has(item.project_id)) {
-      settings = projectSettingsCache.get(item.project_id)!;
+    if (isAllProjects && owningProject?.settings) {
+      settings = owningProject.settings;
     }
 
     const hierarchy = settings?.hierarchy || [];
@@ -81,11 +85,9 @@ export function detectSchemaDeviations(
     const allowedLevelTypes = hierarchy.map((h) => h.type);
     const allowedStatusIds = statuses.map((s) => s.id);
 
-    // 1. Check unmapped hierarchy level
+    // 1. Check unmapped hierarchy level (exact identifier matching)
     if (allowedLevelTypes.length > 0) {
-      const typeMatches = allowedLevelTypes.some(
-        (t) => t.toLowerCase() === (item.item_type || '').toLowerCase()
-      );
+      const typeMatches = allowedLevelTypes.includes(item.item_type || '');
       if (!typeMatches) {
         deviations.push({
           id: `${item.id}-unmapped_level`,
@@ -93,6 +95,8 @@ export function detectSchemaDeviations(
           itemRef: item.external_ref_id || null,
           itemTitle: item.title || item.id,
           projectId: item.project_id,
+          projectSlug: owningProject?.slug,
+          projectName: owningProject?.name || owningProject?.slug,
           deviationType: 'unmapped_level',
           currentValue: item.item_type || '(blank)',
           expectedValues: allowedLevelTypes,
@@ -101,11 +105,9 @@ export function detectSchemaDeviations(
       }
     }
 
-    // 2. Check unmapped status
+    // 2. Check unmapped status (exact identifier matching)
     if (allowedStatusIds.length > 0) {
-      const statusMatches = allowedStatusIds.some(
-        (s) => s.toLowerCase() === (item.status || '').toLowerCase()
-      );
+      const statusMatches = allowedStatusIds.includes(item.status || '');
       if (!statusMatches) {
         deviations.push({
           id: `${item.id}-unmapped_status`,
@@ -113,6 +115,8 @@ export function detectSchemaDeviations(
           itemRef: item.external_ref_id || null,
           itemTitle: item.title || item.id,
           projectId: item.project_id,
+          projectSlug: owningProject?.slug,
+          projectName: owningProject?.name || owningProject?.slug,
           deviationType: 'unmapped_status',
           currentValue: item.status || '(blank)',
           expectedValues: allowedStatusIds,
@@ -133,6 +137,8 @@ export function detectSchemaDeviations(
             itemRef: item.external_ref_id || null,
             itemTitle: item.title || item.id,
             projectId: item.project_id,
+            projectSlug: owningProject?.slug,
+            projectName: owningProject?.name || owningProject?.slug,
             deviationType: 'nesting_conflict',
             currentValue: `${parent.item_type} -> ${item.item_type}`,
             expectedValues: (hierarchy.find((h) => h.type === item.item_type)?.allowed_parents || []),

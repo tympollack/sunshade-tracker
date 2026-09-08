@@ -181,6 +181,62 @@ describe('detectSchemaDeviations', () => {
     // Only item-cozy-subtask should be flagged as deviation
     expect(deviations).toHaveLength(1);
     expect(deviations[0].itemId).toBe('item-cozy-subtask');
+    expect(deviations[0].projectSlug).toBe('cozy');
+  });
+
+  it('detects case-only mismatches for hierarchy types and statuses as deviations', () => {
+    const items: WorkItem[] = [
+      {
+        id: 'item-case-type',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-cozy',
+        item_type: 'Task', // Schema has 'task' (lowercase)
+        status: 'not_started',
+        title: 'Task with upper case T',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 'item-case-status',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-cozy',
+        item_type: 'task',
+        status: 'Not_Started', // Schema has 'not_started' (lowercase)
+        title: 'Task with Title Cased status',
+        order_index: 2000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+
+    const allProjects = [
+      {
+        id: 'proj-cozy',
+        slug: 'cozy',
+        name: 'Cozy Project',
+        settings: mockCozySettings,
+      },
+    ];
+
+    const deviations = detectSchemaDeviations(items, mockCozySettings, allProjects, false);
+    expect(deviations).toHaveLength(2);
+
+    const typeDev = deviations.find((d) => d.itemId === 'item-case-type');
+    expect(typeDev).toBeDefined();
+    expect(typeDev?.deviationType).toBe('unmapped_level');
+    expect(typeDev?.currentValue).toBe('Task');
+    expect(typeDev?.projectSlug).toBe('cozy');
+    expect(typeDev?.projectName).toBe('Cozy Project');
+
+    const statusDev = deviations.find((d) => d.itemId === 'item-case-status');
+    expect(statusDev).toBeDefined();
+    expect(statusDev?.deviationType).toBe('unmapped_status');
+    expect(statusDev?.currentValue).toBe('Not_Started');
+    expect(statusDev?.projectSlug).toBe('cozy');
+    expect(statusDev?.projectName).toBe('Cozy Project');
   });
 });
 
