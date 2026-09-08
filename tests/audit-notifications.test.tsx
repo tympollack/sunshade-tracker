@@ -321,6 +321,41 @@ describe('Audit Logging Engine & Notifications System', () => {
       expect(result).toBe(false);
       expect(mockFrom).not.toHaveBeenCalled();
     });
+
+    it('markNotificationsAsRead returns false when options.all is not strictly boolean true and no valid ids provided', async () => {
+      const mockFrom = vi.fn();
+      (supabaseAdmin.from as any) = mockFrom;
+
+      const result = await markNotificationsAsRead('tenant-123', 'user-456', { all: 'false' as any });
+      expect(result).toBe(false);
+      expect(mockFrom).not.toHaveBeenCalled();
+
+      const resultStringTrue = await markNotificationsAsRead('tenant-123', 'user-456', { all: 'true' as any });
+      expect(resultStringTrue).toBe(false);
+      expect(mockFrom).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed or truthy non-boolean "all" values such as {"all":"false"} in PATCH /api/v1/notifications with 400 Bad Request', async () => {
+      (authenticate as any).mockResolvedValue({
+        context: { tenant: mockTenant, userId: mockUser.id, role: 'member' },
+        errorResponse: null,
+      });
+
+      const mockFrom = vi.fn();
+      (supabaseAdmin.from as any) = mockFrom;
+
+      const req = new NextRequest('http://localhost:3000/api/v1/notifications', {
+        method: 'PATCH',
+        body: JSON.stringify({ all: 'false' }),
+      });
+
+      const res = await notificationsPatchHandler(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.error).toContain('Missing or invalid filter criteria');
+      expect(mockFrom).not.toHaveBeenCalled();
+    });
   });
 
   describe('TASK-TRK-NOTIFICATIONS-RESEND: Email Dispatcher & Preferences Filtering', () => {
@@ -548,6 +583,113 @@ describe('Audit Logging Engine & Notifications System', () => {
 
       const resByPrefix = await resolveRecipient('tenant-123', 'tym');
       expect(resByPrefix?.id).toBe('user-uuid-999');
+    });
+
+    it('builds deep links using tenantSlug and projectSlug in dispatchItemNotifications', async () => {
+      process.env.RESEND_API_KEY = 're_test_123456';
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: 'email-link-test' }),
+      });
+      global.fetch = mockFetch;
+
+      const item: WorkItem = {
+        id: 'item-slug-1',
+        tenant_id: 'tenant-123',
+        project_id: 'proj-789',
+        title: 'Slug Item',
+        item_type: 'task',
+        status: 'in_progress',
+        assignee: 'user-recipient',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await dispatchItemNotifications({
+        tenantId: 'tenant-123',
+        tenantSlug: 'my-custom-workspace',
+        projectId: 'proj-789',
+        projectSlug: 'project-alpha',
+        item,
+        beforeItem: { ...item, assignee: null },
+        actorName: 'Admin',
+        recipientUser: {
+          id: 'user-recipient',
+          email: 'recipient@domain.com',
+          notification_preferences: {
+            notify_email: true,
+            notify_in_app: false,
+            notify_on_assignment: true,
+          },
+        },
+      });
+
+      expect(mockFetch).toHaveBeenCalled();
+      const reqBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(reqBody.html).toContain('/my-custom-workspace/project-alpha?item=item-slug-1');
+    });
+
+    it('awaits in-app and Resend email operations before completing dispatchItemNotifications', async () => {
+      let inAppCompleted = false;
+      let emailCompleted = false;
+
+      (supabaseAdmin.from as any).mockReturnValue({
+        insert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockImplementation(async () => {
+              await new Promise((r) => setTimeout(r, 20));
+              inAppCompleted = true;
+              return { data: { id: 'notif-async' }, error: null };
+            }),
+          }),
+        }),
+      });
+
+      process.env.RESEND_API_KEY = 're_test_async';
+      global.fetch = vi.fn().mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        emailCompleted = true;
+        return {
+          ok: true,
+          json: async () => ({ id: 'email-async' }),
+        };
+      });
+
+      const item: WorkItem = {
+        id: 'item-async-1',
+        tenant_id: 'tenant-123',
+        project_id: 'proj-async',
+        title: 'Async Item',
+        item_type: 'task',
+        status: 'in_progress',
+        assignee: 'user-async',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await dispatchItemNotifications({
+        tenantId: 'tenant-123',
+        projectId: 'proj-async',
+        item,
+        beforeItem: { ...item, assignee: null },
+        recipientUser: {
+          id: 'user-async',
+          email: 'async@domain.com',
+          notification_preferences: {
+            notify_email: true,
+            notify_in_app: true,
+            notify_on_assignment: true,
+          },
+        },
+      });
+
+      // Must be awaited completely
+      expect(inAppCompleted).toBe(true);
+      expect(emailCompleted).toBe(true);
     });
   });
 
