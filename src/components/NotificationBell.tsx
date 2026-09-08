@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Bell, CheckCheck, Loader2, Sparkles, X, ExternalLink, Clock } from 'lucide-react';
 import { InAppNotification } from '@/types/tracker';
 
 interface NotificationBellProps {
   tenantSlug: string;
-  onOpenItem?: (itemId: string) => void;
+  onOpenItem?: (itemId: string) => boolean | void;
 }
 
 function timeAgo(dateString: string): string {
@@ -26,6 +27,13 @@ function timeAgo(dateString: string): string {
 }
 
 export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellProps) {
+  let router: any = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    router = useRouter();
+  } catch {
+    // Fallback when rendered outside Next.js App Router context
+  }
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -120,8 +128,24 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
       }).catch(() => {});
     }
 
-    if (notification.item_id && onOpenItem) {
-      onOpenItem(notification.item_id);
+    if (notification.item_id) {
+      let openedLocally = false;
+      if (onOpenItem) {
+        try {
+          const res = onOpenItem(notification.item_id);
+          openedLocally = res !== false;
+        } catch {
+          openedLocally = false;
+        }
+      }
+
+      if (!openedLocally) {
+        if (router?.push) {
+          router.push(`/${encodeURIComponent(tenantSlug)}/all?item=${encodeURIComponent(notification.item_id)}`);
+        } else if (typeof window !== 'undefined') {
+          window.location.href = `/${encodeURIComponent(tenantSlug)}/all?item=${encodeURIComponent(notification.item_id)}`;
+        }
+      }
       setIsOpen(false);
     }
   };

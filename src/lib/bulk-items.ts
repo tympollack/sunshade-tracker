@@ -6,6 +6,51 @@ import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/noti
 
 
 export const MAX_BULK_ITEMS = 100;
+export const MAX_ID_LENGTH = 100;
+export const MAX_TITLE_LENGTH = 500;
+export const MAX_DESCRIPTION_LENGTH = 50_000;
+export const MAX_REF_LENGTH = 100;
+export const MAX_METADATA_BYTES = 50_000;
+
+export function validateItemPayloadSizes(item: {
+  id?: string | null;
+  title?: string | null;
+  description?: string | null;
+  external_ref_id?: string | null;
+  parent_id?: string | null;
+  parent_ref_id?: string | null;
+  metadata?: Record<string, any> | null;
+}): string | null {
+  if (item.id && (typeof item.id !== 'string' || item.id.length > MAX_ID_LENGTH)) {
+    return `Item identifier exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`;
+  }
+  if (item.title !== undefined && item.title !== null && (typeof item.title !== 'string' || item.title.length > MAX_TITLE_LENGTH)) {
+    return `Item title exceeds maximum allowed length of ${MAX_TITLE_LENGTH} characters`;
+  }
+  if (item.description && (typeof item.description !== 'string' || item.description.length > MAX_DESCRIPTION_LENGTH)) {
+    return `Item description exceeds maximum allowed length of ${MAX_DESCRIPTION_LENGTH} characters`;
+  }
+  if (item.external_ref_id && (typeof item.external_ref_id !== 'string' || item.external_ref_id.length > MAX_REF_LENGTH)) {
+    return `External ref exceeds maximum allowed length of ${MAX_REF_LENGTH} characters`;
+  }
+  if (item.parent_id && (typeof item.parent_id !== 'string' || item.parent_id.length > MAX_ID_LENGTH)) {
+    return `Parent ID exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`;
+  }
+  if (item.parent_ref_id && (typeof item.parent_ref_id !== 'string' || item.parent_ref_id.length > MAX_REF_LENGTH)) {
+    return `Parent ref exceeds maximum allowed length of ${MAX_REF_LENGTH} characters`;
+  }
+  if (item.metadata) {
+    try {
+      const bytes = new TextEncoder().encode(JSON.stringify(item.metadata)).length;
+      if (bytes > MAX_METADATA_BYTES) {
+        return `Item metadata size (${bytes} bytes) exceeds maximum allowed limit of ${MAX_METADATA_BYTES} bytes`;
+      }
+    } catch {
+      return 'Invalid metadata JSON payload';
+    }
+  }
+  return null;
+}
 
 export interface BulkGetParams {
   ids?: string[];
@@ -74,24 +119,50 @@ export async function handleBulkGetItems(
   tenantId: string,
   params: BulkGetParams
 ): Promise<{ success: boolean; count: number; items: WorkItem[]; error?: string; status?: number }> {
-  if (params.ids && params.ids.length > MAX_BULK_ITEMS) {
-    return {
-      success: false,
-      count: 0,
-      items: [],
-      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
-      status: 400,
-    };
+  if (params.ids) {
+    if (params.ids.length > MAX_BULK_ITEMS) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+        status: 400,
+      };
+    }
+    for (const id of params.ids) {
+      if (typeof id !== 'string' || id.length > MAX_ID_LENGTH) {
+        return {
+          success: false,
+          count: 0,
+          items: [],
+          error: `Item identifier exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`,
+          status: 400,
+        };
+      }
+    }
   }
 
-  if (params.refs && params.refs.length > MAX_BULK_ITEMS) {
-    return {
-      success: false,
-      count: 0,
-      items: [],
-      error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
-      status: 400,
-    };
+  if (params.refs) {
+    if (params.refs.length > MAX_BULK_ITEMS) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
+        status: 400,
+      };
+    }
+    for (const ref of params.refs) {
+      if (typeof ref !== 'string' || ref.length > MAX_REF_LENGTH) {
+        return {
+          success: false,
+          count: 0,
+          items: [],
+          error: `External ref exceeds maximum allowed length of ${MAX_REF_LENGTH} characters`,
+          status: 400,
+        };
+      }
+    }
   }
 
   let resolvedProjectId = params.projectId;
@@ -300,6 +371,17 @@ export async function handleBulkCreateItems(
   // Pass 2: Atomic validation of all items before inserting anything
   for (let i = 0; i < preassignedItems.length; i++) {
     const it = preassignedItems[i];
+    const sizeErr = validateItemPayloadSizes(it);
+    if (sizeErr) {
+      return {
+        success: false,
+        count: 0,
+        items: [],
+        error: `Item at index ${i} invalid: ${sizeErr}`,
+        status: 400,
+      };
+    }
+
     if (!it.title || typeof it.title !== 'string' || it.title.trim() === '') {
       return {
         success: false,
@@ -704,6 +786,29 @@ export async function handleBulkUpdateItems(
       };
     }
 
+    for (const id of ids) {
+      if (typeof id !== 'string' || id.length > MAX_ID_LENGTH) {
+        return {
+          success: false,
+          updated_count: 0,
+          items: [],
+          error: `Item identifier exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`,
+          status: 400,
+        };
+      }
+    }
+
+    const updatesSizeErr = validateItemPayloadSizes(updates);
+    if (updatesSizeErr) {
+      return {
+        success: false,
+        updated_count: 0,
+        items: [],
+        error: `Bulk updates payload invalid: ${updatesSizeErr}`,
+        status: 400,
+      };
+    }
+
     // Fetch existing active items
     let fetchQuery: any = supabaseAdmin
       .from('work_items')
@@ -934,18 +1039,50 @@ export async function handleBulkUpdateItems(
 
     const results = await Promise.all(updatePromises);
     const updatedItems: WorkItem[] = [];
+    let failureError: any = null;
 
     for (const r of results) {
       if (r.error) {
-        return {
-          success: false,
-          updated_count: updatedItems.length,
-          items: updatedItems,
-          error: r.error.message,
-          status: 400,
-        };
+        failureError = r.error;
+        break;
       }
       if (r.data) updatedItems.push(r.data as WorkItem);
+    }
+
+    if (failureError) {
+      // Roll back any partially committed updates
+      if (updatedItems.length > 0) {
+        await Promise.allSettled(
+          updatedItems.map((item) => {
+            const original = existingItems.find((e: any) => e.id === item.id);
+            if (!original) return Promise.resolve();
+            return supabaseAdmin
+              .from('work_items')
+              .update({
+                title: original.title,
+                description: original.description,
+                status: original.status,
+                item_type: original.item_type,
+                assignee: original.assignee,
+                parent_id: original.parent_id,
+                external_ref_id: original.external_ref_id,
+                order_index: original.order_index,
+                metadata: original.metadata,
+                updated_at: original.updated_at,
+              })
+              .eq('id', item.id)
+              .eq('tenant_id', tenantId);
+          })
+        );
+      }
+
+      return {
+        success: false,
+        updated_count: 0,
+        items: [],
+        error: `Bulk update failed: ${failureError.message}. Rolled back all partially applied changes.`,
+        status: 400,
+      };
     }
 
     // Record audit logs for updated items
@@ -1007,6 +1144,16 @@ export async function handleBulkUpdateItems(
           status: 400,
         };
       }
+      const sizeErr = validateItemPayloadSizes(itemList[i]);
+      if (sizeErr) {
+        return {
+          success: false,
+          updated_count: 0,
+          items: [],
+          error: `Item at index ${i} invalid: ${sizeErr}`,
+          status: 400,
+        };
+      }
     }
 
     const targetIds = itemList.map((it) => it.id);
@@ -1042,17 +1189,56 @@ export async function handleBulkUpdateItems(
       }
     }
 
+    // Build complete planned final state for all items in the batch
+    const plannedFinalState = new Map<string, any>();
+    for (const it of itemList) {
+      const existing = existingMap.get(it.id)!;
+      plannedFinalState.set(it.id, {
+        ...existing,
+        ...it,
+        parent_id: it.parent_id !== undefined ? it.parent_id : existing.parent_id,
+        item_type: it.item_type !== undefined ? it.item_type : existing.item_type,
+        status: it.status !== undefined ? it.status : existing.status,
+      });
+    }
+
+    // Hierarchy cycle detection across the planned batch state before any writes
+    for (const [id] of plannedFinalState.entries()) {
+      const visited = new Set<string>();
+      let currId: string | null | undefined = id;
+      while (currId) {
+        if (visited.has(currId)) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: `Hierarchy cycle detected involving item '${currId}'`,
+            status: 400,
+          };
+        }
+        visited.add(currId);
+        const parentPlanned = plannedFinalState.get(currId);
+        if (parentPlanned) {
+          currId = parentPlanned.parent_id;
+        } else {
+          // Parent is outside the batch, stop cycle walk
+          break;
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     const plannedUpdates: Array<{ id: string; fields: Record<string, any> }> = [];
 
-    // Pre-validate all items before any writes are made
+    // Pre-validate all items before any writes are made against planned final state
     for (const it of itemList) {
       const existing = existingMap.get(it.id)!;
+      const planned = plannedFinalState.get(it.id)!;
       const projectSettings = await getProjectSettings(existing.project_id);
 
-      const effectiveType = it.item_type !== undefined ? it.item_type : existing.item_type;
-      const effectiveStatus = it.status !== undefined ? it.status : existing.status;
-      const effectiveParentId = it.parent_id !== undefined ? it.parent_id : existing.parent_id;
+      const effectiveType = planned.item_type;
+      const effectiveStatus = planned.status;
+      const effectiveParentId = planned.parent_id;
 
       // Validate status
       if (it.status !== undefined && projectSettings?.statuses?.length) {
@@ -1080,9 +1266,9 @@ export async function handleBulkUpdateItems(
         }
       }
 
-      let targetParentId = it.parent_id !== undefined ? it.parent_id : existing.parent_id;
+      let targetParentId = effectiveParentId;
 
-      // Validate parent hierarchy
+      // Validate parent hierarchy against planned final batch state
       if (effectiveParentId) {
         if (effectiveParentId === existing.id) {
           return {
@@ -1094,7 +1280,7 @@ export async function handleBulkUpdateItems(
           };
         }
 
-        let parentItem = existingMap.get(effectiveParentId);
+        let parentItem = plannedFinalState.get(effectiveParentId) || existingMap.get(effectiveParentId);
         if (!parentItem) {
           let parentQuery: any = supabaseAdmin
             .from('work_items')
@@ -1141,6 +1327,7 @@ export async function handleBulkUpdateItems(
               };
             }
             targetParentId = null;
+            plannedFinalState.get(it.id).parent_id = null;
           }
         }
       }
@@ -1183,18 +1370,50 @@ export async function handleBulkUpdateItems(
 
     const results = await Promise.all(updatePromises);
     const updatedItems: WorkItem[] = [];
+    let failureError: any = null;
 
     for (const r of results) {
       if (r.error) {
-        return {
-          success: false,
-          updated_count: updatedItems.length,
-          items: updatedItems,
-          error: r.error.message,
-          status: 400,
-        };
+        failureError = r.error;
+        break;
       }
       if (r.data) updatedItems.push(r.data as WorkItem);
+    }
+
+    if (failureError) {
+      // Roll back any partially committed updates
+      if (updatedItems.length > 0) {
+        await Promise.allSettled(
+          updatedItems.map((item) => {
+            const original = existingMap.get(item.id);
+            if (!original) return Promise.resolve();
+            return supabaseAdmin
+              .from('work_items')
+              .update({
+                title: original.title,
+                description: original.description,
+                status: original.status,
+                item_type: original.item_type,
+                assignee: original.assignee,
+                parent_id: original.parent_id,
+                external_ref_id: original.external_ref_id,
+                order_index: original.order_index,
+                metadata: original.metadata,
+                updated_at: original.updated_at,
+              })
+              .eq('id', item.id)
+              .eq('tenant_id', tenantId);
+          })
+        );
+      }
+
+      return {
+        success: false,
+        updated_count: 0,
+        items: [],
+        error: `Bulk update failed: ${failureError.message}. Rolled back all partially applied changes.`,
+        status: 400,
+      };
     }
 
     // Record audit logs for updated items
@@ -1267,6 +1486,18 @@ export async function handleBulkDeleteItems(
       error: `Bulk operations are limited to a maximum of ${MAX_BULK_ITEMS} items`,
       status: 400,
     };
+  }
+
+  for (const id of payload.ids) {
+    if (typeof id !== 'string' || id.length > MAX_ID_LENGTH) {
+      return {
+        success: false,
+        deleted_count: 0,
+        deleted_ids: [],
+        error: `Item identifier exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`,
+        status: 400,
+      };
+    }
   }
 
   const now = new Date().toISOString();

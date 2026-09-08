@@ -266,16 +266,28 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const deepLinkedItemId = typeof searchParams?.item === 'string' ? searchParams.item : null;
   const deepLinkHandledRef = useRef<string | null>(null);
   useEffect(() => {
-    if (deepLinkedItemId && items.length > 0 && deepLinkHandledRef.current !== deepLinkedItemId) {
+    if (deepLinkedItemId && deepLinkHandledRef.current !== deepLinkedItemId) {
       const matched = items.find(
         (it) => it.id === deepLinkedItemId || it.external_ref_id === deepLinkedItemId
       );
       if (matched) {
         deepLinkHandledRef.current = deepLinkedItemId;
         setEditingItem(matched);
+      } else if (items.length > 0) {
+        fetch(`/api/v1/items/bulk?ids=${encodeURIComponent(deepLinkedItemId)}`, {
+          headers: { 'x-tenant-slug': tenantSlug },
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.items && data.items.length > 0) {
+              deepLinkHandledRef.current = deepLinkedItemId;
+              setEditingItem(data.items[0]);
+            }
+          })
+          .catch(() => {});
       }
     }
-  }, [deepLinkedItemId, items]);
+  }, [deepLinkedItemId, items, tenantSlug]);
 
   const myDisplayName = useMemo(() => {
     if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
@@ -1030,7 +1042,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               const target = items.find((it) => it.id === itemId);
               if (target) {
                 setEditingItem(target);
+                return true;
               }
+              return false;
             }}
           />
 
