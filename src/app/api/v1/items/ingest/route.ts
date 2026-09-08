@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     // Fetch Project Settings to validate types and statuses dynamically
     let projectQuery: any = supabaseAdmin
       .from('projects')
-      .select('id, settings')
+      .select('id, slug, settings')
       .eq('tenant_id', tenant.id)
       .eq('slug', project_slug);
 
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Batch Process Items
     const insertedItems = [];
+    const itemMutationSnapshots: Array<{ item: any; prior: any }> = [];
     // Track batch external_ref_ids mapped to their resolved internal UUIDs for same-batch parent-child chaining
     const batchRefMap = new Map<string, string>();
 
@@ -152,7 +153,7 @@ export async function POST(req: NextRequest) {
       // Explicitly setting deleted_at: null restores any previously soft-deleted row
       // with the same external_ref_id rather than silently updating a hidden record.
       if (item.external_ref_id) {
-        const prior = priorItemsMap.get(item.external_ref_id);
+        const prior = priorItemsMap.get(item.external_ref_id) || null;
 
         const { data: upserted, error: upsertErr } = await supabaseAdmin
           .from('work_items')
@@ -165,6 +166,8 @@ export async function POST(req: NextRequest) {
 
         if (upsertErr) throw upsertErr;
         insertedItems.push(upserted);
+        itemMutationSnapshots.push({ item: upserted, prior });
+
         if (upserted?.id && item.external_ref_id) {
           batchRefMap.set(item.external_ref_id, upserted.id);
         }
@@ -210,6 +213,7 @@ export async function POST(req: NextRequest) {
 
         if (insertErr) throw insertErr;
         insertedItems.push(inserted);
+        itemMutationSnapshots.push({ item: inserted, prior: null });
 
         auditEntries.push({
           tenant_id: tenant.id,
@@ -224,31 +228,41 @@ export async function POST(req: NextRequest) {
     }
 
     if (auditEntries.length > 0) {
-      recordBulkAuditLogs(auditEntries).catch(() => {});
+      await recordBulkAuditLogs(auditEntries).catch(() => {});
     }
 
-    // Dispatch notifications for assigned items
-    const assignedIngested = insertedItems.filter((it: any) => it.assignee);
-    if (assignedIngested.length > 0) {
-      getTenantMemberRecipients(tenant.id)
-        .then((resolver) => {
-          for (const it of assignedIngested) {
-            const prior = priorItemsMap.get(it.external_ref_id);
-            const recipient = resolver.resolve(it.assignee);
-            if (recipient) {
+    // Dispatch notifications for assigned items with preserved pre-mutation prior snapshot
+    const assignedMutations = itemMutationSnapshots.filter((snap) => snap.item?.assignee);
+    if (assignedMutations.length > 0) {
+      try {
+        const resolver = await getTenantMemberRecipients(tenant.id);
+        const notificationPromises: Promise<any>[] = [];
+
+        for (const { item: it, prior } of assignedMutations) {
+          const recipient = resolver.resolve(it.assignee);
+          if (recipient) {
+            notificationPromises.push(
               dispatchItemNotifications({
                 tenantId: tenant.id,
+                tenantSlug: tenant.slug,
                 projectId: it.project_id,
+                projectSlug: project.slug || project_slug,
                 item: it,
                 beforeItem: prior || null,
                 actorId: auth.context.userId || null,
                 actorName: auth.context.userId ? 'User' : 'Ingest Pipeline',
                 recipientUser: recipient,
-              }).catch(() => {});
-            }
+              })
+            );
           }
-        })
-        .catch(() => {});
+        }
+
+        if (notificationPromises.length > 0) {
+          await Promise.allSettled(notificationPromises);
+        }
+      } catch (notifErr) {
+        console.warn('[tracker:ingest] Notification dispatch error:', notifErr);
+      }
     }
 
     return NextResponse.json({

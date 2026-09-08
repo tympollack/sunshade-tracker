@@ -38,18 +38,25 @@ export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // Guard against empty criteria requests
-    if (!body.all && (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) && !body.id) {
+    const isAll = body.all === true;
+    const hasValidIds =
+      Array.isArray(body.ids) &&
+      body.ids.length > 0 &&
+      body.ids.every((id: any) => typeof id === 'string' && id.trim().length > 0);
+    const hasValidId = typeof body.id === 'string' && body.id.trim().length > 0;
+
+    // Guard against empty criteria requests or truthy non-boolean "all" values
+    if (!isAll && !hasValidIds && !hasValidId) {
       return NextResponse.json(
-        { error: 'Missing filter criteria: must provide "id", "ids", or "all: true"' },
+        { error: 'Missing or invalid filter criteria: must provide "id", non-empty string array "ids", or "all: true"' },
         { status: 400 }
       );
     }
 
     const success = await markNotificationsAsRead(tenant.id, userId, {
-      id: body.id,
-      ids: body.ids,
-      all: body.all,
+      id: hasValidId ? body.id.trim() : undefined,
+      ids: hasValidIds ? body.ids.map((id: string) => id.trim()) : undefined,
+      all: isAll,
     });
 
     return NextResponse.json({ success });
