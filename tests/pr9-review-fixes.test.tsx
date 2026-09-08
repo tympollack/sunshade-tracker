@@ -3,6 +3,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { ProjectSettings, WorkItem } from '@/types/tracker';
+import {
+  mergeProjectStatuses,
+  mergeProjectHierarchy,
+  mergeProjectSettings,
+  getItemProjectSettings,
+} from '@/lib/portfolio-merge';
 
 describe('PR #9 Review Fixes', () => {
   const sampleSettings: ProjectSettings = {
@@ -53,9 +59,34 @@ describe('PR #9 Review Fixes', () => {
       expect(await screen.findByText('Failed to save schema settings.')).toBeDefined();
       expect(screen.queryByText('Saved successfully!')).toBeNull();
     });
+
+    it('resets saveSuccess to false if a subsequent save fails after an earlier success', async () => {
+      let fail = false;
+      const handleSave = vi.fn().mockImplementation(async () => {
+        if (fail) {
+          throw new Error('Immediate validation error');
+        }
+      });
+
+      render(<JsonSchemaEditor settings={sampleSettings} onSave={handleSave} />);
+
+      const saveButton = screen.getByRole('button', { name: /Save Schema/i });
+
+      // First save succeeds
+      fireEvent.click(saveButton);
+      expect(await screen.findByText('Saved successfully!')).toBeDefined();
+
+      // Second save fails immediately within 3 seconds
+      fail = true;
+      fireEvent.click(saveButton);
+
+      // Success message must immediately be removed and error displayed
+      expect(await screen.findByText('Immediate validation error')).toBeDefined();
+      expect(screen.queryByText('Saved successfully!')).toBeNull();
+    });
   });
 
-  describe('TASK-TRK-PORTFOLIO-SCHEMA-POLICY: Deterministic schema merge policy', () => {
+  describe('TASK-TRK-PORTFOLIO-SCHEMA-POLICY: Deterministic schema merge policy (exercising production logic)', () => {
     it('deterministically merges statuses from multiple projects preserving lowest canonical order and sorting ascending', () => {
       const projects = [
         {
@@ -79,27 +110,14 @@ describe('PR #9 Review Fixes', () => {
         },
       ];
 
-      const mergedStatuses = new Map<string, any>();
-      projects.forEach((proj) => {
-        (proj.settings?.statuses || []).forEach((st) => {
-          if (!mergedStatuses.has(st.id)) {
-            mergedStatuses.set(st.id, st);
-          } else {
-            const existing = mergedStatuses.get(st.id);
-            if (typeof st.order === 'number' && (typeof existing.order !== 'number' || st.order < existing.order)) {
-              mergedStatuses.set(st.id, { ...existing, order: st.order });
-            }
-          }
-        });
-      });
+      // Directly exercise production function
+      const finalStatuses = mergeProjectStatuses(projects as any);
 
-      const finalStatuses = Array.from(mergedStatuses.values()).sort(
-        (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id)
-      );
-
-      // Verify testing retained the lowest order (1, not 3)
+      // Verify testing retained the lowest order (1, not 3) from project-b
       const testing = finalStatuses.find((s) => s.id === 'testing');
       expect(testing?.order).toBe(1);
+      expect(testing?.label).toBe('QA Testing');
+      expect(testing?.color).toBe('#f59e0b');
 
       // Verify sorted deterministically by order ascending: 0 (not_started) -> 1 (in_progress, testing) -> 2 (done)
       expect(finalStatuses.map((s) => s.id)).toEqual([
@@ -108,6 +126,33 @@ describe('PR #9 Review Fixes', () => {
         'testing',
         'done',
       ]);
+    });
+
+    it('deterministically breaks ties using project slug when duplicate statuses have equal order', () => {
+      const projects = [
+        {
+          slug: 'project-z',
+          settings: {
+            statuses: [
+              { id: 'review', label: 'Z Review', color: '#ff0000', order: 1 },
+            ],
+          },
+        },
+        {
+          slug: 'project-a',
+          settings: {
+            statuses: [
+              { id: 'review', label: 'A Review', color: '#00ff00', order: 1 },
+            ],
+          },
+        },
+      ];
+
+      // Alphabetically earlier project slug ('project-a') must win the definition
+      const finalStatuses = mergeProjectStatuses(projects as any);
+      const review = finalStatuses.find((s) => s.id === 'review');
+      expect(review?.label).toBe('A Review');
+      expect(review?.color).toBe('#00ff00');
     });
 
     it('deterministically merges hierarchy types from multiple projects sorted by level ascending then type', () => {
@@ -132,23 +177,8 @@ describe('PR #9 Review Fixes', () => {
         },
       ];
 
-      const mergedHierarchy = new Map<string, any>();
-      projects.forEach((proj) => {
-        (proj.settings?.hierarchy || []).forEach((h) => {
-          if (!mergedHierarchy.has(h.type)) {
-            mergedHierarchy.set(h.type, h);
-          } else {
-            const existing = mergedHierarchy.get(h.type);
-            if (typeof h.level === 'number' && (typeof existing.level !== 'number' || h.level < existing.level)) {
-              mergedHierarchy.set(h.type, { ...existing, level: h.level });
-            }
-          }
-        });
-      });
-
-      const finalHierarchy = Array.from(mergedHierarchy.values()).sort(
-        (a, b) => (a.level ?? 0) - (b.level ?? 0) || a.type.localeCompare(b.type)
-      );
+      // Directly exercise production function
+      const finalHierarchy = mergeProjectHierarchy(projects as any);
 
       expect(finalHierarchy.map((h) => h.type)).toEqual([
         'epic',
@@ -157,15 +187,40 @@ describe('PR #9 Review Fixes', () => {
         'subtask',
       ]);
     });
+
+    it('produces full portfolio settings with mergeProjectSettings', () => {
+      const projects = [
+        {
+          slug: 'project-a',
+          settings: {
+            statuses: [{ id: 'open', label: 'Open', color: '#38bdf8', order: 0 }],
+            hierarchy: [{ type: 'task', label: 'Task', level: 0, allowed_parents: [] }],
+            custom_fields: ['severity', 'due_date'],
+            sprint_settings: {
+              sprints: [{ name: 'Sprint 1', is_current: true }],
+            },
+          },
+        },
+      ];
+
+      const merged = mergeProjectSettings(projects as any);
+      expect(merged.statuses).toHaveLength(1);
+      expect(merged.hierarchy).toHaveLength(1);
+      expect(merged.custom_fields).toContain('severity');
+      expect(merged.custom_fields).toContain('due_date');
+      expect(merged.sprint_settings?.sprints).toHaveLength(1);
+      expect(merged.sprint_settings?.default_sprint).toBe('all');
+    });
   });
 
-  describe('TASK-TRK-PORTFOLIO-SCHEMA-OPTIONS: Origin project option derivation', () => {
+  describe('TASK-TRK-PORTFOLIO-SCHEMA-OPTIONS: Origin project option derivation (exercising production logic)', () => {
     it('correctly maps item to origin project hierarchy and statuses in portfolio mode', () => {
       const allProjects = [
         {
           id: 'proj-alpha-id',
           slug: 'proj-alpha',
           settings: {
+            schema_version: '1.0',
             hierarchy: [
               { type: 'initiative', label: 'Initiative', level: 0, allowed_parents: [] },
               { type: 'feature', label: 'Feature', level: 1, allowed_parents: ['initiative'] },
@@ -174,12 +229,14 @@ describe('PR #9 Review Fixes', () => {
               { id: 'planning', label: 'Planning', color: '#cbd5e1', order: 0 },
               { id: 'active', label: 'Active', color: '#38bdf8', order: 1 },
             ],
+            custom_fields: [],
           },
         },
         {
           id: 'proj-beta-id',
           slug: 'proj-beta',
           settings: {
+            schema_version: '1.0',
             hierarchy: [
               { type: 'epic', label: 'Epic', level: 0, allowed_parents: [] },
               { type: 'bug', label: 'Bug', level: 1, allowed_parents: ['epic'] },
@@ -188,23 +245,10 @@ describe('PR #9 Review Fixes', () => {
               { id: 'triage', label: 'Triage', color: '#f87171', order: 0 },
               { id: 'resolved', label: 'Resolved', color: '#4ade80', order: 1 },
             ],
+            custom_fields: [],
           },
         },
       ];
-
-      function getItemProjectSettings(item: Partial<WorkItem>, isAllProjects: boolean, defaultSettings: ProjectSettings): ProjectSettings {
-        if (!item || !isAllProjects) return defaultSettings;
-        const proj = allProjects.find(
-          (p) => p.id === item.project_id || p.slug === item.project_id
-        );
-        if (proj && proj.settings) {
-          return {
-            ...defaultSettings,
-            ...proj.settings,
-          };
-        }
-        return defaultSettings;
-      }
 
       const itemAlpha: Partial<WorkItem> = {
         id: 'item-1',
@@ -220,16 +264,17 @@ describe('PR #9 Review Fixes', () => {
         status: 'triage',
       };
 
-      const settingsAlpha = getItemProjectSettings(itemAlpha, true, sampleSettings);
+      // Directly exercise production function
+      const settingsAlpha = getItemProjectSettings(itemAlpha as WorkItem, allProjects, sampleSettings, true);
       expect(settingsAlpha.hierarchy.map((h) => h.type)).toEqual(['initiative', 'feature']);
       expect(settingsAlpha.statuses.map((s) => s.id)).toEqual(['planning', 'active']);
 
-      const settingsBeta = getItemProjectSettings(itemBeta, true, sampleSettings);
+      const settingsBeta = getItemProjectSettings(itemBeta as WorkItem, allProjects, sampleSettings, true);
       expect(settingsBeta.hierarchy.map((h) => h.type)).toEqual(['epic', 'bug']);
       expect(settingsBeta.statuses.map((s) => s.id)).toEqual(['triage', 'resolved']);
 
-      // In non-portfolio mode (single project), defaultSettings should be used
-      const settingsAlphaSingle = getItemProjectSettings(itemAlpha, false, sampleSettings);
+      // In non-portfolio mode (single project), sampleSettings should be used
+      const settingsAlphaSingle = getItemProjectSettings(itemAlpha as WorkItem, allProjects, sampleSettings, false);
       expect(settingsAlphaSingle.hierarchy.map((h) => h.type)).toEqual(['epic', 'story', 'task']);
     });
   });

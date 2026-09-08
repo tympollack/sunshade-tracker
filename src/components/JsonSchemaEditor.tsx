@@ -97,6 +97,7 @@ export function JsonSchemaEditor({
         setData(payloadToSave);
         setRawError(null);
       } catch (err: any) {
+        setSaveSuccess(false);
         setRawError(err.message || 'Invalid JSON syntax');
         return;
       }
@@ -109,6 +110,7 @@ export function JsonSchemaEditor({
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
+      setSaveSuccess(false);
       setRawError(err.message || 'Failed to save schema settings.');
     }
   };
