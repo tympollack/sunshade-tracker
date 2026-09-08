@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST as ingestHandler } from '@/app/api/v1/items/ingest/route';
 import { supabaseAdmin } from '@/lib/db';
+import { dispatchItemNotifications } from '@/lib/notifications';
 
 vi.mock('@/lib/db', () => {
   return {
@@ -10,6 +11,13 @@ vi.mock('@/lib/db', () => {
     },
   };
 });
+
+vi.mock('@/lib/notifications', () => ({
+  dispatchItemNotifications: vi.fn().mockResolvedValue(undefined),
+  getTenantMemberRecipients: vi.fn().mockResolvedValue({
+    resolve: vi.fn((assignee: string) => ({ id: 'resolved-id', email: `${assignee}@example.com` })),
+  }),
+}));
 
 describe('Headless Ingest API Endpoint (POST /api/v1/items/ingest)', () => {
   beforeEach(() => {
@@ -184,5 +192,140 @@ describe('Headless Ingest API Endpoint (POST /api/v1/items/ingest)', () => {
     expect(json.items[0].external_ref_id).toBe('SPEC-HUB-11');
     expect(json.items[1].external_ref_id).toBe('TASK-HUB-11-A');
     expect(json.items[1].parent_id).toBe('item-uuid-1'); // Resolved from first item in same batch!
+  });
+
+  it('preserves pre-mutation snapshot as beforeItem and supplies tenantSlug and projectSlug to notifications when updating existing item', async () => {
+    const mockTenant = { id: 'tenant-abc-123', slug: 'workspace-slug' };
+    const mockProject = {
+      id: 'proj-xyz-789',
+      tenant_id: mockTenant.id,
+      slug: 'portfolio-slug',
+      settings: {
+        statuses: [{ id: 'not_started' }, { id: 'in_progress' }],
+        hierarchy: [{ type: 'task' }],
+      },
+    };
+
+    const priorRow = {
+      id: 'item-prior-1',
+      project_id: mockProject.id,
+      tenant_id: mockTenant.id,
+      external_ref_id: 'REF-EXISTING',
+      title: 'Prior Title',
+      status: 'not_started',
+      assignee: 'dev_user_old',
+      deleted_at: null,
+    };
+
+    const updatedRow = {
+      ...priorRow,
+      status: 'in_progress',
+      assignee: 'dev_user_new',
+      updated_at: new Date().toISOString(),
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+                })),
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+
+      if (table === 'work_items') {
+        return {
+          select: vi.fn((fields?: string) => {
+            if (fields === 'order_index') {
+              return {
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    order: vi.fn(() => ({
+                      limit: vi.fn(() => ({
+                        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                      })),
+                    })),
+                  })),
+                })),
+              };
+            }
+            // Prior items lookup
+            return {
+              eq: vi.fn(() => ({
+                in: vi.fn().mockResolvedValue({ data: [priorRow], error: null }),
+              })),
+            };
+          }),
+          upsert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: updatedRow, error: null }),
+            })),
+          })),
+        } as any;
+      }
+
+      if (table === 'audit_logs') {
+        return {
+          insert: vi.fn(() => ({
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          })),
+        } as any;
+      }
+
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'portfolio-slug',
+        items: [
+          {
+            external_ref_id: 'REF-EXISTING',
+            title: 'Updated Title',
+            status: 'in_progress',
+            assignee: 'dev_user_new',
+          },
+        ],
+      }),
+    });
+
+    const res = await ingestHandler(req);
+    expect(res.status).toBe(200);
+
+    // Verify dispatchItemNotifications was invoked with correct parameters
+    expect(dispatchItemNotifications).toHaveBeenCalled();
+    const callArgs = vi.mocked(dispatchItemNotifications).mock.calls[0][0];
+
+    // Verify workspace & project slugs
+    expect(callArgs.tenantSlug).toBe('workspace-slug');
+    expect(callArgs.projectSlug).toBe('portfolio-slug');
+
+    // Verify beforeItem retained the pre-mutation state
+    expect(callArgs.beforeItem).toEqual(priorRow);
+    expect(callArgs.item.status).toBe('in_progress');
+    expect(callArgs.item.assignee).toBe('dev_user_new');
   });
 });

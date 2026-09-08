@@ -190,7 +190,8 @@ export async function handleBulkGetItems(
  */
 export async function handleBulkCreateItems(
   tenantId: string,
-  payload: BulkCreatePayload
+  payload: BulkCreatePayload,
+  options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null }
 ): Promise<{ success: boolean; count: number; items: WorkItem[]; error?: string; status?: number }> {
   if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
     return {
@@ -213,7 +214,8 @@ export async function handleBulkCreateItems(
   }
 
   // Cache project lookups
-  const projectCache = new Map<string, { id: string; settings: ProjectSettings }>();
+  const projectCache = new Map<string, { id: string; slug: string; settings: ProjectSettings }>();
+  const projectIdToSlug = new Map<string, string>();
 
   async function resolveProject(projId?: string, projSlug?: string) {
     const key = projId ? `id:${projId}` : projSlug ? `slug:${projSlug}` : null;
@@ -222,7 +224,7 @@ export async function handleBulkCreateItems(
 
     let query: any = supabaseAdmin
       .from('projects')
-      .select('id, settings')
+      .select('id, slug, settings')
       .eq('tenant_id', tenantId);
 
     if (projId) query = query.eq('id', projId);
@@ -236,12 +238,17 @@ export async function handleBulkCreateItems(
     if (project) {
       projectCache.set(key, project);
       projectCache.set(`id:${project.id}`, project);
+      if (project.slug) projectCache.set(`slug:${project.slug}`, project);
+      if (project.id && project.slug) projectIdToSlug.set(project.id, project.slug);
     }
     return project || null;
   }
 
   // Resolve default project if specified at root
   const defaultProject = await resolveProject(payload.project_id, payload.project_slug);
+  if (defaultProject?.id && defaultProject?.slug) {
+    projectIdToSlug.set(defaultProject.id, defaultProject.slug);
+  }
 
   // Pre-calculate order indices per project
   const projectCurrentOrder = new Map<string, number>();
@@ -511,15 +518,61 @@ export async function handleBulkCreateItems(
 
   // Record audit logs for bulk created items
   if (items.length > 0) {
-    recordBulkAuditLogs(
+    await recordBulkAuditLogs(
       items.map((it) => ({
         tenant_id: tenantId,
         project_id: it.project_id,
         item_id: it.id,
+        actor_id: options?.actorId || null,
+        actor_name: options?.actorName || 'System',
         action: 'create',
         changed_fields: { created: { before: null, after: it } },
       }))
     ).catch(() => {});
+  }
+
+  // Dispatch notifications for assigned created items
+  const assignedItems = items.filter((it) => it.assignee);
+  if (assignedItems.length > 0) {
+    try {
+      let resolvedTenantSlug = options?.tenantSlug;
+      if (!resolvedTenantSlug) {
+        const { data: t } = await supabaseAdmin
+          .from('tenants')
+          .select('slug')
+          .eq('id', tenantId)
+          .maybeSingle();
+        resolvedTenantSlug = t?.slug;
+      }
+
+      const resolver = await getTenantMemberRecipients(tenantId);
+      const notificationPromises: Promise<any>[] = [];
+
+      for (const it of assignedItems) {
+        const recipient = resolver.resolve(it.assignee);
+        if (recipient) {
+          notificationPromises.push(
+            dispatchItemNotifications({
+              tenantId,
+              tenantSlug: resolvedTenantSlug,
+              projectId: it.project_id,
+              projectSlug: projectIdToSlug.get(it.project_id),
+              item: it,
+              beforeItem: null,
+              actorId: options?.actorId || null,
+              actorName: options?.actorName || 'System',
+              recipientUser: recipient,
+            })
+          );
+        }
+      }
+
+      if (notificationPromises.length > 0) {
+        await Promise.allSettled(notificationPromises);
+      }
+    } catch (notifErr) {
+      console.warn('[tracker:bulk-items] Failed to dispatch create notifications:', notifErr);
+    }
   }
 
   return {
@@ -535,7 +588,8 @@ export async function handleBulkCreateItems(
 async function dispatchBulkNotifications(
   tenantId: string,
   updatedItems: WorkItem[],
-  beforeLookup: (id: string) => any
+  beforeLookup: (id: string) => any,
+  options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null }
 ): Promise<void> {
   const notificationCandidates = updatedItems.filter((updated) => {
     const before = beforeLookup(updated.id);
@@ -548,20 +602,62 @@ async function dispatchBulkNotifications(
   if (notificationCandidates.length === 0) return;
 
   try {
+    let resolvedTenantSlug = options?.tenantSlug;
+    if (!resolvedTenantSlug) {
+      const { data: t } = await supabaseAdmin
+        .from('tenants')
+        .select('slug')
+        .eq('id', tenantId)
+        .maybeSingle();
+      resolvedTenantSlug = t?.slug;
+    }
+
+    // Resolve project slugs for unique projects among notification candidates
+    const projectIds = Array.from(new Set(notificationCandidates.map((c) => c.project_id)));
+    const projectSlugMap = new Map<string, string>();
+    if (projectIds.length > 0) {
+      let pQuery: any = supabaseAdmin
+        .from('projects')
+        .select('id, slug')
+        .eq('tenant_id', tenantId);
+
+      if (typeof pQuery?.in === 'function') {
+        pQuery = pQuery.in('id', projectIds);
+      }
+      const { data: projs } = await pQuery;
+      for (const p of projs || []) {
+        if (p.id && p.slug) {
+          projectSlugMap.set(p.id, p.slug);
+        }
+      }
+    }
+
     const resolver = await getTenantMemberRecipients(tenantId);
+    const notificationPromises: Promise<any>[] = [];
+
     for (const updated of notificationCandidates) {
       const before = beforeLookup(updated.id);
       const targetAssignee = updated.assignee || before?.assignee;
       const recipient = resolver.resolve(targetAssignee);
       if (recipient) {
-        dispatchItemNotifications({
-          tenantId,
-          projectId: updated.project_id,
-          item: updated,
-          beforeItem: before,
-          recipientUser: recipient,
-        }).catch(() => {});
+        notificationPromises.push(
+          dispatchItemNotifications({
+            tenantId,
+            tenantSlug: resolvedTenantSlug,
+            projectId: updated.project_id,
+            projectSlug: projectSlugMap.get(updated.project_id),
+            item: updated,
+            beforeItem: before,
+            actorId: options?.actorId || null,
+            actorName: options?.actorName || 'System',
+            recipientUser: recipient,
+          })
+        );
       }
+    }
+
+    if (notificationPromises.length > 0) {
+      await Promise.allSettled(notificationPromises);
     }
   } catch (err: any) {
     console.warn('[tracker:bulk-items] Failed to dispatch bulk notifications:', err?.message || err);
@@ -573,7 +669,8 @@ async function dispatchBulkNotifications(
  */
 export async function handleBulkUpdateItems(
   tenantId: string,
-  payload: BulkUpdatePayload
+  payload: BulkUpdatePayload,
+  options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null }
 ): Promise<{ success: boolean; updated_count: number; items: WorkItem[]; error?: string; status?: number }> {
   // Shared project settings cache
   const projectSettingsCache = new Map<string, ProjectSettings>();
@@ -797,6 +894,8 @@ export async function handleBulkUpdateItems(
             tenant_id: tenantId,
             project_id: updated.project_id,
             item_id: updated.id,
+            actor_id: options?.actorId || null,
+            actor_name: options?.actorName || 'System',
             action: 'update' as const,
             changed_fields: diff,
           };
@@ -804,13 +903,16 @@ export async function handleBulkUpdateItems(
         .filter((entry) => Object.keys(entry.changed_fields).length > 0);
 
       if (auditEntries.length > 0) {
-        recordBulkAuditLogs(auditEntries).catch(() => {});
+        await recordBulkAuditLogs(auditEntries).catch(() => {});
       }
 
       // Dispatch notifications for uniform updates
-      dispatchBulkNotifications(tenantId, updatedList, (id) =>
-        existingItems.find((e: any) => e.id === id)
-      ).catch(() => {});
+      await dispatchBulkNotifications(
+        tenantId,
+        updatedList,
+        (id) => existingItems.find((e: any) => e.id === id),
+        options
+      );
 
       return {
         success: true,
@@ -855,6 +957,8 @@ export async function handleBulkUpdateItems(
           tenant_id: tenantId,
           project_id: updated.project_id,
           item_id: updated.id,
+          actor_id: options?.actorId || null,
+          actor_name: options?.actorName || 'System',
           action: 'update' as const,
           changed_fields: diff,
         };
@@ -862,13 +966,16 @@ export async function handleBulkUpdateItems(
       .filter((entry) => Object.keys(entry.changed_fields).length > 0);
 
     if (auditEntries.length > 0) {
-      recordBulkAuditLogs(auditEntries).catch(() => {});
+      await recordBulkAuditLogs(auditEntries).catch(() => {});
     }
 
     // Dispatch notifications for updated items
-    dispatchBulkNotifications(tenantId, updatedItems, (id) =>
-      existingItems.find((e: any) => e.id === id)
-    ).catch(() => {});
+    await dispatchBulkNotifications(
+      tenantId,
+      updatedItems,
+      (id) => existingItems.find((e: any) => e.id === id),
+      options
+    );
 
     return {
       success: true,
@@ -1099,6 +1206,8 @@ export async function handleBulkUpdateItems(
           tenant_id: tenantId,
           project_id: updated.project_id,
           item_id: updated.id,
+          actor_id: options?.actorId || null,
+          actor_name: options?.actorName || 'System',
           action: 'update' as const,
           changed_fields: diff,
         };
@@ -1106,13 +1215,16 @@ export async function handleBulkUpdateItems(
       .filter((entry) => Object.keys(entry.changed_fields).length > 0);
 
     if (auditEntries.length > 0) {
-      recordBulkAuditLogs(auditEntries).catch(() => {});
+      await recordBulkAuditLogs(auditEntries).catch(() => {});
     }
 
     // Dispatch notifications for updated items
-    dispatchBulkNotifications(tenantId, updatedItems, (id) =>
-      existingMap.get(id)
-    ).catch(() => {});
+    await dispatchBulkNotifications(
+      tenantId,
+      updatedItems,
+      (id) => existingMap.get(id),
+      options
+    );
 
     return {
       success: true,

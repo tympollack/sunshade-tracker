@@ -284,7 +284,11 @@ export async function POST(req: NextRequest) {
     // Dual-compatibility: handle bulk create if array or payload with items array
     if (Array.isArray(body) || (Array.isArray(body.items) && body.items.length > 0)) {
       const payload = Array.isArray(body) ? { items: body } : body;
-      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload);
+      const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
       }
@@ -444,7 +448,11 @@ export async function PATCH(req: NextRequest) {
       (Array.isArray(body.ids) && body.ids.length > 0) ||
       (Array.isArray(body.items) && body.items.length > 0)
     ) {
-      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body);
+      const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body, {
+        tenantSlug: authCtx.tenant.slug,
+        actorId: authCtx.userId || null,
+        actorName: authCtx.userId ? 'User' : 'API',
+      });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
       }
