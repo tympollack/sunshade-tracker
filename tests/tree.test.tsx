@@ -177,4 +177,42 @@ describe('TreeNode component', () => {
     const statusBadge = screen.getByText('complete');
     expect(statusBadge).toHaveStyle({ color: '#22c55e' });
   });
+
+  it('renders deviation indicators when deviations are passed', () => {
+    const node = {
+      ...mockItem({ id: 'item-dev', title: 'Deviation Item', item_type: 'subtask', status: 'unknown_status' }),
+      depth: 0,
+      children: [],
+    };
+
+    const mockDeviations = [
+      {
+        id: '1',
+        itemId: 'item-dev',
+        itemRef: null,
+        itemTitle: 'Deviation Item',
+        deviationType: 'unmapped_level' as const,
+        currentValue: 'subtask',
+        expectedValues: ['task'],
+        message: "Item type 'subtask' is unmapped",
+      },
+      {
+        id: '2',
+        itemId: 'item-dev',
+        itemRef: null,
+        itemTitle: 'Deviation Item',
+        deviationType: 'unmapped_status' as const,
+        currentValue: 'unknown_status',
+        expectedValues: ['not_started'],
+        message: "Status 'unknown_status' is unmapped",
+      },
+    ];
+
+    render(<TreeNode item={node} deviations={mockDeviations} />);
+
+    expect(screen.getByTestId('unmapped-level-badge')).toBeInTheDocument();
+    expect(screen.getByText('Unmapped Level')).toBeInTheDocument();
+    expect(screen.getByTestId('unmapped-status-badge')).toBeInTheDocument();
+  });
 });
+

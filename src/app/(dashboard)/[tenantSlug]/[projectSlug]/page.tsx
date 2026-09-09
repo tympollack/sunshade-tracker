@@ -15,6 +15,7 @@ import {
   Code2,
   Send,
   AlertCircle,
+  AlertTriangle,
   Hash,
   Trash2,
   XCircle,
@@ -42,8 +43,10 @@ import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
+import { detectSchemaDeviations, summarizeDeviations, SchemaDeviation } from '@/lib/schema-deviation';
 
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 
@@ -204,6 +207,36 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return projectSettings.hierarchy.map((h) => h.type);
   }, [selectedLevels, projectSettings.hierarchy]);
 
+  // Detect schema deviations (unmapped levels, statuses, nesting conflicts)
+  const deviations = useMemo(() => {
+    return detectSchemaDeviations(items, projectSettings, allProjects, isAllProjects);
+  }, [items, projectSettings, allProjects, isAllProjects]);
+
+  const [isReconciliationModalOpen, setIsReconciliationModalOpen] = useState(false);
+  const [dismissedBoardDeviationBanner, setDismissedBoardDeviationBanner] = useState(false);
+  const [focusedDeviationId, setFocusedDeviationId] = useState<string | null>(null);
+  const [lastIngestedItemIds, setLastIngestedItemIds] = useState<string[] | null>(null);
+
+  // Identify items hidden from the Kanban board columns due to unmapped levels or statuses
+  const hiddenBoardItems = useMemo(() => {
+    const unmappedItemIds = new Set(
+      deviations
+        .filter((d) => d.deviationType === 'unmapped_level' || d.deviationType === 'unmapped_status')
+        .map((d) => d.itemId)
+    );
+    return items.filter((it) => unmappedItemIds.has(it.id));
+  }, [items, deviations]);
+
+  // Derive distinct affected items count from latest ingestion response
+  const ingestedAffectedItemCount = useMemo(() => {
+    if (!lastIngestedItemIds || lastIngestedItemIds.length === 0) return 0;
+    const ingestedIdSet = new Set(lastIngestedItemIds);
+    const affectedItemIds = new Set(
+      deviations.filter((d) => ingestedIdSet.has(d.itemId)).map((d) => d.itemId)
+    );
+    return affectedItemIds.size;
+  }, [lastIngestedItemIds, deviations]);
+
   // Derive all available sprints from projectSettings and items
   const availableSprints = useMemo(() => {
     const set = new Set<string>();
@@ -252,6 +285,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setSelectedLevels(null);
     setSelectedSprint('all');
     setLoadedProjectSlug(null);
+    setDismissedBoardDeviationBanner(false);
     lastSprintInitializedProjectRef.current = null;
   }, [projectSlug]);
 
@@ -899,6 +933,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const handleRunSparkIngest = async () => {
     setIsIngesting(true);
     setIngestResponse(null);
+    setLastIngestedItemIds(null);
     try {
       const parsed = JSON.parse(sparkPayload);
       // Now uses session-based apiFetch — the ingest endpoint accepts both
@@ -909,9 +944,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       });
       const data = await res.json();
       setIngestResponse(data);
-      if (data.success) fetchData();
+      if (data.success) {
+        if (Array.isArray(data.items)) {
+          setLastIngestedItemIds(data.items.map((it: any) => it.id).filter(Boolean));
+        } else {
+          setLastIngestedItemIds([]);
+        }
+        fetchData();
+      } else {
+        setLastIngestedItemIds(null);
+      }
     } catch (err: any) {
       setIngestResponse({ error: err.message || 'Failed to parse/send payload' });
+      setLastIngestedItemIds(null);
     } finally {
       setIsIngesting(false);
     }
@@ -1022,6 +1067,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             })}
           </div>
 
+          {/* Schema Deviations Quick Trigger */}
+          {deviations.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsReconciliationModalOpen(true)}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in"
+              title={`${deviations.length} schema deviations detected. Click to review and reconcile.`}
+              data-testid="header-deviations-btn"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="hidden sm:inline">{deviations.length} Deviation{deviations.length !== 1 ? 's' : ''}</span>
+            </button>
+          )}
+
           {/* Refresh */}
           <button
             onClick={() => {
@@ -1085,6 +1144,41 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
+            {/* Schema Deviations Banner on Board */}
+            {hiddenBoardItems.length > 0 && !dismissedBoardDeviationBanner && (
+              <div
+                className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-3 shadow-md"
+                data-testid="board-deviation-banner"
+              >
+                <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong className="text-amber-100">Schema Deviations Detected:</strong>{' '}
+                    {hiddenBoardItems.length} item{hiddenBoardItems.length !== 1 ? 's are' : ' is'} hidden from board columns because{' '}
+                    {hiddenBoardItems.length !== 1 ? 'their hierarchy levels or statuses are' : 'its hierarchy level or status is'} not defined in the project schema.
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsReconciliationModalOpen(true)}
+                    className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-colors shadow cursor-pointer"
+                    data-testid="reconcile-deviations-banner-btn"
+                  >
+                    Review &amp; Reconcile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDismissedBoardDeviationBanner(true)}
+                    className="text-amber-400/80 hover:text-amber-200 p-1 transition-colors cursor-pointer"
+                    title="Dismiss for now"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Quick Add Form */}
             <form
               onSubmit={handleCreateItem}
@@ -1846,6 +1940,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     key={rootNode.id}
                     item={rootNode}
                     getStatusColor={getStatusColor}
+                    deviations={deviations}
+                    onOpenReconciliation={(dev) => {
+                      setFocusedDeviationId(dev?.id || null);
+                      setIsReconciliationModalOpen(true);
+                    }}
                   />
                 ))
               )}
@@ -1964,6 +2063,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                 >
                                   {item.item_type}
                                 </span>
+
+                                {/* In-situ Sprint Deviation Indicator */}
+                                {(() => {
+                                  const itemDevs = deviations.filter((d) => d.itemId === item.id);
+                                  if (itemDevs.length === 0) return null;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setIsReconciliationModalOpen(true);
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors shrink-0 cursor-pointer"
+                                      title={itemDevs.map((d) => d.message).join('\n') + ' (Click to reconcile)'}
+                                      data-testid="sprint-item-deviation-badge"
+                                    >
+                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
+                                      <span>Deviation</span>
+                                    </button>
+                                  );
+                                })()}
 
                                 {isAllProjects && (
                                   <span
@@ -2249,6 +2369,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <h3 className="font-semibold text-white">Ingest API Response</h3>
               </div>
               <p className="text-xs text-slate-400">Live output from serverless endpoint execution:</p>
+
+              {/* Ingestion Schema Deviations Feedback */}
+              {ingestResponse?.success && ingestedAffectedItemCount > 0 && (
+                <div
+                  className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-3 animate-in fade-in"
+                  data-testid="spark-ingest-deviation-banner"
+                >
+                  <div className="flex items-center space-x-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      <strong className="text-amber-100">Ingestion Warning:</strong> {ingestedAffectedItemCount} item{ingestedAffectedItemCount !== 1 ? 's contain' : ' contains'} schema deviations (unmapped levels or statuses).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFocusedDeviationId(null);
+                      setIsReconciliationModalOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold transition-colors shrink-0 cursor-pointer"
+                  >
+                    Review &amp; Reconcile
+                  </button>
+                </div>
+              )}
+
               <div className="h-[380px] p-4 rounded-lg bg-slate-950 border border-slate-800 overflow-auto font-mono text-xs text-slate-300">
                 {ingestResponse ? (
                   <pre className="text-emerald-400 leading-relaxed">
@@ -2455,6 +2601,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               setEditingItem(null);
             }
           }
+        }}
+      />
+
+      {/* Schema Deviation Reconciliation Modal */}
+      <SchemaReconciliationModal
+        isOpen={isReconciliationModalOpen}
+        onClose={() => {
+          setIsReconciliationModalOpen(false);
+          setFocusedDeviationId(null);
+        }}
+        deviations={deviations}
+        projectSettings={projectSettings}
+        projectIdOrSlug={isAllProjects ? selectedSchemaProjectSlug || allProjects[0]?.slug : projectSlug}
+        tenantSlug={tenantSlug}
+        allProjects={allProjects}
+        isPortfolio={isAllProjects}
+        focusDeviationId={focusedDeviationId}
+        onReconciled={async () => {
+          await fetchTenantInfo();
+          await fetchData();
         }}
       />
     </div>
