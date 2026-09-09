@@ -3,7 +3,27 @@ import { WorkItem, WorkItemNode } from '@/types/tracker';
 export type { WorkItemNode };
 
 /**
- * Transforms flat WorkItem array into a recursive tree structure with depth indicators.
+ * Computes recursive subtree metrics (descendantCount and rollupPoints) for each node.
+ */
+function computeSubtreeMetrics(node: WorkItemNode): { descendantCount: number; rollupPoints: number } {
+  const ownPoints = Number(node.metadata?.story_points ?? node.metadata?.points ?? node.metadata?.estimate ?? 0) || 0;
+  let descendantCount = 0;
+  let totalPoints = ownPoints;
+
+  for (const child of node.children || []) {
+    descendantCount += 1;
+    const childMetrics = computeSubtreeMetrics(child);
+    descendantCount += childMetrics.descendantCount;
+    totalPoints += childMetrics.rollupPoints;
+  }
+
+  node.descendantCount = descendantCount;
+  node.rollupPoints = totalPoints;
+  return { descendantCount, rollupPoints: totalPoints };
+}
+
+/**
+ * Transforms flat WorkItem array into a recursive tree structure with depth indicators and rollup metrics.
  * 
  * @param items Flat array of work items
  * @param parentId Target parent ID (null for root level items)
@@ -32,7 +52,7 @@ export function buildTree(
     matched = items.filter((item) => !visited.has(item.id));
   }
 
-  return matched
+  const tree = matched
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     .map((item) => {
       const nextVisited = new Set(visited);
@@ -43,4 +63,55 @@ export function buildTree(
         children: buildTree(items, item.id, depth + 1, nextVisited),
       };
     });
+
+  if (depth === 0) {
+    tree.forEach((root) => computeSubtreeMetrics(root));
+  }
+
+  return tree;
+}
+
+/**
+ * Recursively searches for a node by ID in a WorkItemNode tree.
+ */
+export function findNodeInTree(nodes: WorkItemNode[], id: string): WorkItemNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.children && node.children.length > 0) {
+      const found = findNodeInTree(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Checks if targetId is a descendant of ancestorId to prevent cycles.
+ */
+export function isDescendantOf(nodes: WorkItemNode[], ancestorId: string, targetId: string): boolean {
+  const ancestor = findNodeInTree(nodes, ancestorId);
+  if (!ancestor || !ancestor.children) return false;
+  
+  for (const child of ancestor.children) {
+    if (child.id === targetId) return true;
+    if (isDescendantOf([child], child.id, targetId)) return true;
+  }
+  return false;
+}
+
+/**
+ * Flattens a WorkItemNode tree into a depth-first ordered array.
+ */
+export function flattenTree(nodes: WorkItemNode[]): WorkItemNode[] {
+  const result: WorkItemNode[] = [];
+  function traverse(n: WorkItemNode) {
+    result.push(n);
+    for (const child of n.children || []) {
+      traverse(child);
+    }
+  }
+  for (const root of nodes) {
+    traverse(root);
+  }
+  return result;
 }

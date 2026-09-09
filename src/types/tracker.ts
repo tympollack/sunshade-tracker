@@ -92,6 +92,8 @@ export interface WorkItemWithChildren extends WorkItem {
 export interface WorkItemNode extends WorkItem {
   depth: number;
   children?: WorkItemNode[];
+  descendantCount?: number;
+  rollupPoints?: number;
 }
 
 export interface IngestItemPayload {
