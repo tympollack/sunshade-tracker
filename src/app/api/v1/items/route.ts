@@ -13,6 +13,7 @@ import {
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
 import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
+import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
 
 export async function GET(req: NextRequest) {
@@ -509,6 +510,13 @@ export async function PATCH(req: NextRequest) {
 
     const projectSettings = project?.settings;
 
+    if (isItemImmutableDueToCompletedSprint(existingItem, projectSettings)) {
+      return NextResponse.json(
+        { error: `Item "${existingItem.title || existingItem.id}" was completed in closed sprint "${existingItem.metadata?.sprint}" and is immutable.` },
+        { status: 403 }
+      );
+    }
+
     const updateFields: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
@@ -709,6 +717,28 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: '"id" is required' }, { status: 400 });
+    }
+
+    // Check immutability if item was completed in a closed sprint
+    const { data: existingItem } = await supabaseAdmin
+      .from('work_items')
+      .select('id, project_id, title, status, metadata')
+      .eq('id', id)
+      .eq('tenant_id', authCtx.tenant.id)
+      .single();
+
+    if (existingItem) {
+      const { data: proj } = await supabaseAdmin
+        .from('projects')
+        .select('id, settings')
+        .eq('id', existingItem.project_id)
+        .single();
+      if (isItemImmutableDueToCompletedSprint(existingItem as any, proj?.settings)) {
+        return NextResponse.json(
+          { error: `Item "${existingItem.title || existingItem.id}" was completed in closed sprint "${existingItem.metadata?.sprint}" and is immutable.` },
+          { status: 403 }
+        );
+      }
     }
 
     // Soft-delete: set deleted_at timestamp, do NOT destroy the row

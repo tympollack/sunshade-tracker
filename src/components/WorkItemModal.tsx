@@ -20,12 +20,14 @@ import {
   Clock,
   ArrowRight,
   RefreshCw,
+  Lock,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition, AuditLogEntry } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
+import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
 
 interface WorkItemModalProps {
@@ -70,6 +72,7 @@ export function WorkItemModal({
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const isLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
 
   // Activity Log tab state
   const [activeTab, setActiveTab] = useState<'details' | 'activity'>('details');
@@ -177,6 +180,10 @@ export function WorkItemModal({
   const { prUrl: modalPrUrl, commitHash: modalCommitHash } = extractGitHubMetadata(metadata);
 
   const handleSave = async () => {
+    if (isLocked) {
+      setSaveError(`This item was completed in closed sprint "${item?.metadata?.sprint}" and is immutable.`);
+      return;
+    }
     if (!title.trim()) return;
     const hasErrors = Object.values(metaErrors).some(Boolean);
     if (hasErrors) {
@@ -401,14 +408,16 @@ export function WorkItemModal({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() => setShowConfirmDelete(true)}
-              className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
-              title="Delete work item"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {!isLocked && (
+              <button
+                type="button"
+                onClick={() => setShowConfirmDelete(true)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                title="Delete work item"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
@@ -601,6 +610,13 @@ export function WorkItemModal({
             </div>
           ) : (
             <>
+              {isLocked && (
+                <div className="p-3 bg-purple-950/70 border border-purple-800/60 rounded-xl text-purple-300 text-xs flex items-center space-x-2 animate-in fade-in">
+                  <Lock className="w-4 h-4 shrink-0 text-purple-400" />
+                  <span>This item was completed in closed sprint "{item?.metadata?.sprint}" and is immutable (read-only).</span>
+                </div>
+              )}
+
               {saveError && (
                 <div className="p-3 bg-red-950/70 border border-red-800/60 rounded-xl text-red-300 text-xs flex items-center space-x-2 animate-in fade-in">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
@@ -942,7 +958,7 @@ export function WorkItemModal({
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSaving || !title.trim()}
+            disabled={isSaving || !title.trim() || isLocked}
             className="px-4 py-2 text-xs font-semibold rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
           >
             <Save className="w-3.5 h-3.5" />

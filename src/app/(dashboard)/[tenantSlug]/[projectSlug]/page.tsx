@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { use, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Layers,
@@ -24,11 +24,20 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronRight,
+  Maximize2,
   Minimize2,
   GripVertical,
   Calendar,
+  Lock,
+  FolderTree,
+  List,
+  CheckSquare,
+  Square,
+  Settings2,
+  Clock,
+  Check,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { buildTree } from '@/lib/tree';
 import { calculateOrderIndex } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
@@ -46,9 +55,19 @@ import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { CascadeCompletionModal } from '@/components/CascadeCompletionModal';
 import { CascadePromptModal } from '@/components/CascadePromptModal';
 import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModal';
+import { ManageSprintsModal } from '@/components/ManageSprintsModal';
+import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
+import { SprintItemRow } from '@/components/SprintItemRow';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
 import { detectSchemaDeviations, summarizeDeviations, SchemaDeviation } from '@/lib/schema-deviation';
+import {
+  compareSprints,
+  sortSprintNames,
+  formatSprintDateRange,
+  getSprintStatusBadge,
+  isItemImmutableDueToCompletedSprint,
+} from '@/lib/sprint-utils';
 
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 
@@ -111,7 +130,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
-  const treeItems = useMemo(() => buildTree(items), [items]);
+
+  // Tree items filtered by selectedSprint (allows focusing on 1 sprint in Hierarchy screen)
+  const treeFilteredItems = useMemo(() => {
+    if (selectedSprint === 'all') return items;
+    if (selectedSprint === '__none__') return items.filter((it) => !it.metadata?.sprint);
+    return items.filter((it) => it.metadata?.sprint === selectedSprint);
+  }, [items, selectedSprint]);
+
+  const treeItems = useMemo(() => buildTree(treeFilteredItems), [treeFilteredItems]);
+
+  // Sprint planning extended states
+  const [isManageSprintsOpen, setIsManageSprintsOpen] = useState(false);
+  const [collapsedSprints, setCollapsedSprints] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = localStorage.getItem(`tracker_collapsed_sprints_${projectSlug}`);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+  const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const lastSelectedIdRef = useRef<string | null>(null);
+  const [isBulkApplying, setIsBulkApplying] = useState(false);
+  const [bulkToast, setBulkToast] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
     schema_version: '1.0',
     hierarchy: [
@@ -270,7 +314,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         set.add(String(it.metadata.sprint));
       }
     });
-    return Array.from(set).sort();
+    return sortSprintNames(Array.from(set), projectSettings.sprint_settings?.sprints);
   }, [items, projectSettings.sprint_settings]);
 
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);
@@ -749,6 +793,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       const item = items.find((i) => i.id === itemId);
       if (!item || item.status === targetStatus) return;
 
+      if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+        setBulkToast('Completed items in closed sprints are immutable.');
+        setTimeout(() => setBulkToast(null), 3000);
+        return;
+      }
+
       // Cascade Rule: Check parent completion with unfinished children
       if (isCompleteStatus(targetStatus)) {
         const unfinishedChildren = items.filter(
@@ -793,7 +843,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       isCompleteStatus,
       isNotStartedStatus,
       isInProgressStatus,
-      projectSettings.statuses,
+      projectSettings,
       executeStatusChange,
     ]
   );
@@ -807,6 +857,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const handleUpdateItemSprint = async (itemId: string, newSprint: string | null) => {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
+
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      setBulkToast('Completed items in closed sprints are immutable.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
 
     const newMetadata = { ...(item.metadata || {}) };
     if (newSprint && newSprint !== '__none__') {
@@ -835,6 +891,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const handleUpdateType = async (itemId: string, newType: string) => {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
+
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      setBulkToast('Completed items in closed sprints are immutable.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
 
     // Check if current parent is valid for newType
     const itemHierarchy = getItemHierarchy(item);
@@ -885,6 +947,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Delete item ─────────────────────────────────────────────────────────
   const handleDeleteItem = async (itemId: string): Promise<boolean> => {
+    const item = items.find((it) => it.id === itemId);
+    if (item && isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      setBulkToast('Cannot delete locked items in closed sprints.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return false;
+    }
     setItems((prev) => prev.filter((it) => it.id !== itemId));
     try {
       const res = await apiFetch('/api/v1/items', {
@@ -902,8 +970,377 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
   };
 
+  // ─── Sprint planning handlers & bulk actions ─────────────────────────────
+  const toggleSprintCollapse = (sprintKey: string) => {
+    setCollapsedSprints((prev) => {
+      const next = new Set(prev);
+      if (next.has(sprintKey)) {
+        next.delete(sprintKey);
+      } else {
+        next.add(sprintKey);
+      }
+      try {
+        localStorage.setItem(
+          `tracker_collapsed_sprints_${projectSlug}`,
+          JSON.stringify(Array.from(next))
+        );
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleToggleCollapseAllSprints = () => {
+    const allKeys = [...availableSprints, '__backlog__'];
+    setCollapsedSprints((prev) => {
+      const next = prev.size === allKeys.length ? new Set<string>() : new Set<string>(allKeys);
+      try {
+        localStorage.setItem(
+          `tracker_collapsed_sprints_${projectSlug}`,
+          JSON.stringify(Array.from(next))
+        );
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleSaveSprints = async (sprints: SprintDefinition[]) => {
+    const newSettings: ProjectSettings = {
+      ...projectSettings,
+      sprint_settings: {
+        ...projectSettings.sprint_settings,
+        sprints,
+      },
+    };
+    setProjectSettings(newSettings);
+    try {
+      const res = await apiFetch(`/api/v1/projects/${projectSlug}/settings`, {
+        method: 'PUT',
+        body: JSON.stringify({ settings: newSettings }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast('Sprint configurations saved.');
+        setTimeout(() => setBulkToast(null), 3000);
+      }
+    } catch (err) {
+      console.error('Error saving sprint settings:', err);
+      fetchData();
+    }
+  };
+
+  const handleToggleSelectItem = useCallback(
+    (itemId: string, e?: React.MouseEvent | React.ChangeEvent, listContext?: WorkItem[]) => {
+      const isShiftKey = (e as React.MouseEvent)?.shiftKey;
+      const pool = listContext || items;
+
+      setSelectedItemIds((prev) => {
+        const next = new Set(prev);
+        if (isShiftKey && lastSelectedIdRef.current) {
+          const lastIdx = pool.findIndex((it) => it.id === lastSelectedIdRef.current);
+          const currIdx = pool.findIndex((it) => it.id === itemId);
+          if (lastIdx !== -1 && currIdx !== -1) {
+            const start = Math.min(lastIdx, currIdx);
+            const end = Math.max(lastIdx, currIdx);
+            for (let i = start; i <= end; i++) {
+              next.add(pool[i].id);
+            }
+            lastSelectedIdRef.current = itemId;
+            return next;
+          }
+        }
+
+        if (next.has(itemId)) {
+          next.delete(itemId);
+        } else {
+          next.add(itemId);
+        }
+        lastSelectedIdRef.current = itemId;
+        return next;
+      });
+    },
+    [items]
+  );
+
+  const handleSelectAllInPool = useCallback((poolItems: WorkItem[]) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = poolItems.length > 0 && poolItems.every((it) => next.has(it.id));
+      if (allSelected) {
+        poolItems.forEach((it) => next.delete(it.id));
+      } else {
+        poolItems.forEach((it) => next.add(it.id));
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedItemIds(new Set());
+    lastSelectedIdRef.current = null;
+  }, []);
+
+  const handleBulkMoveSprint = async (targetSprint: string | null) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    const mutableItems = selectedList.filter(
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (mutableItems.length === 0) {
+      if (selectedList.length > 0) {
+        setBulkToast('Completed items in completed sprints are locked and cannot be moved.');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+      return;
+    }
+    if (mutableItems.length < selectedList.length) {
+      setBulkToast(
+        `Moving ${mutableItems.length} items. Skipped ${selectedList.length - mutableItems.length} locked items.`
+      );
+      setTimeout(() => setBulkToast(null), 3500);
+    }
+
+    const mutableIds = mutableItems.map((it) => it.id);
+    const idSet = new Set(mutableIds);
+
+    setItems((prev) =>
+      prev.map((it) => {
+        if (!idSet.has(it.id)) return it;
+        const newMeta = { ...(it.metadata || {}) };
+        if (targetSprint && targetSprint !== '__none__') {
+          newMeta.sprint = targetSprint;
+        } else {
+          delete newMeta.sprint;
+        }
+        return { ...it, metadata: newMeta };
+      })
+    );
+
+    setIsBulkApplying(true);
+    try {
+      const res = await apiFetch('/api/v1/items/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update',
+          item_ids: mutableIds,
+          updates: {
+            metadata: {
+              sprint: targetSprint && targetSprint !== '__none__' ? targetSprint : null,
+            },
+          },
+        }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint || 'Backlog'}.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+      }
+    } catch {
+      fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkSetStatus = async (targetStatus: string) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    const mutableItems = selectedList.filter(
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (mutableItems.length === 0) {
+      if (selectedList.length > 0) {
+        setBulkToast('Completed items in completed sprints are locked and cannot be changed.');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+      return;
+    }
+
+    const mutableIds = mutableItems.map((it) => it.id);
+    const idSet = new Set(mutableIds);
+
+    setItems((prev) =>
+      prev.map((it) => (idSet.has(it.id) ? { ...it, status: targetStatus } : it))
+    );
+
+    setIsBulkApplying(true);
+    try {
+      const res = await apiFetch('/api/v1/items/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update',
+          item_ids: mutableIds,
+          updates: { status: targetStatus },
+        }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast(`Updated status for ${mutableIds.length} items.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+      }
+    } catch {
+      fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkAssign = async (assignee: string | null) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    const mutableItems = selectedList.filter(
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (mutableItems.length === 0) {
+      if (selectedList.length > 0) {
+        setBulkToast('Completed items in completed sprints are locked.');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+      return;
+    }
+
+    const mutableIds = mutableItems.map((it) => it.id);
+    const idSet = new Set(mutableIds);
+
+    setItems((prev) =>
+      prev.map((it) => (idSet.has(it.id) ? { ...it, assignee: assignee || null } : it))
+    );
+
+    setIsBulkApplying(true);
+    try {
+      const res = await apiFetch('/api/v1/items/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update',
+          item_ids: mutableIds,
+          updates: { assignee: assignee || null },
+        }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast(`Assigned ${mutableIds.length} items to ${assignee || 'Unassigned'}.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+      }
+    } catch {
+      fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkAdjustPoints = async (points: number | null) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    const mutableItems = selectedList.filter(
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (mutableItems.length === 0) {
+      if (selectedList.length > 0) {
+        setBulkToast('Completed items in completed sprints are locked.');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+      return;
+    }
+
+    const mutableIds = mutableItems.map((it) => it.id);
+    const idSet = new Set(mutableIds);
+
+    setItems((prev) =>
+      prev.map((it) => {
+        if (!idSet.has(it.id)) return it;
+        const newMeta = { ...(it.metadata || {}) };
+        if (points !== null) {
+          newMeta.story_points = points;
+        } else {
+          delete newMeta.story_points;
+          delete newMeta.points;
+        }
+        return { ...it, metadata: newMeta };
+      })
+    );
+
+    setIsBulkApplying(true);
+    try {
+      const res = await apiFetch('/api/v1/items/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update',
+          item_ids: mutableIds,
+          updates: {
+            metadata: { story_points: points },
+          },
+        }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast(`Updated story points for ${mutableIds.length} items.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+      }
+    } catch {
+      fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    const mutableItems = selectedList.filter(
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (mutableItems.length === 0) {
+      if (selectedList.length > 0) {
+        setBulkToast('Cannot delete locked items in completed sprints.');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Are you sure you want to permanently delete ${mutableItems.length} selected item(s)?`
+      )
+    ) {
+      return;
+    }
+
+    const mutableIds = mutableItems.map((it) => it.id);
+    const idSet = new Set(mutableIds);
+
+    setItems((prev) => prev.filter((it) => !idSet.has(it.id)));
+    setIsBulkApplying(true);
+    try {
+      const res = await apiFetch('/api/v1/items/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'delete',
+          item_ids: mutableIds,
+        }),
+      });
+      if (!res.ok) {
+        fetchData();
+      } else {
+        setBulkToast(`Deleted ${mutableIds.length} items.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+      }
+    } catch {
+      fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
   // ─── Drag and Drop Handlers ──────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent, item: WorkItem) => {
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.setData('text/plain', item.id);
     e.dataTransfer.effectAllowed = 'move';
     setDraggedItemId(item.id);
@@ -934,6 +1371,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
+
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      setDraggedItemId(null);
+      setDragOverTarget(null);
+      return;
+    }
 
     // All items in the target column sorted by order_index, excluding the dragged item
     const allColItems = items
@@ -1764,6 +2207,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               const isBeingDragged = draggedItemId === item.id;
                               const isDragTarget =
                                 dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
+                              const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings);
 
                               return (
                                 <div key={item.id} className="relative">
@@ -1773,7 +2217,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   )}
 
                                   <div
-                                    draggable
+                                    draggable={!isCardImmutable}
                                     onDragStart={(e) => handleDragStart(e, item)}
                                     onDragEnd={handleDragEnd}
                                     onDragOver={(e) => handleDragOverCard(e, col.id, index)}
@@ -1782,7 +2226,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       handleDrop(e, col.id, index);
                                     }}
                                     onDoubleClick={() => setEditingItem(item)}
-                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group cursor-grab active:cursor-grabbing hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
+                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
+                                      isCardImmutable ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+                                    } ${
                                       isBeingDragged
                                         ? 'opacity-40 border-dashed border-emerald-500'
                                         : 'border-slate-800/90'
@@ -1796,6 +2242,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         <div className="relative inline-flex items-center">
                                           <select
                                             value={item.item_type}
+                                            disabled={isCardImmutable}
                                             onChange={(e) => {
                                               e.stopPropagation();
                                               handleUpdateType(item.id, e.target.value);
@@ -1836,6 +2283,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                       </div>
 
                                       <div className="flex items-center space-x-1 shrink-0">
+                                          {isCardImmutable && (
+                                            <span
+                                              className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+                                              title="Completed item in closed sprint (immutable)"
+                                            >
+                                              <Lock className="w-2.5 h-2.5 text-purple-400" />
+                                              <span>Locked</span>
+                                            </span>
+                                          )}
                                         {item.external_ref_id && (
                                           <span className="font-mono text-slate-400 text-[10px] flex items-center space-x-0.5">
                                             <Hash className="w-2.5 h-2.5 text-slate-500" />
@@ -1853,17 +2309,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         >
                                           <Pencil className="w-3 h-3" />
                                         </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setDeleteConfirmItem(item);
-                                          }}
-                                          className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
-                                          title="Delete item"
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                        </button>
+                                        {!isCardImmutable && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setDeleteConfirmItem(item);
+                                            }}
+                                            className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
+                                            title="Delete item"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
 
@@ -2080,9 +2538,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   Recursive tree representation showing parent-child links resolved from dynamic schema rules.
                 </p>
               </div>
-              <span className="text-xs font-mono text-emerald-400">
-                Total Items: {items.length}
-              </span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-slate-400">Sprint:</span>
+                  <select
+                    value={selectedSprint}
+                    onChange={(e) => setSelectedSprint(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                  >
+                    <option value="all">All Sprints</option>
+                    <option value="__none__">Backlog (Unassigned)</option>
+                    {availableSprints.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <span className="text-xs font-mono text-emerald-400">
+                  Total Items: {treeFilteredItems.length}
+                </span>
+              </div>
             </div>
 
             <div className="space-y-3 pt-4">
@@ -2128,6 +2604,67 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
 
               <div className="flex items-center flex-wrap gap-3">
+                {/* Flat vs Hierarchy Mode Toggle */}
+                <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSprintViewMode('flat')}
+                    className={`flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      sprintViewMode === 'flat'
+                        ? 'bg-slate-800 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    data-testid="sprint-view-mode-flat"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span>Flat</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSprintViewMode('tree')}
+                    className={`flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      sprintViewMode === 'tree'
+                        ? 'bg-slate-800 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    data-testid="sprint-view-mode-tree"
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    <span>Hierarchy</span>
+                  </button>
+                </div>
+
+                {/* Expand / Collapse All Toggle */}
+                <button
+                  type="button"
+                  onClick={handleToggleCollapseAllSprints}
+                  className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  data-testid="sprint-toggle-all-collapse"
+                >
+                  {collapsedSprints.size === (availableSprints.length + 1) ? (
+                    <>
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      <span>Expand All</span>
+                    </>
+                  ) : (
+                    <>
+                      <Minimize2 className="w-3.5 h-3.5" />
+                      <span>Collapse All</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Manage Sprints Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsManageSprintsOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 hover:text-emerald-200 transition-colors flex items-center space-x-1.5 font-medium cursor-pointer"
+                  data-testid="open-manage-sprints-btn"
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                  <span>Manage Sprints</span>
+                </button>
+
                 <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center space-x-2">
                   <span className="text-slate-500">Total Items:</span>
                   <span className="font-mono font-bold text-white">{items.length}</span>
@@ -2157,33 +2694,165 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ? Math.round((completedItems.length / sprintItems.length) * 100)
                     : 0;
 
-                const isCurrent =
-                  projectSettings.sprint_settings?.sprints?.find((s: any) => s.name === sprintName)?.is_current ??
-                  (availableSprints[0] === sprintName);
+                const sprintDef = projectSettings.sprint_settings?.sprints?.find(
+                  (s: any) => s.name === sprintName || s.id === sprintName
+                );
+                const isCurrent = sprintDef?.is_current ?? (availableSprints[0] === sprintName);
+                const isCollapsed = collapsedSprints.has(sprintName);
+                const allSprintSelected =
+                  sprintItems.length > 0 && sprintItems.every((it) => selectedItemIds.has(it.id));
+                const someSprintSelected =
+                  !allSprintSelected && sprintItems.some((it) => selectedItemIds.has(it.id));
+
+                // Tree renderer for hierarchy mode
+                const renderSprintTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
+                  const childCount = (node.children || []).length;
+                  const getSubtreePoints = (n: WorkItemNode): number => {
+                    let sum =
+                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    for (const c of n.children || []) {
+                      sum += getSubtreePoints(c);
+                    }
+                    return sum;
+                  };
+                  const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
+                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings);
+
+                  return (
+                    <React.Fragment key={node.id}>
+                      <SprintItemRow
+                        item={node}
+                        depth={depth}
+                        isSelected={selectedItemIds.has(node.id)}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems)}
+                        isImmutable={isImmutable}
+                        onEditItem={setEditingItem}
+                        getItemHierarchy={getItemHierarchy}
+                        getItemStatuses={getItemStatuses}
+                        deviations={deviations}
+                        onOpenReconciliation={(dev) => {
+                          setFocusedDeviationId(dev?.id || null);
+                          setIsReconciliationModalOpen(true);
+                        }}
+                        isAllProjects={isAllProjects}
+                        allProjects={allProjects}
+                        onUpdateStatus={handleUpdateStatus}
+                        onUpdateSprint={handleUpdateItemSprint}
+                        availableSprints={availableSprints}
+                        currentSprintName={sprintName}
+                        isTreeMode={true}
+                        childCount={childCount}
+                        rollupPoints={rollupPoints}
+                      />
+                      {(node.children || []).map((child) => renderSprintTreeNode(child, depth + 1))}
+                    </React.Fragment>
+                  );
+                };
 
                 return (
                   <div
                     key={sprintName}
                     className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+                    data-testid={`sprint-swimlane-${sprintName}`}
                   >
                     {/* Sprint Header */}
                     <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center space-x-3">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                      <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+                        {/* Collapse Chevron Button */}
+                        <button
+                          type="button"
+                          onClick={() => toggleSprintCollapse(sprintName)}
+                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors cursor-pointer"
+                          data-testid={`collapse-toggle-${sprintName}`}
+                          aria-label={isCollapsed ? `Expand ${sprintName}` : `Collapse ${sprintName}`}
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        {/* Select All in Sprint Checkbox */}
+                        <button
+                          type="button"
+                          onClick={() => handleSelectAllInPool(sprintItems)}
+                          className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                          title={allSprintSelected ? 'Deselect all in sprint' : 'Select all in sprint'}
+                          aria-label={
+                            allSprintSelected
+                              ? `Deselect all in ${sprintName}`
+                              : `Select all in ${sprintName}`
+                          }
+                          data-testid={`select-all-${sprintName}`}
+                        >
+                          {allSprintSelected ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-400" />
+                          ) : someSprintSelected ? (
+                            <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
+                              <span className="w-2 h-0.5 bg-emerald-400" />
+                            </div>
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                          )}
+                        </button>
+
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            sprintDef?.status === 'completed'
+                              ? 'bg-purple-400'
+                              : sprintDef?.status === 'active' || isCurrent
+                              ? 'bg-emerald-400'
+                              : 'bg-slate-500'
+                          }`}
+                        />
+
                         <h4 className="text-base font-semibold text-white flex items-center space-x-2">
                           <span>{sprintName}</span>
                           {isCurrent && (
                             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-sans font-medium border border-emerald-500/30">
-                              Current Active Sprint
+                              Active
                             </span>
                           )}
                         </h4>
+
+                        {/* Sprint Status Badge */}
+                        {sprintDef && (
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${
+                              getSprintStatusBadge(sprintDef.status).bg
+                            } ${getSprintStatusBadge(sprintDef.status).text} ${
+                              getSprintStatusBadge(sprintDef.status).border
+                            }`}
+                          >
+                            {sprintDef.status}
+                          </span>
+                        )}
+
+                        {/* Date Range Badge */}
+                        {sprintDef && (sprintDef.start_date || sprintDef.end_date) && (
+                          <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            <span>{formatSprintDateRange(sprintDef.start_date, sprintDef.end_date)}</span>
+                          </span>
+                        )}
+
                         <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
-                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}{totalPoints > 0 ? ` · ${totalPoints} pts` : ''}
+                          {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
+                          {totalPoints > 0 ? ` · ${totalPoints} pts` : ''}
                         </span>
                       </div>
 
                       <div className="flex items-center space-x-4">
+                        {sprintDef?.goal && (
+                          <span
+                            className="text-xs text-slate-400 italic max-w-xs truncate hidden md:inline-block"
+                            title={sprintDef.goal}
+                          >
+                            Goal: {sprintDef.goal}
+                          </span>
+                        )}
+
                         <div className="flex items-center space-x-2 min-w-[140px]">
                           <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
                             <div
@@ -2196,155 +2865,51 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       </div>
                     </div>
 
-                    {/* Sprint Item List */}
-                    <div className="divide-y divide-slate-800/50">
-                      {sprintItems.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-slate-500 italic">
-                          No stories or tasks in {sprintName}. Allocate backlog items below.
-                        </div>
-                      ) : (
-                        sprintItems.map((item) => {
-                          const itemHierarchy = getItemHierarchy(item);
-                          const lvlColor = getHierarchyLevelColor(
-                            item.item_type,
-                            itemHierarchy
-                          );
-                          const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
-
-                          return (
-                            <div
-                              key={item.id}
-                              onDoubleClick={() => setEditingItem(item)}
-                              className="p-3.5 hover:bg-slate-800/30 transition-colors flex flex-wrap items-center justify-between gap-3 group"
-                            >
-                              <div className="flex items-center space-x-3 min-w-0 flex-1">
-                                <span
-                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
-                                >
-                                  {item.item_type}
-                                </span>
-
-                                {/* In-situ Sprint Deviation Indicator */}
-                                {(() => {
-                                  const itemDevs = deviations.filter((d) => d.itemId === item.id);
-                                  if (itemDevs.length === 0) return null;
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setIsReconciliationModalOpen(true);
-                                      }}
-                                      className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors shrink-0 cursor-pointer"
-                                      title={itemDevs.map((d) => d.message).join('\n') + ' (Click to reconcile)'}
-                                      data-testid="sprint-item-deviation-badge"
-                                    >
-                                      <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
-                                      <span>Deviation</span>
-                                    </button>
-                                  );
-                                })()}
-
-                                {isAllProjects && (
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
-                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
-                                  >
-                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
-                                  </span>
-                                )}
-
-                                {item.external_ref_id && (
-                                  <span className="text-xs font-mono text-slate-400 shrink-0">
-                                    {item.external_ref_id}
-                                  </span>
-                                )}
-
-                                {(() => {
-                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
-                                  return (
-                                    <>
-                                      {prUrl && (
-                                        <GitHubBadge
-                                          type="pr"
-                                          compact
-                                          value={prUrl}
-                                        />
-                                      )}
-                                      {commitHash && (
-                                        <GitHubBadge
-                                          type="commit"
-                                          compact
-                                          value={commitHash}
-                                          prUrl={prUrl}
-                                        />
-                                      )}
-                                    </>
-                                  );
-                                })()}
-
-                                <span
-                                  className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
-                                  onClick={() => setEditingItem(item)}
-                                >
-                                  {item.title}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center space-x-3 shrink-0">
-                                {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
-                                    {String(points)} pts
-                                  </span>
-                                )}
-
-                                <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
-                                  <User className="w-3 h-3 text-slate-500" />
-                                  <span>{item.assignee || 'Unassigned'}</span>
-                                </span>
-
-                                {/* Status Select */}
-                                <select
-                                  value={item.status}
-                                  onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
-                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
-                                >
-                                  {getItemStatuses(item).map((st: StatusDefinition) => (
-                                    <option key={st.id} value={st.id}>
-                                      {st.label}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                {/* Move to sprint */}
-                                <select
-                                  value={sprintName}
-                                  onChange={(e) => handleUpdateItemSprint(item.id, e.target.value)}
-                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer"
-                                  title="Change sprint"
-                                >
-                                  <option value="__none__">Move to Backlog</option>
-                                  {availableSprints.map((s) => (
-                                    <option key={s} value={s}>
-                                      {s}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingItem(item)}
-                                  className="p-1 rounded text-slate-500 hover:text-white transition-colors"
-                                  title="Edit work item"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
+                    {/* Sprint Item List (Collapsible) */}
+                    {!isCollapsed && (
+                      <div className="divide-y divide-slate-800/50">
+                        {sprintItems.length === 0 ? (
+                          <div className="p-6 text-center text-xs text-slate-500 italic">
+                            No stories or tasks in {sprintName}. Allocate backlog items below.
+                          </div>
+                        ) : sprintViewMode === 'tree' ? (
+                          buildTree(sprintItems).map((node) => renderSprintTreeNode(node))
+                        ) : (
+                          sprintItems.map((item) => {
+                            const isImmutable = isItemImmutableDueToCompletedSprint(
+                              item,
+                              projectSettings
+                            );
+                            return (
+                              <SprintItemRow
+                                key={item.id}
+                                item={item}
+                                isSelected={selectedItemIds.has(item.id)}
+                                onToggleSelect={(id, e) =>
+                                  handleToggleSelectItem(id, e, sprintItems)
+                                }
+                                isImmutable={isImmutable}
+                                onEditItem={setEditingItem}
+                                getItemHierarchy={getItemHierarchy}
+                                getItemStatuses={getItemStatuses}
+                                deviations={deviations}
+                                onOpenReconciliation={(dev) => {
+                                  setFocusedDeviationId(dev?.id || null);
+                                  setIsReconciliationModalOpen(true);
+                                }}
+                                isAllProjects={isAllProjects}
+                                allProjects={allProjects}
+                                onUpdateStatus={handleUpdateStatus}
+                                onUpdateSprint={handleUpdateItemSprint}
+                                availableSprints={availableSprints}
+                                currentSprintName={sprintName}
+                                isTreeMode={false}
+                              />
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2356,134 +2921,152 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
                   return acc + (isNaN(p) ? 0 : p);
                 }, 0);
+                const isBacklogCollapsed = collapsedSprints.has('__backlog__');
+                const allBacklogSelected =
+                  backlogItems.length > 0 &&
+                  backlogItems.every((it) => selectedItemIds.has(it.id));
+                const someBacklogSelected =
+                  !allBacklogSelected && backlogItems.some((it) => selectedItemIds.has(it.id));
+
+                const renderBacklogTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
+                  const childCount = (node.children || []).length;
+                  const getSubtreePoints = (n: WorkItemNode): number => {
+                    let sum =
+                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    for (const c of n.children || []) {
+                      sum += getSubtreePoints(c);
+                    }
+                    return sum;
+                  };
+                  const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
+                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings);
+
+                  return (
+                    <React.Fragment key={node.id}>
+                      <SprintItemRow
+                        item={node}
+                        depth={depth}
+                        isSelected={selectedItemIds.has(node.id)}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems)}
+                        isImmutable={isImmutable}
+                        onEditItem={setEditingItem}
+                        getItemHierarchy={getItemHierarchy}
+                        getItemStatuses={getItemStatuses}
+                        deviations={deviations}
+                        onOpenReconciliation={(dev) => {
+                          setFocusedDeviationId(dev?.id || null);
+                          setIsReconciliationModalOpen(true);
+                        }}
+                        isAllProjects={isAllProjects}
+                        allProjects={allProjects}
+                        onUpdateStatus={handleUpdateStatus}
+                        onUpdateSprint={handleUpdateItemSprint}
+                        availableSprints={availableSprints}
+                        currentSprintName="__none__"
+                        isTreeMode={true}
+                        childCount={childCount}
+                        rollupPoints={rollupPoints}
+                      />
+                      {(node.children || []).map((child) => renderBacklogTreeNode(child, depth + 1))}
+                    </React.Fragment>
+                  );
+                };
 
                 return (
-                  <div className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm">
+                  <div
+                    className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+                    data-testid="backlog-swimlane"
+                  >
                     <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleSprintCollapse('__backlog__')}
+                          className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors cursor-pointer"
+                          data-testid="collapse-toggle-backlog"
+                          aria-label={isBacklogCollapsed ? 'Expand Backlog' : 'Collapse Backlog'}
+                        >
+                          {isBacklogCollapsed ? (
+                            <ChevronRight className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSelectAllInPool(backlogItems)}
+                          className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                          title={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
+                          aria-label={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
+                          data-testid="select-all-backlog"
+                        >
+                          {allBacklogSelected ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-400" />
+                          ) : someBacklogSelected ? (
+                            <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
+                              <span className="w-2 h-0.5 bg-emerald-400" />
+                            </div>
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                          )}
+                        </button>
+
                         <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
                         <h4 className="text-base font-semibold text-white">
                           Product Backlog (Unassigned)
                         </h4>
                         <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
-                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}{backlogPoints > 0 ? ` · ${backlogPoints} pts` : ''}
+                          {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
+                          {backlogPoints > 0 ? ` · ${backlogPoints} pts` : ''}
                         </span>
                       </div>
                     </div>
 
-                    <div className="divide-y divide-slate-800/50">
-                      {backlogItems.length === 0 ? (
-                        <div className="p-6 text-center text-xs text-slate-500 italic">
-                          Backlog is empty! All items are assigned to active sprints.
-                        </div>
-                      ) : (
-                        backlogItems.map((item) => {
-                          const itemHierarchy = getItemHierarchy(item);
-                          const lvlColor = getHierarchyLevelColor(
-                            item.item_type,
-                            itemHierarchy
-                          );
-                          const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
-
-                          return (
-                            <div
-                              key={item.id}
-                              onDoubleClick={() => setEditingItem(item)}
-                              className="p-3.5 hover:bg-slate-800/30 transition-colors flex flex-wrap items-center justify-between gap-3 group"
-                            >
-                              <div className="flex items-center space-x-3 min-w-0 flex-1">
-                                <span
-                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
-                                >
-                                  {item.item_type}
-                                </span>
-
-                                {isAllProjects && (
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
-                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
-                                  >
-                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
-                                  </span>
-                                )}
-
-                                {item.external_ref_id && (
-                                  <span className="text-xs font-mono text-slate-400 shrink-0">
-                                    {item.external_ref_id}
-                                  </span>
-                                )}
-
-                                {(() => {
-                                  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
-                                  return (
-                                    <>
-                                      {prUrl && (
-                                        <GitHubBadge
-                                          type="pr"
-                                          compact
-                                          value={prUrl}
-                                        />
-                                      )}
-                                      {commitHash && (
-                                        <GitHubBadge
-                                          type="commit"
-                                          compact
-                                          value={commitHash}
-                                          prUrl={prUrl}
-                                        />
-                                      )}
-                                    </>
-                                  );
-                                })()}
-
-                                <span
-                                  className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white"
-                                  onClick={() => setEditingItem(item)}
-                                >
-                                  {item.title}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center space-x-3 shrink-0">
-                                {points !== undefined && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none">
-                                    {String(points)} pts
-                                  </span>
-                                )}
-
-                                <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
-                                  <User className="w-3 h-3 text-slate-500" />
-                                  <span>{item.assignee || 'Unassigned'}</span>
-                                </span>
-
-                                {/* Assign to sprint */}
-                                <select
-                                  value=""
-                                  onChange={(e) => handleUpdateItemSprint(item.id, e.target.value)}
-                                  className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer"
-                                >
-                                  <option value="" disabled>Assign to Sprint →</option>
-                                  {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((s) => (
-                                    <option key={s} value={s}>
-                                      {s}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingItem(item)}
-                                  className="p-1 rounded text-slate-500 hover:text-white transition-colors"
-                                  title="Edit work item"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
+                    {!isBacklogCollapsed && (
+                      <div className="divide-y divide-slate-800/50">
+                        {backlogItems.length === 0 ? (
+                          <div className="p-6 text-center text-xs text-slate-500 italic">
+                            Backlog is empty! All items are assigned to active sprints.
+                          </div>
+                        ) : sprintViewMode === 'tree' ? (
+                          buildTree(backlogItems).map((node) => renderBacklogTreeNode(node))
+                        ) : (
+                          backlogItems.map((item) => {
+                            const isImmutable = isItemImmutableDueToCompletedSprint(
+                              item,
+                              projectSettings
+                            );
+                            return (
+                              <SprintItemRow
+                                key={item.id}
+                                item={item}
+                                isSelected={selectedItemIds.has(item.id)}
+                                onToggleSelect={(id, e) =>
+                                  handleToggleSelectItem(id, e, backlogItems)
+                                }
+                                isImmutable={isImmutable}
+                                onEditItem={setEditingItem}
+                                getItemHierarchy={getItemHierarchy}
+                                getItemStatuses={getItemStatuses}
+                                deviations={deviations}
+                                onOpenReconciliation={(dev) => {
+                                  setFocusedDeviationId(dev?.id || null);
+                                  setIsReconciliationModalOpen(true);
+                                }}
+                                isAllProjects={isAllProjects}
+                                allProjects={allProjects}
+                                onUpdateStatus={handleUpdateStatus}
+                                onUpdateSprint={handleUpdateItemSprint}
+                                availableSprints={availableSprints}
+                                currentSprintName="__none__"
+                                isTreeMode={false}
+                              />
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2907,6 +3490,41 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           await fetchData();
         }}
       />
+
+      {/* Standalone Sprint Definitions Modal */}
+      <ManageSprintsModal
+        isOpen={isManageSprintsOpen}
+        onClose={() => setIsManageSprintsOpen(false)}
+        sprints={projectSettings.sprint_settings?.sprints || []}
+        onSaveSprints={handleSaveSprints}
+        items={items}
+      />
+
+      {/* Floating Multi-Item Bulk Actions Toolbar */}
+      <BulkActionsToolbar
+        selectedCount={selectedItemIds.size}
+        availableSprints={availableSprints}
+        statuses={projectSettings.statuses || []}
+        onMoveToSprint={handleBulkMoveSprint}
+        onSetStatus={handleBulkSetStatus}
+        onAssignMember={handleBulkAssign}
+        onAdjustPoints={handleBulkAdjustPoints}
+        onDeleteSelected={handleBulkDelete}
+        onClearSelection={handleDeselectAll}
+        isApplying={isBulkApplying}
+      />
+
+      {/* Floating Bulk Toast Notification */}
+      {bulkToast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-slate-900 text-slate-100 border border-slate-700 shadow-xl text-xs flex items-center space-x-2 animate-in fade-in slide-in-from-bottom-2 duration-200"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>{bulkToast}</span>
+        </div>
+      )}
     </div>
   );
 }
