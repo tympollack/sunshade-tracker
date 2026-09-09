@@ -43,6 +43,8 @@ import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { CascadeCompletionModal } from '@/components/CascadeCompletionModal';
+import { CascadePromptModal } from '@/components/CascadePromptModal';
 import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -192,6 +194,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [boardHeight, setBoardHeight] = useState<'compact' | 'standard' | 'full'>('standard');
   const [collapsedSideways, setCollapsedSideways] = useState<Set<string>>(new Set());
   const [collapsedUp, setCollapsedUp] = useState<Set<string>>(new Set());
+  const boardScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Cascade & Confirmation Modal States
+  const [cascadeCompletionState, setCascadeCompletionState] = useState<{
+    parentItem: WorkItem;
+    unfinishedChildren: WorkItem[];
+    targetStatus: string;
+    targetStatusLabel: string;
+    prevOrder?: number;
+    nextOrder?: number;
+  } | null>(null);
+
+  const [cascadePromptState, setCascadePromptState] = useState<{
+    type: 'advance_children_to_in_progress' | 'advance_parent_to_complete';
+    targetItem: WorkItem;
+    relatedItems: WorkItem[];
+    targetStatus: string;
+    prevOrder?: number;
+    nextOrder?: number;
+  } | null>(null);
 
   // Filter States: null means unconfigured/all-selected (default), [] means explicitly none selected
   const [selectedStatuses, setSelectedStatuses] = useState<string[] | null>(null);
@@ -604,24 +626,181 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     fetchData();
   }, [fetchTenantInfo, fetchData]);
 
-  // ─── Update item status ──────────────────────────────────────────────────
-  const handleUpdateStatus = async (itemId: string, newStatus: string) => {
-    // Optimistic update
-    setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, status: newStatus } : it))
-    );
-    try {
-      const res = await apiFetch('/api/v1/items', {
-        method: 'PATCH',
-        body: JSON.stringify({ id: itemId, status: newStatus }),
-      });
-      if (!res.ok) {
-        // Revert on failure
+  // ─── Status helpers ──────────────────────────────────────────────────────
+  const isCompleteStatus = useCallback((statusId: string) => {
+    const norm = (statusId || '').toLowerCase().trim();
+    return ['complete', 'done', 'closed', 'resolved'].includes(norm);
+  }, []);
+
+  const isNotStartedStatus = useCallback((statusId: string) => {
+    const norm = (statusId || '').toLowerCase().trim();
+    return ['not_started', 'unplanned', 'backlog', 'todo'].includes(norm);
+  }, []);
+
+  const isInProgressStatus = useCallback((statusId: string) => {
+    const norm = (statusId || '').toLowerCase().trim();
+    return ['in_progress', 'started', 'doing', 'in_review', 'active'].includes(norm);
+  }, []);
+
+  // ─── Wheel Scroll Handler ────────────────────────────────────────────────
+  const handleBoardWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.shiftKey) return;
+
+    const target = e.target as HTMLElement;
+    const columnScroll = target.closest('.board-column-scroll') as HTMLElement | null;
+
+    if (columnScroll) {
+      const isScrollable = columnScroll.scrollHeight > columnScroll.clientHeight;
+      if (isScrollable) {
+        const isAtTop = columnScroll.scrollTop <= 0 && e.deltaY < 0;
+        const isAtBottom =
+          columnScroll.scrollTop + columnScroll.clientHeight >= columnScroll.scrollHeight - 1 &&
+          e.deltaY > 0;
+
+        if (!isAtTop && !isAtBottom) {
+          return;
+        }
+      }
+    }
+
+    if (boardScrollRef.current && typeof window !== 'undefined' && window.innerWidth >= 768) {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        boardScrollRef.current.scrollLeft += e.deltaY;
+      }
+    }
+  }, []);
+
+  // ─── Execute status change with optimistic updates and API persistence ───
+  const executeStatusChange = useCallback(
+    async (
+      itemId: string,
+      newStatus: string,
+      prevOrder?: number,
+      nextOrder?: number
+    ) => {
+      const item = items.find((i) => i.id === itemId);
+      if (!item) return;
+
+      let newOrder = item.order_index;
+      if (prevOrder !== undefined || nextOrder !== undefined) {
+        newOrder = calculateOrderIndex(prevOrder, nextOrder);
+      }
+
+      // Optimistic update
+      setItems((prev) =>
+        prev
+          .map((it) =>
+            it.id === itemId ? { ...it, status: newStatus, order_index: newOrder } : it
+          )
+          .sort((a, b) => a.order_index - b.order_index)
+      );
+
+      try {
+        const res = await apiFetch('/api/v1/items', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: itemId,
+            status: newStatus,
+            prev_order: prevOrder,
+            next_order: nextOrder,
+          }),
+        });
+        if (!res.ok) {
+          fetchData();
+          return;
+        }
+
+        // Cascade Rule 2: If a child was moved to complete, check if parent should be offered promotion
+        if (isCompleteStatus(newStatus) && item.parent_id) {
+          const parentItem = items.find((p) => p.id === item.parent_id);
+          if (parentItem && !isCompleteStatus(parentItem.status)) {
+            const siblingChildren = items.filter(
+              (c) => c.parent_id === parentItem.id && c.id !== item.id
+            );
+            const allSiblingsComplete =
+              siblingChildren.length === 0 ||
+              siblingChildren.every((c) => isCompleteStatus(c.status));
+
+            if (allSiblingsComplete) {
+              setCascadePromptState({
+                type: 'advance_parent_to_complete',
+                targetItem: parentItem,
+                relatedItems: [item, ...siblingChildren],
+                targetStatus: newStatus,
+              });
+            }
+          }
+        }
+      } catch {
         fetchData();
       }
-    } catch {
-      fetchData();
-    }
+    },
+    [items, apiFetch, fetchData, isCompleteStatus]
+  );
+
+  // ─── Initiate status update intercepted by cascade confirmation checks ───
+  const initiateStatusChange = useCallback(
+    (
+      itemId: string,
+      targetStatus: string,
+      prevOrder?: number,
+      nextOrder?: number
+    ) => {
+      const item = items.find((i) => i.id === itemId);
+      if (!item || item.status === targetStatus) return;
+
+      // Cascade Rule: Check parent completion with unfinished children
+      if (isCompleteStatus(targetStatus)) {
+        const unfinishedChildren = items.filter(
+          (c) => c.parent_id === item.id && !isCompleteStatus(c.status)
+        );
+        if (unfinishedChildren.length > 0) {
+          const targetDef = projectSettings.statuses.find((s) => s.id === targetStatus);
+          setCascadeCompletionState({
+            parentItem: item,
+            unfinishedChildren,
+            targetStatus,
+            targetStatusLabel: targetDef?.label || targetStatus,
+            prevOrder,
+            nextOrder,
+          });
+          return;
+        }
+      }
+
+      // Cascade Rule 1: Parent moving from unstarted to in_progress with unstarted children
+      if (isNotStartedStatus(item.status) && isInProgressStatus(targetStatus)) {
+        const unstartedChildren = items.filter(
+          (c) => c.parent_id === item.id && isNotStartedStatus(c.status)
+        );
+        if (unstartedChildren.length > 0) {
+          setCascadePromptState({
+            type: 'advance_children_to_in_progress',
+            targetItem: item,
+            relatedItems: unstartedChildren,
+            targetStatus,
+            prevOrder,
+            nextOrder,
+          });
+          return;
+        }
+      }
+
+      executeStatusChange(itemId, targetStatus, prevOrder, nextOrder);
+    },
+    [
+      items,
+      isCompleteStatus,
+      isNotStartedStatus,
+      isInProgressStatus,
+      projectSettings.statuses,
+      executeStatusChange,
+    ]
+  );
+
+  // ─── Update item status ──────────────────────────────────────────────────
+  const handleUpdateStatus = async (itemId: string, newStatus: string) => {
+    initiateStatusChange(itemId, newStatus);
   };
 
   // ─── Update item sprint ──────────────────────────────────────────────────
@@ -798,34 +977,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       nextItem = null;
     }
 
-    const newOrder = calculateOrderIndex(prevItem?.order_index, nextItem?.order_index);
-
-    // Optimistically update and keep items sorted by order_index
-    setItems((prev) =>
-      prev
-        .map((it) =>
-          it.id === itemId ? { ...it, status: targetColId, order_index: newOrder } : it
-        )
-        .sort((a, b) => a.order_index - b.order_index)
-    );
-
     setDraggedItemId(null);
     setDragOverTarget(null);
 
-    try {
-      const res = await apiFetch('/api/v1/items', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          id: itemId,
-          status: targetColId,
-          prev_order: prevItem?.order_index,
-          next_order: nextItem?.order_index,
-        }),
-      });
-      if (!res.ok) fetchData();
-    } catch {
-      fetchData();
-    }
+    initiateStatusChange(itemId, targetColId, prevItem?.order_index, nextItem?.order_index);
   };
 
   // ─── Column Collapse Toggles ─────────────────────────────────────────────
@@ -1434,12 +1589,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               <BoardSkeleton />
             ) : (
               <div
-                className={`flex flex-row items-start gap-4 overflow-x-auto pb-4 pt-1 select-none overscroll-contain board-scroll-container ${
+                ref={boardScrollRef}
+                onWheel={handleBoardWheel}
+                className={`flex flex-col md:flex-row items-start gap-4 overflow-x-hidden md:overflow-x-auto pb-4 pt-1 board-scroll-container ${
                   boardHeight === 'compact'
-                    ? 'h-[440px]'
+                    ? 'h-auto md:h-[440px]'
                     : boardHeight === 'full'
-                    ? 'h-[calc(100vh-250px)]'
-                    : 'h-[620px]'
+                    ? 'h-auto md:h-[calc(100vh-200px)] md:min-h-[500px]'
+                    : 'h-auto md:h-[calc(100vh-270px)] md:min-h-[420px]'
                 }`}
               >
                 {projectSettings.statuses
@@ -1470,14 +1627,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           onClick={() => toggleCollapseSideways(col.id)}
                           onDragOver={(e) => handleDragOverColumn(e, col.id)}
                           onDrop={(e) => handleDrop(e, col.id)}
-                          className={`w-14 min-w-[56px] max-w-[56px] shrink-0 h-full rounded-xl bg-slate-900/60 border cursor-pointer hover:border-slate-600 transition-all flex flex-col items-center justify-between py-4 shadow-sm group ${
+                          className={`w-full md:w-14 md:min-w-[56px] md:max-w-[56px] shrink-0 md:h-full rounded-xl bg-slate-900/60 border cursor-pointer hover:border-slate-600 transition-all flex flex-row md:flex-col items-center justify-between p-3 md:py-4 shadow-sm group ${
                             dragOverTarget?.colId === col.id
                               ? 'border-emerald-500 bg-emerald-500/10'
                               : 'border-slate-800/80'
                           }`}
                           title={`${col.label}: ${colItems.length} items (click to expand)`}
                         >
-                          <div className="flex flex-col items-center space-y-2">
+                          <div className="flex flex-row md:flex-col items-center space-x-2 md:space-x-0 md:space-y-2">
                             <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-slate-800/90 border border-slate-700/80 shadow-xs">
                               <span
                                 className="w-2 h-2 rounded-full shrink-0"
@@ -1487,10 +1644,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                 {colItems.length}
                               </span>
                             </div>
+                            <span className="md:hidden text-xs font-semibold uppercase text-slate-300">
+                              {col.label}
+                            </span>
                             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white transition-colors" />
                           </div>
 
-                          <div className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-300 whitespace-nowrap py-4">
+                          <div className="hidden md:block [writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-300 whitespace-nowrap py-4">
                             {col.label}
                           </div>
                         </div>
@@ -1502,7 +1662,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       return (
                         <div
                           key={col.id}
-                          className="w-80 min-w-[320px] max-w-[320px] shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col shadow-sm"
+                          className="w-full md:w-80 md:min-w-[320px] md:max-w-[320px] shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col shadow-sm"
                         >
                           <div className="px-4 py-3 flex items-center justify-between">
                             <div className="flex items-center space-x-2">
@@ -1530,7 +1690,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               <button
                                 type="button"
                                 onClick={() => toggleCollapseSideways(col.id)}
-                                className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                                className="hidden md:inline-flex p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
                                 title="Collapse column sideways"
                               >
                                 <Minimize2 className="w-3.5 h-3.5" />
@@ -1547,7 +1707,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         key={col.id}
                         onDragOver={(e) => handleDragOverColumn(e, col.id)}
                         onDrop={(e) => handleDrop(e, col.id)}
-                        className={`w-80 min-w-[320px] max-w-[320px] shrink-0 bg-slate-900/40 border rounded-xl flex flex-col h-full shadow-sm transition-colors ${
+                        className={`w-full md:w-80 md:min-w-[320px] md:max-w-[320px] shrink-0 bg-slate-900/40 border rounded-xl flex flex-col md:h-full shadow-sm transition-colors ${
                           dragOverTarget?.colId === col.id && dragOverTarget?.index === -1
                             ? 'border-emerald-500/70 bg-emerald-500/5'
                             : 'border-slate-800/80'
@@ -1580,7 +1740,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             <button
                               type="button"
                               onClick={() => toggleCollapseSideways(col.id)}
-                              className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+                              className="hidden md:inline-flex p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
                               title="Collapse column sideways"
                             >
                               <Minimize2 className="w-3.5 h-3.5" />
@@ -1589,7 +1749,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </div>
 
                         {/* Column Item Cards Container */}
-                        <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0 overscroll-contain board-column-scroll custom-scrollbar">
+                        <div className="p-3 space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0 board-column-scroll custom-scrollbar">
                           {colItems.length === 0 ? (
                             <div className="h-32 border border-dashed border-slate-800/90 rounded-lg flex items-center justify-center text-slate-600 text-xs">
                               No items
@@ -2599,6 +2759,130 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             await handleDeleteItem(deleteConfirmItem.id);
             if (editingItem?.id === deleteConfirmItem.id) {
               setEditingItem(null);
+            }
+          }
+        }}
+      />
+
+      {/* Cascade Completion Warning Modal */}
+      <CascadeCompletionModal
+        isOpen={!!cascadeCompletionState}
+        parentItem={cascadeCompletionState?.parentItem || null}
+        unfinishedChildren={cascadeCompletionState?.unfinishedChildren || []}
+        targetStatus={cascadeCompletionState?.targetStatus || ''}
+        targetStatusLabel={cascadeCompletionState?.targetStatusLabel}
+        onCancel={() => setCascadeCompletionState(null)}
+        onCompleteParentAnyway={() => {
+          if (cascadeCompletionState) {
+            const { parentItem, targetStatus, prevOrder, nextOrder } = cascadeCompletionState;
+            setCascadeCompletionState(null);
+            executeStatusChange(parentItem.id, targetStatus, prevOrder, nextOrder);
+          }
+        }}
+        onCompleteAllChildren={() => {
+          if (cascadeCompletionState) {
+            const { parentItem, unfinishedChildren, targetStatus, prevOrder, nextOrder } =
+              cascadeCompletionState;
+            setCascadeCompletionState(null);
+            const childIds = new Set(unfinishedChildren.map((c) => c.id));
+            const allIds = [parentItem.id, ...unfinishedChildren.map((c) => c.id)];
+
+            let newOrder = parentItem.order_index;
+            if (prevOrder !== undefined || nextOrder !== undefined) {
+              newOrder = calculateOrderIndex(prevOrder, nextOrder);
+            }
+
+            setItems((prev) =>
+              prev
+                .map((it) => {
+                  if (it.id === parentItem.id) {
+                    return { ...it, status: targetStatus, order_index: newOrder };
+                  }
+                  if (childIds.has(it.id)) {
+                    return { ...it, status: targetStatus };
+                  }
+                  return it;
+                })
+                .sort((a, b) => a.order_index - b.order_index)
+            );
+
+            apiFetch('/api/v1/items', {
+              method: 'PATCH',
+              body: JSON.stringify({
+                ids: allIds,
+                updates: { status: targetStatus },
+              }),
+            })
+              .then((res) => {
+                if (!res.ok) fetchData();
+              })
+              .catch(() => fetchData());
+          }
+        }}
+      />
+
+      {/* Cascade Status Transition Prompt Modal */}
+      <CascadePromptModal
+        isOpen={!!cascadePromptState}
+        type={cascadePromptState?.type || 'advance_children_to_in_progress'}
+        targetItem={cascadePromptState?.targetItem || null}
+        relatedItems={cascadePromptState?.relatedItems || []}
+        onCancel={() => setCascadePromptState(null)}
+        onDecline={() => {
+          if (cascadePromptState) {
+            if (cascadePromptState.type === 'advance_children_to_in_progress') {
+              const { targetItem, targetStatus, prevOrder, nextOrder } = cascadePromptState;
+              setCascadePromptState(null);
+              executeStatusChange(targetItem.id, targetStatus, prevOrder, nextOrder);
+            } else {
+              setCascadePromptState(null);
+            }
+          }
+        }}
+        onConfirm={() => {
+          if (cascadePromptState) {
+            if (cascadePromptState.type === 'advance_children_to_in_progress') {
+              const { targetItem, relatedItems, targetStatus, prevOrder, nextOrder } =
+                cascadePromptState;
+              setCascadePromptState(null);
+              const childIds = new Set(relatedItems.map((c) => c.id));
+              const allIds = [targetItem.id, ...relatedItems.map((c) => c.id)];
+
+              let newOrder = targetItem.order_index;
+              if (prevOrder !== undefined || nextOrder !== undefined) {
+                newOrder = calculateOrderIndex(prevOrder, nextOrder);
+              }
+
+              setItems((prev) =>
+                prev
+                  .map((it) => {
+                    if (it.id === targetItem.id) {
+                      return { ...it, status: targetStatus, order_index: newOrder };
+                    }
+                    if (childIds.has(it.id)) {
+                      return { ...it, status: targetStatus };
+                    }
+                    return it;
+                  })
+                  .sort((a, b) => a.order_index - b.order_index)
+              );
+
+              apiFetch('/api/v1/items', {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  ids: allIds,
+                  updates: { status: targetStatus },
+                }),
+              })
+                .then((res) => {
+                  if (!res.ok) fetchData();
+                })
+                .catch(() => fetchData());
+            } else {
+              // advance_parent_to_complete
+              const { targetItem, targetStatus } = cascadePromptState;
+              setCascadePromptState(null);
+              executeStatusChange(targetItem.id, targetStatus);
             }
           }
         }}

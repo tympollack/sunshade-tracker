@@ -12,6 +12,7 @@ import {
 } from '@/lib/bulk-items';
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
+import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
 
 
 export async function GET(req: NextRequest) {
@@ -368,11 +369,17 @@ export async function POST(req: NextRequest) {
       calculatedOrder = lastItem?.order_index ? lastItem.order_index + 1000.0 : 1000.0;
     }
 
+    let resolvedExternalRefId = external_ref_id?.trim() || null;
+    if (!resolvedExternalRefId) {
+      const prefix = deriveProjectPrefix({ slug: project_slug, settings: projectSettings });
+      resolvedExternalRefId = await generateNextSequentialRef(projId, prefix);
+    }
+
     const payload = {
       tenant_id: authCtx.tenant.id,
       project_id: projId,
       parent_id: parent_id || null,
-      external_ref_id: external_ref_id || null,
+      external_ref_id: resolvedExternalRefId,
       item_type: resolvedType,
       status: resolvedStatus,
       title,
