@@ -73,13 +73,20 @@ body {
 }
 
 /* ==========================================================================
-   Scroll Isolation (Overscroll Containment for Board Canvas & Columns)
+   Scroll Management (Board Canvas & Columns)
    ========================================================================== */
-.board-scroll-container,
-.board-column-scroll,
-.overscroll-contain {
-  overscroll-behavior: contain;
-  overscroll-behavior-y: contain;
-  overscroll-behavior-x: contain;
+.board-column-scroll {
+  overscroll-behavior-y: auto;
+}
+
+@media (max-width: 767px) {
+  .board-scroll-container {
+    overflow-x: hidden !important;
+    height: auto !important;
+  }
+  .board-column-scroll {
+    overflow-y: visible !important;
+    max-height: none !important;
+  }
 }
 

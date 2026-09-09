@@ -3,6 +3,7 @@ import { WorkItem, ProjectSettings } from '@/types/tracker';
 import { validateHierarchyNesting } from '@/lib/fractional-index';
 import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
+import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 
 
 export const MAX_BULK_ITEMS = 100;
@@ -563,12 +564,24 @@ export async function handleBulkCreateItems(
     const orderIdx = it.order_index ?? (await getNextOrder(itemProject.id));
     const now = new Date().toISOString();
 
+    let resolvedExternalRefId = it.external_ref_id?.trim() || null;
+    if (!resolvedExternalRefId) {
+      const prefix = deriveProjectPrefix({ slug: itemProject.slug, settings });
+      const [genRef] = await generateSequentialRefsForBatch(
+        itemProject.id,
+        prefix,
+        1,
+        new Set(rowsToInsert.map((r) => r.external_ref_id).filter(Boolean))
+      );
+      resolvedExternalRefId = genRef || null;
+    }
+
     rowsToInsert.push({
       id: it.id,
       tenant_id: tenantId,
       project_id: itemProject.id,
       parent_id: resolvedParentId,
-      external_ref_id: it.external_ref_id || null,
+      external_ref_id: resolvedExternalRefId,
       item_type: resolvedType,
       status: resolvedStatus,
       title: it.title.trim(),
