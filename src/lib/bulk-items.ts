@@ -4,6 +4,7 @@ import { validateHierarchyNesting } from '@/lib/fractional-index';
 import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
+import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
 
 export const MAX_BULK_ITEMS = 100;
@@ -854,6 +855,17 @@ export async function handleBulkUpdateItems(
     // Pre-validate all items before any writes are made
     for (const item of existingItems) {
       const projectSettings = await getProjectSettings(item.project_id);
+
+      if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+        return {
+          success: false,
+          updated_count: 0,
+          items: [],
+          error: `Item "${item.title || item.id}" was completed in closed sprint "${item.metadata?.sprint}" and is immutable.`,
+          status: 403,
+        };
+      }
+
       const effectiveType = updates.item_type !== undefined ? updates.item_type : item.item_type;
       const effectiveStatus = updates.status !== undefined ? updates.status : item.status;
       const effectiveParentId = updates.parent_id !== undefined ? updates.parent_id : item.parent_id;
@@ -1510,6 +1522,47 @@ export async function handleBulkDeleteItems(
         error: `Item identifier exceeds maximum allowed length of ${MAX_ID_LENGTH} characters`,
         status: 400,
       };
+    }
+  }
+
+  // Prevent deleting items completed in closed sprints
+  const workItemsTable = supabaseAdmin.from('work_items');
+  if (typeof workItemsTable?.select === 'function') {
+    let checkQuery: any = workItemsTable
+      .select('id, title, status, metadata, project_id')
+      .in('id', payload.ids)
+      .eq('tenant_id', tenantId);
+    if (typeof checkQuery?.is === 'function') {
+      checkQuery = checkQuery.is('deleted_at', null);
+    }
+    const { data: itemsToCheck } = (await checkQuery) || {};
+    if (itemsToCheck && itemsToCheck.length > 0) {
+      const projSettingsCache = new Map<string, ProjectSettings>();
+      for (const it of itemsToCheck) {
+        let ps = projSettingsCache.get(it.project_id);
+        if (!ps) {
+          const projTable = supabaseAdmin.from('projects');
+          if (typeof projTable?.select === 'function') {
+            let pQ: any = projTable
+              .select('id, settings')
+              .eq('tenant_id', tenantId)
+              .eq('id', it.project_id);
+            if (typeof pQ?.is === 'function') pQ = pQ.is('deleted_at', null);
+            const { data: pData } = (await pQ?.maybeSingle?.()) || {};
+            ps = pData?.settings || {};
+            projSettingsCache.set(it.project_id, ps!);
+          }
+        }
+        if (ps && isItemImmutableDueToCompletedSprint(it as any, ps)) {
+          return {
+            success: false,
+            deleted_count: 0,
+            deleted_ids: [],
+            error: `Item "${it.title || it.id}" was completed in closed sprint "${it.metadata?.sprint}" and is immutable.`,
+            status: 403,
+          };
+        }
+      }
     }
   }
 
