@@ -9,16 +9,73 @@ import { createServerClient, createServiceClient } from '@/lib/supabase-server';
  *
  * Used by the dashboard header, WorkspaceSwitcher, and ProjectSwitcher.
  */
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const supabase = await createServerClient();
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    const service = createServiceClient();
+
+    const rawSlugHint =
+      req.headers.get('x-tenant-slug') ||
+      req.nextUrl.searchParams.get('tenant_slug') ||
+      'sunshade';
+    const tenantSlugHint = rawSlugHint?.replace(/^@/, '');
+
+    const checkPublicGuestWorkspace = async (slugToTest: string) => {
+      let q: any = service
+        .from('tenants')
+        .select('id, slug, name, tier, owner_id, metadata, created_at, deleted_at')
+        .eq('slug', slugToTest);
+      if (typeof q.is === 'function') {
+        q = q.is('deleted_at', null);
+      }
+      const { data: publicTenant } = await q.maybeSingle();
+      if (
+        publicTenant &&
+        (publicTenant.slug === 'sunshade' ||
+          publicTenant.tier === 'demo' ||
+          Boolean(publicTenant.metadata?.is_public))
+      ) {
+        const { data: demoProjects } = await service
+          .from('projects')
+          .select('id, tenant_id, slug, name, description, created_at')
+          .eq('tenant_id', publicTenant.id)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: true });
+
+        return {
+          id: publicTenant.id,
+          slug: publicTenant.slug,
+          name: publicTenant.name,
+          tier: publicTenant.tier,
+          owner_id: publicTenant.owner_id,
+          api_key_preview: null,
+          created_at: publicTenant.created_at,
+          role: 'viewer',
+          member_since: publicTenant.created_at,
+          projects: demoProjects || [],
+          members: [],
+          is_public: true,
+          metadata: publicTenant.metadata || {},
+        };
+      }
+      return null;
+    };
 
     if (userErr || !user) {
+      if (tenantSlugHint) {
+        const publicWs = await checkPublicGuestWorkspace(tenantSlugHint);
+        if (publicWs) {
+          return NextResponse.json({
+            user: null,
+            is_guest: true,
+            workspaces: [publicWs],
+            primary_workspace: publicWs,
+          });
+        }
+      }
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const service = createServiceClient();
 
     // Fetch all active memberships with tenant details
     const { data: memberships, error: memberErr } = await service
@@ -32,6 +89,7 @@ export async function GET(_req: NextRequest) {
           name,
           tier,
           owner_id,
+          metadata,
           api_key,
           created_at,
           deleted_at
@@ -46,6 +104,31 @@ export async function GET(_req: NextRequest) {
     }
 
     if (!memberships || memberships.length === 0) {
+      if (tenantSlugHint) {
+        const publicWs = await checkPublicGuestWorkspace(tenantSlugHint);
+        if (publicWs) {
+          const currentFullName =
+            user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            (user.email ? user.email.split('@')[0] : 'User');
+          return NextResponse.json({
+            user: {
+              id: user.id,
+              email: user.email,
+              full_name: currentFullName,
+              notification_preferences: {
+                notify_in_app: true,
+                notify_email: true,
+                notify_on_assignment: true,
+                notify_on_status_change: true,
+                ...(user.user_metadata?.notification_preferences || {}),
+              },
+            },
+            workspaces: [publicWs],
+            primary_workspace: publicWs,
+          });
+        }
+      }
       return NextResponse.json(
         { error: 'No workspaces found. Complete onboarding first.', needs_onboarding: true },
         { status: 404 }
@@ -141,8 +224,21 @@ export async function GET(_req: NextRequest) {
         member_since: m.created_at,
         projects: projectsByTenant[tenant.id] || [],
         members: membersByTenant[tenant.id] || [],
+        is_public:
+          tenant.slug === 'sunshade' ||
+          tenant.tier === 'demo' ||
+          Boolean(tenant.metadata?.is_public),
+        metadata: tenant.metadata || {},
       };
     });
+
+    // If visiting a public workspace where user is not a member, append it as a viewer
+    if (tenantSlugHint && !workspaces.some((w: any) => w.slug === tenantSlugHint)) {
+      const publicWs = await checkPublicGuestWorkspace(tenantSlugHint);
+      if (publicWs) {
+        workspaces.push(publicWs);
+      }
+    }
 
     const userMetadata = user.user_metadata || {};
     const notificationPreferences = {

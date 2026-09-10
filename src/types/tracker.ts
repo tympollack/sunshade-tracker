@@ -13,11 +13,28 @@ export interface StatusDefinition {
   order: number;
 }
 
+export interface SprintDefinition {
+  id: string;
+  name: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  goal?: string | null;
+  status: 'planned' | 'active' | 'completed';
+  is_current?: boolean;
+}
+
+export interface SprintSettings {
+  default_sprint?: string;
+  sprints?: SprintDefinition[];
+  [key: string]: any;
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
   statuses: StatusDefinition[];
   custom_fields: string[];
+  sprint_settings?: SprintSettings;
   [key: string]: any;
 }
 
@@ -75,6 +92,8 @@ export interface WorkItemWithChildren extends WorkItem {
 export interface WorkItemNode extends WorkItem {
   depth: number;
   children?: WorkItemNode[];
+  descendantCount?: number;
+  rollupPoints?: number;
 }
 
 export interface IngestItemPayload {

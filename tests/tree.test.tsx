@@ -93,6 +93,41 @@ describe('buildTree recursive tree builder', () => {
     const tree = buildTree(items);
     expect(tree.length).toBeGreaterThan(0);
   });
+
+  it('calculates recursive descendantCount and rollupPoints across deep branches', () => {
+    const items: WorkItem[] = [
+      mockItem({ id: 'epic-1', title: 'Epic 1', parent_id: null, order_index: 1000, metadata: { story_points: 5 } }),
+      mockItem({ id: 'story-1', title: 'Story 1', parent_id: 'epic-1', order_index: 1000, metadata: { story_points: 8 } }),
+      mockItem({ id: 'task-1', title: 'Task 1', parent_id: 'story-1', order_index: 1000, metadata: { story_points: 3 } }),
+      mockItem({ id: 'task-2', title: 'Task 2', parent_id: 'story-1', order_index: 2000, metadata: { story_points: 2 } }),
+      mockItem({ id: 'story-2', title: 'Story 2', parent_id: 'epic-1', order_index: 2000, metadata: { story_points: 1 } }),
+    ];
+
+    const tree = buildTree(items);
+    expect(tree).toHaveLength(1);
+
+    const epic = tree[0];
+    // Epic has 4 descendants: story-1, task-1, task-2, story-2
+    expect(epic.descendantCount).toBe(4);
+    // Epic points rollup = 5 + (8 + 3 + 2) + 1 = 19
+    expect(epic.rollupPoints).toBe(19);
+
+    const [story1, story2] = epic.children!;
+    // Story 1 has 2 descendants: task-1, task-2
+    expect(story1.descendantCount).toBe(2);
+    // Story 1 points rollup = 8 + 3 + 2 = 13
+    expect(story1.rollupPoints).toBe(13);
+
+    // Leaf nodes
+    expect(story2.descendantCount).toBe(0);
+    expect(story2.rollupPoints).toBe(1);
+
+    const [task1, task2] = story1.children!;
+    expect(task1.descendantCount).toBe(0);
+    expect(task1.rollupPoints).toBe(3);
+    expect(task2.descendantCount).toBe(0);
+    expect(task2.rollupPoints).toBe(2);
+  });
 });
 
 describe('TreeNode component', () => {
@@ -177,4 +212,42 @@ describe('TreeNode component', () => {
     const statusBadge = screen.getByText('complete');
     expect(statusBadge).toHaveStyle({ color: '#22c55e' });
   });
+
+  it('renders deviation indicators when deviations are passed', () => {
+    const node = {
+      ...mockItem({ id: 'item-dev', title: 'Deviation Item', item_type: 'subtask', status: 'unknown_status' }),
+      depth: 0,
+      children: [],
+    };
+
+    const mockDeviations = [
+      {
+        id: '1',
+        itemId: 'item-dev',
+        itemRef: null,
+        itemTitle: 'Deviation Item',
+        deviationType: 'unmapped_level' as const,
+        currentValue: 'subtask',
+        expectedValues: ['task'],
+        message: "Item type 'subtask' is unmapped",
+      },
+      {
+        id: '2',
+        itemId: 'item-dev',
+        itemRef: null,
+        itemTitle: 'Deviation Item',
+        deviationType: 'unmapped_status' as const,
+        currentValue: 'unknown_status',
+        expectedValues: ['not_started'],
+        message: "Status 'unknown_status' is unmapped",
+      },
+    ];
+
+    render(<TreeNode item={node} deviations={mockDeviations} />);
+
+    expect(screen.getByTestId('unmapped-level-badge')).toBeInTheDocument();
+    expect(screen.getByText('Unmapped Level')).toBeInTheDocument();
+    expect(screen.getByTestId('unmapped-status-badge')).toBeInTheDocument();
+  });
 });
+

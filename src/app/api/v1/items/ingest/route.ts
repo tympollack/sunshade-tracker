@@ -4,6 +4,7 @@ import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
 import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
+import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 
 
 export async function POST(req: NextRequest) {
@@ -107,7 +108,22 @@ export async function POST(req: NextRequest) {
       changed_fields: Record<string, any>;
     }> = [];
 
+    // Pre-generate sequential reference tags for items without external_ref_id
+    const prefix = deriveProjectPrefix({ slug: project_slug, settings });
+    const itemsNeedingRefs = items.filter((it) => !it.external_ref_id || !it.external_ref_id.trim());
+    const generatedBatchRefs = await generateSequentialRefsForBatch(
+      project.id,
+      prefix,
+      itemsNeedingRefs.length,
+      new Set(items.map((it) => it.external_ref_id).filter(Boolean) as string[])
+    );
+    let genRefIdx = 0;
+
     for (const item of items) {
+      const resolvedExternalRefId = (item.external_ref_id && item.external_ref_id.trim())
+        ? item.external_ref_id.trim()
+        : generatedBatchRefs[genRefIdx++];
+
       // Resolve Parent ID if parent_ref_id is supplied
       let resolvedParentId: string | null = null;
       if (item.parent_ref_id) {
@@ -136,7 +152,7 @@ export async function POST(req: NextRequest) {
         tenant_id: tenant.id,
         project_id: project.id,
         parent_id: resolvedParentId,
-        external_ref_id: item.external_ref_id || null,
+        external_ref_id: resolvedExternalRefId || null,
         item_type: item.item_type || defaultType,
         status: item.status || defaultStatus,
         title: item.title,
@@ -152,8 +168,8 @@ export async function POST(req: NextRequest) {
       // Upsert by project_id and external_ref_id if provided; otherwise insert.
       // Explicitly setting deleted_at: null restores any previously soft-deleted row
       // with the same external_ref_id rather than silently updating a hidden record.
-      if (item.external_ref_id) {
-        const prior = priorItemsMap.get(item.external_ref_id) || null;
+      if (resolvedExternalRefId) {
+        const prior = priorItemsMap.get(resolvedExternalRefId) || null;
 
         const { data: upserted, error: upsertErr } = await supabaseAdmin
           .from('work_items')
@@ -168,8 +184,8 @@ export async function POST(req: NextRequest) {
         insertedItems.push(upserted);
         itemMutationSnapshots.push({ item: upserted, prior });
 
-        if (upserted?.id && item.external_ref_id) {
-          batchRefMap.set(item.external_ref_id, upserted.id);
+        if (upserted?.id && resolvedExternalRefId) {
+          batchRefMap.set(resolvedExternalRefId, upserted.id);
         }
 
         // Classify audit action: create, restore, or update
@@ -191,7 +207,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Keep local cache up to date for subsequent items in batch
-        priorItemsMap.set(item.external_ref_id, upserted);
+        priorItemsMap.set(resolvedExternalRefId, upserted);
 
         if (action === 'create' || action === 'restore' || Object.keys(changed_fields).length > 0) {
           auditEntries.push({

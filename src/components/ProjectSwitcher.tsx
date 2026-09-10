@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Plus, Folder, Settings, Layers } from 'lucide-react';
+import { ChevronDown, Plus, Folder, Settings, Layers, Archive } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -14,22 +14,31 @@ interface ProjectSwitcherProps {
   tenantSlug: string;
   currentProjectSlug: string;
   projects: Project[];
+  onArchiveCurrentProject?: () => void;
+  isReadOnly?: boolean;
 }
 
 export function ProjectSwitcher({
   tenantSlug,
   currentProjectSlug,
   projects,
+  onArchiveCurrentProject,
+  isReadOnly = false,
 }: ProjectSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const isPortfolio = currentProjectSlug === 'portfolio';
   const isAll =
     (currentProjectSlug === 'all' || currentProjectSlug === 'portfolio') &&
     !projects.some((p) => p.slug === currentProjectSlug);
   const currentProject = isAll
-    ? { id: currentProjectSlug, slug: currentProjectSlug, name: 'All Projects' }
+    ? {
+        id: currentProjectSlug,
+        slug: currentProjectSlug,
+        name: isPortfolio ? 'Portfolio Overview' : 'All Projects',
+      }
     : projects.find((p) => p.slug === currentProjectSlug);
 
   useEffect(() => {
@@ -112,16 +121,30 @@ export function ProjectSwitcher({
 
           <div className="px-1.5 pb-1.5 border-t border-slate-800 mt-1 pt-1 space-y-0.5">
             {!isAll && (
-              <button
-                onClick={() => {
-                  setOpen(false);
-                  router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
-                }}
-                className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-              >
-                <Settings className="w-3.5 h-3.5 text-slate-500" />
-                <span>Project Schema Settings</span>
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    setOpen(false);
+                    router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
+                  }}
+                  className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+                >
+                  <Settings className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Project Schema Settings</span>
+                </button>
+                {!isReadOnly && onArchiveCurrentProject && (
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      onArchiveCurrentProject();
+                    }}
+                    className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-red-400" />
+                    <span>Archive Project…</span>
+                  </button>
+                )}
+              </>
             )}
             <button
               onClick={() => {

@@ -19,6 +19,7 @@ interface JsonSchemaEditorProps {
   settings: ProjectSettings;
   onSave: (updatedSettings: ProjectSettings) => Promise<void> | void;
   isSaving?: boolean;
+  readOnly?: boolean;
 }
 
 const HEX_COLOR_REGEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -27,6 +28,7 @@ export function JsonSchemaEditor({
   settings,
   onSave,
   isSaving = false,
+  readOnly = false,
 }: JsonSchemaEditorProps) {
   // Local state for schema object
   const [data, setData] = useState<ProjectSettings>(settings);
@@ -184,33 +186,41 @@ export function JsonSchemaEditor({
 
         {/* Save / Reset Actions */}
         <div className="flex items-center space-x-2">
-          {saveSuccess && (
-            <span className="text-xs text-emerald-400 flex items-center space-x-1 font-medium animate-in fade-in">
-              <Check className="w-3.5 h-3.5" />
-              <span>Saved successfully!</span>
+          {readOnly ? (
+            <span className="text-xs px-2.5 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 font-medium">
+              Read-Only
             </span>
+          ) : (
+            <>
+              {saveSuccess && (
+                <span className="text-xs text-emerald-400 flex items-center space-x-1 font-medium animate-in fade-in">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Saved successfully!</span>
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={handleReset}
+                disabled={isSaving}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center space-x-1.5 transition-colors disabled:opacity-50"
+                title="Reset changes to original"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving || isRawInvalid}
+                className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSaving ? 'Saving...' : 'Save Schema'}</span>
+              </button>
+            </>
           )}
-
-          <button
-            type="button"
-            onClick={handleReset}
-            disabled={isSaving}
-            className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 text-xs flex items-center space-x-1.5 transition-colors disabled:opacity-50"
-            title="Reset changes to original"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || isRawInvalid}
-            className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>{isSaving ? 'Saving...' : 'Save Schema'}</span>
-          </button>
         </div>
       </div>
 
@@ -233,12 +243,15 @@ export function JsonSchemaEditor({
               depth={0}
               collapseLevel={collapseLevel}
               onUpdateValue={handleUpdateValue}
+              readOnly={readOnly}
             />
           </div>
         ) : (
           <textarea
             value={rawText}
+            readOnly={readOnly}
             onChange={(e) => {
+              if (readOnly) return;
               setRawText(e.target.value);
               try {
                 const parsed = JSON.parse(e.target.value);
@@ -268,6 +281,7 @@ interface JsonTreeNodeProps {
   depth: number;
   collapseLevel: number;
   onUpdateValue: (path: (string | number)[], newValue: any) => void;
+  readOnly?: boolean;
 }
 
 function JsonTreeNode({
@@ -277,6 +291,7 @@ function JsonTreeNode({
   depth,
   collapseLevel,
   onUpdateValue,
+  readOnly = false,
 }: JsonTreeNodeProps) {
   const isObject = value !== null && typeof value === 'object';
   const isArray = Array.isArray(value);
@@ -349,6 +364,7 @@ function JsonTreeNode({
                   depth={depth + 1}
                   collapseLevel={collapseLevel}
                   onUpdateValue={onUpdateValue}
+                  readOnly={readOnly}
                 />
               );
             })}
@@ -374,18 +390,22 @@ function JsonTreeNode({
         <div className="flex items-center space-x-1.5">
           {/* Color swatch */}
           <div
-            onClick={() => colorInputRef.current?.click()}
-            className="w-4 h-4 rounded border border-white/20 shadow-sm cursor-pointer hover:scale-110 transition-transform relative inline-flex items-center justify-center shrink-0"
+            onClick={() => !readOnly && colorInputRef.current?.click()}
+            className={`w-4 h-4 rounded border border-white/20 shadow-sm relative inline-flex items-center justify-center shrink-0 ${
+              readOnly ? 'cursor-default' : 'cursor-pointer hover:scale-110 transition-transform'
+            }`}
             style={{ backgroundColor: value }}
-            title={`Click to change color (${value})`}
+            title={readOnly ? `Color: ${value}` : `Click to change color (${value})`}
           >
-            <input
-              ref={colorInputRef}
-              type="color"
-              value={value.length === 4 ? `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}` : value}
-              onChange={(e) => onUpdateValue(path, e.target.value)}
-              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer pointer-events-auto"
-            />
+            {!readOnly && (
+              <input
+                ref={colorInputRef}
+                type="color"
+                value={value.length === 4 ? `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}` : value}
+                onChange={(e) => onUpdateValue(path, e.target.value)}
+                className="opacity-0 absolute inset-0 w-full h-full cursor-pointer pointer-events-auto"
+              />
+            )}
           </div>
 
           <span className="text-emerald-300 font-bold">&quot;{value}&quot;</span>

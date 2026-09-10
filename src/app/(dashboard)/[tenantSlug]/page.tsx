@@ -10,29 +10,38 @@ interface PageProps {
  */
 export default async function TenantRootPage({ params }: PageProps) {
   const { tenantSlug } = await params;
-
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect(`/login?next=/${tenantSlug}`);
-  }
-
   const service = createServiceClient();
 
   // Find the tenant (active only)
   const { data: tenant } = await service
     .from('tenants')
-    .select('id, slug')
+    .select('id, slug, tier, metadata')
     .eq('slug', tenantSlug)
     .is('deleted_at', null)
     .maybeSingle();
 
+  const isPublic =
+    tenant &&
+    (tenant.slug === 'sunshade' ||
+      tenant.tier === 'demo' ||
+      Boolean(tenant.metadata?.is_public));
+
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user && !isPublic) {
+    redirect(`/login?next=/${tenantSlug}`);
+  }
+
   if (!tenant) {
-    // If workspace does not exist, resolve the user's actual active workspace
-    const { resolvePostAuthDestination } = await import('@/lib/auth');
-    const destination = await resolvePostAuthDestination(user.id);
-    redirect(destination.pathname);
+    if (user) {
+      // If workspace does not exist, resolve the user's actual active workspace
+      const { resolvePostAuthDestination } = await import('@/lib/auth');
+      const destination = await resolvePostAuthDestination(user.id);
+      redirect(destination.pathname);
+    } else {
+      redirect('/login');
+    }
   }
 
   // Get first active project
@@ -49,6 +58,11 @@ export default async function TenantRootPage({ params }: PageProps) {
     redirect(`/${tenantSlug}/${project.slug}`);
   }
 
-  // Tenant exists but no projects yet — route to workspace settings
+  // Tenant exists but no projects yet
+  if (!user) {
+    redirect(`/${tenantSlug}/portfolio`);
+  }
+
+  // Route authenticated user to workspace settings
   redirect(`/${tenantSlug}/settings`);
 }

@@ -12,6 +12,8 @@ import {
 } from '@/lib/bulk-items';
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
+import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
+import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
 
 export async function GET(req: NextRequest) {
@@ -298,7 +300,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, prev_order, next_order } = body;
+    const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, order_index, prev_order, next_order } = body;
 
     if (!title) {
       return NextResponse.json({ error: '"title" is required' }, { status: 400 });
@@ -357,7 +359,9 @@ export async function POST(req: NextRequest) {
 
     // Calculate order index
     let calculatedOrder = calculateOrderIndex(prev_order, next_order);
-    if (!prev_order && !next_order) {
+    if (typeof order_index === 'number' && !isNaN(order_index)) {
+      calculatedOrder = order_index;
+    } else if (!prev_order && !next_order) {
       const { data: lastItem } = await supabaseAdmin
         .from('work_items')
         .select('order_index')
@@ -368,11 +372,17 @@ export async function POST(req: NextRequest) {
       calculatedOrder = lastItem?.order_index ? lastItem.order_index + 1000.0 : 1000.0;
     }
 
+    let resolvedExternalRefId = external_ref_id?.trim() || null;
+    if (!resolvedExternalRefId) {
+      const prefix = deriveProjectPrefix({ slug: project_slug, settings: projectSettings });
+      resolvedExternalRefId = await generateNextSequentialRef(projId, prefix);
+    }
+
     const payload = {
       tenant_id: authCtx.tenant.id,
       project_id: projId,
       parent_id: parent_id || null,
-      external_ref_id: external_ref_id || null,
+      external_ref_id: resolvedExternalRefId,
       item_type: resolvedType,
       status: resolvedStatus,
       title,
@@ -471,6 +481,7 @@ export async function PATCH(req: NextRequest) {
       item_type,
       assignee,
       metadata,
+      order_index,
       prev_order,
       next_order,
       parent_id,
@@ -501,6 +512,13 @@ export async function PATCH(req: NextRequest) {
       .single();
 
     const projectSettings = project?.settings;
+
+    if (isItemImmutableDueToCompletedSprint(existingItem, projectSettings)) {
+      return NextResponse.json(
+        { error: `Item "${existingItem.title || existingItem.id}" was completed in closed sprint "${existingItem.metadata?.sprint}" and is immutable.` },
+        { status: 403 }
+      );
+    }
 
     const updateFields: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -620,7 +638,9 @@ export async function PATCH(req: NextRequest) {
       updateFields.parent_id = null;
     }
 
-    if (prev_order !== undefined || next_order !== undefined) {
+    if (typeof order_index === 'number' && !isNaN(order_index)) {
+      updateFields.order_index = order_index;
+    } else if (prev_order !== undefined || next_order !== undefined) {
       updateFields.order_index = calculateOrderIndex(prev_order, next_order);
     }
 
@@ -702,6 +722,28 @@ export async function DELETE(req: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: '"id" is required' }, { status: 400 });
+    }
+
+    // Check immutability if item was completed in a closed sprint
+    const { data: existingItem } = await supabaseAdmin
+      .from('work_items')
+      .select('id, project_id, title, status, metadata')
+      .eq('id', id)
+      .eq('tenant_id', authCtx.tenant.id)
+      .single();
+
+    if (existingItem) {
+      const { data: proj } = await supabaseAdmin
+        .from('projects')
+        .select('id, settings')
+        .eq('id', existingItem.project_id)
+        .single();
+      if (isItemImmutableDueToCompletedSprint(existingItem as any, proj?.settings)) {
+        return NextResponse.json(
+          { error: `Item "${existingItem.title || existingItem.id}" was completed in closed sprint "${existingItem.metadata?.sprint}" and is immutable.` },
+          { status: 403 }
+        );
+      }
     }
 
     // Soft-delete: set deleted_at timestamp, do NOT destroy the row
