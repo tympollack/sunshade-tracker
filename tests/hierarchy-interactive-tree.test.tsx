@@ -484,11 +484,53 @@ describe('Hierarchy Tree UI Lines & Guide Rails - TASK-TRK-HIER-TREE-LINES-UI', 
     // Intermediate sibling (Story 1) should have continuation spine
     const continuation = screen.getByTestId('branch-connector-continuation');
     expect(continuation).toBeInTheDocument();
-    expect(continuation).toHaveClass('absolute top-1/2 bottom-0 left-0 w-[2px] bg-slate-700');
+    expect(continuation).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none');
+    expect(continuation).toHaveStyle({ left: '28px' });
 
     // Both Story 1 and Story 2 have branch-connectors
     const connectors = screen.getAllByTestId('branch-connector');
     expect(connectors).toHaveLength(2);
+  });
+
+  it('maintains continuous vertical guide spine across open inline child creation form on intermediate nodes', async () => {
+    const parentNode: WorkItemNode = {
+      ...mockItem({ id: 'epic-1', title: 'Main Epic', item_type: 'epic' }),
+      depth: 0,
+      children: [
+        {
+          ...mockItem({ id: 'story-1', title: 'Story 1', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [],
+        },
+        {
+          ...mockItem({ id: 'story-2', title: 'Story 2', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [],
+        },
+      ],
+    };
+
+    render(
+      <TreeNode
+        item={parentNode}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        members={mockMembers}
+        onCreateChild={vi.fn()}
+      />
+    );
+
+    // Open inline child creation form on intermediate sibling (Story 1)
+    const quickAddBtn = screen.getByTestId('add-child-btn-story-1');
+    fireEvent.click(quickAddBtn);
+
+    expect(screen.getByTestId('inline-create-child-form')).toBeInTheDocument();
+
+    // Sibling continuation spine is rendered in the node content container and spans top-0 to bottom-0 across both row and form
+    const continuation = screen.getByTestId('branch-connector-continuation');
+    expect(continuation).toBeInTheDocument();
+    expect(continuation).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none');
+    expect(continuation).toHaveStyle({ left: '28px' });
   });
 
   it('renders ancestor vertical guide rails for multi-level nested descendants (depth >= 2)', () => {

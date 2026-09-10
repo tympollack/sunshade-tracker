@@ -212,6 +212,15 @@ export function TreeNode({
           );
         })}
 
+        {/* Current depth sibling continuation spine for intermediate nodes (spans card row and inline child form) */}
+        {!isLastChild && item.depth > 0 && (
+          <div
+            data-testid="branch-connector-continuation"
+            className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
+            style={{ left: `${item.depth * 28}px` }}
+          />
+        )}
+
         <div
           className="flex items-center gap-3 transition-all group"
           style={{ marginLeft: `${item.depth * 28}px` }}
@@ -228,13 +237,6 @@ export function TreeNode({
                   isLastChild ? 'rounded-bl-sm' : ''
                 }`}
               />
-              {/* Bottom-half vertical spine continuing down for intermediate siblings (├──) */}
-              {!isLastChild && (
-                <div
-                  data-testid="branch-connector-continuation"
-                  className="absolute top-1/2 bottom-0 left-0 w-[2px] bg-slate-700"
-                />
-              )}
             </div>
           )}
 
