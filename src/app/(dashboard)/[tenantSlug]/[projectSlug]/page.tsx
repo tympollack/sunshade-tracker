@@ -38,8 +38,8 @@ import {
   Check,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
-import { buildTree } from '@/lib/tree';
-import { calculateOrderIndex } from '@/lib/fractional-index';
+import { buildTree, isDescendantOf } from '@/lib/tree';
+import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
@@ -139,6 +139,76 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [items, selectedSprint]);
 
   const treeItems = useMemo(() => buildTree(treeFilteredItems), [treeFilteredItems]);
+  const allTreeItems = useMemo(() => buildTree(items), [items]);
+
+  // Interactive Hierarchy Tree states (STORY-TRK-HIERARCHY-UX)
+  const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = localStorage.getItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
+      setCollapsedTreeNodes(stored ? new Set(JSON.parse(stored)) : new Set());
+    } catch {
+      setCollapsedTreeNodes(new Set());
+    }
+  }, [projectSlug]);
+
+  const [treeDraggedItemId, setTreeDraggedItemId] = useState<string | null>(null);
+  const [isTreeRootOver, setIsTreeRootOver] = useState(false);
+
+  const handleToggleCollapseTreeNode = (nodeId: string) => {
+    setCollapsedTreeNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      try {
+        localStorage.setItem(
+          `tracker_collapsed_tree_nodes_${projectSlug}`,
+          JSON.stringify(Array.from(next))
+        );
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleExpandAllTreeNodes = () => {
+    setCollapsedTreeNodes(new Set());
+    try {
+      localStorage.removeItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
+    } catch {}
+  };
+
+  const handleCollapseAllTreeNodes = () => {
+    const parentIds = new Set<string>();
+    const collectParents = (nodes: WorkItemNode[]) => {
+      for (const n of nodes) {
+        if (n.children && n.children.length > 0) {
+          parentIds.add(n.id);
+          collectParents(n.children);
+        }
+      }
+    };
+    collectParents(treeItems);
+    setCollapsedTreeNodes(parentIds);
+    try {
+      localStorage.setItem(
+        `tracker_collapsed_tree_nodes_${projectSlug}`,
+        JSON.stringify(Array.from(parentIds))
+      );
+    } catch {}
+  };
 
   // Sprint planning extended states
   const [isManageSprintsOpen, setIsManageSprintsOpen] = useState(false);
@@ -151,6 +221,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       return new Set();
     }
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(`tracker_collapsed_sprints_${projectSlug}`);
+      setCollapsedSprints(stored ? new Set(JSON.parse(stored)) : new Set());
+    } catch {
+      setCollapsedSprints(new Set());
+    }
+  }, [projectSlug]);
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
@@ -924,6 +1004,273 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       if (!res.ok) fetchData();
     } catch {
       fetchData();
+    }
+  };
+
+  // ─── Hierarchy Tree Actions (STORY-TRK-HIERARCHY-UX) ─────────────────────
+  const handleTreeUpdateAssignee = async (itemId: string, newAssignee: string | null) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+
+    if (isItemImmutableDueToCompletedSprint(item, getItemProjectSettings(item))) {
+      setBulkToast('Completed items in closed sprints are immutable.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
+
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, assignee: newAssignee } : it))
+    );
+
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: itemId, assignee: newAssignee }),
+      });
+      if (!res.ok) fetchData();
+    } catch {
+      fetchData();
+    }
+  };
+
+  const handleTreeCreateChild = async (parentId: string, title: string, itemType: string) => {
+    const parent = items.find((it) => it.id === parentId);
+    if (!parent) return;
+
+    const parentProjectSettings = getItemProjectSettings(parent);
+    const siblings = items.filter((it) => it.parent_id === parentId);
+    const maxOrder = siblings.reduce((max, it) => Math.max(max, it.order_index ?? 0), 0);
+    const nextOrder = maxOrder + DEFAULT_ORDER_STEP;
+
+    const sprintToAssign =
+      parent.metadata?.sprint ||
+      (selectedSprint !== 'all' && selectedSprint !== '__none__' ? selectedSprint : undefined);
+
+    const defaultStatus =
+      (parentProjectSettings.statuses && parentProjectSettings.statuses[0]?.id) || 'not_started';
+
+    const payload: Partial<WorkItem> & { project_id: string; prev_order?: number } = {
+      project_id: parent.project_id,
+      parent_id: parentId,
+      title,
+      item_type: itemType,
+      status: defaultStatus,
+      order_index: nextOrder,
+      prev_order: maxOrder > 0 ? maxOrder : undefined,
+      metadata: sprintToAssign ? { sprint: sprintToAssign } : {},
+    };
+
+    const res = await apiFetch('/api/v1/items', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to create child item (${res.status})`);
+    }
+    const created = await res.json();
+    if (created.item) {
+      setItems((prev) => [...prev, created.item]);
+      // Auto-expand parent so new child is visible
+      setCollapsedTreeNodes((prev) => {
+        const next = new Set(prev);
+        next.delete(parentId);
+        try {
+          localStorage.setItem(
+            `tracker_collapsed_tree_nodes_${projectSlug}`,
+            JSON.stringify(Array.from(next))
+          );
+        } catch {}
+        return next;
+      });
+    } else {
+      fetchData();
+    }
+  };
+
+  const handleTreeReparent = async (
+    draggedId: string,
+    targetId: string | null,
+    position: 'inside' | 'before' | 'after'
+  ) => {
+    const draggedItem = items.find((it) => it.id === draggedId);
+    if (!draggedItem) return;
+
+    const draggedProjectSettings = getItemProjectSettings(draggedItem);
+
+    if (isItemImmutableDueToCompletedSprint(draggedItem, draggedProjectSettings)) {
+      setBulkToast('Completed items in closed sprints are immutable.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
+
+    // Root unnesting
+    if (!targetId) {
+      const rootSiblings = items
+        .filter((it) => !it.parent_id && it.id !== draggedId)
+        .sort((a, b) => a.order_index - b.order_index);
+
+      const prevRoot = rootSiblings.length > 0 ? rootSiblings[rootSiblings.length - 1] : null;
+      const newOrderIndex = prevRoot
+        ? calculateOrderIndex(prevRoot.order_index, null)
+        : DEFAULT_ORDER_STEP;
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === draggedId ? { ...it, parent_id: null, order_index: newOrderIndex } : it
+        )
+      );
+
+      try {
+        const res = await apiFetch('/api/v1/items', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: draggedId,
+            parent_id: null,
+            order_index: newOrderIndex,
+            prev_order: prevRoot?.order_index,
+          }),
+        });
+        if (!res.ok) fetchData();
+      } catch {
+        fetchData();
+      }
+      return;
+    }
+
+    if (draggedId === targetId) return;
+    const targetItem = items.find((it) => it.id === targetId);
+    if (!targetItem) return;
+
+    // Disallow cross-project reparenting in portfolio view
+    if (draggedItem.project_id !== targetItem.project_id) {
+      setBulkToast('Cannot move items between different projects in the hierarchy tree.');
+      setTimeout(() => setBulkToast(null), 4000);
+      return;
+    }
+
+    // Cycle prevention: cannot nest into its own descendant across all items
+    if (isDescendantOf(allTreeItems, draggedId, targetId)) {
+      setBulkToast('Cannot move an item into its own descendant.');
+      setTimeout(() => setBulkToast(null), 3000);
+      return;
+    }
+
+    if (position === 'inside') {
+      const validation = validateHierarchyNesting(
+        targetItem.item_type,
+        draggedItem.item_type,
+        draggedProjectSettings.hierarchy
+      );
+      if (!validation.valid) {
+        setBulkToast(validation.message || 'Invalid hierarchy nesting');
+        setTimeout(() => setBulkToast(null), 4000);
+        return;
+      }
+
+      const existingChildren = items
+        .filter((it) => it.parent_id === targetId && it.id !== draggedId)
+        .sort((a, b) => a.order_index - b.order_index);
+
+      const prevChild = existingChildren.length > 0 ? existingChildren[existingChildren.length - 1] : null;
+      const newOrderIndex = prevChild
+        ? calculateOrderIndex(prevChild.order_index, null)
+        : DEFAULT_ORDER_STEP;
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === draggedId ? { ...it, parent_id: targetId, order_index: newOrderIndex } : it
+        )
+      );
+
+      // Auto-expand target
+      setCollapsedTreeNodes((prev) => {
+        const next = new Set(prev);
+        next.delete(targetId);
+        try {
+          localStorage.setItem(
+            `tracker_collapsed_tree_nodes_${projectSlug}`,
+            JSON.stringify(Array.from(next))
+          );
+        } catch {}
+        return next;
+      });
+
+      try {
+        const res = await apiFetch('/api/v1/items', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: draggedId,
+            parent_id: targetId,
+            order_index: newOrderIndex,
+            prev_order: prevChild?.order_index,
+          }),
+        });
+        if (!res.ok) fetchData();
+      } catch {
+        fetchData();
+      }
+    } else {
+      const newParentId = targetItem.parent_id;
+
+      if (newParentId) {
+        const parentItem = items.find((it) => it.id === newParentId);
+        if (parentItem) {
+          const validation = validateHierarchyNesting(
+            parentItem.item_type,
+            draggedItem.item_type,
+            draggedProjectSettings.hierarchy
+          );
+          if (!validation.valid) {
+            setBulkToast(validation.message || 'Invalid hierarchy nesting');
+            setTimeout(() => setBulkToast(null), 4000);
+            return;
+          }
+        }
+      }
+
+      const siblings = items
+        .filter((it) => it.parent_id === newParentId && it.id !== draggedId)
+        .sort((a, b) => a.order_index - b.order_index);
+
+      const targetIdx = siblings.findIndex((s) => s.id === targetId);
+      let newOrderIndex: number;
+      let prevOrder: number | undefined;
+      let nextOrder: number | undefined;
+
+      if (position === 'before') {
+        const prevSibling = targetIdx > 0 ? siblings[targetIdx - 1] : null;
+        prevOrder = prevSibling?.order_index;
+        nextOrder = targetItem.order_index;
+        newOrderIndex = calculateOrderIndex(prevOrder, nextOrder);
+      } else {
+        const nextSibling = targetIdx < siblings.length - 1 ? siblings[targetIdx + 1] : null;
+        prevOrder = targetItem.order_index;
+        nextOrder = nextSibling?.order_index;
+        newOrderIndex = calculateOrderIndex(prevOrder, nextOrder);
+      }
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === draggedId ? { ...it, parent_id: newParentId, order_index: newOrderIndex } : it
+        )
+      );
+
+      try {
+        const res = await apiFetch('/api/v1/items', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: draggedId,
+            parent_id: newParentId,
+            order_index: newOrderIndex,
+            prev_order: prevOrder,
+            next_order: nextOrder,
+          }),
+        });
+        if (!res.ok) fetchData();
+      } catch {
+        fetchData();
+      }
     }
   };
 
@@ -2539,6 +2886,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                <div className="flex items-center space-x-1.5 border-r border-slate-800 pr-3">
+                  <button
+                    type="button"
+                    onClick={handleExpandAllTreeNodes}
+                    className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    data-testid="tree-expand-all-btn"
+                  >
+                    Expand All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCollapseAllTreeNodes}
+                    className="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    data-testid="tree-collapse-all-btn"
+                  >
+                    Collapse All
+                  </button>
+                </div>
                 <div className="flex items-center space-x-2">
                   <span className="text-xs text-slate-400">Sprint:</span>
                   <select
@@ -2555,13 +2920,52 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ))}
                   </select>
                 </div>
-                <span className="text-xs font-mono text-emerald-400">
+                <span className="text-xs font-mono text-emerald-400 whitespace-nowrap shrink-0">
                   Total Items: {treeFilteredItems.length}
+                  {selectedSprint !== 'all' && (
+                    <span className="text-slate-400 font-normal ml-1">
+                      (filtered by {selectedSprint === '__none__' ? 'Backlog' : selectedSprint})
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
 
             <div className="space-y-3 pt-4">
+              {/* Root Drop Zone for unnesting */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  setIsTreeRootOver(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsTreeRootOver(false);
+                }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  setIsTreeRootOver(false);
+                  const draggedId = e.dataTransfer.getData('text/plain') || treeDraggedItemId;
+                  if (!draggedId) return;
+                  await handleTreeReparent(draggedId, null, 'inside');
+                }}
+                data-testid="tree-root-drop-zone"
+                className={`p-3 rounded-lg border-2 border-dashed transition-all text-center text-xs font-medium cursor-pointer ${
+                  isTreeRootOver
+                    ? 'border-emerald-400 bg-emerald-950/40 text-emerald-300 shadow-md shadow-emerald-500/10'
+                    : treeDraggedItemId
+                    ? 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-emerald-500/50 hover:text-slate-300'
+                    : 'border-slate-800/60 bg-slate-950/30 text-slate-500'
+                }`}
+              >
+                <span>
+                  {isTreeRootOver
+                    ? 'Drop to move to root level (unnest)'
+                    : 'Drag items here to unnest to root level'}
+                </span>
+              </div>
+
               {loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="h-14 rounded-lg bg-slate-950 border border-slate-800 animate-pulse" />
@@ -2581,6 +2985,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       setFocusedDeviationId(dev?.id || null);
                       setIsReconciliationModalOpen(true);
                     }}
+                    statuses={getItemStatuses(rootNode)}
+                    hierarchy={getItemHierarchy(rootNode)}
+                    getItemStatuses={getItemStatuses}
+                    getItemHierarchy={getItemHierarchy}
+                    isFilteredBySprint={selectedSprint !== 'all'}
+                    members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
+                    isImmutable={(it) => isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it))}
+                    collapsedNodeIds={collapsedTreeNodes}
+                    onToggleCollapse={handleToggleCollapseTreeNode}
+                    onUpdateStatus={handleUpdateStatus}
+                    onUpdateAssignee={handleTreeUpdateAssignee}
+                    onCreateChild={handleTreeCreateChild}
+                    onReparentItem={handleTreeReparent}
+                    onEditItem={(item) => setEditingItem(item)}
+                    isDraggingItemId={treeDraggedItemId}
+                    onDragStartNode={(e, item) => setTreeDraggedItemId(item.id)}
+                    onDragEndNode={() => setTreeDraggedItemId(null)}
                   />
                 ))
               )}
