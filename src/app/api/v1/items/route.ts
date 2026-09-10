@@ -300,7 +300,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, prev_order, next_order } = body;
+    const { project_id, project_slug, parent_id, external_ref_id, item_type, status, title, description, assignee, metadata, order_index, prev_order, next_order } = body;
 
     if (!title) {
       return NextResponse.json({ error: '"title" is required' }, { status: 400 });
@@ -359,7 +359,9 @@ export async function POST(req: NextRequest) {
 
     // Calculate order index
     let calculatedOrder = calculateOrderIndex(prev_order, next_order);
-    if (!prev_order && !next_order) {
+    if (typeof order_index === 'number' && !isNaN(order_index)) {
+      calculatedOrder = order_index;
+    } else if (!prev_order && !next_order) {
       const { data: lastItem } = await supabaseAdmin
         .from('work_items')
         .select('order_index')
@@ -479,6 +481,7 @@ export async function PATCH(req: NextRequest) {
       item_type,
       assignee,
       metadata,
+      order_index,
       prev_order,
       next_order,
       parent_id,
@@ -635,7 +638,9 @@ export async function PATCH(req: NextRequest) {
       updateFields.parent_id = null;
     }
 
-    if (prev_order !== undefined || next_order !== undefined) {
+    if (typeof order_index === 'number' && !isNaN(order_index)) {
+      updateFields.order_index = order_index;
+    } else if (prev_order !== undefined || next_order !== undefined) {
       updateFields.order_index = calculateOrderIndex(prev_order, next_order);
     }
 

@@ -346,4 +346,146 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     const json = await res.json();
     expect(json.error).toContain("Invalid item_type 'nonexistent_type'");
   });
+
+  it('should accept and persist direct order_index on PATCH', async () => {
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    let capturedUpdates: any = null;
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: sampleItems[1], error: null }),
+              })),
+            })),
+          })),
+          update: vi.fn((updates: any) => {
+            capturedUpdates = updates;
+            return {
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'task-1', ...updates },
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            };
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items', {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'task-1',
+        order_index: 3500.0,
+      }),
+    });
+
+    const res = await patchItemHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.item.order_index).toBe(3500.0);
+    expect(capturedUpdates.order_index).toBe(3500.0);
+  });
+
+  it('should accept and persist direct order_index on POST', async () => {
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    let capturedPayload: any = null;
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        const b: any = {
+          eq: vi.fn(() => b),
+          single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+        };
+        return {
+          select: vi.fn(() => b),
+        } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: { item_type: 'epic' }, error: null }),
+              })),
+            })),
+          })),
+          insert: vi.fn((payload: any) => {
+            capturedPayload = payload;
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'new-task-1', ...payload },
+                  error: null,
+                }),
+              })),
+            };
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_id: mockProject.id,
+        parent_id: 'epic-1',
+        title: 'New Subtask',
+        item_type: 'task',
+        external_ref_id: 'TASK-99',
+        order_index: 2500.0,
+      }),
+    });
+
+    const res = await createItemHandler(req);
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.item.order_index).toBe(2500.0);
+    expect(capturedPayload.order_index).toBe(2500.0);
+  });
 });

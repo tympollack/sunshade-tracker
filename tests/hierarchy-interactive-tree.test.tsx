@@ -1,7 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, createEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { buildTree, isDescendantOf, flattenTree } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
 import { TreeNode } from '@/components/TreeNode';
@@ -56,7 +55,7 @@ describe('Hierarchy UX - TASK-TRK-HIER-ROLLUP-METRICS', () => {
     expect(epicNode.descendantCount).toBe(3);
     expect(epicNode.rollupPoints).toBe(10);
 
-    const storyNode = epicNode.children[0];
+    const storyNode = epicNode.children![0];
     expect(storyNode.descendantCount).toBe(2);
     expect(storyNode.rollupPoints).toBe(10); // 5 own + 3 + 2 = 10 pts
 
@@ -72,6 +71,30 @@ describe('Hierarchy UX - TASK-TRK-HIER-ROLLUP-METRICS', () => {
     // Epic displays rollup badges
     expect(screen.getByText('3 subtasks')).toBeInTheDocument();
     expect(screen.getAllByText('10 pts rollup')).toHaveLength(2);
+  });
+
+  it('indicates sprint filtering in rollup badges tooltip when isFilteredBySprint is true', () => {
+    const items: WorkItem[] = [
+      mockItem({ id: 'epic-1', title: 'Main Epic', item_type: 'epic', metadata: { points: 0 } }),
+      mockItem({ id: 'story-1', title: 'User Auth', item_type: 'story', parent_id: 'epic-1', metadata: { story_points: 5 } }),
+    ];
+
+    const tree = buildTree(items);
+
+    render(
+      <TreeNode
+        item={tree[0]}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        isFilteredBySprint={true}
+      />
+    );
+
+    const subtaskBadge = screen.getByTestId('tree-node-subtasks-badge');
+    expect(subtaskBadge).toHaveAttribute('title', '1 descendant item(s) (sprint filtered)');
+
+    const rollupBadges = screen.getAllByTestId('tree-node-rollup-points-badge');
+    expect(rollupBadges[0]).toHaveAttribute('title', 'Subtree total: 5 pts (sprint filtered)');
   });
 });
 
@@ -222,6 +245,49 @@ describe('Hierarchy UX - TASK-TRK-HIER-CREATE-CHILD', () => {
       expect(onCreateChild).toHaveBeenCalledWith('epic-1', 'Sub Feature Story', 'story');
     });
   });
+
+  it('hides quick child add button on leaf nodes with no allowed child types', () => {
+    // In mockHierarchy: Task has no types listing it as allowed_parent
+    const leafItem = buildTree([mockItem({ id: 'task-1', title: 'Leaf Task', item_type: 'task' })])[0];
+
+    render(
+      <TreeNode
+        item={leafItem}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        onCreateChild={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId('add-child-btn-task-1')).not.toBeInTheDocument();
+  });
+
+  it('keeps inline form open and displays error feedback when child creation fails', async () => {
+    const onCreateChild = vi.fn().mockRejectedValue(new Error('Invalid item type for project'));
+    const item = buildTree([mockItem({ id: 'epic-1', title: 'Feature Epic', item_type: 'epic' })])[0];
+
+    render(
+      <TreeNode
+        item={item}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        onCreateChild={onCreateChild}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-1'));
+    const titleInput = screen.getByTestId('inline-create-child-input');
+    fireEvent.change(titleInput, { target: { value: 'Failing Child Story' } });
+
+    fireEvent.click(screen.getByTestId('inline-create-child-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('inline-create-child-error')).toHaveTextContent('Invalid item type for project');
+    });
+
+    // Input is preserved and form remains open
+    expect(screen.getByTestId('inline-create-child-input')).toHaveValue('Failing Child Story');
+  });
 });
 
 describe('Hierarchy UX - TASK-TRK-HIER-DND-REORDER', () => {
@@ -323,6 +389,25 @@ describe('Hierarchy UX - TASK-TRK-HIER-DND-REORDER', () => {
     expect(isDescendantOf(tree, 'child-1', 'grandchild-1')).toBe(true);
     // parent-1 is NOT a descendant of grandchild-1
     expect(isDescendantOf(tree, 'grandchild-1', 'parent-1')).toBe(false);
+  });
+
+  it('prevents cycle reparenting across sprint boundaries using allTreeItems', () => {
+    // Parent is in Sprint 1, Child is in Sprint 2, Grandchild is in Sprint 1
+    const allItems: WorkItem[] = [
+      mockItem({ id: 'parent-1', title: 'Parent Node', item_type: 'epic', metadata: { sprint: 'Sprint 1' } }),
+      mockItem({ id: 'child-1', title: 'Child Node', item_type: 'story', parent_id: 'parent-1', metadata: { sprint: 'Sprint 2' } }),
+      mockItem({ id: 'grandchild-1', title: 'Grandchild Node', item_type: 'task', parent_id: 'child-1', metadata: { sprint: 'Sprint 1' } }),
+    ];
+
+    // Filtered tree for Sprint 1 only
+    const sprint1Items = allItems.filter((it) => it.metadata?.sprint === 'Sprint 1');
+    const filteredTree = buildTree(sprint1Items);
+    // Because child-1 is in Sprint 2, filteredTree separates parent-1 and grandchild-1
+    expect(isDescendantOf(filteredTree, 'parent-1', 'grandchild-1')).toBe(false);
+
+    // But with allTreeItems, descendant relationship is correctly detected across sprint filters!
+    const allTreeItems = buildTree(allItems);
+    expect(isDescendantOf(allTreeItems, 'parent-1', 'grandchild-1')).toBe(true);
   });
 
   it('validates hierarchy constraints for allowed parents', () => {

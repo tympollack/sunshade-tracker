@@ -23,6 +23,9 @@ export interface TreeNodeProps {
   // STORY-TRK-HIERARCHY-UX interactive props
   statuses?: StatusDefinition[];
   hierarchy?: HierarchyLevel[];
+  getItemStatuses?: (item: WorkItemNode) => StatusDefinition[];
+  getItemHierarchy?: (item: WorkItemNode) => HierarchyLevel[];
+  isFilteredBySprint?: boolean;
   members?: Array<{ id: string; name: string }>;
   isImmutable?: boolean | ((item: WorkItemNode) => boolean);
   collapsedNodeIds?: Set<string>;
@@ -48,6 +51,9 @@ export function TreeNode({
   onOpenReconciliation,
   statuses = [],
   hierarchy = [],
+  getItemStatuses,
+  getItemHierarchy,
+  isFilteredBySprint = false,
   members = [],
   isImmutable = false,
   collapsedNodeIds,
@@ -65,7 +71,12 @@ export function TreeNode({
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
   const [isCreatingChild, setIsCreatingChild] = useState(false);
   const [childTitle, setChildTitle] = useState('');
+  const [isSubmittingChild, setIsSubmittingChild] = useState(false);
+  const [childError, setChildError] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
+
+  const effectiveStatuses = getItemStatuses ? getItemStatuses(item) : statuses;
+  const effectiveHierarchy = getItemHierarchy ? getItemHierarchy(item) : hierarchy;
 
   const statusColor = getStatusColor ? getStatusColor(item.status) : null;
   const itemDeviations = deviations.filter((d) => d.itemId === item.id);
@@ -79,35 +90,40 @@ export function TreeNode({
 
   // Determine valid child item types from hierarchy rules
   const validChildTypes = React.useMemo(() => {
-    if (!hierarchy || hierarchy.length === 0) {
+    if (!effectiveHierarchy || effectiveHierarchy.length === 0) {
       return [{ type: 'task', label: 'Task' }];
     }
-    const childrenMatching = hierarchy.filter((h) =>
+    return effectiveHierarchy.filter((h) =>
       (h.allowed_parents || []).includes(item.item_type)
     );
-    if (childrenMatching.length > 0) {
-      return childrenMatching;
-    }
-    // Fallback: next hierarchy level by index
-    const currentIdx = hierarchy.findIndex((h) => h.type === item.item_type);
-    if (currentIdx !== -1 && currentIdx + 1 < hierarchy.length) {
-      return [hierarchy[currentIdx + 1]];
-    }
-    return hierarchy.filter((h) => h.type !== item.item_type);
-  }, [hierarchy, item.item_type]);
+  }, [effectiveHierarchy, item.item_type]);
 
   const [childType, setChildType] = useState(() => validChildTypes[0]?.type || 'task');
+
+  React.useEffect(() => {
+    if (validChildTypes.length > 0 && !validChildTypes.some((t) => t.type === childType)) {
+      setChildType(validChildTypes[0].type);
+    }
+  }, [validChildTypes, childType]);
 
   // Quick Child Submission
   const handleChildSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!childTitle.trim()) return;
+    if (!childTitle.trim() || isSubmittingChild) return;
 
-    if (onCreateChild) {
-      await onCreateChild(item.id, childTitle.trim(), childType);
+    setChildError(null);
+    setIsSubmittingChild(true);
+    try {
+      if (onCreateChild) {
+        await onCreateChild(item.id, childTitle.trim(), childType);
+      }
+      setChildTitle('');
+      setIsCreatingChild(false);
+    } catch (err: any) {
+      setChildError(err?.message || 'Failed to create child item');
+    } finally {
+      setIsSubmittingChild(false);
     }
-    setChildTitle('');
-    setIsCreatingChild(false);
   };
 
   // Drag and drop event handlers
@@ -314,7 +330,11 @@ export function TreeNode({
                 <span
                   data-testid="tree-node-subtasks-badge"
                   className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0"
-                  title={`${item.descendantCount} descendant item(s)`}
+                  title={
+                    isFilteredBySprint
+                      ? `${item.descendantCount} descendant item(s) (sprint filtered)`
+                      : `${item.descendantCount} descendant item(s)`
+                  }
                 >
                   {item.descendantCount} {item.descendantCount === 1 ? 'subtask' : 'subtasks'}
                 </span>
@@ -324,7 +344,11 @@ export function TreeNode({
                 <span
                   data-testid="tree-node-rollup-points-badge"
                   className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0"
-                  title={`Subtree total: ${item.rollupPoints} pts`}
+                  title={
+                    isFilteredBySprint
+                      ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
+                      : `Subtree total: ${item.rollupPoints} pts`
+                  }
                 >
                   {item.rollupPoints} pts rollup
                 </span>
@@ -364,7 +388,7 @@ export function TreeNode({
               )}
 
               {/* Status Selector */}
-              {statuses && statuses.length > 0 ? (
+              {effectiveStatuses && effectiveStatuses.length > 0 ? (
                 <select
                   value={item.status}
                   disabled={nodeIsImmutable}
@@ -384,7 +408,7 @@ export function TreeNode({
                   title={nodeIsImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
                   data-testid={`status-select-${item.id}`}
                 >
-                  {statuses.map((st) => (
+                  {effectiveStatuses.map((st) => (
                     <option
                       key={st.id}
                       value={st.id}
@@ -429,10 +453,13 @@ export function TreeNode({
               )}
 
               {/* Quick Add Child Button */}
-              {!nodeIsImmutable && onCreateChild && (
+              {!nodeIsImmutable && onCreateChild && validChildTypes.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setIsCreatingChild(!isCreatingChild)}
+                  onClick={() => {
+                    setIsCreatingChild(!isCreatingChild);
+                    setChildError(null);
+                  }}
                   className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                   title="Add child task"
                   data-testid={`add-child-btn-${item.id}`}
@@ -471,47 +498,63 @@ export function TreeNode({
       {isCreatingChild && (
         <form
           onSubmit={handleChildSubmit}
-          className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-900 border border-emerald-500/40 my-1 shadow-lg"
+          className="flex flex-col gap-1.5 p-2.5 rounded-lg bg-slate-900 border border-emerald-500/40 my-1 shadow-lg"
           style={{ marginLeft: `${(item.depth + 1) * 28}px` }}
           data-testid="inline-create-child-form"
         >
-          <span className="text-xs text-emerald-400 font-mono shrink-0">Add child:</span>
-          <select
-            value={childType}
-            onChange={(e) => setChildType(e.target.value)}
-            className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 shrink-0 cursor-pointer"
-            data-testid="inline-create-child-type-select"
-          >
-            {validChildTypes.map((t) => (
-              <option key={t.type} value={t.type}>
-                {t.label || t.type}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            autoFocus
-            value={childTitle}
-            onChange={(e) => setChildTitle(e.target.value)}
-            placeholder="Child item title..."
-            className="flex-1 text-xs bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
-            data-testid="inline-create-child-input"
-          />
-          <button
-            type="submit"
-            disabled={!childTitle.trim()}
-            className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-medium disabled:opacity-40 transition-colors cursor-pointer"
-            data-testid="inline-create-child-submit"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsCreatingChild(false)}
-            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors cursor-pointer"
-          >
-            Cancel
-          </button>
+          {childError && (
+            <div
+              className="text-xs text-rose-400 font-mono pl-1"
+              data-testid="inline-create-child-error"
+            >
+              {childError}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-emerald-400 font-mono shrink-0">Add child:</span>
+            <select
+              value={childType}
+              onChange={(e) => setChildType(e.target.value)}
+              disabled={isSubmittingChild}
+              className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 shrink-0 cursor-pointer disabled:opacity-50"
+              data-testid="inline-create-child-type-select"
+            >
+              {validChildTypes.map((t) => (
+                <option key={t.type} value={t.type}>
+                  {t.label || t.type}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              autoFocus
+              value={childTitle}
+              onChange={(e) => setChildTitle(e.target.value)}
+              disabled={isSubmittingChild}
+              placeholder="Child item title..."
+              className="flex-1 text-xs bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+              data-testid="inline-create-child-input"
+            />
+            <button
+              type="submit"
+              disabled={!childTitle.trim() || isSubmittingChild}
+              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-medium disabled:opacity-40 transition-colors cursor-pointer"
+              data-testid="inline-create-child-submit"
+            >
+              {isSubmittingChild ? 'Creating...' : 'Create'}
+            </button>
+            <button
+              type="button"
+              disabled={isSubmittingChild}
+              onClick={() => {
+                setIsCreatingChild(false);
+                setChildError(null);
+              }}
+              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
 
@@ -527,6 +570,9 @@ export function TreeNode({
               onOpenReconciliation={onOpenReconciliation}
               statuses={statuses}
               hierarchy={hierarchy}
+              getItemStatuses={getItemStatuses}
+              getItemHierarchy={getItemHierarchy}
+              isFilteredBySprint={isFilteredBySprint}
               members={members}
               isImmutable={isImmutable}
               collapsedNodeIds={collapsedNodeIds}
