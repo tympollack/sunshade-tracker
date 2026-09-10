@@ -453,3 +453,125 @@ describe('Hierarchy UX - TASK-TRK-HIER-DND-REORDER', () => {
   });
 });
 
+describe('Hierarchy Tree UI Lines & Guide Rails - TASK-TRK-HIER-TREE-LINES-UI', () => {
+  it('renders continuous vertical spine continuation on intermediate sibling nodes', () => {
+    const parentNode: WorkItemNode = {
+      ...mockItem({ id: 'epic-1', title: 'Main Epic', item_type: 'epic' }),
+      depth: 0,
+      children: [
+        {
+          ...mockItem({ id: 'story-1', title: 'Story 1', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [],
+        },
+        {
+          ...mockItem({ id: 'story-2', title: 'Story 2', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [],
+        },
+      ],
+    };
+
+    render(
+      <TreeNode
+        item={parentNode}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        members={mockMembers}
+      />
+    );
+
+    // Intermediate sibling (Story 1) should have continuation spine
+    const continuation = screen.getByTestId('branch-connector-continuation');
+    expect(continuation).toBeInTheDocument();
+    expect(continuation).toHaveClass('absolute top-1/2 bottom-0 left-0 w-[2px] bg-slate-700');
+
+    // Both Story 1 and Story 2 have branch-connectors
+    const connectors = screen.getAllByTestId('branch-connector');
+    expect(connectors).toHaveLength(2);
+  });
+
+  it('renders ancestor vertical guide rails for multi-level nested descendants (depth >= 2)', () => {
+    const multiLevelTree: WorkItemNode = {
+      ...mockItem({ id: 'epic-1', title: 'Main Epic', item_type: 'epic' }),
+      depth: 0,
+      children: [
+        {
+          ...mockItem({ id: 'story-1', title: 'Story 1', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [
+            {
+              ...mockItem({ id: 'task-1', title: 'Task 1', item_type: 'task', parent_id: 'story-1' }),
+              depth: 2,
+              children: [
+                {
+                  ...mockItem({ id: 'subtask-1', title: 'Subtask 1', item_type: 'task', parent_id: 'task-1' }),
+                  depth: 3,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          ...mockItem({ id: 'story-2', title: 'Story 2', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [],
+        },
+      ],
+    };
+
+    render(
+      <TreeNode
+        item={multiLevelTree}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        members={mockMembers}
+      />
+    );
+
+    // Story 1 is intermediate sibling of epic-1, so its descendants receive ancestorRail for depth 1 (colDepth 1 = 28px)
+    // Task 1 (depth 2) and subtask-1 (depth 3) render ancestor-rail-1
+    const ancestorRailCol1 = screen.getAllByTestId('ancestor-rail-1');
+    expect(ancestorRailCol1.length).toBeGreaterThanOrEqual(1);
+    expect(ancestorRailCol1[0]).toHaveStyle({ left: '28px' });
+    expect(ancestorRailCol1[0]).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700');
+  });
+
+  it('does not render ancestor guide rail when the preceding parent level was the last child', () => {
+    const terminalTree: WorkItemNode = {
+      ...mockItem({ id: 'epic-1', title: 'Main Epic', item_type: 'epic' }),
+      depth: 0,
+      children: [
+        {
+          // Only child at depth 1, so isLastChild is true
+          ...mockItem({ id: 'story-only', title: 'Only Story', item_type: 'story', parent_id: 'epic-1' }),
+          depth: 1,
+          children: [
+            {
+              ...mockItem({ id: 'task-only', title: 'Only Task', item_type: 'task', parent_id: 'story-only' }),
+              depth: 2,
+              children: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <TreeNode
+        item={terminalTree}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        members={mockMembers}
+      />
+    );
+
+    // Because Story-only is the last child of Epic (and only child), no spine continues down at depth 1
+    expect(screen.queryByTestId('ancestor-rail-1')).not.toBeInTheDocument();
+    // And Story-only has no sibling continuation
+    expect(screen.queryByTestId('branch-connector-continuation')).not.toBeInTheDocument();
+  });
+});
+
+
