@@ -28,8 +28,64 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
   try {
     const supabase = await createServerClient();
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    const service = supabaseAdmin;
+
+    // Determine which workspace to authorize against
+    const rawSlugHint =
+      req.headers.get('x-tenant-slug') ||
+      new URL(req.url).searchParams.get('tenant_slug');
+    const tenantSlugHint = rawSlugHint?.replace(/^@/, '');
+
+    // Helper to check public demo guest access
+    const checkPublicAccess = async (): Promise<AuthResult | null> => {
+      if (!tenantSlugHint) return null;
+
+      let publicQuery: any = service
+        .from('tenants')
+        .select('*')
+        .eq('slug', tenantSlugHint);
+
+      if (typeof publicQuery.is === 'function') {
+        publicQuery = publicQuery.is('deleted_at', null);
+      }
+
+      const { data: tenantData } = await publicQuery.maybeSingle();
+
+      const isPublicWorkspace =
+        tenantData &&
+        (tenantData.slug === 'sunshade' ||
+          tenantData.tier === 'demo' ||
+          Boolean(tenantData.metadata?.is_public));
+
+      if (isPublicWorkspace) {
+        if (req.method !== 'GET') {
+          return {
+            context: null,
+            errorResponse: NextResponse.json(
+              { error: 'The public demo workspace is read-only. Create your own workspace to make changes.' },
+              { status: 403 }
+            ),
+          };
+        }
+
+        return {
+          context: {
+            tenant: tenantData as Tenant,
+            userId: user?.id || null,
+            role: 'viewer',
+          },
+          errorResponse: null,
+        };
+      }
+
+      return null;
+    };
 
     if (userErr || !user) {
+      // Unauthenticated guest check: allow read-only access if target is a public/demo workspace
+      const publicResult = await checkPublicAccess();
+      if (publicResult) return publicResult;
+
       return {
         context: null,
         errorResponse: NextResponse.json(
@@ -38,13 +94,6 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
         ),
       };
     }
-
-    const service = supabaseAdmin;
-
-    // Determine which workspace to authorize against
-    const tenantSlugHint =
-      req.headers.get('x-tenant-slug') ||
-      new URL(req.url).searchParams.get('tenant_slug');
 
     let membershipQuery: any = service
       .from('tenant_members')
@@ -87,36 +136,9 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
         }
       }
 
-      // 2. Demo workspace allowance: 'sunshade' is the public demo workspace (read-only for guests)
-      if (tenantSlugHint === 'sunshade') {
-        if (req.method !== 'GET') {
-          return {
-            context: null,
-            errorResponse: NextResponse.json(
-              { error: 'The public demo workspace is read-only. Create your own workspace to make changes.' },
-              { status: 403 }
-            ),
-          };
-        }
-
-        let demoQuery: any = service
-          .from('tenants')
-          .select('*')
-          .eq('slug', 'sunshade');
-
-        if (typeof demoQuery.is === 'function') {
-          demoQuery = demoQuery.is('deleted_at', null);
-        }
-
-        const { data: demoTenant } = await demoQuery.maybeSingle();
-
-        if (demoTenant) {
-          return {
-            context: { tenant: demoTenant as Tenant, userId: user.id, role: 'viewer' },
-            errorResponse: null,
-          };
-        }
-      }
+      // 2. Public demo workspace allowance for authenticated non-members
+      const publicResult = await checkPublicAccess();
+      if (publicResult) return publicResult;
 
       return {
         context: null,
@@ -233,6 +255,11 @@ export async function authenticate(req: NextRequest): Promise<AuthResult> {
   const hasAuthCookie = cookieHeader.includes('sb-') || cookieHeader.includes('supabase');
 
   if (!authHeader && !xApiKey && !hasAuthCookie) {
+    // Allow GET requests to delegate to authenticateSession so public demo guest access can be resolved
+    if (req.method === 'GET') {
+      return authenticateSession(req);
+    }
+
     return {
       context: null,
       errorResponse: NextResponse.json(

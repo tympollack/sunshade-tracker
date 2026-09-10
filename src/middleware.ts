@@ -53,8 +53,61 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   // ─── Public routes — always allow through ───────────────────────────────
+  // Handle /@tenantSlug alias by redirecting to /tenantSlug
+  if (pathname.startsWith('/@')) {
+    const cleanPath = pathname.replace(/^\/@/, '/');
+    const redirectUrl = new URL(cleanPath, request.url);
+    redirectUrl.search = request.nextUrl.search;
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  // Public demo workspace guest access (e.g. /sunshade/portfolio, /sunshade/all, /sunshade/[project])
+  // Excludes administrative workspace settings which require auth
+  let isDemoGuestRoute =
+    (pathname === '/sunshade' || pathname.startsWith('/sunshade/')) &&
+    !pathname.startsWith('/sunshade/settings');
+
+  const pathParts = pathname.split('/').filter(Boolean);
+  const potentialSlug = pathParts[0]?.replace(/^@/, '');
+
+  if (
+    !isDemoGuestRoute &&
+    potentialSlug &&
+    !['login', 'auth', 'api', '_next', 'favicon', 'onboarding'].includes(potentialSlug) &&
+    !pathname.includes('/settings') &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY &&
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+  ) {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const admin = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        { db: { schema: 'tracker' }, auth: { persistSession: false, autoRefreshToken: false } }
+      );
+      const { data: tenant } = await admin
+        .from('tenants')
+        .select('slug, tier, metadata')
+        .eq('slug', potentialSlug)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (
+        tenant &&
+        (tenant.slug === 'sunshade' ||
+          tenant.tier === 'demo' ||
+          Boolean(tenant.metadata?.is_public))
+      ) {
+        isDemoGuestRoute = true;
+      }
+    } catch {
+      // Continue to protected check
+    }
+  }
+
   const isPublicRoute =
     pathname === '/' ||
+    isDemoGuestRoute ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth/') ||
     pathname.startsWith('/api/') || // All API routes handle their own auth (dual: session or API key)
@@ -74,7 +127,7 @@ export async function middleware(request: NextRequest) {
       // Pass through to LoginPage server component so resolvePostAuthDestination can redirect to their workspace
       return supabaseResponse;
     }
-    // For API routes, always pass through (route handlers do auth themselves)
+    // For API routes and public guest views, always pass through (route handlers do auth themselves)
     return supabaseResponse;
   }
 

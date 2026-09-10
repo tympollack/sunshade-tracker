@@ -41,6 +41,7 @@ interface WorkItemModalProps {
   currentUser?: { full_name?: string; email?: string };
   workspaceMembers?: { full_name: string; email?: string }[];
   tenantSlug?: string;
+  isReadOnly?: boolean;
 }
 
 export function WorkItemModal({
@@ -54,6 +55,7 @@ export function WorkItemModal({
   currentUser,
   workspaceMembers = [],
   tenantSlug,
+  isReadOnly = false,
 }: WorkItemModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -72,7 +74,8 @@ export function WorkItemModal({
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
-  const isLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
+  const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
+  const isLocked = isSprintLocked || isReadOnly;
 
   // Activity Log tab state
   const [activeTab, setActiveTab] = useState<'details' | 'activity'>('details');
@@ -611,9 +614,19 @@ export function WorkItemModal({
           ) : (
             <>
               {isLocked && (
-                <div className="p-3 bg-purple-950/70 border border-purple-800/60 rounded-xl text-purple-300 text-xs flex items-center space-x-2 animate-in fade-in">
-                  <Lock className="w-4 h-4 shrink-0 text-purple-400" />
-                  <span>This item was completed in closed sprint "{item?.metadata?.sprint}" and is immutable (read-only).</span>
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center space-x-2 animate-in fade-in ${
+                    isReadOnly
+                      ? 'bg-sky-950/70 border border-sky-800/60 text-sky-300'
+                      : 'bg-purple-950/70 border border-purple-800/60 text-purple-300'
+                  }`}
+                >
+                  <Lock className={`w-4 h-4 shrink-0 ${isReadOnly ? 'text-sky-400' : 'text-purple-400'}`} />
+                  <span>
+                    {isReadOnly
+                      ? 'This workspace is currently in read-only guest mode. Sign in to edit items.'
+                      : `This item was completed in closed sprint "${item?.metadata?.sprint}" and is immutable (read-only).`}
+                  </span>
                 </div>
               )}
 

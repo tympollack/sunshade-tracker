@@ -8,14 +8,21 @@ export async function GET(req: NextRequest) {
   const authCtx = auth.context;
 
   const { searchParams } = new URL(req.url);
-  const tenantSlugFilter = searchParams.get('tenant_slug');
+  const isArchived = searchParams.get('archived') === 'true';
 
-  const { data: projects, error } = await supabaseAdmin
+  let query: any = supabaseAdmin
     .from('projects')
     .select('*')
     .eq('tenant_id', authCtx.tenant.id)
-    .is('deleted_at', null) // exclude soft-deleted projects
     .order('created_at', { ascending: true });
+
+  if (isArchived) {
+    query = query.not('deleted_at', 'is', null);
+  } else {
+    query = query.is('deleted_at', null);
+  }
+
+  const { data: projects, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -86,12 +93,30 @@ export async function DELETE(req: NextRequest) {
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
+  if (authCtx.role === 'viewer') {
+    return NextResponse.json({ error: 'Viewers cannot archive projects' }, { status: 403 });
+  }
+
   try {
     const body = await req.json();
-    const { id } = body;
+    let { id, slug } = body;
+
+    if (!id && slug) {
+      const { data: projBySlug } = await supabaseAdmin
+        .from('projects')
+        .select('id')
+        .eq('tenant_id', authCtx.tenant.id)
+        .eq('slug', slug)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (projBySlug) {
+        id = projBySlug.id;
+      }
+    }
 
     if (!id) {
-      return NextResponse.json({ error: '"id" is required' }, { status: 400 });
+      return NextResponse.json({ error: '"id" or "slug" is required' }, { status: 400 });
     }
 
     const now = new Date().toISOString();

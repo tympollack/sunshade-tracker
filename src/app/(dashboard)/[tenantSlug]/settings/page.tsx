@@ -24,6 +24,10 @@ import {
   Sparkles,
   Bell,
   Mail,
+  Archive,
+  RotateCcw,
+  Globe,
+  Eye,
 } from 'lucide-react';
 import { UserMenu } from '@/components/UserMenu';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -62,6 +66,16 @@ export default function WorkspaceSettingsPage(props: PageProps) {
   const [isRegeneratingKey, setIsRegeneratingKey] = useState(false);
   const [newGeneratedFullKey, setNewGeneratedFullKey] = useState<string | null>(null);
   const [copiedFullKey, setCopiedFullKey] = useState(false);
+
+  // Public workspace guest state
+  const [isTogglingPublic, setIsTogglingPublic] = useState(false);
+  const [publicShareCopied, setPublicShareCopied] = useState(false);
+
+  // Archived projects state (TASK-TRK-PROJECT-ARCHIVE-VIEW)
+  const [archivedProjects, setArchivedProjects] = useState<any[]>([]);
+  const [loadingArchived, setLoadingArchived] = useState(false);
+  const [restoringProjectId, setRestoringProjectId] = useState<string | null>(null);
+  const [archiveRestoreSuccess, setArchiveRestoreSuccess] = useState<string | null>(null);
 
   // Project creation state
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -133,9 +147,79 @@ export default function WorkspaceSettingsPage(props: PageProps) {
     }
   }, [apiFetch, tenantSlug]);
 
+  const loadArchivedProjects = useCallback(async () => {
+    setLoadingArchived(true);
+    try {
+      const res = await apiFetch('/api/v1/projects?archived=true');
+      if (res.ok) {
+        const data = await res.json();
+        setArchivedProjects(data.projects || []);
+      }
+    } catch (err) {
+      console.error('Failed to load archived projects', err);
+    } finally {
+      setLoadingArchived(false);
+    }
+  }, [apiFetch]);
+
   useEffect(() => {
     loadWorkspace();
-  }, [loadWorkspace]);
+    loadArchivedProjects();
+  }, [loadWorkspace, loadArchivedProjects]);
+
+  const handleRestoreProject = async (projectId: string) => {
+    setRestoringProjectId(projectId);
+    try {
+      const res = await apiFetch('/api/v1/projects/restore', {
+        method: 'POST',
+        body: JSON.stringify({ id: projectId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setArchiveRestoreSuccess(`Restored "${data.restored_project?.name || 'Project'}" successfully.`);
+        setTimeout(() => setArchiveRestoreSuccess(null), 3500);
+        await Promise.all([loadWorkspace(), loadArchivedProjects()]);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to restore project.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error communicating with server.');
+    } finally {
+      setRestoringProjectId(null);
+    }
+  };
+
+  const handleTogglePublic = async () => {
+    if (!tenantInfo) return;
+    const isCurrentlyPublic = Boolean(
+      tenantInfo.metadata?.is_public ||
+      tenantInfo.tier === 'demo' ||
+      tenantInfo.slug === 'sunshade'
+    );
+    const nextState = !isCurrentlyPublic;
+    setIsTogglingPublic(true);
+    try {
+      const res = await apiFetch(`/api/v1/tenants/${tenantInfo.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_public: nextState }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTenantInfo((prev: any) => ({
+          ...prev,
+          metadata: data.tenant?.metadata || { ...(prev?.metadata || {}), is_public: nextState },
+        }));
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to update public workspace status.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error updating workspace status.');
+    } finally {
+      setIsTogglingPublic(false);
+    }
+  };
 
   // Copy masked key identifier
   const handleCopyKeyPreview = () => {
@@ -383,6 +467,93 @@ export default function WorkspaceSettingsPage(props: PageProps) {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Public Guest Access Card */}
+        <div className="p-6 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Globe className="w-5 h-5 text-sky-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
+                Public Guest Access
+              </h2>
+            </div>
+            {Boolean(tenantInfo?.metadata?.is_public || tenantInfo?.tier === 'demo' || tenantInfo?.slug === 'sunshade') ? (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold flex items-center space-x-1">
+                <Check className="w-3 h-3" />
+                <span>Publicly Accessible</span>
+              </span>
+            ) : (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 font-medium">
+                Private Workspace
+              </span>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-400">
+            Allow anyone with the link to view this workspace in read-only guest mode without signing in or requiring team invitations.
+          </p>
+
+          <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+            <div className="space-y-0.5">
+              <span className="text-xs font-semibold text-white">Enable Public Read-Only Guest Access</span>
+              <p className="text-[11px] text-slate-400">
+                {tenantInfo?.slug === 'sunshade' || tenantInfo?.tier === 'demo'
+                  ? 'Always enabled for the public demo workspace.'
+                  : 'Visitors will receive read-only viewer privileges.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(tenantInfo?.metadata?.is_public || tenantInfo?.tier === 'demo' || tenantInfo?.slug === 'sunshade')}
+              onClick={handleTogglePublic}
+              disabled={isTogglingPublic || tenantInfo?.slug === 'sunshade' || tenantInfo?.tier === 'demo'}
+              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                Boolean(tenantInfo?.metadata?.is_public || tenantInfo?.tier === 'demo' || tenantInfo?.slug === 'sunshade')
+                  ? 'bg-emerald-500'
+                  : 'bg-slate-700'
+              } disabled:opacity-50`}
+            >
+              <div
+                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  Boolean(tenantInfo?.metadata?.is_public || tenantInfo?.tier === 'demo' || tenantInfo?.slug === 'sunshade')
+                    ? 'translate-x-5'
+                    : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {Boolean(tenantInfo?.metadata?.is_public || tenantInfo?.tier === 'demo' || tenantInfo?.slug === 'sunshade') && (
+            <div className="flex items-center space-x-2 pt-1">
+              <div className="flex-1 p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-400 select-all truncate">
+                {typeof window !== 'undefined' ? `${window.location.origin}/${tenantSlug}/portfolio` : `https://track.sunshade.icu/${tenantSlug}/portfolio`}
+              </div>
+              <button
+                onClick={() => {
+                  const url = typeof window !== 'undefined' ? `${window.location.origin}/${tenantSlug}/portfolio` : `https://track.sunshade.icu/${tenantSlug}/portfolio`;
+                  navigator.clipboard.writeText(url);
+                  setPublicShareCopied(true);
+                  setTimeout(() => setPublicShareCopied(false), 2000);
+                }}
+                className="px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium flex items-center space-x-1.5 transition-colors"
+                title="Copy public guest URL"
+              >
+                {publicShareCopied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy Share Link</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Operational Efficiency Statement Card */}
@@ -774,6 +945,83 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                     Create First Project
                   </button>
                 )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Archived Projects Card (TASK-TRK-PROJECT-ARCHIVE-VIEW) */}
+        <div className="p-6 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Archive className="w-5 h-5 text-amber-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
+                Archived Projects
+              </h2>
+            </div>
+            {archiveRestoreSuccess && (
+              <span className="text-xs text-emerald-400 font-medium flex items-center space-x-1 animate-in fade-in">
+                <Check className="w-3.5 h-3.5" />
+                <span>{archiveRestoreSuccess}</span>
+              </span>
+            )}
+          </div>
+
+          <p className="text-xs text-slate-400">
+            Archived projects are hidden from active boards and switchers. You can restore an archived project and its work items at any time.
+          </p>
+
+          <div className="space-y-2">
+            {loadingArchived ? (
+              <div className="flex items-center justify-center py-6 text-xs text-slate-500 space-x-2">
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                <span>Loading archived projects…</span>
+              </div>
+            ) : archivedProjects.length > 0 ? (
+              archivedProjects.map((proj: any) => (
+                <div
+                  key={proj.id}
+                  className="p-4 rounded-lg bg-slate-950 border border-slate-800/90 flex items-center justify-between hover:border-slate-700 transition-colors"
+                >
+                  <div className="flex items-center space-x-3">
+                    <Archive className="w-4 h-4 text-amber-400/80" />
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-semibold text-white line-through opacity-80">{proj.name}</span>
+                        <span className="text-xs font-mono text-slate-500">/{proj.slug}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">
+                          Archived
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {proj.deleted_at ? `Archived on ${new Date(proj.deleted_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}` : 'Archived'}
+                        {proj.description ? ` · ${proj.description}` : ''}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleRestoreProject(proj.id)}
+                    disabled={restoringProjectId === proj.id}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center space-x-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {restoringProjectId === proj.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Restoring…</span>
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Restore Project</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-6 px-4 rounded-xl border border-dashed border-slate-800/80 text-xs text-slate-500">
+                No archived projects. Active projects can be archived from their project schema settings tab.
               </div>
             )}
           </div>

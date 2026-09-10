@@ -2,6 +2,7 @@
 
 import React, { use, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Layers,
   Kanban,
@@ -36,6 +37,8 @@ import {
   Settings2,
   Clock,
   Check,
+  Eye,
+  Archive,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { buildTree, isDescendantOf } from '@/lib/tree';
@@ -52,6 +55,7 @@ import { WorkItemModal } from '@/components/WorkItemModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
+import { ConfirmArchiveProjectModal } from '@/components/ConfirmArchiveProjectModal';
 import { CascadeCompletionModal } from '@/components/CascadeCompletionModal';
 import { CascadePromptModal } from '@/components/CascadePromptModal';
 import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModal';
@@ -85,6 +89,7 @@ interface TenantInfo {
   name: string;
   tier: string;
   api_key_preview: string | null;
+  role?: string;
 }
 
 interface ProjectInfo {
@@ -95,6 +100,7 @@ interface ProjectInfo {
 }
 
 export default function ProjectTrackerDashboard(props: PageProps) {
+  const router = useRouter();
   const { tenantSlug, projectSlug } = use(props.params);
   const searchParams = props.searchParams ? use(props.searchParams) : {};
   const requestedTab =
@@ -313,6 +319,36 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
   const [assigneeDropdownOpen, setAssigneeDropdownOpen] = useState(false);
   const assigneeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Project Archive state (TASK-TRK-PROJECT-ARCHIVE)
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [isArchivingProject, setIsArchivingProject] = useState(false);
+
+  // Read-only guest mode
+  const isReadOnly = currentUser === null || tenantInfo?.role === 'viewer';
+
+  const handleArchiveCurrentProject = async () => {
+    const proj = allProjects.find((p) => p.slug === projectSlug);
+    if (!proj || isAllProjects) return;
+    setIsArchivingProject(true);
+    try {
+      const res = await apiFetch('/api/v1/projects', {
+        method: 'DELETE',
+        body: JSON.stringify({ id: proj.id }),
+      });
+      if (res.ok) {
+        setIsArchiveModalOpen(false);
+        router.push(`/${tenantSlug}/portfolio`);
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to archive project.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error communicating with server.');
+    } finally {
+      setIsArchivingProject(false);
+    }
+  };
 
   // Board View Controls
   const [boardHeight, setBoardHeight] = useState<'compact' | 'standard' | 'full'>('standard');
@@ -610,6 +646,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           name: ws.name,
           tier: ws.tier,
           api_key_preview: ws.api_key_preview,
+          role: ws.role,
         });
         setAllProjects(ws.projects || []);
         if (ws.members) {
@@ -1684,7 +1721,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Drag and Drop Handlers ──────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent, item: WorkItem) => {
-    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (isReadOnly || isItemImmutableDueToCompletedSprint(item, projectSettings)) {
       e.preventDefault();
       return;
     }
@@ -1694,12 +1731,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   const handleDragOverColumn = (e: React.DragEvent, colId: string) => {
+    if (isReadOnly) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setDragOverTarget({ colId, index: -1 });
   };
 
   const handleDragOverCard = (e: React.DragEvent, colId: string, index: number) => {
+    if (isReadOnly) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
@@ -1713,6 +1752,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   const handleDrop = async (e: React.DragEvent, targetColId: string, dropIndex?: number) => {
     e.preventDefault();
+    if (isReadOnly) return;
     const itemId = e.dataTransfer.getData('text/plain') || draggedItemId;
     if (!itemId) return;
 
@@ -1974,6 +2014,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             tenantSlug={tenantSlug}
             currentProjectSlug={projectSlug}
             projects={allProjects}
+            onArchiveCurrentProject={() => setIsArchiveModalOpen(true)}
+            isReadOnly={isReadOnly}
           />
         </div>
 
@@ -2052,20 +2094,36 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             }}
           />
 
-          {/* User Menu */}
-          {tenantInfo ? (
-            <UserMenu
-              tenantName={tenantInfo.name}
-              tenantSlug={tenantInfo.slug}
-              apiKeyPreview={tenantInfo.api_key_preview ?? undefined}
-            />
+          {/* User Menu / Guest Mode */}
+          {currentUser === null ? (
+            <div className="flex items-center space-x-2">
+              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold">
+                <Eye className="w-3.5 h-3.5" />
+                <span>Read-Only Demo</span>
+              </span>
+              <Link
+                href={`/login?next=/${tenantSlug}/${projectSlug}`}
+                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+              >
+                Sign In
+              </Link>
+            </div>
           ) : (
-            <Link
-              href="/login"
-              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
-            >
-              Sign In
-            </Link>
+            <div className="flex items-center space-x-2">
+              {isReadOnly && (
+                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs font-medium">
+                  <Eye className="w-3 h-3 text-slate-400" />
+                  <span>Viewer</span>
+                </span>
+              )}
+              {tenantInfo && (
+                <UserMenu
+                  tenantName={tenantInfo.name}
+                  tenantSlug={tenantInfo.slug}
+                  apiKeyPreview={tenantInfo.api_key_preview ?? undefined}
+                />
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -2124,117 +2182,121 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
             )}
 
-            {/* Quick Add Form */}
-            <form
-              onSubmit={handleCreateItem}
-              className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-wrap items-center gap-3"
-            >
-              {isAllProjects && allProjects.length > 0 && (
+            {/* Quick Add Form / Guest Read-Only Banner */}
+            {!isReadOnly ? (
+              <form
+                onSubmit={handleCreateItem}
+                className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-wrap items-center gap-3"
+              >
+                {isAllProjects && allProjects.length > 0 && (
+                  <select
+                    value={newItemProjectSlug || allProjects[0]?.slug}
+                    onChange={(e) => setNewItemProjectSlug(e.target.value)}
+                    className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
+                  >
+                    {allProjects.map((p) => (
+                      <option key={p.id} value={p.slug}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                <div className="flex-1 min-w-[240px]">
+                  <input
+                    type="text"
+                    placeholder="New item title (e.g. Implement Webhook Dispatcher)..."
+                    value={newItemTitle}
+                    onChange={(e) => setNewItemTitle(e.target.value)}
+                    className="w-full px-3 py-1.5 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-sans transition-colors"
+                  />
+                </div>
+
+                {/* Item Hierarchy Type */}
                 <select
-                  value={newItemProjectSlug || allProjects[0]?.slug}
-                  onChange={(e) => setNewItemProjectSlug(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
+                  value={newItemType}
+                  onChange={(e) => setNewItemType(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
                 >
-                  {allProjects.map((p) => (
-                    <option key={p.id} value={p.slug}>
-                      {p.name}
+                  {quickAddHierarchy.map((h) => (
+                    <option key={h.type} value={h.type}>
+                      {h.label} (Level {h.level})
                     </option>
                   ))}
                 </select>
-              )}
 
-              <div className="flex-1 min-w-[240px]">
-                <input
-                  type="text"
-                  placeholder="New item title (e.g. Implement Webhook Dispatcher)..."
-                  value={newItemTitle}
-                  onChange={(e) => setNewItemTitle(e.target.value)}
-                  className="w-full px-3 py-1.5 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-sans transition-colors"
-                />
-              </div>
-
-              {/* Item Hierarchy Type */}
-              <select
-                value={newItemType}
-                onChange={(e) => setNewItemType(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-              >
-                {quickAddHierarchy.map((h) => (
-                  <option key={h.type} value={h.type}>
-                    {h.label} (Level {h.level})
-                  </option>
-                ))}
-              </select>
-
-              {/* Item Status */}
-              <select
-                value={newItemStatus}
-                onChange={(e) => setNewItemStatus(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-              >
-                {quickAddStatuses.map((s: StatusDefinition) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-
-              {/* Assignee Dropdown Picker */}
-              <div className="relative" ref={assigneeDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setAssigneeDropdownOpen((v) => !v)}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors max-w-[190px]"
+                {/* Item Status */}
+                <select
+                  value={newItemStatus}
+                  onChange={(e) => setNewItemStatus(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
                 >
-                  <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="truncate">{newItemAssignee || 'Unassigned'}</span>
-                  <ChevronDown
-                    className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${
-                      assigneeDropdownOpen ? 'rotate-180' : ''
-                    }`}
-                  />
-                </button>
+                  {quickAddStatuses.map((s: StatusDefinition) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
 
-                {assigneeDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
-                    <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                      Select Assignee
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewItemAssignee(myDisplayName);
-                        setAssigneeDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                        newItemAssignee === myDisplayName
-                          ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                          : 'text-slate-300 hover:bg-slate-800'
+                {/* Assignee Dropdown Picker */}
+                <div className="relative" ref={assigneeDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setAssigneeDropdownOpen((v) => !v)}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors max-w-[190px]"
+                  >
+                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="truncate">{newItemAssignee || 'Unassigned'}</span>
+                    <ChevronDown
+                      className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${
+                        assigneeDropdownOpen ? 'rotate-180' : ''
                       }`}
-                    >
-                      <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span className="truncate">{myDisplayName}</span>
-                    </button>
+                    />
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewItemAssignee('');
-                        setAssigneeDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                        !newItemAssignee
-                          ? 'bg-slate-800 text-white font-medium'
-                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                      }`}
-                    >
-                      <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                      <span>Unassigned</span>
-                    </button>
+                  {assigneeDropdownOpen && (
+                    <div className="absolute left-0 top-full mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
+                      <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                        Select Assignee
+                      </div>
 
-                    {workspaceMembers.length > 0 && (
-                      <div className="pt-1 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewItemAssignee(myDisplayName);
+                          setAssigneeDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                          newItemAssignee === myDisplayName
+                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[9px] font-bold">
+                          Me
+                        </div>
+                        <span className="truncate">{myDisplayName}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewItemAssignee('');
+                          setAssigneeDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
+                          !newItemAssignee
+                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[9px]">
+                          —
+                        </div>
+                        <span className="italic">Unassigned</span>
+                      </button>
+
+                      <div className="border-t border-slate-800 my-1 pt-1">
                         <div className="px-2 py-0.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
                           Workspace Members
                         </div>
@@ -2261,28 +2323,43 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             </button>
                           ))}
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
+
+                {/* External Ref ID */}
+                <input
+                  type="text"
+                  placeholder="Ref (e.g. SPEC-01)"
+                  value={newItemExtRef}
+                  onChange={(e) => setNewItemExtRef(e.target.value)}
+                  className="w-32 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
+                />
+
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Item</span>
+                </button>
+              </form>
+            ) : (
+              <div className="p-4 rounded-xl bg-sky-950/20 border border-sky-800/30 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
+                <div className="flex items-center space-x-2.5">
+                  <Eye className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span>
+                    You are browsing this workspace in <strong>read-only guest mode</strong>. Work items and hierarchy can be explored freely.
+                  </span>
+                </div>
+                <Link
+                  href={`/login?next=/${tenantSlug}/${projectSlug}`}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors shrink-0"
+                >
+                  Sign In to Make Changes
+                </Link>
               </div>
-
-              {/* External Ref ID */}
-              <input
-                type="text"
-                placeholder="Ref (e.g. SPEC-01)"
-                value={newItemExtRef}
-                onChange={(e) => setNewItemExtRef(e.target.value)}
-                className="w-32 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
-              />
-
-              <button
-                type="submit"
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Item</span>
-              </button>
-            </form>
+            )}
 
             {/* Board Controls Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-1">
@@ -2564,7 +2641,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                   )}
 
                                   <div
-                                    draggable={!isCardImmutable}
+                                    draggable={!isCardImmutable && !isReadOnly}
                                     onDragStart={(e) => handleDragStart(e, item)}
                                     onDragEnd={handleDragEnd}
                                     onDragOver={(e) => handleDragOverCard(e, col.id, index)}
@@ -2574,7 +2651,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     }}
                                     onDoubleClick={() => setEditingItem(item)}
                                     className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
-                                      isCardImmutable ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+                                      isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
                                     } ${
                                       isBeingDragged
                                         ? 'opacity-40 border-dashed border-emerald-500'
@@ -2933,38 +3010,40 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
             <div className="space-y-3 pt-4">
               {/* Root Drop Zone for unnesting */}
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  setIsTreeRootOver(true);
-                }}
-                onDragLeave={(e) => {
-                  e.preventDefault();
-                  setIsTreeRootOver(false);
-                }}
-                onDrop={async (e) => {
-                  e.preventDefault();
-                  setIsTreeRootOver(false);
-                  const draggedId = e.dataTransfer.getData('text/plain') || treeDraggedItemId;
-                  if (!draggedId) return;
-                  await handleTreeReparent(draggedId, null, 'inside');
-                }}
-                data-testid="tree-root-drop-zone"
-                className={`p-3 rounded-lg border-2 border-dashed transition-all text-center text-xs font-medium cursor-pointer ${
-                  isTreeRootOver
-                    ? 'border-emerald-400 bg-emerald-950/40 text-emerald-300 shadow-md shadow-emerald-500/10'
-                    : treeDraggedItemId
-                    ? 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-emerald-500/50 hover:text-slate-300'
-                    : 'border-slate-800/60 bg-slate-950/30 text-slate-500'
-                }`}
-              >
-                <span>
-                  {isTreeRootOver
-                    ? 'Drop to move to root level (unnest)'
-                    : 'Drag items here to unnest to root level'}
-                </span>
-              </div>
+              {!isReadOnly && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setIsTreeRootOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsTreeRootOver(false);
+                  }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsTreeRootOver(false);
+                    const draggedId = e.dataTransfer.getData('text/plain') || treeDraggedItemId;
+                    if (!draggedId) return;
+                    await handleTreeReparent(draggedId, null, 'inside');
+                  }}
+                  data-testid="tree-root-drop-zone"
+                  className={`p-3 rounded-lg border-2 border-dashed transition-all text-center text-xs font-medium cursor-pointer ${
+                    isTreeRootOver
+                      ? 'border-emerald-400 bg-emerald-950/40 text-emerald-300 shadow-md shadow-emerald-500/10'
+                      : treeDraggedItemId
+                      ? 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-emerald-500/50 hover:text-slate-300'
+                      : 'border-slate-800/60 bg-slate-950/30 text-slate-500'
+                  }`}
+                >
+                  <span>
+                    {isTreeRootOver
+                      ? 'Drop to move to root level (unnest)'
+                      : 'Drag items here to unnest to root level'}
+                  </span>
+                </div>
+              )}
 
               {loading ? (
                 Array.from({ length: 4 }).map((_, i) => (
@@ -2993,7 +3072,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     getItemHierarchy={getItemHierarchy}
                     isFilteredBySprint={selectedSprint !== 'all'}
                     members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
-                    isImmutable={(it) => isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it))}
+                    isImmutable={(it) => isReadOnly || isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it))}
                     collapsedNodeIds={collapsedTreeNodes}
                     onToggleCollapse={handleToggleCollapseTreeNode}
                     onUpdateStatus={handleUpdateStatus}
@@ -3002,7 +3081,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     onReparentItem={handleTreeReparent}
                     onEditItem={(item) => setEditingItem(item)}
                     isDraggingItemId={treeDraggedItemId}
-                    onDragStartNode={(e, item) => setTreeDraggedItemId(item.id)}
+                    onDragStartNode={(e, item) => !isReadOnly && setTreeDraggedItemId(item.id)}
                     onDragEndNode={() => setTreeDraggedItemId(null)}
                   />
                 ))
@@ -3736,6 +3815,31 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 isSaving={isSavingSchema}
               />
             </div>
+
+            {/* Danger Zone: Archive Project (TASK-TRK-PROJECT-ARCHIVE) */}
+            {!isAllProjects && !isReadOnly && (
+              <div className="p-5 rounded-xl bg-red-950/20 border border-red-900/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-red-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-red-400" />
+                      <span>Danger Zone: Archive Project</span>
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                      Archiving this project removes it from active project switchers, overview boards, and searches. All work items in this project are safely soft-deleted and preserved. You can restore this project at any time from Workspace Settings.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsArchiveModalOpen(true)}
+                    className="px-4 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 hover:text-red-200 text-xs font-semibold flex items-center space-x-1.5 transition-colors self-start sm:self-center shrink-0"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    <span>Archive Project…</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -3752,6 +3856,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         currentUser={currentUser ?? undefined}
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
+        isReadOnly={isReadOnly}
       />
 
       {/* Board Item Delete Confirmation Modal */}
@@ -3768,6 +3873,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             }
           }
         }}
+      />
+
+      {/* Archive Project Confirmation Modal (TASK-TRK-PROJECT-ARCHIVE) */}
+      <ConfirmArchiveProjectModal
+        isOpen={isArchiveModalOpen}
+        projectName={allProjects.find((p) => p.slug === projectSlug)?.name || projectSlug}
+        projectSlug={projectSlug}
+        onClose={() => setIsArchiveModalOpen(false)}
+        onConfirm={handleArchiveCurrentProject}
+        isArchiving={isArchivingProject}
       />
 
       {/* Cascade Completion Warning Modal */}
