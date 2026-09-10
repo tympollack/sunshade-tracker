@@ -42,6 +42,10 @@ export interface TreeNodeProps {
   isDraggingItemId?: string | null;
   onDragStartNode?: (e: React.DragEvent, item: WorkItemNode) => void;
   onDragEndNode?: () => void;
+
+  // UI tree lines guide props (TASK-TRK-HIER-TREE-LINES-UI)
+  isLastChild?: boolean;
+  ancestorRails?: boolean[];
 }
 
 export function TreeNode({
@@ -66,6 +70,8 @@ export function TreeNode({
   isDraggingItemId,
   onDragStartNode,
   onDragEndNode,
+  isLastChild = false,
+  ancestorRails = [],
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
@@ -190,17 +196,49 @@ export function TreeNode({
         />
       )}
 
-      <div
-        className="flex items-center gap-3 transition-all group"
-        style={{ marginLeft: `${item.depth * 28}px` }}
-      >
-        {/* Tree Branch Connector */}
-        {item.depth > 0 && (
+      {/* Node Content Container with ancestor guide rails */}
+      <div className="relative flex flex-col">
+        {/* Multi-level ancestor vertical guide rails (depth >= 2) */}
+        {ancestorRails.map((hasRail, idx) => {
+          if (!hasRail) return null;
+          const colDepth = idx + 1;
+          return (
+            <div
+              key={colDepth}
+              data-testid={`ancestor-rail-${colDepth}`}
+              className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
+              style={{ left: `${colDepth * 28}px` }}
+            />
+          );
+        })}
+
+        {/* Current depth sibling continuation spine for intermediate nodes (spans card row and inline child form) */}
+        {!isLastChild && item.depth > 0 && (
           <div
-            data-testid="branch-connector"
-            className="w-4 h-6 border-b-2 border-l-2 border-slate-700 -mt-3 rounded-bl-sm flex-shrink-0"
+            data-testid="branch-connector-continuation"
+            className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
+            style={{ left: `${item.depth * 28}px` }}
           />
         )}
+
+        <div
+          className="flex items-center gap-3 transition-all group"
+          style={{ marginLeft: `${item.depth * 28}px` }}
+        >
+          {/* Tree Branch Connector */}
+          {item.depth > 0 && (
+            <div
+              data-testid="branch-connector"
+              className="relative w-4 self-stretch flex-shrink-0 flex items-center"
+            >
+              {/* Top-half vertical spine down to 50% + horizontal branch into node */}
+              <div
+                className={`absolute top-0 bottom-1/2 left-0 w-full border-l-2 border-b-2 border-slate-700 ${
+                  isLastChild ? 'rounded-bl-sm' : ''
+                }`}
+              />
+            </div>
+          )}
 
         {/* Branch Collapse Chevron Button */}
         {hasChildren ? (
@@ -557,36 +595,47 @@ export function TreeNode({
           </div>
         </form>
       )}
+      </div>
 
       {/* Render Nested Children (Collapsible) */}
       {!isCollapsed && item.children && item.children.length > 0 && (
         <div className="flex flex-col" data-testid={`children-container-${item.id}`}>
-          {item.children.map((child) => (
-            <TreeNode
-              key={child.id}
-              item={child}
-              getStatusColor={getStatusColor}
-              deviations={deviations}
-              onOpenReconciliation={onOpenReconciliation}
-              statuses={statuses}
-              hierarchy={hierarchy}
-              getItemStatuses={getItemStatuses}
-              getItemHierarchy={getItemHierarchy}
-              isFilteredBySprint={isFilteredBySprint}
-              members={members}
-              isImmutable={isImmutable}
-              collapsedNodeIds={collapsedNodeIds}
-              onToggleCollapse={onToggleCollapse}
-              onUpdateStatus={onUpdateStatus}
-              onUpdateAssignee={onUpdateAssignee}
-              onCreateChild={onCreateChild}
-              onReparentItem={onReparentItem}
-              onEditItem={onEditItem}
-              isDraggingItemId={isDraggingItemId}
-              onDragStartNode={onDragStartNode}
-              onDragEndNode={onDragEndNode}
-            />
-          ))}
+          {item.children.map((child, idx) => {
+            const isLast = idx === (item.children?.length ?? 0) - 1;
+            const nextAncestorRails =
+              item.depth === 0
+                ? []
+                : [...ancestorRails, !isLastChild];
+
+            return (
+              <TreeNode
+                key={child.id}
+                item={child}
+                isLastChild={isLast}
+                ancestorRails={nextAncestorRails}
+                getStatusColor={getStatusColor}
+                deviations={deviations}
+                onOpenReconciliation={onOpenReconciliation}
+                statuses={statuses}
+                hierarchy={hierarchy}
+                getItemStatuses={getItemStatuses}
+                getItemHierarchy={getItemHierarchy}
+                isFilteredBySprint={isFilteredBySprint}
+                members={members}
+                isImmutable={isImmutable}
+                collapsedNodeIds={collapsedNodeIds}
+                onToggleCollapse={onToggleCollapse}
+                onUpdateStatus={onUpdateStatus}
+                onUpdateAssignee={onUpdateAssignee}
+                onCreateChild={onCreateChild}
+                onReparentItem={onReparentItem}
+                onEditItem={onEditItem}
+                isDraggingItemId={isDraggingItemId}
+                onDragStartNode={onDragStartNode}
+                onDragEndNode={onDragEndNode}
+              />
+            );
+          })}
         </div>
       )}
     </div>

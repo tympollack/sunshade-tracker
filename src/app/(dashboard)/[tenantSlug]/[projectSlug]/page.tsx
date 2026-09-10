@@ -2878,14 +2878,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         {/* TAB 2: HIERARCHY TREE */}
         {activeTab === 'tree' && (
           <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="min-w-[240px] flex-1">
                 <h3 className="text-lg font-semibold text-white">Hierarchical Tree Structure</h3>
                 <p className="text-xs text-slate-400">
                   Recursive tree representation showing parent-child links resolved from dynamic schema rules.
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center flex-wrap gap-3 shrink-0">
                 <div className="flex items-center space-x-1.5 border-r border-slate-800 pr-3">
                   <button
                     type="button"
@@ -2975,10 +2975,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   No items in project. Ingest work items using Gemini Spark or the quick add form.
                 </div>
               ) : (
-                treeItems.map((rootNode) => (
+                treeItems.map((rootNode, idx) => (
                   <TreeNode
                     key={rootNode.id}
                     item={rootNode}
+                    isLastChild={idx === treeItems.length - 1}
+                    ancestorRails={[]}
                     getStatusColor={getStatusColor}
                     deviations={deviations}
                     onOpenReconciliation={(dev) => {
