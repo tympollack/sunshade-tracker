@@ -14,8 +14,11 @@ export async function POST(req: NextRequest) {
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
-  if (authCtx.role === 'viewer') {
-    return NextResponse.json({ error: 'Viewers cannot restore projects' }, { status: 403 });
+  if (authCtx.role !== 'owner' && authCtx.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'Only workspace owners and admins can restore projects' },
+      { status: 403 }
+    );
   }
 
   try {
@@ -42,10 +45,10 @@ export async function POST(req: NextRequest) {
 
     const now = new Date().toISOString();
 
-    // Check project exists and is archived
+    // Check project exists, is archived, and fetch settings snapshot
     const { data: archivedProject, error: fetchErr } = await supabaseAdmin
       .from('projects')
-      .select('id, slug, name, deleted_at')
+      .select('id, slug, name, deleted_at, settings')
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .not('deleted_at', 'is', null)
@@ -62,10 +65,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const prevSettings = archivedProject.settings || {};
+    const cascadedItemIds: string[] | undefined =
+      prevSettings.archival_snapshot?.cascaded_item_ids;
+
+    const cleanedSettings = { ...prevSettings };
+    delete (cleanedSettings as any).archival_snapshot;
+
     // Restore the project
     const { data: restoredProject, error: updateErr } = await supabaseAdmin
       .from('projects')
-      .update({ deleted_at: null, updated_at: now })
+      .update({ deleted_at: null, updated_at: now, settings: cleanedSettings })
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .select('id, slug, name, deleted_at')
@@ -76,12 +86,46 @@ export async function POST(req: NextRequest) {
     }
 
     // Restore cascaded work items
-    await supabaseAdmin
-      .from('work_items')
-      .update({ deleted_at: null, updated_at: now })
-      .eq('project_id', id)
-      .eq('tenant_id', authCtx.tenant.id)
-      .not('deleted_at', 'is', null);
+    // If archival_snapshot exists, only restore the specific active items captured during archive.
+    // Otherwise fallback to items whose deleted_at exactly matches the project's deleted_at timestamp.
+    let itemRestoreError: any = null;
+
+    if (Array.isArray(cascadedItemIds)) {
+      if (cascadedItemIds.length > 0) {
+        const { error: itemsErr } = await supabaseAdmin
+          .from('work_items')
+          .update({ deleted_at: null, updated_at: now })
+          .in('id', cascadedItemIds)
+          .eq('project_id', id)
+          .eq('tenant_id', authCtx.tenant.id);
+        itemRestoreError = itemsErr;
+      }
+    } else {
+      const { error: itemsErr } = await supabaseAdmin
+        .from('work_items')
+        .update({ deleted_at: null, updated_at: now })
+        .eq('project_id', id)
+        .eq('tenant_id', authCtx.tenant.id)
+        .eq('deleted_at', archivedProject.deleted_at);
+      itemRestoreError = itemsErr;
+    }
+
+    if (itemRestoreError) {
+      // Rollback project update to preserve atomic consistency
+      await supabaseAdmin
+        .from('projects')
+        .update({
+          deleted_at: archivedProject.deleted_at,
+          updated_at: now,
+          settings: prevSettings,
+        })
+        .eq('id', id);
+
+      return NextResponse.json(
+        { error: `Failed to restore project items: ${itemRestoreError.message}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

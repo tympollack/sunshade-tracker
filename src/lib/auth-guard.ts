@@ -156,6 +156,16 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
     const tenant = (memberships as any).tenants as Tenant;
     const role = (memberships as any).role as string;
 
+    if (role === 'viewer' && req.method !== 'GET') {
+      return {
+        context: null,
+        errorResponse: NextResponse.json(
+          { error: 'Workspace viewers have read-only access and cannot perform modifications.' },
+          { status: 403 }
+        ),
+      };
+    }
+
     return {
       context: { tenant, userId: user.id, role },
       errorResponse: null,

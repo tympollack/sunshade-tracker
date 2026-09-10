@@ -213,4 +213,47 @@ describe('Public Demo Workspace Guest Access (TASK-TRK-PUBLIC-DEMO-WORKSPACE)', 
     expect(json.success).toBe(true);
     expect(json.tenant.metadata.is_public).toBe(true);
   });
+
+  it('should reject authenticated viewer mutation requests (POST/PATCH/DELETE) with 403 Forbidden', async () => {
+    vi.mocked(createServerClient).mockResolvedValueOnce({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'authenticated-viewer-id' } }, error: null }),
+      },
+    } as any);
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        const maybeSingleMock = vi.fn().mockResolvedValue({ data: publicDemoTenant, error: null });
+        const isMock = vi.fn(() => ({ maybeSingle: maybeSingleMock }));
+        const eqMock = vi.fn(() => ({ is: isMock, maybeSingle: maybeSingleMock }));
+        const selectMock = vi.fn(() => ({ eq: eqMock }));
+        return { select: selectMock } as any;
+      }
+      if (table === 'tenant_members') {
+        const maybeSingleMock = vi.fn().mockResolvedValue({
+          data: { role: 'viewer', tenants: publicDemoTenant },
+          error: null,
+        });
+        const limitMock = vi.fn(() => ({ maybeSingle: maybeSingleMock }));
+        const isMock = vi.fn(() => ({ limit: limitMock, maybeSingle: maybeSingleMock }));
+        const eqMock = vi.fn(() => ({ eq: eqMock, is: isMock, limit: limitMock, maybeSingle: maybeSingleMock }));
+        const selectMock = vi.fn(() => ({ eq: eqMock }));
+        return { select: selectMock } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?tenant_slug=sunshade', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'New Item' }),
+    });
+
+    const auth = await authenticateSession(req);
+    expect(auth.context).toBeNull();
+    expect(auth.errorResponse).not.toBeNull();
+    expect(auth.errorResponse?.status).toBe(403);
+    const json = await auth.errorResponse?.json();
+    expect(json.error).toContain('Workspace viewers have read-only access');
+  });
 });

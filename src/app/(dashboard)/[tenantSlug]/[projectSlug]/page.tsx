@@ -748,6 +748,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
   const handleSaveSchema = async (newSettings: ProjectSettings, targetSlugParam?: string) => {
+    if (isReadOnly) {
+      throw new Error('You have read-only access and cannot modify schema settings.');
+    }
     const targetSlug =
       targetSlugParam ||
       (isAllProjects ? (selectedSchemaProjectSlug || allProjects[0]?.slug) : projectSlug);
@@ -1388,6 +1391,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   const handleSaveSprints = async (sprints: SprintDefinition[]) => {
+    if (isReadOnly) return;
     const newSettings: ProjectSettings = {
       ...projectSettings,
       sprint_settings: {
@@ -1916,6 +1920,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Gemini Spark ingest ─────────────────────────────────────────────────
   const handleRunSparkIngest = async () => {
+    if (isReadOnly) return;
     setIsIngesting(true);
     setIngestResponse(null);
     setLastIngestedItemIds(null);
@@ -2055,7 +2060,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           </div>
 
           {/* Schema Deviations Quick Trigger */}
-          {deviations.length > 0 && (
+          {!isReadOnly && deviations.length > 0 && (
             <button
               type="button"
               onClick={() => setIsReconciliationModalOpen(true)}
@@ -3157,15 +3162,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 </button>
 
                 {/* Manage Sprints Button */}
-                <button
-                  type="button"
-                  onClick={() => setIsManageSprintsOpen(true)}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 hover:text-emerald-200 transition-colors flex items-center space-x-1.5 font-medium cursor-pointer"
-                  data-testid="open-manage-sprints-btn"
-                >
-                  <Settings2 className="w-3.5 h-3.5" />
-                  <span>Manage Sprints</span>
-                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setIsManageSprintsOpen(true)}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 hover:text-emerald-200 transition-colors flex items-center space-x-1.5 font-medium cursor-pointer"
+                    data-testid="open-manage-sprints-btn"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                    <span>Manage Sprints</span>
+                  </button>
+                )}
 
                 <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center space-x-2">
                   <span className="text-slate-500">Total Items:</span>
@@ -3218,7 +3225,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     return sum;
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings);
+                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
 
                   return (
                     <React.Fragment key={node.id}>
@@ -3276,28 +3283,30 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </button>
 
                         {/* Select All in Sprint Checkbox */}
-                        <button
-                          type="button"
-                          onClick={() => handleSelectAllInPool(sprintItems)}
-                          className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
-                          title={allSprintSelected ? 'Deselect all in sprint' : 'Select all in sprint'}
-                          aria-label={
-                            allSprintSelected
-                              ? `Deselect all in ${sprintName}`
-                              : `Select all in ${sprintName}`
-                          }
-                          data-testid={`select-all-${sprintName}`}
-                        >
-                          {allSprintSelected ? (
-                            <CheckSquare className="w-4 h-4 text-emerald-400" />
-                          ) : someSprintSelected ? (
-                            <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
-                              <span className="w-2 h-0.5 bg-emerald-400" />
-                            </div>
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
-                          )}
-                        </button>
+                        {!isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectAllInPool(sprintItems)}
+                            className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                            title={allSprintSelected ? 'Deselect all in sprint' : 'Select all in sprint'}
+                            aria-label={
+                              allSprintSelected
+                                ? `Deselect all in ${sprintName}`
+                                : `Select all in ${sprintName}`
+                            }
+                            data-testid={`select-all-${sprintName}`}
+                          >
+                            {allSprintSelected ? (
+                              <CheckSquare className="w-4 h-4 text-emerald-400" />
+                            ) : someSprintSelected ? (
+                              <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
+                                <span className="w-2 h-0.5 bg-emerald-400" />
+                              </div>
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                            )}
+                          </button>
+                        )}
 
                         <span
                           className={`w-2.5 h-2.5 rounded-full ${
@@ -3378,10 +3387,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           buildTree(sprintItems).map((node) => renderSprintTreeNode(node))
                         ) : (
                           sprintItems.map((item) => {
-                            const isImmutable = isItemImmutableDueToCompletedSprint(
-                              item,
-                              projectSettings
-                            );
+                            const isImmutable =
+                              isItemImmutableDueToCompletedSprint(item, projectSettings) || isReadOnly;
                             return (
                               <SprintItemRow
                                 key={item.id}
@@ -3441,7 +3448,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     return sum;
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings);
+                  const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
 
                   return (
                     <React.Fragment key={node.id}>
@@ -3495,24 +3502,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           )}
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleSelectAllInPool(backlogItems)}
-                          className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
-                          title={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
-                          aria-label={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
-                          data-testid="select-all-backlog"
-                        >
-                          {allBacklogSelected ? (
-                            <CheckSquare className="w-4 h-4 text-emerald-400" />
-                          ) : someBacklogSelected ? (
-                            <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
-                              <span className="w-2 h-0.5 bg-emerald-400" />
-                            </div>
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
-                          )}
-                        </button>
+                        {!isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectAllInPool(backlogItems)}
+                            className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                            title={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
+                            aria-label={allBacklogSelected ? 'Deselect all in backlog' : 'Select all in backlog'}
+                            data-testid="select-all-backlog"
+                          >
+                            {allBacklogSelected ? (
+                              <CheckSquare className="w-4 h-4 text-emerald-400" />
+                            ) : someBacklogSelected ? (
+                              <div className="w-4 h-4 rounded border border-emerald-500/50 bg-emerald-950 flex items-center justify-center">
+                                <span className="w-2 h-0.5 bg-emerald-400" />
+                              </div>
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                            )}
+                          </button>
+                        )}
 
                         <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
                         <h4 className="text-base font-semibold text-white">
@@ -3535,10 +3544,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           buildTree(backlogItems).map((node) => renderBacklogTreeNode(node))
                         ) : (
                           backlogItems.map((item) => {
-                            const isImmutable = isItemImmutableDueToCompletedSprint(
-                              item,
-                              projectSettings
-                            );
+                            const isImmutable =
+                              isItemImmutableDueToCompletedSprint(item, projectSettings) || isReadOnly;
                             return (
                               <SprintItemRow
                                 key={item.id}
@@ -3592,19 +3599,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <code className="text-emerald-300">parent_ref_id</code> and performs upserts on{' '}
                 <code className="text-emerald-300">external_ref_id</code>. Uses your tenant API key.
               </p>
+              {isReadOnly && (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 flex items-center space-x-2">
+                  <Eye className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>The public demo workspace is read-only. Ingesting work items requires workspace membership.</span>
+                </div>
+              )}
               <textarea
                 rows={16}
                 value={sparkPayload}
-                onChange={(e) => setSparkPayload(e.target.value)}
+                readOnly={isReadOnly}
+                onChange={(e) => !isReadOnly && setSparkPayload(e.target.value)}
                 className="w-full p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500 leading-relaxed"
               />
               <button
                 onClick={handleRunSparkIngest}
-                disabled={isIngesting}
+                disabled={isIngesting || isReadOnly}
                 className="w-full py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs flex items-center justify-center space-x-2 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>{isIngesting ? 'Ingesting via Headless API...' : 'Execute Ingestion'}</span>
+                <span>{isReadOnly ? 'Ingestion Disabled in Demo Mode' : isIngesting ? 'Ingesting via Headless API...' : 'Execute Ingestion'}</span>
               </button>
             </div>
 
@@ -3666,6 +3680,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </p>
             </div>
 
+            {isReadOnly && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 flex items-center space-x-2">
+                <Eye className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>You are viewing this project schema in read-only mode. Workspace schema modifications require member or owner privileges.</span>
+              </div>
+            )}
+
             {isAllProjects && allProjects.length > 0 && (
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -3694,7 +3715,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
                     Hierarchy Levels
                   </h4>
-                  <span className="text-[10px] text-slate-500">Click swatch to pick</span>
+                  <span className="text-[10px] text-slate-500">{isReadOnly ? 'Read-only' : 'Click swatch to pick'}</span>
                 </div>
                 <div className="space-y-1 text-xs">
                   {activeSchemaSettings.hierarchy.map((h, idx) => {
@@ -3705,17 +3726,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         className="flex items-center justify-between py-1 border-b border-slate-900 last:border-0"
                       >
                         <div className="flex items-center space-x-2">
-                          <label className="relative inline-flex items-center justify-center cursor-pointer group">
+                          <label className={`relative inline-flex items-center justify-center group ${isReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
                             <input
                               type="color"
                               value={currentHex}
+                              disabled={isReadOnly}
                               onChange={(e) => {
+                                if (isReadOnly) return;
                                 const newHierarchy = [...activeSchemaSettings.hierarchy];
                                 newHierarchy[idx] = { ...newHierarchy[idx], color: e.target.value };
                                 const newSettings = { ...activeSchemaSettings, hierarchy: newHierarchy };
                                 handleSaveSchema(newSettings);
                               }}
-                              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                              className={`opacity-0 absolute inset-0 w-full h-full ${isReadOnly ? 'cursor-default' : 'cursor-pointer'}`}
                             />
                             <span
                               className="w-3.5 h-3.5 rounded border border-white/20 shadow-sm transition-transform group-hover:scale-110"
@@ -3743,7 +3766,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
                     Project Statuses
                   </h4>
-                  <span className="text-[10px] text-slate-500">Click swatch to pick</span>
+                  <span className="text-[10px] text-slate-500">{isReadOnly ? 'Read-only' : 'Click swatch to pick'}</span>
                 </div>
                 <div className="space-y-1 text-xs">
                   {activeSchemaSettings.statuses.map((s: StatusDefinition, idx: number) => (
@@ -3752,17 +3775,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       className="flex items-center justify-between py-1 border-b border-slate-900 last:border-0"
                     >
                       <div className="flex items-center space-x-2">
-                        <label className="relative inline-flex items-center justify-center cursor-pointer group">
+                        <label className={`relative inline-flex items-center justify-center group ${isReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
                           <input
                             type="color"
                             value={s.color}
+                            disabled={isReadOnly}
                             onChange={(e) => {
+                              if (isReadOnly) return;
                               const newStatuses = [...activeSchemaSettings.statuses];
                               newStatuses[idx] = { ...newStatuses[idx], color: e.target.value };
                               const newSettings = { ...activeSchemaSettings, statuses: newStatuses };
                               handleSaveSchema(newSettings);
                             }}
-                            className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                            className={`opacity-0 absolute inset-0 w-full h-full ${isReadOnly ? 'cursor-default' : 'cursor-pointer'}`}
                           />
                           <span
                             className="w-3.5 h-3.5 rounded-full border border-white/20 shadow-sm transition-transform group-hover:scale-110"
@@ -3813,6 +3838,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 settings={activeSchemaSettings}
                 onSave={handleSaveSchema}
                 isSaving={isSavingSchema}
+                readOnly={isReadOnly}
               />
             </div>
 
@@ -4031,7 +4057,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
       {/* Standalone Sprint Definitions Modal */}
       <ManageSprintsModal
-        isOpen={isManageSprintsOpen}
+        isOpen={!isReadOnly && isManageSprintsOpen}
         onClose={() => setIsManageSprintsOpen(false)}
         sprints={projectSettings.sprint_settings?.sprints || []}
         onSaveSprints={handleSaveSprints}
@@ -4039,18 +4065,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       />
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
-      <BulkActionsToolbar
-        selectedCount={selectedItemIds.size}
-        availableSprints={availableSprints}
-        statuses={projectSettings.statuses || []}
-        onMoveToSprint={handleBulkMoveSprint}
-        onSetStatus={handleBulkSetStatus}
-        onAssignMember={handleBulkAssign}
-        onAdjustPoints={handleBulkAdjustPoints}
-        onDeleteSelected={handleBulkDelete}
-        onClearSelection={handleDeselectAll}
-        isApplying={isBulkApplying}
-      />
+      {!isReadOnly && (
+        <BulkActionsToolbar
+          selectedCount={selectedItemIds.size}
+          availableSprints={availableSprints}
+          statuses={projectSettings.statuses || []}
+          onMoveToSprint={handleBulkMoveSprint}
+          onSetStatus={handleBulkSetStatus}
+          onAssignMember={handleBulkAssign}
+          onAdjustPoints={handleBulkAdjustPoints}
+          onDeleteSelected={handleBulkDelete}
+          onClearSelection={handleDeselectAll}
+          isApplying={isBulkApplying}
+        />
+      )}
 
       {/* Floating Bulk Toast Notification */}
       {bulkToast && (

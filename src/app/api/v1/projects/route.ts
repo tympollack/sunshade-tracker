@@ -10,6 +10,15 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const isArchived = searchParams.get('archived') === 'true';
 
+  if (isArchived) {
+    if (authCtx.role !== 'owner' && authCtx.role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Only workspace owners and admins can view archived projects' },
+        { status: 403 }
+      );
+    }
+  }
+
   let query: any = supabaseAdmin
     .from('projects')
     .select('*')
@@ -26,6 +35,35 @@ export async function GET(req: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (isArchived) {
+    const projectList = projects || [];
+    const projectIds = projectList.map((p: any) => p.id);
+    const itemCounts: Record<string, number> = {};
+
+    if (projectIds.length > 0) {
+      const { data: items } = await supabaseAdmin
+        .from('work_items')
+        .select('id, project_id')
+        .in('project_id', projectIds);
+
+      if (items) {
+        for (const item of items) {
+          itemCounts[item.project_id] = (itemCounts[item.project_id] || 0) + 1;
+        }
+      }
+    }
+
+    const enrichedProjects = projectList.map((p: any) => ({
+      ...p,
+      item_count: itemCounts[p.id] || 0,
+    }));
+
+    return NextResponse.json({
+      tenant: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+      projects: enrichedProjects,
+    });
   }
 
   return NextResponse.json({
@@ -82,19 +120,23 @@ export async function POST(req: NextRequest) {
 
 /**
  * DELETE /api/v1/projects
- * Body: { id: string }
+ * Body: { id?: string, slug?: string }
  *
- * Soft-deletes a project. Sets deleted_at timestamp — the project and its items
- * will be filtered from all queries but remain recoverable in the database.
- * Note: items are NOT cascaded here; they remain until explicitly deleted.
+ * Soft-deletes a project. Sets deleted_at timestamp — the project and its active
+ * work items are soft-deleted and preserved.
+ * Captures active item snapshot in project.settings.archival_snapshot to avoid
+ * restoring items that were deleted prior to project archival.
  */
 export async function DELETE(req: NextRequest) {
   const auth = await authenticate(req);
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
-  if (authCtx.role === 'viewer') {
-    return NextResponse.json({ error: 'Viewers cannot archive projects' }, { status: 403 });
+  if (authCtx.role !== 'owner' && authCtx.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'Only workspace owners and admins can archive projects' },
+      { status: 403 }
+    );
   }
 
   try {
@@ -119,15 +161,58 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: '"id" or "slug" is required' }, { status: 400 });
     }
 
-    const now = new Date().toISOString();
-
-    // Soft-delete the project
-    const { data: softDeleted, error: projectErr } = await supabaseAdmin
+    // Fetch existing project to snapshot settings
+    const { data: existingProject, error: fetchErr } = await supabaseAdmin
       .from('projects')
-      .update({ deleted_at: now, updated_at: now })
+      .select('id, slug, name, settings')
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
-      .is('deleted_at', null) // guard against double-delete
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (fetchErr) {
+      return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+    }
+
+    if (!existingProject) {
+      return NextResponse.json(
+        { error: 'Project not found or already deleted' },
+        { status: 404 }
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    // Snapshot currently active work item IDs before soft-deleting
+    const { data: activeItems, error: itemsErr } = await supabaseAdmin
+      .from('work_items')
+      .select('id')
+      .eq('project_id', id)
+      .eq('tenant_id', authCtx.tenant.id)
+      .is('deleted_at', null);
+
+    if (itemsErr) {
+      return NextResponse.json({ error: itemsErr.message }, { status: 500 });
+    }
+
+    const activeItemIds = (activeItems || []).map((it: any) => it.id);
+
+    const prevSettings = existingProject.settings || {};
+    const updatedSettings = {
+      ...prevSettings,
+      archival_snapshot: {
+        archived_at: now,
+        cascaded_item_ids: activeItemIds,
+      },
+    };
+
+    // Soft-delete the project and save archival snapshot in settings
+    const { data: softDeleted, error: projectErr } = await supabaseAdmin
+      .from('projects')
+      .update({ deleted_at: now, updated_at: now, settings: updatedSettings })
+      .eq('id', id)
+      .eq('tenant_id', authCtx.tenant.id)
+      .is('deleted_at', null)
       .select('id, slug, name, deleted_at')
       .single();
 
@@ -135,31 +220,24 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: projectErr.message }, { status: 400 });
     }
 
-    if (!softDeleted) {
-      return NextResponse.json(
-        { error: 'Project not found or already deleted' },
-        { status: 404 }
-      );
-    }
+    // Cascade soft-delete ONLY to the active work items captured in the snapshot
+    if (activeItemIds.length > 0) {
+      const { error: cascadeErr } = await supabaseAdmin
+        .from('work_items')
+        .update({ deleted_at: now, updated_at: now })
+        .in('id', activeItemIds);
 
-    // Cascade soft-delete to all work items in this project
-    const { error: cascadeErr } = await supabaseAdmin
-      .from('work_items')
-      .update({ deleted_at: now, updated_at: now })
-      .eq('project_id', id)
-      .eq('tenant_id', authCtx.tenant.id)
-      .is('deleted_at', null);
-
-    if (cascadeErr) {
-      // Restore the project so we don't leave it in a partially-deleted state
-      await supabaseAdmin
-        .from('projects')
-        .update({ deleted_at: null, updated_at: now })
-        .eq('id', id);
-      return NextResponse.json(
-        { error: `Project restored: failed to cascade-delete items — ${cascadeErr.message}` },
-        { status: 500 }
-      );
+      if (cascadeErr) {
+        // Rollback project update so we don't leave it in a partially-deleted state
+        await supabaseAdmin
+          .from('projects')
+          .update({ deleted_at: null, updated_at: now, settings: prevSettings })
+          .eq('id', id);
+        return NextResponse.json(
+          { error: `Project restored: failed to cascade-delete items — ${cascadeErr.message}` },
+          { status: 500 }
+        );
+      }
     }
 
     return NextResponse.json({
