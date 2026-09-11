@@ -2107,9 +2107,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 py-3 flex items-center justify-between sticky top-0 z-40">
-        <div className="flex items-center space-x-2">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1" />
+      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+        <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap shrink-0">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1 shrink-0" />
           <span className="text-slate-700">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
@@ -2127,9 +2127,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           />
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-3 flex-nowrap whitespace-nowrap shrink-0">
           {/* View tabs */}
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs">
+          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
             {(['board', 'tree', 'sprint', 'spark', 'schema'] as const).map((tab) => {
               const icons = {
                 board: <Kanban className="w-3.5 h-3.5" />,
@@ -2149,7 +2149,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <button
                   key={tab}
                   onClick={() => handleTabChange(tab)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors ${
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
                     activeTab === tab
                       ? 'bg-emerald-500 text-slate-950 shadow'
                       : 'text-slate-400 hover:text-white'
@@ -2184,7 +2184,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             <button
               type="button"
               onClick={() => setIsReconciliationModalOpen(true)}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in shrink-0"
               title={`${deviations.length} schema deviations detected. Click to review and reconcile.`}
               data-testid="header-deviations-btn"
             >
@@ -2200,7 +2200,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               fetchData();
             }}
             disabled={isRefreshing}
-            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors"
+            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors shrink-0"
             title="Refresh"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
@@ -2219,29 +2219,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             }}
           />
 
-          {/* User Menu / Guest Mode */}
-          {currentUser === null ? (
-            <div className="flex items-center space-x-2">
-              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold">
+          {/* User Menu / Guest Mode (PRJ-05: never flash read-only badges while loading) */}
+          {loading ? (
+            <div className="w-20 h-7 bg-slate-900/60 rounded-lg animate-pulse shrink-0" />
+          ) : currentUser === null ? (
+            <div className="flex items-center space-x-2 shrink-0">
+              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold shrink-0">
                 <Eye className="w-3.5 h-3.5" />
                 <span>Read-Only Demo</span>
               </span>
               <Link
                 href={`/login?next=/${tenantSlug}/${projectSlug}`}
-                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shrink-0"
               >
                 Sign In
               </Link>
             </div>
           ) : (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 shrink-0">
               {isReadOnly && (
-                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs font-medium">
+                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs font-medium shrink-0">
                   <Eye className="w-3 h-3 text-slate-400" />
                   <span>Viewer</span>
                 </span>
               )}
               {tenantInfo && (
+
                 <UserMenu
                   tenantName={tenantInfo.name}
                   tenantSlug={tenantInfo.slug}
@@ -2308,7 +2311,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             )}
 
             {/* Guest Read-Only Banner */}
-            {isReadOnly && (
+            {!loading && isReadOnly && (
+
               <div className="p-4 rounded-xl bg-sky-950/20 border border-sky-800/30 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
                 <div className="flex items-center space-x-2.5">
                   <Eye className="w-4 h-4 text-sky-400 shrink-0" />

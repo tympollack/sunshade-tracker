@@ -30,9 +30,9 @@ export interface SprintItemRowProps {
   onOpenReconciliation?: (dev: SchemaDeviation) => void;
   isAllProjects?: boolean;
   allProjects?: { id: string; name: string }[];
-  onUpdateStatus: (itemId: string, status: string) => void;
-  onUpdateSprint: (itemId: string, sprint: string) => void;
-  availableSprints: string[];
+  onUpdateStatus?: (itemId: string, status: string) => void;
+  onUpdateSprint?: (itemId: string, sprint: string) => void;
+  availableSprints?: string[];
   currentSprintName?: string;
   isTreeMode?: boolean;
   childCount?: number;
@@ -55,7 +55,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   allProjects = [],
   onUpdateStatus,
   onUpdateSprint,
-  availableSprints,
+  availableSprints = [],
   currentSprintName,
   isTreeMode = false,
   childCount = 0,
@@ -221,25 +221,48 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           <span>{item.assignee || 'Unassigned'}</span>
         </span>
 
-        {/* Status Select */}
-        <select
-          value={item.status}
-          onChange={(e) => onUpdateStatus(item.id, e.target.value)}
-          disabled={isImmutable}
-          className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          title={isImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
-        >
-          {getItemStatuses(item).map((st: StatusDefinition) => (
-            <option key={st.id} value={st.id}>
-              {st.label}
-            </option>
-          ))}
-        </select>
+        {/* Status Select with Hierarchy Color-Coding */}
+        {(() => {
+          const itemStatuses = getItemStatuses(item);
+          const currentStatusObj = itemStatuses.find((st: StatusDefinition) => st.id === item.status);
+          const statusColor = currentStatusObj?.color;
+
+          return (
+            <select
+              value={item.status}
+              onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
+              disabled={isImmutable}
+              className="text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border"
+              style={
+                statusColor
+                  ? {
+                      backgroundColor: `${statusColor}20`,
+                      color: statusColor,
+                      border: `1px solid ${statusColor}40`,
+                    }
+                  : { backgroundColor: '#020617', color: '#cbd5e1', border: '1px solid #1e293b' }
+              }
+              title={isImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
+              data-testid={`sprint-status-select-${item.id}`}
+            >
+              {itemStatuses.map((st: StatusDefinition) => (
+                <option
+                  key={st.id}
+                  value={st.id}
+                  style={{ backgroundColor: '#020617', color: '#cbd5e1' }}
+                >
+                  {st.label}
+                </option>
+              ))}
+            </select>
+          );
+        })()}
+
 
         {/* Move / Reassign Sprint Select */}
         <select
           value={currentSprintName || item.metadata?.sprint || '__none__'}
-          onChange={(e) => onUpdateSprint(item.id, e.target.value)}
+          onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
           disabled={isImmutable}
           className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}
