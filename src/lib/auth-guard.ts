@@ -10,7 +10,7 @@ export interface AuthContext {
   /** The user's role in this workspace ('owner' | 'admin' | 'member' | null for API key auth) */
   role: string | null;
   /** The authenticated user's display name or email prefix */
-  userName: string | null;
+  userName?: string | null;
 }
 
 export type AuthResult =
