@@ -7,15 +7,15 @@ import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { HierarchyLevel, StatusDefinition } from '@/types/tracker';
 
 const mockHierarchy: HierarchyLevel[] = [
-  { level: 1, type: 'epic', label: 'Epic' },
-  { level: 2, type: 'story', label: 'Story' },
-  { level: 3, type: 'task', label: 'Task' },
+  { level: 1, type: 'epic', label: 'Epic', allowed_parents: [] },
+  { level: 2, type: 'story', label: 'Story', allowed_parents: ['epic'] },
+  { level: 3, type: 'task', label: 'Task', allowed_parents: ['story'] },
 ];
 
 const mockStatuses: StatusDefinition[] = [
-  { id: 'not_started', label: 'Not Started', color: '#94a3b8' },
-  { id: 'in_progress', label: 'In Progress', color: '#38bdf8' },
-  { id: 'done', label: 'Done', color: '#34d399' },
+  { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
+  { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+  { id: 'done', label: 'Done', color: '#34d399', order: 3 },
 ];
 
 const mockMembers = [
