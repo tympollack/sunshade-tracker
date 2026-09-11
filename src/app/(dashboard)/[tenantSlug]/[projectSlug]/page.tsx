@@ -52,6 +52,7 @@ import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
+import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
@@ -305,20 +306,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [ingestResponse, setIngestResponse] = useState<any>(null);
   const [isIngesting, setIsIngesting] = useState(false);
 
-  // Quick Add form state
-  const [newItemTitle, setNewItemTitle] = useState('');
-  const [newItemType, setNewItemType] = useState('task');
-  const [newItemStatus, setNewItemStatus] = useState('not_started');
-  const [newItemAssignee, setNewItemAssignee] = useState('');
-  const [newItemExtRef, setNewItemExtRef] = useState('');
-  const [newItemProjectSlug, setNewItemProjectSlug] = useState('');
+  // Quick Add modal state (TASK-TRK-QUICK-ADD-DIALOG)
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [selectedSchemaProjectSlug, setSelectedSchemaProjectSlug] = useState('');
 
   // User & Workspace Members
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
   const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
-  const [assigneeDropdownOpen, setAssigneeDropdownOpen] = useState(false);
-  const assigneeDropdownRef = useRef<HTMLDivElement>(null);
 
   // Project Archive state (TASK-TRK-PROJECT-ARCHIVE)
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
@@ -511,41 +505,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return 'Me';
   }, [currentUser]);
 
-  const currentQuickAddProject = useMemo(() => {
-    if (!isAllProjects) return null;
-    return allProjects.find((p) => p.slug === newItemProjectSlug) || allProjects[0] || null;
-  }, [isAllProjects, allProjects, newItemProjectSlug]);
-
-  const quickAddHierarchy = useMemo(() => {
-    if (currentQuickAddProject?.settings?.hierarchy?.length) {
-      return currentQuickAddProject.settings.hierarchy.map((h: any) => ({
-        ...h,
-        color: h.color || getDefaultLevelHex(h.level),
-      }));
-    }
-    return projectSettings.hierarchy;
-  }, [currentQuickAddProject, projectSettings.hierarchy]);
-
-  const quickAddStatuses = useMemo(() => {
-    if (currentQuickAddProject?.settings?.statuses?.length) {
-      return currentQuickAddProject.settings.statuses;
-    }
-    return projectSettings.statuses;
-  }, [currentQuickAddProject, projectSettings.statuses]);
-
-  useEffect(() => {
-    if (isAllProjects && quickAddHierarchy.length > 0) {
-      if (!quickAddHierarchy.some((h: any) => h.type === newItemType)) {
-        setNewItemType(quickAddHierarchy[quickAddHierarchy.length - 1].type);
-      }
-    }
-    if (isAllProjects && quickAddStatuses.length > 0) {
-      if (!quickAddStatuses.some((s: any) => s.id === newItemStatus)) {
-        setNewItemStatus(quickAddStatuses[0].id);
-      }
-    }
-  }, [isAllProjects, quickAddHierarchy, quickAddStatuses, newItemType, newItemStatus]);
-
   const modalProjectSettings = useMemo(() => {
     if (!editingItem) return projectSettings;
     const proj = allProjects.find(
@@ -593,16 +552,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return projectSettings;
   }, [isAllProjects, allProjects, selectedSchemaProjectSlug, projectSettings]);
 
-  // Click outside for assignee dropdown
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target as Node)) {
-        setAssigneeDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   // ─── Session-authenticated fetch with workspace context ─────────────────
   const apiFetch = useCallback(
@@ -627,12 +576,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       const data = await res.json();
       if (data.user) {
         setCurrentUser(data.user);
-        const name = data.user.full_name
-          ? `Me (${data.user.full_name})`
-          : data.user.email
-          ? `Me (${data.user.email.split('@')[0]})`
-          : 'Me';
-        setNewItemAssignee((prev) => (!prev ? name : prev));
       }
       // data.workspaces is an array of all the user's workspaces
       setAllWorkspaces(data.workspaces || []);
@@ -669,9 +612,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         const sData = await settingsRes.json();
         if (Array.isArray(sData.projects)) {
           setAllProjects(sData.projects);
-          if (sData.projects.length > 0) {
-            setNewItemProjectSlug((prev) => prev || sData.projects[0].slug);
-          }
         }
         if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
           setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
@@ -695,10 +635,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 };
                 setProjectSettings(enrichedSettings);
                 if (detail.settings.statuses?.length) {
-                  setNewItemStatus((prev) => {
-                    const exists = detail.settings.statuses.some((s: any) => s.id === prev);
-                    return exists ? prev : detail.settings.statuses[0].id;
-                  });
                   setSelectedStatuses((prev) => {
                     if (prev === null) return null;
                     const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
@@ -706,12 +642,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   });
                 }
                 if (detail.settings.hierarchy?.length) {
-                  setNewItemType((prev) => {
-                    const exists = detail.settings.hierarchy.some((h: any) => h.type === prev);
-                    return exists
-                      ? prev
-                      : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
-                  });
                   setSelectedLevels((prev) => {
                     if (prev === null) return null;
                     const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
@@ -1886,37 +1816,81 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     [items, knownStatusIds, effectiveSelectedLevels, selectedSprint]
   );
 
-  // ─── Create item ─────────────────────────────────────────────────────────
-  const handleCreateItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItemTitle.trim()) return;
-    const targetProjectSlug = isAllProjects
-      ? (newItemProjectSlug || allProjects[0]?.slug || 'sunshade-tracker')
-      : projectSlug;
+  // ─── Create item (TASK-TRK-QUICK-ADD-DIALOG) ──────────────────────────────
+  const handleCreateItem = async (payload: QuickAddPayload) => {
+    if (isReadOnly) return;
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'POST',
-        body: JSON.stringify({
-          project_slug: targetProjectSlug,
-          title: newItemTitle,
-          item_type: newItemType,
-          status: newItemStatus,
-          assignee: newItemAssignee || null,
-          external_ref_id: newItemExtRef || null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.item) {
           setItems((prev) => [...prev, data.item]);
-          setNewItemTitle('');
-          setNewItemExtRef('');
+          return data.item;
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to create work item');
       }
     } catch (err) {
       console.error('Error creating item:', err);
+      throw err;
     }
   };
+
+  // ─── Global Keyboard Shortcuts for Quick Add (TASK-TRK-HEADER-ADD-BUTTON) ─
+  useEffect(() => {
+    if (isReadOnly) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ignore if modifier keys (Ctrl, Cmd, Alt) are pressed
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Only trigger on 'c' or 'n'
+      if (e.key !== 'c' && e.key !== 'n' && e.key !== 'C' && e.key !== 'N') return;
+
+      // Ignore if user is focused on an interactive input element
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl) {
+        const tag = activeEl.tagName?.toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || activeEl.isContentEditable) {
+          return;
+        }
+      }
+
+      // Ignore if any modal is currently open
+      if (
+        isQuickAddOpen ||
+        editingItem ||
+        isManageSprintsOpen ||
+        isReconciliationModalOpen ||
+        isArchiveModalOpen ||
+        !!deleteConfirmItem ||
+        !!cascadePromptState ||
+        !!cascadeCompletionState
+      ) {
+        return;
+      }
+
+      e.preventDefault();
+      setIsQuickAddOpen(true);
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    isReadOnly,
+    isQuickAddOpen,
+    editingItem,
+    isManageSprintsOpen,
+    isReconciliationModalOpen,
+    isArchiveModalOpen,
+    deleteConfirmItem,
+    cascadePromptState,
+    cascadeCompletionState,
+  ]);
 
   // ─── Gemini Spark ingest ─────────────────────────────────────────────────
   const handleRunSparkIngest = async () => {
@@ -2059,6 +2033,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             })}
           </div>
 
+          {/* Add Item Quick Button (TASK-TRK-HEADER-ADD-BUTTON) */}
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setIsQuickAddOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer shrink-0"
+              title="Add Item (Press 'c' or 'n')"
+              data-testid="header-add-item-btn"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Item</span>
+              <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
+                N
+              </kbd>
+            </button>
+          )}
+
           {/* Schema Deviations Quick Trigger */}
           {!isReadOnly && deviations.length > 0 && (
             <button
@@ -2187,169 +2178,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
             )}
 
-            {/* Quick Add Form / Guest Read-Only Banner */}
-            {!isReadOnly ? (
-              <form
-                onSubmit={handleCreateItem}
-                className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-wrap items-center gap-3"
-              >
-                {isAllProjects && allProjects.length > 0 && (
-                  <select
-                    value={newItemProjectSlug || allProjects[0]?.slug}
-                    onChange={(e) => setNewItemProjectSlug(e.target.value)}
-                    className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
-                  >
-                    {allProjects.map((p) => (
-                      <option key={p.id} value={p.slug}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                <div className="flex-1 min-w-[240px]">
-                  <input
-                    type="text"
-                    placeholder="New item title (e.g. Implement Webhook Dispatcher)..."
-                    value={newItemTitle}
-                    onChange={(e) => setNewItemTitle(e.target.value)}
-                    className="w-full px-3 py-1.5 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-sans transition-colors"
-                  />
-                </div>
-
-                {/* Item Hierarchy Type */}
-                <select
-                  value={newItemType}
-                  onChange={(e) => setNewItemType(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-                >
-                  {quickAddHierarchy.map((h) => (
-                    <option key={h.type} value={h.type}>
-                      {h.label} (Level {h.level})
-                    </option>
-                  ))}
-                </select>
-
-                {/* Item Status */}
-                <select
-                  value={newItemStatus}
-                  onChange={(e) => setNewItemStatus(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-                >
-                  {quickAddStatuses.map((s: StatusDefinition) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Assignee Dropdown Picker */}
-                <div className="relative" ref={assigneeDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setAssigneeDropdownOpen((v) => !v)}
-                    className="flex items-center space-x-1.5 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors max-w-[190px]"
-                  >
-                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{newItemAssignee || 'Unassigned'}</span>
-                    <ChevronDown
-                      className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${
-                        assigneeDropdownOpen ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-
-                  {assigneeDropdownOpen && (
-                    <div className="absolute left-0 top-full mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
-                      <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Select Assignee
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewItemAssignee(myDisplayName);
-                          setAssigneeDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                          newItemAssignee === myDisplayName
-                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                            : 'text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[9px] font-bold">
-                          Me
-                        </div>
-                        <span className="truncate">{myDisplayName}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewItemAssignee('');
-                          setAssigneeDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                          !newItemAssignee
-                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[9px]">
-                          —
-                        </div>
-                        <span className="italic">Unassigned</span>
-                      </button>
-
-                      <div className="border-t border-slate-800 my-1 pt-1">
-                        <div className="px-2 py-0.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
-                          Workspace Members
-                        </div>
-                        {workspaceMembers
-                          .filter((m) => m.full_name && m.full_name !== myDisplayName)
-                          .map((m) => (
-                            <button
-                              key={m.user_id}
-                              type="button"
-                              onClick={() => {
-                                setNewItemAssignee(m.full_name);
-                                setAssigneeDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                                newItemAssignee === m.full_name
-                                  ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                                  : 'text-slate-300 hover:bg-slate-800'
-                              }`}
-                            >
-                              <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-bold">
-                                {m.full_name[0]?.toUpperCase() || 'M'}
-                              </div>
-                              <span className="truncate">{m.full_name}</span>
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* External Ref ID */}
-                <input
-                  type="text"
-                  placeholder="Ref (e.g. SPEC-01)"
-                  value={newItemExtRef}
-                  onChange={(e) => setNewItemExtRef(e.target.value)}
-                  className="w-32 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
-                />
-
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Item</span>
-                </button>
-              </form>
-            ) : (
+            {/* Guest Read-Only Banner */}
+            {isReadOnly && (
               <div className="p-4 rounded-xl bg-sky-950/20 border border-sky-800/30 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
                 <div className="flex items-center space-x-2.5">
                   <Eye className="w-4 h-4 text-sky-400 shrink-0" />
@@ -2467,8 +2297,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   boardHeight === 'compact'
                     ? 'h-auto md:h-[440px]'
                     : boardHeight === 'full'
-                    ? 'h-auto md:h-[calc(100vh-200px)] md:min-h-[500px]'
-                    : 'h-auto md:h-[calc(100vh-270px)] md:min-h-[420px]'
+                    ? 'h-auto md:h-[calc(100vh-140px)] md:min-h-[500px]'
+                    : 'h-auto md:h-[calc(100vh-200px)] md:min-h-[420px]'
                 }`}
               >
                 {projectSettings.statuses
@@ -4054,6 +3884,30 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           await fetchData();
         }}
       />
+
+      {/* Quick Add Work Item Modal (TASK-TRK-QUICK-ADD-DIALOG) */}
+      {!isReadOnly && (
+        <QuickAddModal
+          isOpen={isQuickAddOpen}
+          onClose={() => setIsQuickAddOpen(false)}
+          onSubmit={handleCreateItem}
+          currentProjectSlug={projectSlug}
+          isAllProjects={isAllProjects}
+          allProjects={allProjects}
+          hierarchy={projectSettings.hierarchy}
+          statuses={projectSettings.statuses}
+          workspaceMembers={workspaceMembers}
+          myDisplayName={myDisplayName}
+          getHierarchyForProject={(slug) => {
+            const p = allProjects.find((x) => x.slug === slug);
+            return p?.settings?.hierarchy || projectSettings.hierarchy;
+          }}
+          getStatusesForProject={(slug) => {
+            const p = allProjects.find((x) => x.slug === slug);
+            return p?.settings?.statuses || projectSettings.statuses;
+          }}
+        />
+      )}
 
       {/* Standalone Sprint Definitions Modal */}
       <ManageSprintsModal
