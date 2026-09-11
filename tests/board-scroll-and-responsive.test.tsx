@@ -10,8 +10,8 @@ describe('BUG-TRK-BOARD-SCROLL, TASK-TRK-BOARD-RESPONSIVE-LAYOUT, and TASK-TRK-B
 
   describe('BUG-TRK-BOARD-SCROLL: Viewport-Adaptive Height and Wheel Translation', () => {
     it('uses viewport-adaptive height for standard board mode instead of rigid 620px', () => {
-      // Standard board height must adapt to viewport height so horizontal scrollbar stays above the fold
-      expect(pageContent).toContain('md:h-[calc(100vh-270px)]');
+      // Standard board height adapts to viewport height (reclaiming 70px from inline form)
+      expect(pageContent).toContain('md:h-[calc(100vh-200px)]');
       expect(pageContent).toContain('md:min-h-[420px]');
       expect(pageContent).not.toContain(": 'h-[620px]'");
     });
