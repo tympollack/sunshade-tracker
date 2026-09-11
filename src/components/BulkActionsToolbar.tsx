@@ -205,7 +205,9 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
       <button
         type="button"
         onClick={onClearSelection}
-        className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+        aria-label="Dismiss bulk selection"
+        data-testid="bulk-actions-dismiss"
+        className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
         title="Deselect all items"
       >
         <X className="w-4 h-4" />

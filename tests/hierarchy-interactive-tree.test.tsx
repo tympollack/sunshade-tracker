@@ -485,7 +485,7 @@ describe('Hierarchy Tree UI Lines & Guide Rails - TASK-TRK-HIER-TREE-LINES-UI', 
     const continuation = screen.getByTestId('branch-connector-continuation');
     expect(continuation).toBeInTheDocument();
     expect(continuation).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none');
-    expect(continuation).toHaveStyle({ left: '28px' });
+    expect(continuation).toHaveStyle({ left: '20px' });
 
     // Both Story 1 and Story 2 have branch-connectors
     const connectors = screen.getAllByTestId('branch-connector');
@@ -530,7 +530,7 @@ describe('Hierarchy Tree UI Lines & Guide Rails - TASK-TRK-HIER-TREE-LINES-UI', 
     const continuation = screen.getByTestId('branch-connector-continuation');
     expect(continuation).toBeInTheDocument();
     expect(continuation).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none');
-    expect(continuation).toHaveStyle({ left: '28px' });
+    expect(continuation).toHaveStyle({ left: '20px' });
   });
 
   it('renders ancestor vertical guide rails for multi-level nested descendants (depth >= 2)', () => {
@@ -572,11 +572,11 @@ describe('Hierarchy Tree UI Lines & Guide Rails - TASK-TRK-HIER-TREE-LINES-UI', 
       />
     );
 
-    // Story 1 is intermediate sibling of epic-1, so its descendants receive ancestorRail for depth 1 (colDepth 1 = 28px)
+    // Story 1 is intermediate sibling of epic-1, so its descendants receive ancestorRail for depth 1 (colDepth 1 = 20px)
     // Task 1 (depth 2) and subtask-1 (depth 3) render ancestor-rail-1
     const ancestorRailCol1 = screen.getAllByTestId('ancestor-rail-1');
     expect(ancestorRailCol1.length).toBeGreaterThanOrEqual(1);
-    expect(ancestorRailCol1[0]).toHaveStyle({ left: '28px' });
+    expect(ancestorRailCol1[0]).toHaveStyle({ left: '20px' });
     expect(ancestorRailCol1[0]).toHaveClass('absolute top-0 bottom-0 w-[2px] bg-slate-700');
   });
 
