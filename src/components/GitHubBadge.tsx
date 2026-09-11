@@ -91,6 +91,8 @@ interface GitHubBadgeProps {
   prUrl?: string; // Optional reference PR URL to derive repo context for commit hashes
   compact?: boolean;
   className?: string;
+  repo?: string;
+  owner?: string;
 }
 
 /**
@@ -134,6 +136,8 @@ export function GitHubBadge({
   prUrl,
   compact = false,
   className = '',
+  repo: propRepo,
+  owner: propOwner,
 }: GitHubBadgeProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -151,8 +155,17 @@ export function GitHubBadge({
   // Derive target URL and repo context
   let targetUrl = '';
   let displayLabel = '';
-  let owner = 'tympollack';
-  let repo = 'sunshade-tracker';
+  let owner = propOwner || 'tympollack';
+  let repo = propRepo || 'sunshade-tracker';
+
+  if (propRepo && propRepo.includes('/')) {
+    const parts = propRepo.split('/');
+    if (parts.length === 2 && parts[0] && parts[1]) {
+      if (!propOwner) owner = parts[0];
+      repo = parts[1];
+    }
+  }
+
   let prNumber: string | undefined;
   let commitHash: string | undefined;
 

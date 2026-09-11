@@ -41,7 +41,7 @@ import {
   Archive,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
-import { buildTree, isDescendantOf } from '@/lib/tree';
+import { buildTree, isDescendantOf, getDescendantIds } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
@@ -138,15 +138,96 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
 
-  // Tree items filtered by selectedSprint (allows focusing on 1 sprint in Hierarchy screen)
-  const treeFilteredItems = useMemo(() => {
-    if (selectedSprint === 'all') return items;
-    if (selectedSprint === '__none__') return items.filter((it) => !it.metadata?.sprint);
-    return items.filter((it) => it.metadata?.sprint === selectedSprint);
-  }, [items, selectedSprint]);
+  // Tree View Filtering & Sorting States (PRJ-02)
+  const [treeStatusFilter, setTreeStatusFilter] = useState<string>('all');
+  const [treeTypeFilter, setTreeTypeFilter] = useState<string>('all');
+  const [treeSortBy, setTreeSortBy] = useState<string>('order_index');
 
-  const treeItems = useMemo(() => buildTree(treeFilteredItems), [treeFilteredItems]);
+  // Sprint Planning View Filtering & Sorting States (PRJ-02)
+  const [sprintStatusFilter, setSprintStatusFilter] = useState<string>('all');
+  const [sprintTypeFilter, setSprintTypeFilter] = useState<string>('all');
+  const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
+
+  const treeSortComparator = useMemo(() => {
+    return (a: WorkItem, b: WorkItem): number => {
+      if (treeSortBy === 'points_desc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pB !== pA) return pB - pA;
+      } else if (treeSortBy === 'points_asc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pA !== pB) return pA - pB;
+      } else if (treeSortBy === 'title_asc') {
+        const cmp = (a.title || '').localeCompare(b.title || '');
+        if (cmp !== 0) return cmp;
+      } else if (treeSortBy === 'title_desc') {
+        const cmp = (b.title || '').localeCompare(a.title || '');
+        if (cmp !== 0) return cmp;
+      }
+      return (a.order_index ?? 0) - (b.order_index ?? 0);
+    };
+  }, [treeSortBy]);
+
+  // Tree items filtered by selectedSprint, status, and level (PRJ-02)
+  const treeFilteredItems = useMemo(() => {
+    let res = items;
+    if (selectedSprint !== 'all') {
+      if (selectedSprint === '__none__') {
+        res = res.filter((it) => !it.metadata?.sprint);
+      } else {
+        res = res.filter((it) => it.metadata?.sprint === selectedSprint);
+      }
+    }
+    if (treeStatusFilter !== 'all') {
+      res = res.filter((it) => it.status === treeStatusFilter);
+    }
+    if (treeTypeFilter !== 'all') {
+      res = res.filter((it) => it.item_type === treeTypeFilter);
+    }
+    return res;
+  }, [items, selectedSprint, treeStatusFilter, treeTypeFilter]);
+
+  const treeItems = useMemo(
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
+    [treeFilteredItems, treeSortComparator]
+  );
   const allTreeItems = useMemo(() => buildTree(items), [items]);
+
+  const sprintComparator = useMemo(() => {
+    return (a: WorkItem, b: WorkItem): number => {
+      if (sprintSortBy === 'points_desc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pB !== pA) return pB - pA;
+      } else if (sprintSortBy === 'points_asc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pA !== pB) return pA - pB;
+      } else if (sprintSortBy === 'title_asc') {
+        const cmp = (a.title || '').localeCompare(b.title || '');
+        if (cmp !== 0) return cmp;
+      } else if (sprintSortBy === 'title_desc') {
+        const cmp = (b.title || '').localeCompare(a.title || '');
+        if (cmp !== 0) return cmp;
+      }
+      return (a.order_index ?? 0) - (b.order_index ?? 0);
+    };
+  }, [sprintSortBy]);
+
+  const filterSprintItems = useCallback(
+    (itemsList: WorkItem[]) => {
+      let res = itemsList;
+      if (sprintStatusFilter !== 'all') {
+        res = res.filter((it) => it.status === sprintStatusFilter);
+      }
+      if (sprintTypeFilter !== 'all') {
+        res = res.filter((it) => it.item_type === sprintTypeFilter);
+      }
+      return [...res].sort(sprintComparator);
+    },
+    [sprintStatusFilter, sprintTypeFilter, sprintComparator]
+  );
 
   // Interactive Hierarchy Tree states (STORY-TRK-HIERARCHY-UX)
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
@@ -914,6 +995,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       return;
     }
 
+    const descendantIds = getDescendantIds(items, itemId);
+    const targetIds = [itemId, ...descendantIds];
+    const targetIdSet = new Set(targetIds);
+
     const newMetadata = { ...(item.metadata || {}) };
     if (newSprint && newSprint !== '__none__') {
       newMetadata.sprint = newSprint;
@@ -921,9 +1006,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       delete newMetadata.sprint;
     }
 
-    // Optimistic update
+    // Optimistic update for root and all descendants (PRJ-03)
     setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, metadata: newMetadata } : it))
+      prev.map((it) => {
+        if (targetIdSet.has(it.id)) {
+          const nextMeta = { ...(it.metadata || {}) };
+          if (newSprint && newSprint !== '__none__') {
+            nextMeta.sprint = newSprint;
+          } else {
+            delete nextMeta.sprint;
+          }
+          return { ...it, metadata: nextMeta };
+        }
+        return it;
+      })
     );
 
     try {
@@ -1260,6 +1356,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
+    if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
+      fetchData();
+    }
   };
 
   // ─── Delete item ─────────────────────────────────────────────────────────
@@ -2598,7 +2697,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                                     {/* Metadata tags */}
                                     {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
-                                      const { prUrl, commitHash, isGitHubField } = extractGitHubMetadata(item.metadata);
+                                      const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata);
                                       const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => !isGitHubField(k));
                                       const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
                                       if (!hasAnyDisplay) return null;
@@ -2609,6 +2708,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                             <GitHubBadge
                                               type="pr"
                                               value={prUrl}
+                                              repo={repo}
+                                              owner={owner}
                                             />
                                           )}
                                           {commitHash && (
@@ -2616,6 +2717,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                               type="commit"
                                               value={commitHash}
                                               prUrl={prUrl}
+                                              repo={repo}
+                                              owner={owner}
                                             />
                                           )}
                                           {nonGitHubEntries.map(([k, v]) => {
@@ -2816,12 +2919,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     Collapse All
                   </button>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5">
                   <span className="text-xs text-slate-400">Sprint:</span>
                   <select
                     value={selectedSprint}
                     onChange={(e) => setSelectedSprint(e.target.value)}
                     className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-sprint-filter"
                   >
                     <option value="all">All Sprints</option>
                     <option value="__none__">Backlog (Unassigned)</option>
@@ -2832,13 +2936,70 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ))}
                   </select>
                 </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Status:</span>
+                  <select
+                    value={treeStatusFilter}
+                    onChange={(e) => setTreeStatusFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-status-filter"
+                  >
+                    <option value="all">All Statuses</option>
+                    {projectSettings.statuses.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label || s.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Level:</span>
+                  <select
+                    value={treeTypeFilter}
+                    onChange={(e) => setTreeTypeFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-level-filter"
+                  >
+                    <option value="all">All Levels</option>
+                    {projectSettings.hierarchy.map((h) => (
+                      <option key={h.type} value={h.type}>
+                        {h.label || h.type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Sort:</span>
+                  <select
+                    value={treeSortBy}
+                    onChange={(e) => setTreeSortBy(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-sort-by"
+                  >
+                    <option value="order_index">Manual (Order)</option>
+                    <option value="points_desc">Points (High to Low)</option>
+                    <option value="points_asc">Points (Low to High)</option>
+                    <option value="title_asc">Title (A to Z)</option>
+                    <option value="title_desc">Title (Z to A)</option>
+                  </select>
+                </div>
+                {(selectedSprint !== 'all' || treeStatusFilter !== 'all' || treeTypeFilter !== 'all' || treeSortBy !== 'order_index') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSprint('all');
+                      setTreeStatusFilter('all');
+                      setTreeTypeFilter('all');
+                      setTreeSortBy('order_index');
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                    data-testid="tree-reset-filters-btn"
+                  >
+                    Reset
+                  </button>
+                )}
                 <span className="text-xs font-mono text-emerald-400 whitespace-nowrap shrink-0">
                   Total Items: {treeFilteredItems.length}
-                  {selectedSprint !== 'all' && (
-                    <span className="text-slate-400 font-normal ml-1">
-                      (filtered by {selectedSprint === '__none__' ? 'Backlog' : selectedSprint})
-                    </span>
-                  )}
                 </span>
               </div>
             </div>
@@ -2991,6 +3152,68 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   )}
                 </button>
 
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Status:</span>
+                  <select
+                    value={sprintStatusFilter}
+                    onChange={(e) => setSprintStatusFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-status-filter"
+                  >
+                    <option value="all">All Statuses</option>
+                    {projectSettings.statuses.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label || s.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Level:</span>
+                  <select
+                    value={sprintTypeFilter}
+                    onChange={(e) => setSprintTypeFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-level-filter"
+                  >
+                    <option value="all">All Levels</option>
+                    {projectSettings.hierarchy.map((h) => (
+                      <option key={h.type} value={h.type}>
+                        {h.label || h.type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Sort:</span>
+                  <select
+                    value={sprintSortBy}
+                    onChange={(e) => setSprintSortBy(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-sort-by"
+                  >
+                    <option value="order_index">Manual (Order)</option>
+                    <option value="points_desc">Points (High to Low)</option>
+                    <option value="points_asc">Points (Low to High)</option>
+                    <option value="title_asc">Title (A to Z)</option>
+                    <option value="title_desc">Title (Z to A)</option>
+                  </select>
+                </div>
+                {(sprintStatusFilter !== 'all' || sprintTypeFilter !== 'all' || sprintSortBy !== 'order_index') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSprintStatusFilter('all');
+                      setSprintTypeFilter('all');
+                      setSprintSortBy('order_index');
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                    data-testid="sprint-reset-filters-btn"
+                  >
+                    Reset
+                  </button>
+                )}
+
                 {/* Manage Sprints Button */}
                 {!isReadOnly && (
                   <button
@@ -3020,7 +3243,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             {/* Sprint Groups */}
             <div className="space-y-6">
               {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((sprintName) => {
-                const sprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
+                const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
+                const sprintItems = filterSprintItems(rawSprintItems);
                 const totalPoints = sprintItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
                   return acc + (isNaN(p) ? 0 : p);
@@ -3214,7 +3438,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             No stories or tasks in {sprintName}. Allocate backlog items below.
                           </div>
                         ) : sprintViewMode === 'tree' ? (
-                          buildTree(sprintItems).map((node) => renderSprintTreeNode(node))
+                          buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node) => renderSprintTreeNode(node))
                         ) : (
                           sprintItems.map((item) => {
                             const isImmutable =
@@ -3255,7 +3479,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
               {/* Backlog (Unassigned) Swimlane */}
               {(() => {
-                const backlogItems = items.filter((it) => !it.metadata?.sprint);
+                const rawBacklogItems = items.filter((it) => !it.metadata?.sprint);
+                const backlogItems = filterSprintItems(rawBacklogItems);
                 const backlogPoints = backlogItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
                   return acc + (isNaN(p) ? 0 : p);
@@ -3371,7 +3596,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             Backlog is empty! All items are assigned to active sprints.
                           </div>
                         ) : sprintViewMode === 'tree' ? (
-                          buildTree(backlogItems).map((node) => renderBacklogTreeNode(node))
+                          buildTree(backlogItems, null, 0, new Set(), sprintComparator).map((node) => renderBacklogTreeNode(node))
                         ) : (
                           backlogItems.map((item) => {
                             const isImmutable =
@@ -3713,6 +3938,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
         isReadOnly={isReadOnly}
+        projects={allProjects}
+        onSelectItem={(item) => setEditingItem(item)}
       />
 
       {/* Board Item Delete Confirmation Modal */}

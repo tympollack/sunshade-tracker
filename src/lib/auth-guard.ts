@@ -9,6 +9,8 @@ export interface AuthContext {
   userId: string | null;
   /** The user's role in this workspace ('owner' | 'admin' | 'member' | null for API key auth) */
   role: string | null;
+  /** The authenticated user's display name or email prefix */
+  userName: string | null;
 }
 
 export type AuthResult =
@@ -29,6 +31,12 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
     const supabase = await createServerClient();
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     const service = supabaseAdmin;
+
+    const userName = user
+      ? user.user_metadata?.full_name ??
+        user.user_metadata?.name ??
+        (user.email ? user.email.split('@')[0] : null)
+      : null;
 
     // Determine which workspace to authorize against
     const rawSlugHint =
@@ -73,6 +81,7 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
             tenant: tenantData as Tenant,
             userId: user?.id || null,
             role: 'viewer',
+            userName: userName || (user ? 'User' : 'Guest'),
           },
           errorResponse: null,
         };
@@ -130,7 +139,7 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
 
         if (ownedTenant) {
           return {
-            context: { tenant: ownedTenant as Tenant, userId: user.id, role: 'owner' },
+            context: { tenant: ownedTenant as Tenant, userId: user.id, role: 'owner', userName },
             errorResponse: null,
           };
         }
@@ -167,7 +176,7 @@ export async function authenticateSession(req: NextRequest): Promise<AuthResult>
     }
 
     return {
-      context: { tenant, userId: user.id, role },
+      context: { tenant, userId: user.id, role, userName },
       errorResponse: null,
     };
   } catch (err: any) {
@@ -230,7 +239,7 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
     }
 
     return {
-      context: { tenant: tenant as Tenant, userId: null, role: null },
+      context: { tenant: tenant as Tenant, userId: null, role: null, userName: 'API Client' },
       errorResponse: null,
     };
   } catch (err: any) {

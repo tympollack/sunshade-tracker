@@ -29,6 +29,12 @@ import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
+interface ProjectInfo {
+  id: string;
+  slug: string;
+  name: string;
+  settings?: ProjectSettings;
+}
 
 interface WorkItemModalProps {
   item: WorkItem | null;
@@ -42,6 +48,26 @@ interface WorkItemModalProps {
   workspaceMembers?: { full_name: string; email?: string }[];
   tenantSlug?: string;
   isReadOnly?: boolean;
+  projects?: ProjectInfo[];
+  onSelectItem?: (item: WorkItem) => void;
+}
+
+function formatModalTimestamp(isoString?: string | null): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return '';
+  }
 }
 
 export function WorkItemModal({
@@ -56,6 +82,8 @@ export function WorkItemModal({
   workspaceMembers = [],
   tenantSlug,
   isReadOnly = false,
+  projects = [],
+  onSelectItem,
 }: WorkItemModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -64,6 +92,7 @@ export function WorkItemModal({
   const [parentId, setParentId] = useState<string>('');
   const [assignee, setAssignee] = useState('');
   const [externalRef, setExternalRef] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [metadata, setMetadata] = useState<Record<string, any>>({});
   const [metaDrafts, setMetaDrafts] = useState<Record<string, string>>({});
   const [metaErrors, setMetaErrors] = useState<Record<string, string | null>>({});
@@ -77,11 +106,13 @@ export function WorkItemModal({
   const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
   const isLocked = isSprintLocked || isReadOnly;
 
-  // Activity Log tab state
-  const [activeTab, setActiveTab] = useState<'details' | 'activity'>('details');
+  // Navigation tabs: details | children | activity
+  const [activeTab, setActiveTab] = useState<'details' | 'children' | 'activity'>('details');
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const lastFetchedItemIdRef = useRef<string | null>(null);
+
+  const childItems = item ? allItems.filter((it) => it.parent_id === item.id) : [];
 
   const fetchAuditLogs = async (itemId: string) => {
     lastFetchedItemIdRef.current = itemId;
@@ -116,6 +147,7 @@ export function WorkItemModal({
       setParentId(item.parent_id || '');
       setAssignee(item.assignee || '');
       setExternalRef(item.external_ref_id || '');
+      setSelectedProjectId(item.project_id || '');
       const rawMeta = item.metadata ? { ...item.metadata } : {};
       setMetadata(rawMeta);
       const drafts: Record<string, string> = {};
@@ -180,7 +212,7 @@ export function WorkItemModal({
   );
 
   const levelColor = getHierarchyLevelColor(itemType, projectSettings.hierarchy);
-  const { prUrl: modalPrUrl, commitHash: modalCommitHash } = extractGitHubMetadata(metadata);
+  const { prUrl: modalPrUrl, commitHash: modalCommitHash, repo: modalRepo, owner: modalOwner } = extractGitHubMetadata(metadata);
 
   const handleSave = async () => {
     if (isLocked) {
@@ -196,7 +228,7 @@ export function WorkItemModal({
     setIsSaving(true);
     setSaveError(null);
     try {
-      await onSave(item.id, {
+      const updates: Partial<WorkItem> = {
         title: title.trim(),
         description: description.trim() || null,
         status,
@@ -205,7 +237,11 @@ export function WorkItemModal({
         assignee: assignee || null,
         external_ref_id: externalRef.trim() || null,
         metadata,
-      });
+      };
+      if (selectedProjectId && selectedProjectId !== item.project_id) {
+        updates.project_id = selectedProjectId;
+      }
+      await onSave(item.id, updates);
       onClose();
     } catch (err: any) {
       setSaveError(err.message || 'Failed to save changes');
@@ -386,6 +422,8 @@ export function WorkItemModal({
                 type="commit"
                 value={modalCommitHash}
                 prUrl={modalPrUrl}
+                repo={modalRepo}
+                owner={modalOwner}
               />
             )}
           </div>
@@ -401,12 +439,12 @@ export function WorkItemModal({
               {copiedGetUrl ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">Copied URL</span>
+                  <span className="text-emerald-400">Copied</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Copy GET URL</span>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>GET URL</span>
                 </>
               )}
             </button>
@@ -446,6 +484,24 @@ export function WorkItemModal({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('children')}
+            data-testid="modal-tab-children"
+            className={`py-2.5 px-3 text-xs font-semibold border-b-2 flex items-center space-x-1.5 transition-colors ${
+              activeTab === 'children'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Children</span>
+            {childItems.length > 0 && (
+              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                {childItems.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setActiveTab('activity');
               if (item?.id) fetchAuditLogs(item.id);
@@ -468,7 +524,86 @@ export function WorkItemModal({
 
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
-          {activeTab === 'activity' ? (
+          {activeTab === 'children' ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Layers className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Child Work Items
+                  </span>
+                  <span className="px-2 py-0.5 text-xs font-mono rounded-full bg-slate-800 text-slate-300">
+                    {childItems.length}
+                  </span>
+                </div>
+              </div>
+
+              {childItems.length === 0 ? (
+                <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl space-y-2">
+                  <Layers className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs text-slate-400 font-medium">No child items found</p>
+                  <p className="text-[11px] text-slate-500">
+                    Tasks, stories, or sub-items can be linked to this item by setting this item as their parent.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {childItems.map((child) => {
+                    const childColor = getHierarchyLevelColor(child.item_type, projectSettings.hierarchy);
+                    const childStatus = projectSettings.statuses.find((s) => s.id === child.status);
+                    const childPoints = child.metadata?.story_points ?? child.metadata?.points ?? child.metadata?.estimate;
+
+                    return (
+                      <div
+                        key={child.id}
+                        onClick={() => {
+                          if (onSelectItem) {
+                            onSelectItem(child);
+                          }
+                        }}
+                        data-testid={`child-item-row-${child.id}`}
+                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 hover:bg-slate-900/60 transition-colors flex items-center justify-between gap-3 cursor-pointer group"
+                      >
+                        <div className="flex items-center space-x-3 min-w-0 flex-1">
+                          <span
+                            className={`text-[10px] uppercase font-mono font-semibold px-2 py-0.5 rounded border shrink-0 ${childColor.badgeBg} ${childColor.badgeText} ${childColor.badgeBorder}`}
+                          >
+                            {child.item_type}
+                          </span>
+                          {child.external_ref_id && (
+                            <span className="text-xs font-mono text-slate-400 shrink-0">
+                              {child.external_ref_id}
+                            </span>
+                          )}
+                          <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
+                            {child.title}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-3 shrink-0">
+                          {childPoints !== undefined && childPoints !== null && (
+                            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded">
+                              {childPoints} pts
+                            </span>
+                          )}
+                          {child.assignee && (
+                            <span className="text-xs text-slate-400 flex items-center space-x-1">
+                              <User className="w-3 h-3 text-slate-500" />
+                              <span className="truncate max-w-[100px]">{child.assignee}</span>
+                            </span>
+                          )}
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                            {childStatus?.label || child.status}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'activity' ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -750,6 +885,32 @@ export function WorkItemModal({
               />
             </div>
 
+            {/* Project (Reassignment with recursive cascade) */}
+            {projects && projects.length > 0 && (
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Project</span>
+                  {selectedProjectId && selectedProjectId !== item?.project_id && (
+                    <span className="text-[10px] text-amber-400 font-normal">
+                      Reassigning project cascades to all child items
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={selectedProjectId}
+                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  data-testid="item-project-select"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.slug})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Parent Item */}
             <div className="space-y-1.5 sm:col-span-2">
               <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
@@ -896,6 +1057,8 @@ export function WorkItemModal({
                               type={k.toLowerCase().includes('commit') || k.toLowerCase() === 'sha' ? 'commit' : 'pr'}
                               value={draftVal}
                               prUrl={modalPrUrl}
+                              repo={modalRepo}
+                              owner={modalOwner}
                               compact
                             />
                           </div>
@@ -949,17 +1112,20 @@ export function WorkItemModal({
     </div>
 
     {/* Modal Footer */}
-    <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
-      {activeTab === 'details' ? (
-        <span className="text-[11px] text-slate-500 font-mono">
-          Press <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Ctrl+Enter</kbd> to save
-        </span>
-      ) : (
-        <span className="text-[11px] text-slate-500 font-mono">
-          Viewing changelog history
-        </span>
-      )}
-      <div className="flex items-center space-x-2.5">
+    <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 text-[11px] text-slate-400 font-mono">
+        {item?.created_at && (
+          <span>
+            Created: <span className="text-slate-300">{formatModalTimestamp(item.created_at)}</span>
+          </span>
+        )}
+        {item?.updated_at && (
+          <span>
+            Updated: <span className="text-slate-300">{formatModalTimestamp(item.updated_at)}</span>
+          </span>
+        )}
+      </div>
+      <div className="flex items-center space-x-2.5 shrink-0">
         <button
           type="button"
           onClick={onClose}
