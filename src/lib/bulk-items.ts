@@ -977,10 +977,16 @@ export async function handleBulkUpdateItems(
       if (updates.order_index !== undefined) itemUpdate.order_index = updates.order_index;
 
       if (updates.metadata !== undefined) {
-        itemUpdate.metadata = {
+        const mergedMetadata = {
           ...(item.metadata || {}),
           ...updates.metadata,
         };
+        for (const [k, v] of Object.entries(updates.metadata)) {
+          if (v === null) {
+            delete mergedMetadata[k];
+          }
+        }
+        itemUpdate.metadata = mergedMetadata;
       }
 
       plannedUpdates.push({ id: item.id, fields: itemUpdate });
@@ -1373,10 +1379,16 @@ export async function handleBulkUpdateItems(
       if (it.order_index !== undefined) patchFields.order_index = it.order_index;
 
       if (it.metadata !== undefined) {
-        patchFields.metadata = {
+        const mergedMetadata = {
           ...(existing.metadata || {}),
           ...it.metadata,
         };
+        for (const [k, v] of Object.entries(it.metadata)) {
+          if (v === null) {
+            delete mergedMetadata[k];
+          }
+        }
+        patchFields.metadata = mergedMetadata;
       }
 
       plannedUpdates.push({ id: it.id, fields: patchFields });

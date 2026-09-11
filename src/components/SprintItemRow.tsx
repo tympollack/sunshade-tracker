@@ -3,6 +3,7 @@
 import React from 'react';
 import {
   CheckSquare,
+  MinusSquare,
   Square,
   Lock,
   User,
@@ -19,6 +20,7 @@ export interface SprintItemRowProps {
   item: WorkItem;
   depth?: number;
   isSelected: boolean;
+  isIndeterminate?: boolean;
   onToggleSelect: (itemId: string, e: React.MouseEvent) => void;
   isImmutable: boolean;
   onEditItem: (item: WorkItem) => void;
@@ -41,6 +43,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   item,
   depth = 0,
   isSelected,
+  isIndeterminate = false,
   onToggleSelect,
   isImmutable,
   onEditItem,
@@ -89,12 +92,31 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         <button
           type="button"
           onClick={(e) => onToggleSelect(item.id, e)}
-          className="p-1 text-slate-500 hover:text-white transition-colors shrink-0"
-          title={isSelected ? 'Deselect item' : 'Select item (Shift+Click for range)'}
+          className="p-1 text-slate-500 hover:text-white transition-colors shrink-0 cursor-pointer"
+          title={
+            isSelected
+              ? 'Deselect item'
+              : isIndeterminate
+              ? 'Some child tasks selected (click to select all)'
+              : 'Select item (Shift+Click for range)'
+          }
           aria-label={isSelected ? `Deselect ${item.title}` : `Select ${item.title}`}
+          data-testid={`sprint-item-checkbox-${item.id}`}
         >
+          <input
+            type="checkbox"
+            className="sr-only"
+            checked={isSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = Boolean(isIndeterminate);
+            }}
+            readOnly
+            tabIndex={-1}
+          />
           {isSelected ? (
             <CheckSquare className="w-4 h-4 text-emerald-400" />
+          ) : isIndeterminate ? (
+            <MinusSquare className="w-4 h-4 text-emerald-400" data-testid="indeterminate-checkbox" />
           ) : (
             <Square className="w-4 h-4 text-slate-600 group-hover:text-slate-400" />
           )}

@@ -322,6 +322,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
+
+  // Clear selection on tab change or project switch (BUG-TRK-SPRINT-BAR-GLOBAL-LEAK)
+  useEffect(() => {
+    setSelectedItemIds(new Set());
+    lastSelectedIdRef.current = null;
+  }, [activeTab, projectSlug]);
+
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkToast, setBulkToast] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -399,8 +406,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isArchivingProject, setIsArchivingProject] = useState(false);
 
-  // Read-only guest mode
-  const isReadOnly = currentUser === null || tenantInfo?.role === 'viewer';
+  // Read-only guest mode (PRJ-05: only evaluate when not loading to prevent flashing)
+  const isReadOnly = !loading && (currentUser === null || tenantInfo?.role === 'viewer');
 
   const handleArchiveCurrentProject = async () => {
     const proj = allProjects.find((p) => p.slug === projectSlug);
@@ -1447,7 +1454,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   const handleToggleSelectItem = useCallback(
-    (itemId: string, e?: React.MouseEvent | React.ChangeEvent, listContext?: WorkItem[]) => {
+    (
+      itemId: string,
+      e?: React.MouseEvent | React.ChangeEvent,
+      listContext?: WorkItem[],
+      cascade = false
+    ) => {
       const isShiftKey = (e as React.MouseEvent)?.shiftKey;
       const pool = listContext || items;
 
@@ -1467,10 +1479,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           }
         }
 
-        if (next.has(itemId)) {
+        const isCurrentlySelected = next.has(itemId);
+        const descendants = cascade ? getDescendantIds(items, itemId) : [];
+
+        if (isCurrentlySelected) {
+          // Deselect item and its descendants (FEAT-TRK-SPRINT-CASCADE-SELECTION)
           next.delete(itemId);
+          if (cascade) {
+            descendants.forEach((dId) => next.delete(dId));
+            // Also uncheck ancestors since not all children are selected
+            let parentId = items.find((it) => it.id === itemId)?.parent_id;
+            while (parentId) {
+              next.delete(parentId);
+              parentId = items.find((it) => it.id === parentId)?.parent_id;
+            }
+          }
         } else {
+          // Select item and all its descendants (FEAT-TRK-SPRINT-CASCADE-SELECTION)
           next.add(itemId);
+          if (cascade) {
+            descendants.forEach((dId) => next.add(dId));
+          }
         }
         lastSelectedIdRef.current = itemId;
         return next;
@@ -1535,10 +1564,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: {
             metadata: {
               sprint: targetSprint && targetSprint !== '__none__' ? targetSprint : null,
@@ -1547,13 +1575,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to move sprint: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
-        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint || 'Backlog'}.`);
+        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint && targetSprint !== '__none__' ? targetSprint : 'Backlog'}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error moving items: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1583,21 +1616,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: { status: targetStatus },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to update status: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Updated status for ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1627,21 +1664,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: { assignee: assignee || null },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to assign: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Assigned ${mutableIds.length} items to ${assignee || 'Unassigned'}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1681,23 +1722,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: {
             metadata: { story_points: points },
           },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to update points: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Updated story points for ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1732,20 +1777,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'DELETE',
         body: JSON.stringify({
-          action: 'delete',
-          item_ids: mutableIds,
+          ids: mutableIds,
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to delete items: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Deleted ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -3280,14 +3329,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
                   const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+                  const descendantIds = getDescendantIds(items, node.id);
+                  const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
+                  const isNodeSelected = selectedItemIds.has(node.id);
+                  const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
 
                   return (
                     <React.Fragment key={node.id}>
                       <SprintItemRow
                         item={node}
                         depth={depth}
-                        isSelected={selectedItemIds.has(node.id)}
-                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems)}
+                        isSelected={isNodeSelected}
+                        isIndeterminate={isNodeIndeterminate}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems, true)}
                         isImmutable={isImmutable}
                         onEditItem={setEditingItem}
                         getItemHierarchy={getItemHierarchy}
@@ -3504,14 +3558,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
                   const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+                  const descendantIds = getDescendantIds(items, node.id);
+                  const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
+                  const isNodeSelected = selectedItemIds.has(node.id);
+                  const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
 
                   return (
                     <React.Fragment key={node.id}>
                       <SprintItemRow
                         item={node}
                         depth={depth}
-                        isSelected={selectedItemIds.has(node.id)}
-                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems)}
+                        isSelected={isNodeSelected}
+                        isIndeterminate={isNodeIndeterminate}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems, true)}
                         isImmutable={isImmutable}
                         onEditItem={setEditingItem}
                         getItemHierarchy={getItemHierarchy}
@@ -4145,8 +4204,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         items={items}
       />
 
-      {/* Floating Multi-Item Bulk Actions Toolbar */}
-      {!isReadOnly && (
+      {/* Floating Multi-Item Bulk Actions Toolbar (BUG-TRK-SPRINT-BAR-GLOBAL-LEAK: scoped strictly to sprint view) */}
+      {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (
         <BulkActionsToolbar
           selectedCount={selectedItemIds.size}
           availableSprints={availableSprints}
