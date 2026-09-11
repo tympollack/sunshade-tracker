@@ -35,7 +35,8 @@ export function buildTree(
   items: WorkItem[],
   parentId: string | null = null,
   depth = 0,
-  visited = new Set<string>()
+  visited = new Set<string>(),
+  sortFn?: (a: WorkItem, b: WorkItem) => number
 ): WorkItemNode[] {
   let matched = items.filter((item) => {
     if (visited.has(item.id)) return false;
@@ -52,15 +53,17 @@ export function buildTree(
     matched = items.filter((item) => !visited.has(item.id));
   }
 
+  const comparator = sortFn || ((a: WorkItem, b: WorkItem) => (a.order_index ?? 0) - (b.order_index ?? 0));
+
   const tree = matched
-    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .sort(comparator)
     .map((item) => {
       const nextVisited = new Set(visited);
       nextVisited.add(item.id);
       return {
         ...item,
         depth,
-        children: buildTree(items, item.id, depth + 1, nextVisited),
+        children: buildTree(items, item.id, depth + 1, nextVisited, sortFn),
       };
     });
 
@@ -115,3 +118,40 @@ export function flattenTree(nodes: WorkItemNode[]): WorkItemNode[] {
   }
   return result;
 }
+
+/**
+ * Recursively collects all descendant IDs (children, grand-children, etc.) for a given root item ID.
+ */
+export function getDescendantIds(
+  items: Array<{ id: string; parent_id?: string | null }>,
+  rootId: string
+): string[] {
+  if (!items || items.length === 0 || !rootId) return [];
+  const childrenMap = new Map<string, string[]>();
+  for (const it of items) {
+    if (it.parent_id) {
+      const list = childrenMap.get(it.parent_id) || [];
+      list.push(it.id);
+      childrenMap.set(it.parent_id, list);
+    }
+  }
+
+  const descendants: string[] = [];
+  const visited = new Set<string>();
+  const queue = [rootId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const children = childrenMap.get(current) || [];
+    for (const childId of children) {
+      if (!visited.has(childId)) {
+        visited.add(childId);
+        descendants.push(childId);
+        queue.push(childId);
+      }
+    }
+  }
+
+  return descendants;
+}
+

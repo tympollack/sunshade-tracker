@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     const res = await handleBulkCreateItems(authCtx.tenant.id, payload, {
       tenantSlug: authCtx.tenant.slug,
       actorId: authCtx.userId || null,
-      actorName: authCtx.userId ? 'User' : 'Bulk API',
+      actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
     });
     if (!res.success) {
       return NextResponse.json({ error: res.error }, { status: res.status || 400 });
@@ -84,7 +84,7 @@ export async function PATCH(req: NextRequest) {
     const res = await handleBulkUpdateItems(authCtx.tenant.id, body, {
       tenantSlug: authCtx.tenant.slug,
       actorId: authCtx.userId || null,
-      actorName: authCtx.userId ? 'User' : 'Bulk API',
+      actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
     });
     if (!res.success) {
       return NextResponse.json({ error: res.error }, { status: res.status || 400 });

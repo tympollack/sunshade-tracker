@@ -62,7 +62,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
   const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
   const itemDevs = deviations.filter((d) => d.itemId === item.id);
-  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata);
 
   return (
     <div
@@ -143,7 +143,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
         {/* GitHub Badges */}
         {prUrl && <GitHubBadge type="pr" compact value={prUrl} />}
-        {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} />}
+        {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} />}
 
         {/* Title */}
         <span
