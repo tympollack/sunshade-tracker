@@ -63,6 +63,7 @@ import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModa
 import { ManageSprintsModal } from '@/components/ManageSprintsModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
+import { useTabUrlSync } from '@/components/rev_trk_02';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
 import { detectSchemaDeviations, summarizeDeviations, SchemaDeviation } from '@/lib/schema-deviation';
@@ -104,35 +105,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const router = useRouter();
   const { tenantSlug, projectSlug } = use(props.params);
   const searchParams = props.searchParams ? use(props.searchParams) : {};
-  const requestedTab =
-    typeof searchParams?.tab === 'string' &&
-    ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
-      ? (searchParams.tab as 'board' | 'tree' | 'sprint' | 'spark' | 'schema')
-      : 'board';
-
-  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'sprint' | 'spark' | 'schema'>(requestedTab);
-
-  const handleTabChange = (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema') => {
-    setActiveTab(tab);
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      if (tab === 'board') {
-        url.searchParams.delete('tab');
-      } else {
-        url.searchParams.set('tab', tab);
-      }
-      window.history.replaceState({}, '', url.toString());
-    }
-  };
-
-  useEffect(() => {
-    if (
-      typeof searchParams?.tab === 'string' &&
-      ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
-    ) {
-      setActiveTab(searchParams.tab as any);
-    }
-  }, [searchParams?.tab]);
+  const requestedSprint = typeof searchParams?.sprint === 'string' ? searchParams.sprint : null;
+  const { activeTab, handleTabChange, setActiveTab } = useTabUrlSync({
+    initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
+  });
 
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
@@ -522,6 +498,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   useEffect(() => {
     if (loadedProjectSlug !== projectSlug) return;
     if (lastSprintInitializedProjectRef.current === projectSlug) return;
+    if (requestedSprint && (requestedSprint === 'all' || requestedSprint === '__none__' || availableSprints.includes(requestedSprint))) {
+      setSelectedSprint(requestedSprint);
+      lastSprintInitializedProjectRef.current = projectSlug;
+      return;
+    }
     if (projectSettings.sprint_settings?.default_sprint) {
       const def = projectSettings.sprint_settings.default_sprint;
       if (def === 'all') {

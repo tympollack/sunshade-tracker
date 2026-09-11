@@ -112,4 +112,163 @@ describe('Dynamic Schema Settings Endpoint (/api/v1/projects/[projectId]/setting
     const json = await res.json();
     expect(json.error).toContain('Invalid settings payload');
   });
+
+  it('should update settings successfully when payload is valid with automations and templates', async () => {
+    const validSettings = {
+      ...mockProject.settings,
+      automations: [
+        {
+          trigger: { type: 'item_created' },
+          actions: [{ type: 'apply_template', target: 'tmpl-welcome' }],
+        },
+      ],
+      templates: [
+        {
+          id: 'tmpl-welcome',
+          actions: [{ type: 'set_status', target: 'not_started' }],
+        },
+      ],
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          update: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: { ...mockProject, settings: validSettings },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/portfolio/settings', {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ settings: validSettings }),
+    });
+
+    const res = await putSettingsHandler(req, {
+      params: Promise.resolve({ projectId: 'portfolio' }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.project.settings.automations).toHaveLength(1);
+  });
+
+  it('should reject settings update with 422 if automation trigger is malformed', async () => {
+    const invalidSettings = {
+      ...mockProject.settings,
+      automations: [
+        {
+          // malformed trigger lacking type
+          trigger: {},
+          actions: [{ type: 'apply_template', target: 'tmpl-1' }],
+        },
+      ],
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/portfolio/settings', {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ settings: invalidSettings }),
+    });
+
+    const res = await putSettingsHandler(req, {
+      params: Promise.resolve({ projectId: 'portfolio' }),
+    });
+
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.error).toContain('Unprocessable Entity');
+    expect(json.errors).toBeDefined();
+    expect(json.errors.some((e: any) => e.path.includes('automations[0].trigger'))).toBe(true);
+  });
+
+  it('should reject settings update with 422 if template action target is missing', async () => {
+    const invalidSettings = {
+      ...mockProject.settings,
+      automations: [
+        {
+          trigger: { type: 'item_created' },
+          // Missing target for apply_template action
+          actions: [{ type: 'apply_template' }],
+        },
+      ],
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/portfolio/settings', {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ settings: invalidSettings }),
+    });
+
+    const res = await putSettingsHandler(req, {
+      params: Promise.resolve({ projectId: 'portfolio' }),
+    });
+
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.error).toContain('Unprocessable Entity');
+    expect(json.errors).toBeDefined();
+    expect(json.errors.some((e: any) => e.path.includes('automations[0].actions[0].target'))).toBe(true);
+  });
 });
+
