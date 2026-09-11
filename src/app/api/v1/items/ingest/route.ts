@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     // Fetch Project Settings to validate types and statuses dynamically
     let projectQuery: any = supabaseAdmin
       .from('projects')
-      .select('id, slug, settings')
+      .select('id, slug, name, settings')
       .eq('tenant_id', tenant.id)
       .eq('slug', project_slug);
 
@@ -93,8 +93,8 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-      } catch {
-        // Fall back gracefully if prior state lookup is unavailable
+      } catch (err) {
+        console.warn('[tracker:ingest] Error checking prior external_refs:', err);
       }
     }
 
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
     }> = [];
 
     // Pre-generate sequential reference tags for items without external_ref_id
-    const prefix = deriveProjectPrefix({ slug: project_slug, settings });
+    const prefix = deriveProjectPrefix({ slug: project.slug || project_slug, name: project.name, settings });
     const itemsNeedingRefs = items.filter((it) => !it.external_ref_id || !it.external_ref_id.trim());
     const generatedBatchRefs = await generateSequentialRefsForBatch(
       project.id,
@@ -215,7 +215,7 @@ export async function POST(req: NextRequest) {
             project_id: upserted.project_id,
             item_id: upserted.id,
             actor_id: auth.context.userId || null,
-            actor_name: auth.context.userId ? 'User' : 'Ingest Pipeline',
+            actor_name: auth.context.userName || (auth.context.userId ? 'User' : 'Ingest Pipeline'),
             action,
             changed_fields,
           });
@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
           project_id: inserted.project_id,
           item_id: inserted.id,
           actor_id: auth.context.userId || null,
-          actor_name: auth.context.userId ? 'User' : 'Ingest Pipeline',
+          actor_name: auth.context.userName || (auth.context.userId ? 'User' : 'Ingest Pipeline'),
           action: 'create',
           changed_fields: { created: { before: null, after: inserted } },
         });
@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
                 item: it,
                 beforeItem: prior || null,
                 actorId: auth.context.userId || null,
-                actorName: auth.context.userId ? 'User' : 'Ingest Pipeline',
+                actorName: auth.context.userName || (auth.context.userId ? 'User' : 'Ingest Pipeline'),
                 recipientUser: recipient,
               })
             );

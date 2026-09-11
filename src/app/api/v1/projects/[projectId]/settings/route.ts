@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { ProjectSettings } from '@/types/tracker';
+import { validateProjectSettings } from '@/lib/project-settings-validator';
 
 interface RouteContext {
   params: Promise<{ projectId: string }>;
@@ -69,6 +70,17 @@ export async function PUT(req: NextRequest, context: RouteContext) {
     return NextResponse.json(
       { error: 'Invalid settings payload. Must contain "hierarchy" and "statuses" arrays.' },
       { status: 400 }
+    );
+  }
+
+  const validation = validateProjectSettings(settings);
+  if (!validation.valid) {
+    return NextResponse.json(
+      {
+        error: 'Unprocessable Entity: invalid automation or template configuration',
+        errors: validation.errors,
+      },
+      { status: 422 }
     );
   }
 

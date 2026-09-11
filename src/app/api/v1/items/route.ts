@@ -14,6 +14,7 @@ import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
 import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import { getDescendantIds } from '@/lib/tree';
 
 
 export async function GET(req: NextRequest) {
@@ -289,7 +290,7 @@ export async function POST(req: NextRequest) {
       const bulkRes = await handleBulkCreateItems(authCtx.tenant.id, payload, {
         tenantSlug: authCtx.tenant.slug,
         actorId: authCtx.userId || null,
-        actorName: authCtx.userId ? 'User' : 'API',
+        actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API'),
       });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
@@ -309,26 +310,31 @@ export async function POST(req: NextRequest) {
     // Resolve project
     let projId = project_id;
     let projectSettings: any = null;
+    let resolvedProject: any = null;
 
     if (!projId && project_slug) {
       const { data: p } = await supabaseAdmin
         .from('projects')
-        .select('id, settings')
+        .select('id, slug, name, settings')
         .eq('tenant_id', authCtx.tenant.id)
         .eq('slug', project_slug)
         .single();
       if (p) {
+        resolvedProject = p;
         projId = p.id;
         projectSettings = p.settings;
       }
     } else if (projId) {
       const { data: p } = await supabaseAdmin
         .from('projects')
-        .select('id, settings')
+        .select('id, slug, name, settings')
         .eq('tenant_id', authCtx.tenant.id)
         .eq('id', projId)
         .single();
-      if (p) projectSettings = p.settings;
+      if (p) {
+        resolvedProject = p;
+        projectSettings = p.settings;
+      }
     }
 
     if (!projId) {
@@ -374,7 +380,11 @@ export async function POST(req: NextRequest) {
 
     let resolvedExternalRefId = external_ref_id?.trim() || null;
     if (!resolvedExternalRefId) {
-      const prefix = deriveProjectPrefix({ slug: project_slug, settings: projectSettings });
+      const prefix = deriveProjectPrefix({
+        slug: resolvedProject?.slug || project_slug,
+        name: resolvedProject?.name,
+        settings: projectSettings,
+      });
       resolvedExternalRefId = await generateNextSequentialRef(projId, prefix);
     }
 
@@ -410,7 +420,7 @@ export async function POST(req: NextRequest) {
       project_id: projId,
       item_id: created.id,
       actor_id: authCtx.userId || null,
-      actor_name: authCtx.userId ? 'User' : 'API Client',
+      actor_name: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
       action: 'create',
       changed_fields: {
         created: { before: null, after: created },
@@ -426,11 +436,11 @@ export async function POST(req: NextRequest) {
               tenantId: authCtx.tenant.id,
               tenantSlug: authCtx.tenant.slug,
               projectId: projId,
-              projectSlug: project_slug,
+              projectSlug: resolvedProject?.slug || project_slug,
               item: created,
               beforeItem: null,
               actorId: authCtx.userId || null,
-              actorName: authCtx.userId ? 'User' : 'API Client',
+              actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
               recipientUser,
             });
           }
@@ -461,7 +471,7 @@ export async function PATCH(req: NextRequest) {
       const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body, {
         tenantSlug: authCtx.tenant.slug,
         actorId: authCtx.userId || null,
-        actorName: authCtx.userId ? 'User' : 'API',
+        actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API'),
       });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
@@ -486,6 +496,7 @@ export async function PATCH(req: NextRequest) {
       next_order,
       parent_id,
       external_ref_id,
+      project_id,
     } = body;
 
     if (!id) {
@@ -523,6 +534,28 @@ export async function PATCH(req: NextRequest) {
     const updateFields: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
+
+    let isProjectReassignment = false;
+    let targetProjectId = existingItem.project_id;
+    if (project_id !== undefined && project_id !== existingItem.project_id) {
+      const { data: targetProj } = await supabaseAdmin
+        .from('projects')
+        .select('id, slug, name, settings')
+        .eq('tenant_id', authCtx.tenant.id)
+        .eq('id', project_id)
+        .single();
+
+      if (!targetProj) {
+        return NextResponse.json({ error: `Destination project '${project_id}' not found` }, { status: 404 });
+      }
+      isProjectReassignment = true;
+      targetProjectId = project_id;
+      updateFields.project_id = project_id;
+      // In project reassignment, clear parent_id if moving across projects and no new parent specified
+      if (parent_id === undefined && existingItem.parent_id) {
+        updateFields.parent_id = null;
+      }
+    }
 
     if (title !== undefined) updateFields.title = title;
     if (description !== undefined) updateFields.description = description;
@@ -579,7 +612,7 @@ export async function PATCH(req: NextRequest) {
           .from('work_items')
           .select('id')
           .eq('tenant_id', authCtx.tenant.id)
-          .eq('project_id', existingItem.project_id)
+          .eq('project_id', targetProjectId)
           .eq('external_ref_id', trimmedRef)
           .neq('id', id)
           .maybeSingle();
@@ -616,7 +649,7 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: `Parent item '${effectiveParentId}' not found` }, { status: 404 });
       }
 
-      if (parentItem.project_id !== existingItem.project_id) {
+      if (parentItem.project_id !== targetProjectId) {
         return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
       }
 
@@ -656,15 +689,69 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Cascade project migration to all descendants
+    if (isProjectReassignment && project_id) {
+      const { data: tenantItems } = await supabaseAdmin
+        .from('work_items')
+        .select('id, parent_id')
+        .eq('tenant_id', authCtx.tenant.id);
+      const descendantIds = getDescendantIds(tenantItems || [], id);
+      if (descendantIds.length > 0) {
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            project_id: project_id,
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', descendantIds)
+          .eq('tenant_id', authCtx.tenant.id);
+      }
+    }
+
+    // Cascade sprint change to all descendants
+    if (
+      metadata !== undefined &&
+      metadata?.sprint !== undefined &&
+      metadata.sprint !== existingItem.metadata?.sprint
+    ) {
+      const targetSprint = metadata.sprint;
+      const { data: tenantItems } = await supabaseAdmin
+        .from('work_items')
+        .select('id, parent_id, metadata')
+        .eq('tenant_id', authCtx.tenant.id);
+      const descendantIds = getDescendantIds(tenantItems || [], id);
+      if (descendantIds.length > 0) {
+        const descendantUpdates = (tenantItems || [])
+          .filter((it) => descendantIds.includes(it.id))
+          .map((it) => {
+            const nextMeta = { ...(it.metadata || {}) };
+            if (targetSprint && targetSprint !== '__none__') {
+              nextMeta.sprint = targetSprint;
+            } else {
+              delete nextMeta.sprint;
+            }
+            return supabaseAdmin
+              .from('work_items')
+              .update({
+                metadata: nextMeta,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', it.id)
+              .eq('tenant_id', authCtx.tenant.id);
+          });
+        await Promise.all(descendantUpdates);
+      }
+    }
+
     // Record audit diff if fields changed
     const diff = computeChangedFields(existingItem, updated);
     if (Object.keys(diff).length > 0) {
       await recordAuditLog({
         tenant_id: authCtx.tenant.id,
-        project_id: existingItem.project_id,
+        project_id: updated.project_id || existingItem.project_id,
         item_id: id,
         actor_id: authCtx.userId || null,
-        actor_name: authCtx.userId ? 'User' : 'API Client',
+        actor_name: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
         action: 'update',
         changed_fields: diff,
       }).catch(() => {});
@@ -677,11 +764,11 @@ export async function PATCH(req: NextRequest) {
               return dispatchItemNotifications({
                 tenantId: authCtx.tenant.id,
                 tenantSlug: authCtx.tenant.slug,
-                projectId: existingItem.project_id,
+                projectId: updated.project_id || existingItem.project_id,
                 item: updated,
                 beforeItem: existingItem,
                 actorId: authCtx.userId || null,
-                actorName: authCtx.userId ? 'User' : 'API Client',
+                actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
                 recipientUser,
               });
             }
@@ -781,7 +868,7 @@ export async function DELETE(req: NextRequest) {
       project_id: softDeleted.project_id,
       item_id: id,
       actor_id: authCtx.userId || null,
-      actor_name: authCtx.userId ? 'User' : 'API Client',
+      actor_name: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
       action: 'delete',
       changed_fields: {
         deleted_at: { before: null, after: softDeleted.deleted_at },

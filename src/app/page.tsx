@@ -17,6 +17,12 @@ export default function LandingPage() {
           />
           <div className="flex items-center space-x-4">
             <Link
+              href="/docs"
+              className="text-sm text-slate-300 hover:text-white transition-colors"
+            >
+              Documentation
+            </Link>
+            <Link
               href="/sunshade/portfolio"
               className="text-sm text-slate-300 hover:text-white transition-colors"
             >
@@ -37,32 +43,30 @@ export default function LandingPage() {
         <div className="text-center space-y-6 max-w-3xl mx-auto">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>Headless Agent Ingestion for Gemini Spark & Autonomous Pipelines</span>
+            <span>Connected tracking for everyday teams and automated tools.</span>
           </div>
 
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-white leading-tight">
-            Dynamic, Schemaless Work Item Tracking for <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300">SunShade</span>
+            Simple, flexible project tracking for <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300">SunShade</span>.
           </h1>
 
           <p className="text-lg text-slate-400">
-            Eliminating rigid database ENUMs in favor of dynamic per-project JSON schemas. Programmatic headless ingestion, polymorphic work items, and fractional indexing for modern collaborative tools.
+            Organize tasks, align your team, and track progress across every initiative in real time. Work the way your project demands without rigid setups or complex maintenance.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
             <Link
-              href="/sunshade/portfolio"
+              href="/workspaces"
               className="inline-flex items-center space-x-2 px-6 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold transition-all shadow-lg shadow-emerald-500/20"
             >
-              <span>Explore SunShade Board</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>Open Workspaces &rarr;</span>
             </Link>
-            <a
-              href="#api-spec"
+            <Link
+              href="/docs"
               className="inline-flex items-center space-x-2 px-6 py-3 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-medium transition-all"
             >
-              <Terminal className="w-4 h-4 text-emerald-400" />
-              <span>Ingest API Spec</span>
-            </a>
+              <span>View Documentation</span>
+            </Link>
           </div>
         </div>
 
@@ -72,9 +76,9 @@ export default function LandingPage() {
             <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
               <Database className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-semibold text-white">Schemaless Polymorphism</h3>
+            <h3 className="text-lg font-semibold text-white">Custom Workflows</h3>
             <p className="text-sm text-slate-400 leading-relaxed">
-              No rigid PostgreSQL ENUMs. Work item types, statuses, hierarchy levels, and metadata are validated against dynamic JSON schemas stored in project settings.
+              Every project runs differently. Set your own statuses, tags, and milestones without waiting on database changes or technical setups.
             </p>
           </div>
 
@@ -82,9 +86,9 @@ export default function LandingPage() {
             <div className="w-10 h-10 rounded-lg bg-teal-500/10 border border-teal-500/30 flex items-center justify-center text-teal-400">
               <Cpu className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-semibold text-white">Gemini Spark Ingest API</h3>
+            <h3 className="text-lg font-semibold text-white">Automated Task Ingestion</h3>
             <p className="text-sm text-slate-400 leading-relaxed">
-              Headless <code className="text-xs text-emerald-300 bg-slate-800 px-1 py-0.5 rounded">POST /api/v1/items/ingest</code> endpoint. External LLMs can programmatically create, nest, and upsert work items without direct DB access.
+              Tasks flow directly into your board from chats, design reviews, and automated tools. Keep your roadmaps current without manual data entry.
             </p>
           </div>
 
@@ -92,9 +96,9 @@ export default function LandingPage() {
             <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
               <GitFork className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-semibold text-white">Fractional Reordering</h3>
+            <h3 className="text-lg font-semibold text-white">Frictionless Prioritization</h3>
             <p className="text-sm text-slate-400 leading-relaxed">
-              Midpoint double precision ordering allows cards to be dropped and reordered anywhere in Kanban columns without cascading table updates or locks.
+              Drag, reorder, and adjust your priorities instantly. Boards update in real time across the entire team without sync delays or page refreshes.
             </p>
           </div>
         </div>
@@ -154,7 +158,19 @@ POST https://track.sunshade.icu/api/v1/items/ingest
       {/* Footer */}
       <footer className="border-t border-slate-800/80 py-8 bg-slate-950/40">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between text-xs text-slate-400 gap-4">
-          <span>&copy; {new Date().getFullYear()} SunShade Digital Canopy. All rights reserved.</span>
+          <div className="flex items-center space-x-4">
+            <span>&copy; {new Date().getFullYear()} SunShade Digital Canopy. All rights reserved.</span>
+            <span className="text-slate-700">|</span>
+            <Link href="/docs" className="hover:text-slate-200 transition-colors">
+              Documentation
+            </Link>
+            <Link href="/workspaces" className="hover:text-slate-200 transition-colors">
+              Workspaces
+            </Link>
+            <Link href="/sunshade/portfolio" className="hover:text-slate-200 transition-colors">
+              Demo Board
+            </Link>
+          </div>
           <div className="flex items-center space-x-6">
             <span>Schema: <strong className="text-slate-300 font-mono">tracker</strong></span>
             <span>Tenant 0: <strong className="text-emerald-400 font-mono">sunshade</strong></span>

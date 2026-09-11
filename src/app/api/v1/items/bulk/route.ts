@@ -46,12 +46,51 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+
+    // Support action-based bulk operations on POST (e.g. action: 'update' or 'delete')
+    if (body && typeof body === 'object' && !Array.isArray(body) && body.action) {
+      if (body.action === 'update') {
+        const payload = {
+          ...body,
+          ids: body.ids || body.item_ids,
+        };
+        const res = await handleBulkUpdateItems(authCtx.tenant.id, payload, {
+          tenantSlug: authCtx.tenant.slug,
+          actorId: authCtx.userId || null,
+          actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
+        });
+        if (!res.success) {
+          return NextResponse.json({ error: res.error }, { status: res.status || 400 });
+        }
+        return NextResponse.json({
+          success: true,
+          updated_count: res.updated_count,
+          items: res.items,
+        });
+      }
+
+      if (body.action === 'delete') {
+        const payload = {
+          ids: body.ids || body.item_ids || [],
+        };
+        const res = await handleBulkDeleteItems(authCtx.tenant.id, payload);
+        if (!res.success) {
+          return NextResponse.json({ error: res.error }, { status: res.status || 400 });
+        }
+        return NextResponse.json({
+          success: true,
+          deleted_count: res.deleted_count,
+          deleted_ids: res.deleted_ids,
+        });
+      }
+    }
+
     const payload = Array.isArray(body) ? { items: body } : body;
 
     const res = await handleBulkCreateItems(authCtx.tenant.id, payload, {
       tenantSlug: authCtx.tenant.slug,
       actorId: authCtx.userId || null,
-      actorName: authCtx.userId ? 'User' : 'Bulk API',
+      actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
     });
     if (!res.success) {
       return NextResponse.json({ error: res.error }, { status: res.status || 400 });
@@ -81,10 +120,15 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const res = await handleBulkUpdateItems(authCtx.tenant.id, body, {
+    const payload =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? { ...body, ids: body.ids || body.item_ids }
+        : body;
+
+    const res = await handleBulkUpdateItems(authCtx.tenant.id, payload, {
       tenantSlug: authCtx.tenant.slug,
       actorId: authCtx.userId || null,
-      actorName: authCtx.userId ? 'User' : 'Bulk API',
+      actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
     });
     if (!res.success) {
       return NextResponse.json({ error: res.error }, { status: res.status || 400 });
@@ -111,7 +155,9 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const payload = Array.isArray(body) ? { ids: body } : body;
+    const payload = Array.isArray(body)
+      ? { ids: body }
+      : { ...body, ids: body?.ids || body?.item_ids || [] };
 
     const res = await handleBulkDeleteItems(authCtx.tenant.id, payload);
     if (!res.success) {

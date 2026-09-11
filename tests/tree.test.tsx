@@ -166,9 +166,9 @@ describe('TreeNode component', () => {
     // Branch connector rendered for depth > 0
     expect(screen.getByTestId('branch-connector')).toBeInTheDocument();
 
-    // Margin is depth * 28px = 56px
+    // Margin is depth * 20px = 40px
     const row = container.querySelector('.flex.items-center.gap-3');
-    expect(row).toHaveStyle({ marginLeft: '56px' });
+    expect(row).toHaveStyle({ marginLeft: '40px' });
   });
 
   it('recursively renders children nodes', () => {

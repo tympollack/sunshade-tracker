@@ -31,6 +31,10 @@ export function deriveProjectPrefix(project?: {
   if (!project) return 'PRJ';
 
   // 1. Explicit prefix in settings
+  if (project.settings?.default_prefix && typeof project.settings.default_prefix === 'string') {
+    const p = project.settings.default_prefix.trim().toUpperCase();
+    if (p) return p;
+  }
   if (project.settings?.ref_prefix && typeof project.settings.ref_prefix === 'string') {
     const p = project.settings.ref_prefix.trim().toUpperCase();
     if (p) return p;
@@ -51,15 +55,16 @@ export function deriveProjectPrefix(project?: {
     return KNOWN_PREFIXES[cleanSlug];
   }
 
-  // Multi-word slug (e.g. 'cloud-infra' -> 'CI', 'puk-huk' -> 'PH')
-  const parts = cleanSlug.split(/[-_\s]+/).filter(Boolean);
+  // Multi-word slug or name (e.g. 'cloud-infra' -> 'CI', 'puk-huk' -> 'PH', 'SunShade Tracker' -> 'ST')
+  const rawIdentifier = cleanSlug || (project.name || '').toLowerCase().replace(/[^a-z0-9\s_-]/g, '').trim();
+  const parts = rawIdentifier.split(/[-_\s]+/).filter(Boolean);
   if (parts.length >= 2) {
     const initials = parts.map((w) => w[0].toUpperCase()).join('');
     if (initials.length >= 2) return initials.slice(0, 4);
   }
 
   // Single word: extract consonants if 3+ (e.g. 'tracker' -> 'TRK')
-  const word = cleanSlug || (project.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const word = rawIdentifier.replace(/[^a-z0-9]/g, '');
   if (word.length > 0) {
     const consonants = word.replace(/[aeiou]/g, '').toUpperCase();
     if (consonants.length >= 3) {

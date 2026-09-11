@@ -3,6 +3,7 @@
 import React from 'react';
 import {
   CheckSquare,
+  MinusSquare,
   Square,
   Lock,
   User,
@@ -19,6 +20,7 @@ export interface SprintItemRowProps {
   item: WorkItem;
   depth?: number;
   isSelected: boolean;
+  isIndeterminate?: boolean;
   onToggleSelect: (itemId: string, e: React.MouseEvent) => void;
   isImmutable: boolean;
   onEditItem: (item: WorkItem) => void;
@@ -28,9 +30,9 @@ export interface SprintItemRowProps {
   onOpenReconciliation?: (dev: SchemaDeviation) => void;
   isAllProjects?: boolean;
   allProjects?: { id: string; name: string }[];
-  onUpdateStatus: (itemId: string, status: string) => void;
-  onUpdateSprint: (itemId: string, sprint: string) => void;
-  availableSprints: string[];
+  onUpdateStatus?: (itemId: string, status: string) => void;
+  onUpdateSprint?: (itemId: string, sprint: string) => void;
+  availableSprints?: string[];
   currentSprintName?: string;
   isTreeMode?: boolean;
   childCount?: number;
@@ -41,6 +43,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   item,
   depth = 0,
   isSelected,
+  isIndeterminate = false,
   onToggleSelect,
   isImmutable,
   onEditItem,
@@ -52,7 +55,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   allProjects = [],
   onUpdateStatus,
   onUpdateSprint,
-  availableSprints,
+  availableSprints = [],
   currentSprintName,
   isTreeMode = false,
   childCount = 0,
@@ -62,7 +65,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
   const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
   const itemDevs = deviations.filter((d) => d.itemId === item.id);
-  const { prUrl, commitHash } = extractGitHubMetadata(item.metadata);
+  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata);
 
   return (
     <div
@@ -89,12 +92,31 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         <button
           type="button"
           onClick={(e) => onToggleSelect(item.id, e)}
-          className="p-1 text-slate-500 hover:text-white transition-colors shrink-0"
-          title={isSelected ? 'Deselect item' : 'Select item (Shift+Click for range)'}
+          className="p-1 text-slate-500 hover:text-white transition-colors shrink-0 cursor-pointer"
+          title={
+            isSelected
+              ? 'Deselect item'
+              : isIndeterminate
+              ? 'Some child tasks selected (click to select all)'
+              : 'Select item (Shift+Click for range)'
+          }
           aria-label={isSelected ? `Deselect ${item.title}` : `Select ${item.title}`}
+          data-testid={`sprint-item-checkbox-${item.id}`}
         >
+          <input
+            type="checkbox"
+            className="sr-only"
+            checked={isSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = Boolean(isIndeterminate);
+            }}
+            readOnly
+            tabIndex={-1}
+          />
           {isSelected ? (
             <CheckSquare className="w-4 h-4 text-emerald-400" />
+          ) : isIndeterminate ? (
+            <MinusSquare className="w-4 h-4 text-emerald-400" data-testid="indeterminate-checkbox" />
           ) : (
             <Square className="w-4 h-4 text-slate-600 group-hover:text-slate-400" />
           )}
@@ -143,7 +165,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
         {/* GitHub Badges */}
         {prUrl && <GitHubBadge type="pr" compact value={prUrl} />}
-        {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} />}
+        {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} />}
 
         {/* Title */}
         <span
@@ -199,25 +221,48 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           <span>{item.assignee || 'Unassigned'}</span>
         </span>
 
-        {/* Status Select */}
-        <select
-          value={item.status}
-          onChange={(e) => onUpdateStatus(item.id, e.target.value)}
-          disabled={isImmutable}
-          className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          title={isImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
-        >
-          {getItemStatuses(item).map((st: StatusDefinition) => (
-            <option key={st.id} value={st.id}>
-              {st.label}
-            </option>
-          ))}
-        </select>
+        {/* Status Select with Hierarchy Color-Coding */}
+        {(() => {
+          const itemStatuses = getItemStatuses(item);
+          const currentStatusObj = itemStatuses.find((st: StatusDefinition) => st.id === item.status);
+          const statusColor = currentStatusObj?.color;
+
+          return (
+            <select
+              value={item.status}
+              onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
+              disabled={isImmutable}
+              className="text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border"
+              style={
+                statusColor
+                  ? {
+                      backgroundColor: `${statusColor}20`,
+                      color: statusColor,
+                      border: `1px solid ${statusColor}40`,
+                    }
+                  : { backgroundColor: '#020617', color: '#cbd5e1', border: '1px solid #1e293b' }
+              }
+              title={isImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
+              data-testid={`sprint-status-select-${item.id}`}
+            >
+              {itemStatuses.map((st: StatusDefinition) => (
+                <option
+                  key={st.id}
+                  value={st.id}
+                  style={{ backgroundColor: '#020617', color: '#cbd5e1' }}
+                >
+                  {st.label}
+                </option>
+              ))}
+            </select>
+          );
+        })()}
+
 
         {/* Move / Reassign Sprint Select */}
         <select
           value={currentSprintName || item.metadata?.sprint || '__none__'}
-          onChange={(e) => onUpdateSprint(item.id, e.target.value)}
+          onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
           disabled={isImmutable}
           className="text-xs bg-slate-950 border border-slate-800 rounded px-2 py-1 text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}

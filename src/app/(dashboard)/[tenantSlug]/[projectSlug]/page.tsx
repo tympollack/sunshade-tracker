@@ -41,7 +41,7 @@ import {
   Archive,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
-import { buildTree, isDescendantOf } from '@/lib/tree';
+import { buildTree, isDescendantOf, getDescendantIds } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
@@ -52,6 +52,7 @@ import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
+import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
@@ -62,6 +63,7 @@ import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModa
 import { ManageSprintsModal } from '@/components/ManageSprintsModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
+import { useTabUrlSync } from '@/components/rev_trk_02';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
 import { detectSchemaDeviations, summarizeDeviations, SchemaDeviation } from '@/lib/schema-deviation';
@@ -103,49 +105,105 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const router = useRouter();
   const { tenantSlug, projectSlug } = use(props.params);
   const searchParams = props.searchParams ? use(props.searchParams) : {};
-  const requestedTab =
-    typeof searchParams?.tab === 'string' &&
-    ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
-      ? (searchParams.tab as 'board' | 'tree' | 'sprint' | 'spark' | 'schema')
-      : 'board';
-
-  const [activeTab, setActiveTab] = useState<'board' | 'tree' | 'sprint' | 'spark' | 'schema'>(requestedTab);
-
-  const handleTabChange = (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema') => {
-    setActiveTab(tab);
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      if (tab === 'board') {
-        url.searchParams.delete('tab');
-      } else {
-        url.searchParams.set('tab', tab);
-      }
-      window.history.replaceState({}, '', url.toString());
-    }
-  };
-
-  useEffect(() => {
-    if (
-      typeof searchParams?.tab === 'string' &&
-      ['board', 'tree', 'sprint', 'spark', 'schema'].includes(searchParams.tab)
-    ) {
-      setActiveTab(searchParams.tab as any);
-    }
-  }, [searchParams?.tab]);
+  const requestedSprint = typeof searchParams?.sprint === 'string' ? searchParams.sprint : null;
+  const { activeTab, handleTabChange, setActiveTab } = useTabUrlSync({
+    initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
+  });
 
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
 
-  // Tree items filtered by selectedSprint (allows focusing on 1 sprint in Hierarchy screen)
-  const treeFilteredItems = useMemo(() => {
-    if (selectedSprint === 'all') return items;
-    if (selectedSprint === '__none__') return items.filter((it) => !it.metadata?.sprint);
-    return items.filter((it) => it.metadata?.sprint === selectedSprint);
-  }, [items, selectedSprint]);
+  // Tree View Filtering & Sorting States (PRJ-02)
+  const [treeStatusFilter, setTreeStatusFilter] = useState<string>('all');
+  const [treeTypeFilter, setTreeTypeFilter] = useState<string>('all');
+  const [treeSortBy, setTreeSortBy] = useState<string>('order_index');
 
-  const treeItems = useMemo(() => buildTree(treeFilteredItems), [treeFilteredItems]);
+  // Sprint Planning View Filtering & Sorting States (PRJ-02)
+  const [sprintStatusFilter, setSprintStatusFilter] = useState<string>('all');
+  const [sprintTypeFilter, setSprintTypeFilter] = useState<string>('all');
+  const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
+
+  const treeSortComparator = useMemo(() => {
+    return (a: WorkItem, b: WorkItem): number => {
+      if (treeSortBy === 'points_desc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pB !== pA) return pB - pA;
+      } else if (treeSortBy === 'points_asc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pA !== pB) return pA - pB;
+      } else if (treeSortBy === 'title_asc') {
+        const cmp = (a.title || '').localeCompare(b.title || '');
+        if (cmp !== 0) return cmp;
+      } else if (treeSortBy === 'title_desc') {
+        const cmp = (b.title || '').localeCompare(a.title || '');
+        if (cmp !== 0) return cmp;
+      }
+      return (a.order_index ?? 0) - (b.order_index ?? 0);
+    };
+  }, [treeSortBy]);
+
+  // Tree items filtered by selectedSprint, status, and level (PRJ-02)
+  const treeFilteredItems = useMemo(() => {
+    let res = items;
+    if (selectedSprint !== 'all') {
+      if (selectedSprint === '__none__') {
+        res = res.filter((it) => !it.metadata?.sprint);
+      } else {
+        res = res.filter((it) => it.metadata?.sprint === selectedSprint);
+      }
+    }
+    if (treeStatusFilter !== 'all') {
+      res = res.filter((it) => it.status === treeStatusFilter);
+    }
+    if (treeTypeFilter !== 'all') {
+      res = res.filter((it) => it.item_type === treeTypeFilter);
+    }
+    return res;
+  }, [items, selectedSprint, treeStatusFilter, treeTypeFilter]);
+
+  const treeItems = useMemo(
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
+    [treeFilteredItems, treeSortComparator]
+  );
   const allTreeItems = useMemo(() => buildTree(items), [items]);
+
+  const sprintComparator = useMemo(() => {
+    return (a: WorkItem, b: WorkItem): number => {
+      if (sprintSortBy === 'points_desc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pB !== pA) return pB - pA;
+      } else if (sprintSortBy === 'points_asc') {
+        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
+        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
+        if (pA !== pB) return pA - pB;
+      } else if (sprintSortBy === 'title_asc') {
+        const cmp = (a.title || '').localeCompare(b.title || '');
+        if (cmp !== 0) return cmp;
+      } else if (sprintSortBy === 'title_desc') {
+        const cmp = (b.title || '').localeCompare(a.title || '');
+        if (cmp !== 0) return cmp;
+      }
+      return (a.order_index ?? 0) - (b.order_index ?? 0);
+    };
+  }, [sprintSortBy]);
+
+  const filterSprintItems = useCallback(
+    (itemsList: WorkItem[]) => {
+      let res = itemsList;
+      if (sprintStatusFilter !== 'all') {
+        res = res.filter((it) => it.status === sprintStatusFilter);
+      }
+      if (sprintTypeFilter !== 'all') {
+        res = res.filter((it) => it.item_type === sprintTypeFilter);
+      }
+      return [...res].sort(sprintComparator);
+    },
+    [sprintStatusFilter, sprintTypeFilter, sprintComparator]
+  );
 
   // Interactive Hierarchy Tree states (STORY-TRK-HIERARCHY-UX)
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
@@ -240,6 +298,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
+
+  // Clear selection on tab change or project switch (BUG-TRK-SPRINT-BAR-GLOBAL-LEAK)
+  useEffect(() => {
+    setSelectedItemIds(new Set());
+    lastSelectedIdRef.current = null;
+  }, [activeTab, projectSlug]);
+
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkToast, setBulkToast] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
@@ -305,27 +370,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [ingestResponse, setIngestResponse] = useState<any>(null);
   const [isIngesting, setIsIngesting] = useState(false);
 
-  // Quick Add form state
-  const [newItemTitle, setNewItemTitle] = useState('');
-  const [newItemType, setNewItemType] = useState('task');
-  const [newItemStatus, setNewItemStatus] = useState('not_started');
-  const [newItemAssignee, setNewItemAssignee] = useState('');
-  const [newItemExtRef, setNewItemExtRef] = useState('');
-  const [newItemProjectSlug, setNewItemProjectSlug] = useState('');
+  // Quick Add modal state (TASK-TRK-QUICK-ADD-DIALOG)
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [selectedSchemaProjectSlug, setSelectedSchemaProjectSlug] = useState('');
 
   // User & Workspace Members
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
   const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
-  const [assigneeDropdownOpen, setAssigneeDropdownOpen] = useState(false);
-  const assigneeDropdownRef = useRef<HTMLDivElement>(null);
 
   // Project Archive state (TASK-TRK-PROJECT-ARCHIVE)
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isArchivingProject, setIsArchivingProject] = useState(false);
 
-  // Read-only guest mode
-  const isReadOnly = currentUser === null || tenantInfo?.role === 'viewer';
+  // Read-only guest mode (PRJ-05: only evaluate when not loading to prevent flashing)
+  const isReadOnly = !loading && (currentUser === null || tenantInfo?.role === 'viewer');
 
   const handleArchiveCurrentProject = async () => {
     const proj = allProjects.find((p) => p.slug === projectSlug);
@@ -440,6 +498,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   useEffect(() => {
     if (loadedProjectSlug !== projectSlug) return;
     if (lastSprintInitializedProjectRef.current === projectSlug) return;
+    if (requestedSprint && (requestedSprint === 'all' || requestedSprint === '__none__' || availableSprints.includes(requestedSprint))) {
+      setSelectedSprint(requestedSprint);
+      lastSprintInitializedProjectRef.current = projectSlug;
+      return;
+    }
     if (projectSettings.sprint_settings?.default_sprint) {
       const def = projectSettings.sprint_settings.default_sprint;
       if (def === 'all') {
@@ -511,41 +574,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return 'Me';
   }, [currentUser]);
 
-  const currentQuickAddProject = useMemo(() => {
-    if (!isAllProjects) return null;
-    return allProjects.find((p) => p.slug === newItemProjectSlug) || allProjects[0] || null;
-  }, [isAllProjects, allProjects, newItemProjectSlug]);
-
-  const quickAddHierarchy = useMemo(() => {
-    if (currentQuickAddProject?.settings?.hierarchy?.length) {
-      return currentQuickAddProject.settings.hierarchy.map((h: any) => ({
-        ...h,
-        color: h.color || getDefaultLevelHex(h.level),
-      }));
-    }
-    return projectSettings.hierarchy;
-  }, [currentQuickAddProject, projectSettings.hierarchy]);
-
-  const quickAddStatuses = useMemo(() => {
-    if (currentQuickAddProject?.settings?.statuses?.length) {
-      return currentQuickAddProject.settings.statuses;
-    }
-    return projectSettings.statuses;
-  }, [currentQuickAddProject, projectSettings.statuses]);
-
-  useEffect(() => {
-    if (isAllProjects && quickAddHierarchy.length > 0) {
-      if (!quickAddHierarchy.some((h: any) => h.type === newItemType)) {
-        setNewItemType(quickAddHierarchy[quickAddHierarchy.length - 1].type);
-      }
-    }
-    if (isAllProjects && quickAddStatuses.length > 0) {
-      if (!quickAddStatuses.some((s: any) => s.id === newItemStatus)) {
-        setNewItemStatus(quickAddStatuses[0].id);
-      }
-    }
-  }, [isAllProjects, quickAddHierarchy, quickAddStatuses, newItemType, newItemStatus]);
-
   const modalProjectSettings = useMemo(() => {
     if (!editingItem) return projectSettings;
     const proj = allProjects.find(
@@ -593,16 +621,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return projectSettings;
   }, [isAllProjects, allProjects, selectedSchemaProjectSlug, projectSettings]);
 
-  // Click outside for assignee dropdown
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target as Node)) {
-        setAssigneeDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   // ─── Session-authenticated fetch with workspace context ─────────────────
   const apiFetch = useCallback(
@@ -627,12 +645,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       const data = await res.json();
       if (data.user) {
         setCurrentUser(data.user);
-        const name = data.user.full_name
-          ? `Me (${data.user.full_name})`
-          : data.user.email
-          ? `Me (${data.user.email.split('@')[0]})`
-          : 'Me';
-        setNewItemAssignee((prev) => (!prev ? name : prev));
       }
       // data.workspaces is an array of all the user's workspaces
       setAllWorkspaces(data.workspaces || []);
@@ -669,9 +681,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         const sData = await settingsRes.json();
         if (Array.isArray(sData.projects)) {
           setAllProjects(sData.projects);
-          if (sData.projects.length > 0) {
-            setNewItemProjectSlug((prev) => prev || sData.projects[0].slug);
-          }
         }
         if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
           setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
@@ -695,10 +704,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 };
                 setProjectSettings(enrichedSettings);
                 if (detail.settings.statuses?.length) {
-                  setNewItemStatus((prev) => {
-                    const exists = detail.settings.statuses.some((s: any) => s.id === prev);
-                    return exists ? prev : detail.settings.statuses[0].id;
-                  });
                   setSelectedStatuses((prev) => {
                     if (prev === null) return null;
                     const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
@@ -706,12 +711,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   });
                 }
                 if (detail.settings.hierarchy?.length) {
-                  setNewItemType((prev) => {
-                    const exists = detail.settings.hierarchy.some((h: any) => h.type === prev);
-                    return exists
-                      ? prev
-                      : detail.settings.hierarchy[detail.settings.hierarchy.length - 1].type;
-                  });
                   setSelectedLevels((prev) => {
                     if (prev === null) return null;
                     const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
@@ -984,6 +983,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       return;
     }
 
+    const descendantIds = getDescendantIds(items, itemId);
+    const targetIds = [itemId, ...descendantIds];
+    const targetIdSet = new Set(targetIds);
+
     const newMetadata = { ...(item.metadata || {}) };
     if (newSprint && newSprint !== '__none__') {
       newMetadata.sprint = newSprint;
@@ -991,9 +994,20 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       delete newMetadata.sprint;
     }
 
-    // Optimistic update
+    // Optimistic update for root and all descendants (PRJ-03)
     setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, metadata: newMetadata } : it))
+      prev.map((it) => {
+        if (targetIdSet.has(it.id)) {
+          const nextMeta = { ...(it.metadata || {}) };
+          if (newSprint && newSprint !== '__none__') {
+            nextMeta.sprint = newSprint;
+          } else {
+            delete nextMeta.sprint;
+          }
+          return { ...it, metadata: nextMeta };
+        }
+        return it;
+      })
     );
 
     try {
@@ -1330,6 +1344,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
+    if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
+      fetchData();
+    }
   };
 
   // ─── Delete item ─────────────────────────────────────────────────────────
@@ -1418,7 +1435,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   const handleToggleSelectItem = useCallback(
-    (itemId: string, e?: React.MouseEvent | React.ChangeEvent, listContext?: WorkItem[]) => {
+    (
+      itemId: string,
+      e?: React.MouseEvent | React.ChangeEvent,
+      listContext?: WorkItem[],
+      cascade = false
+    ) => {
       const isShiftKey = (e as React.MouseEvent)?.shiftKey;
       const pool = listContext || items;
 
@@ -1438,10 +1460,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           }
         }
 
-        if (next.has(itemId)) {
+        const isCurrentlySelected = next.has(itemId);
+        const descendants = cascade ? getDescendantIds(items, itemId) : [];
+
+        if (isCurrentlySelected) {
+          // Deselect item and its descendants (FEAT-TRK-SPRINT-CASCADE-SELECTION)
           next.delete(itemId);
+          if (cascade) {
+            descendants.forEach((dId) => next.delete(dId));
+            // Also uncheck ancestors since not all children are selected
+            let parentId = items.find((it) => it.id === itemId)?.parent_id;
+            while (parentId) {
+              next.delete(parentId);
+              parentId = items.find((it) => it.id === parentId)?.parent_id;
+            }
+          }
         } else {
+          // Select item and all its descendants (FEAT-TRK-SPRINT-CASCADE-SELECTION)
           next.add(itemId);
+          if (cascade) {
+            descendants.forEach((dId) => next.add(dId));
+          }
         }
         lastSelectedIdRef.current = itemId;
         return next;
@@ -1506,10 +1545,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: {
             metadata: {
               sprint: targetSprint && targetSprint !== '__none__' ? targetSprint : null,
@@ -1518,13 +1556,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to move sprint: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
-        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint || 'Backlog'}.`);
+        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint && targetSprint !== '__none__' ? targetSprint : 'Backlog'}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error moving items: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1554,21 +1597,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: { status: targetStatus },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to update status: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Updated status for ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1598,21 +1645,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: { assignee: assignee || null },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to assign: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Assigned ${mutableIds.length} items to ${assignee || 'Unassigned'}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1652,23 +1703,27 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'PATCH',
         body: JSON.stringify({
-          action: 'update',
-          item_ids: mutableIds,
+          ids: mutableIds,
           updates: {
             metadata: { story_points: points },
           },
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to update points: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Updated story points for ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1703,20 +1758,24 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'POST',
+        method: 'DELETE',
         body: JSON.stringify({
-          action: 'delete',
-          item_ids: mutableIds,
+          ids: mutableIds,
         }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setBulkToast(`Failed to delete items: ${err.error || 'Server rejected update'}`);
+        setTimeout(() => setBulkToast(null), 4000);
         fetchData();
       } else {
         setBulkToast(`Deleted ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
       }
-    } catch {
+    } catch (err: any) {
+      setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     } finally {
       setIsBulkApplying(false);
@@ -1886,37 +1945,81 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     [items, knownStatusIds, effectiveSelectedLevels, selectedSprint]
   );
 
-  // ─── Create item ─────────────────────────────────────────────────────────
-  const handleCreateItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItemTitle.trim()) return;
-    const targetProjectSlug = isAllProjects
-      ? (newItemProjectSlug || allProjects[0]?.slug || 'sunshade-tracker')
-      : projectSlug;
+  // ─── Create item (TASK-TRK-QUICK-ADD-DIALOG) ──────────────────────────────
+  const handleCreateItem = async (payload: QuickAddPayload) => {
+    if (isReadOnly) return;
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'POST',
-        body: JSON.stringify({
-          project_slug: targetProjectSlug,
-          title: newItemTitle,
-          item_type: newItemType,
-          status: newItemStatus,
-          assignee: newItemAssignee || null,
-          external_ref_id: newItemExtRef || null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.item) {
           setItems((prev) => [...prev, data.item]);
-          setNewItemTitle('');
-          setNewItemExtRef('');
+          return data.item;
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to create work item');
       }
     } catch (err) {
       console.error('Error creating item:', err);
+      throw err;
     }
   };
+
+  // ─── Global Keyboard Shortcuts for Quick Add (TASK-TRK-HEADER-ADD-BUTTON) ─
+  useEffect(() => {
+    if (isReadOnly) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ignore if modifier keys (Ctrl, Cmd, Alt) are pressed
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Only trigger on 'c' or 'n'
+      if (e.key !== 'c' && e.key !== 'n' && e.key !== 'C' && e.key !== 'N') return;
+
+      // Ignore if user is focused on an interactive input element
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl) {
+        const tag = activeEl.tagName?.toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || activeEl.isContentEditable) {
+          return;
+        }
+      }
+
+      // Ignore if any modal is currently open
+      if (
+        isQuickAddOpen ||
+        editingItem ||
+        isManageSprintsOpen ||
+        isReconciliationModalOpen ||
+        isArchiveModalOpen ||
+        !!deleteConfirmItem ||
+        !!cascadePromptState ||
+        !!cascadeCompletionState
+      ) {
+        return;
+      }
+
+      e.preventDefault();
+      setIsQuickAddOpen(true);
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    isReadOnly,
+    isQuickAddOpen,
+    editingItem,
+    isManageSprintsOpen,
+    isReconciliationModalOpen,
+    isArchiveModalOpen,
+    deleteConfirmItem,
+    cascadePromptState,
+    cascadeCompletionState,
+  ]);
 
   // ─── Gemini Spark ingest ─────────────────────────────────────────────────
   const handleRunSparkIngest = async () => {
@@ -2004,9 +2107,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 py-3 flex items-center justify-between sticky top-0 z-40">
-        <div className="flex items-center space-x-2">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1" />
+      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+        <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap shrink-0">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1 shrink-0" />
           <span className="text-slate-700">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
@@ -2024,9 +2127,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           />
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-3 flex-nowrap whitespace-nowrap shrink-0">
           {/* View tabs */}
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs">
+          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
             {(['board', 'tree', 'sprint', 'spark', 'schema'] as const).map((tab) => {
               const icons = {
                 board: <Kanban className="w-3.5 h-3.5" />,
@@ -2046,7 +2149,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <button
                   key={tab}
                   onClick={() => handleTabChange(tab)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors ${
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
                     activeTab === tab
                       ? 'bg-emerald-500 text-slate-950 shadow'
                       : 'text-slate-400 hover:text-white'
@@ -2059,12 +2162,29 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             })}
           </div>
 
+          {/* Add Item Quick Button (TASK-TRK-HEADER-ADD-BUTTON) */}
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setIsQuickAddOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer shrink-0"
+              title="Add Item (Press 'c' or 'n')"
+              data-testid="header-add-item-btn"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Item</span>
+              <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
+                N
+              </kbd>
+            </button>
+          )}
+
           {/* Schema Deviations Quick Trigger */}
           {!isReadOnly && deviations.length > 0 && (
             <button
               type="button"
               onClick={() => setIsReconciliationModalOpen(true)}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in shrink-0"
               title={`${deviations.length} schema deviations detected. Click to review and reconcile.`}
               data-testid="header-deviations-btn"
             >
@@ -2080,7 +2200,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               fetchData();
             }}
             disabled={isRefreshing}
-            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors"
+            className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors shrink-0"
             title="Refresh"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
@@ -2099,29 +2219,32 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             }}
           />
 
-          {/* User Menu / Guest Mode */}
-          {currentUser === null ? (
-            <div className="flex items-center space-x-2">
-              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold">
+          {/* User Menu / Guest Mode (PRJ-05: never flash read-only badges while loading) */}
+          {loading ? (
+            <div className="w-20 h-7 bg-slate-900/60 rounded-lg animate-pulse shrink-0" />
+          ) : currentUser === null ? (
+            <div className="flex items-center space-x-2 shrink-0">
+              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold shrink-0">
                 <Eye className="w-3.5 h-3.5" />
                 <span>Read-Only Demo</span>
               </span>
               <Link
                 href={`/login?next=/${tenantSlug}/${projectSlug}`}
-                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shrink-0"
               >
                 Sign In
               </Link>
             </div>
           ) : (
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 shrink-0">
               {isReadOnly && (
-                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs font-medium">
+                <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-xs font-medium shrink-0">
                   <Eye className="w-3 h-3 text-slate-400" />
                   <span>Viewer</span>
                 </span>
               )}
               {tenantInfo && (
+
                 <UserMenu
                   tenantName={tenantInfo.name}
                   tenantSlug={tenantInfo.slug}
@@ -2187,169 +2310,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
             )}
 
-            {/* Quick Add Form / Guest Read-Only Banner */}
-            {!isReadOnly ? (
-              <form
-                onSubmit={handleCreateItem}
-                className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 flex flex-wrap items-center gap-3"
-              >
-                {isAllProjects && allProjects.length > 0 && (
-                  <select
-                    value={newItemProjectSlug || allProjects[0]?.slug}
-                    onChange={(e) => setNewItemProjectSlug(e.target.value)}
-                    className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
-                  >
-                    {allProjects.map((p) => (
-                      <option key={p.id} value={p.slug}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
+            {/* Guest Read-Only Banner */}
+            {!loading && isReadOnly && (
 
-                <div className="flex-1 min-w-[240px]">
-                  <input
-                    type="text"
-                    placeholder="New item title (e.g. Implement Webhook Dispatcher)..."
-                    value={newItemTitle}
-                    onChange={(e) => setNewItemTitle(e.target.value)}
-                    className="w-full px-3 py-1.5 text-sm bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-sans transition-colors"
-                  />
-                </div>
-
-                {/* Item Hierarchy Type */}
-                <select
-                  value={newItemType}
-                  onChange={(e) => setNewItemType(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-                >
-                  {quickAddHierarchy.map((h) => (
-                    <option key={h.type} value={h.type}>
-                      {h.label} (Level {h.level})
-                    </option>
-                  ))}
-                </select>
-
-                {/* Item Status */}
-                <select
-                  value={newItemStatus}
-                  onChange={(e) => setNewItemStatus(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-300 focus:outline-none focus:border-emerald-500 font-mono cursor-pointer"
-                >
-                  {quickAddStatuses.map((s: StatusDefinition) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Assignee Dropdown Picker */}
-                <div className="relative" ref={assigneeDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setAssigneeDropdownOpen((v) => !v)}
-                    className="flex items-center space-x-1.5 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors max-w-[190px]"
-                  >
-                    <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{newItemAssignee || 'Unassigned'}</span>
-                    <ChevronDown
-                      className={`w-3 h-3 text-slate-500 shrink-0 transition-transform ${
-                        assigneeDropdownOpen ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-
-                  {assigneeDropdownOpen && (
-                    <div className="absolute left-0 top-full mt-1.5 w-60 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
-                      <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Select Assignee
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewItemAssignee(myDisplayName);
-                          setAssigneeDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                          newItemAssignee === myDisplayName
-                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                            : 'text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[9px] font-bold">
-                          Me
-                        </div>
-                        <span className="truncate">{myDisplayName}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewItemAssignee('');
-                          setAssigneeDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                          !newItemAssignee
-                            ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[9px]">
-                          —
-                        </div>
-                        <span className="italic">Unassigned</span>
-                      </button>
-
-                      <div className="border-t border-slate-800 my-1 pt-1">
-                        <div className="px-2 py-0.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
-                          Workspace Members
-                        </div>
-                        {workspaceMembers
-                          .filter((m) => m.full_name && m.full_name !== myDisplayName)
-                          .map((m) => (
-                            <button
-                              key={m.user_id}
-                              type="button"
-                              onClick={() => {
-                                setNewItemAssignee(m.full_name);
-                                setAssigneeDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors ${
-                                newItemAssignee === m.full_name
-                                  ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                                  : 'text-slate-300 hover:bg-slate-800'
-                              }`}
-                            >
-                              <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-bold">
-                                {m.full_name[0]?.toUpperCase() || 'M'}
-                              </div>
-                              <span className="truncate">{m.full_name}</span>
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* External Ref ID */}
-                <input
-                  type="text"
-                  placeholder="Ref (e.g. SPEC-01)"
-                  value={newItemExtRef}
-                  onChange={(e) => setNewItemExtRef(e.target.value)}
-                  className="w-32 px-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono"
-                />
-
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Item</span>
-                </button>
-              </form>
-            ) : (
               <div className="p-4 rounded-xl bg-sky-950/20 border border-sky-800/30 flex flex-wrap items-center justify-between gap-3 text-xs text-sky-200">
                 <div className="flex items-center space-x-2.5">
                   <Eye className="w-4 h-4 text-sky-400 shrink-0" />
@@ -2467,8 +2430,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   boardHeight === 'compact'
                     ? 'h-auto md:h-[440px]'
                     : boardHeight === 'full'
-                    ? 'h-auto md:h-[calc(100vh-200px)] md:min-h-[500px]'
-                    : 'h-auto md:h-[calc(100vh-270px)] md:min-h-[420px]'
+                    ? 'h-auto md:h-[calc(100vh-140px)] md:min-h-[500px]'
+                    : 'h-auto md:h-[calc(100vh-200px)] md:min-h-[420px]'
                 }`}
               >
                 {projectSettings.statuses
@@ -2768,7 +2731,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                                     {/* Metadata tags */}
                                     {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
-                                      const { prUrl, commitHash, isGitHubField } = extractGitHubMetadata(item.metadata);
+                                      const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata);
                                       const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => !isGitHubField(k));
                                       const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
                                       if (!hasAnyDisplay) return null;
@@ -2779,6 +2742,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                             <GitHubBadge
                                               type="pr"
                                               value={prUrl}
+                                              repo={repo}
+                                              owner={owner}
                                             />
                                           )}
                                           {commitHash && (
@@ -2786,6 +2751,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                               type="commit"
                                               value={commitHash}
                                               prUrl={prUrl}
+                                              repo={repo}
+                                              owner={owner}
                                             />
                                           )}
                                           {nonGitHubEntries.map(([k, v]) => {
@@ -2986,12 +2953,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     Collapse All
                   </button>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5">
                   <span className="text-xs text-slate-400">Sprint:</span>
                   <select
                     value={selectedSprint}
                     onChange={(e) => setSelectedSprint(e.target.value)}
                     className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-sprint-filter"
                   >
                     <option value="all">All Sprints</option>
                     <option value="__none__">Backlog (Unassigned)</option>
@@ -3002,13 +2970,70 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ))}
                   </select>
                 </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Status:</span>
+                  <select
+                    value={treeStatusFilter}
+                    onChange={(e) => setTreeStatusFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-status-filter"
+                  >
+                    <option value="all">All Statuses</option>
+                    {projectSettings.statuses.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label || s.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Level:</span>
+                  <select
+                    value={treeTypeFilter}
+                    onChange={(e) => setTreeTypeFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-level-filter"
+                  >
+                    <option value="all">All Levels</option>
+                    {projectSettings.hierarchy.map((h) => (
+                      <option key={h.type} value={h.type}>
+                        {h.label || h.type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Sort:</span>
+                  <select
+                    value={treeSortBy}
+                    onChange={(e) => setTreeSortBy(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="tree-sort-by"
+                  >
+                    <option value="order_index">Manual (Order)</option>
+                    <option value="points_desc">Points (High to Low)</option>
+                    <option value="points_asc">Points (Low to High)</option>
+                    <option value="title_asc">Title (A to Z)</option>
+                    <option value="title_desc">Title (Z to A)</option>
+                  </select>
+                </div>
+                {(selectedSprint !== 'all' || treeStatusFilter !== 'all' || treeTypeFilter !== 'all' || treeSortBy !== 'order_index') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSprint('all');
+                      setTreeStatusFilter('all');
+                      setTreeTypeFilter('all');
+                      setTreeSortBy('order_index');
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                    data-testid="tree-reset-filters-btn"
+                  >
+                    Reset
+                  </button>
+                )}
                 <span className="text-xs font-mono text-emerald-400 whitespace-nowrap shrink-0">
                   Total Items: {treeFilteredItems.length}
-                  {selectedSprint !== 'all' && (
-                    <span className="text-slate-400 font-normal ml-1">
-                      (filtered by {selectedSprint === '__none__' ? 'Backlog' : selectedSprint})
-                    </span>
-                  )}
                 </span>
               </div>
             </div>
@@ -3161,6 +3186,68 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   )}
                 </button>
 
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Status:</span>
+                  <select
+                    value={sprintStatusFilter}
+                    onChange={(e) => setSprintStatusFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-status-filter"
+                  >
+                    <option value="all">All Statuses</option>
+                    {projectSettings.statuses.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label || s.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Level:</span>
+                  <select
+                    value={sprintTypeFilter}
+                    onChange={(e) => setSprintTypeFilter(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-level-filter"
+                  >
+                    <option value="all">All Levels</option>
+                    {projectSettings.hierarchy.map((h) => (
+                      <option key={h.type} value={h.type}>
+                        {h.label || h.type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs text-slate-400">Sort:</span>
+                  <select
+                    value={sprintSortBy}
+                    onChange={(e) => setSprintSortBy(e.target.value)}
+                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    data-testid="sprint-sort-by"
+                  >
+                    <option value="order_index">Manual (Order)</option>
+                    <option value="points_desc">Points (High to Low)</option>
+                    <option value="points_asc">Points (Low to High)</option>
+                    <option value="title_asc">Title (A to Z)</option>
+                    <option value="title_desc">Title (Z to A)</option>
+                  </select>
+                </div>
+                {(sprintStatusFilter !== 'all' || sprintTypeFilter !== 'all' || sprintSortBy !== 'order_index') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSprintStatusFilter('all');
+                      setSprintTypeFilter('all');
+                      setSprintSortBy('order_index');
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                    data-testid="sprint-reset-filters-btn"
+                  >
+                    Reset
+                  </button>
+                )}
+
                 {/* Manage Sprints Button */}
                 {!isReadOnly && (
                   <button
@@ -3190,7 +3277,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             {/* Sprint Groups */}
             <div className="space-y-6">
               {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((sprintName) => {
-                const sprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
+                const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
+                const sprintItems = filterSprintItems(rawSprintItems);
                 const totalPoints = sprintItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
                   return acc + (isNaN(p) ? 0 : p);
@@ -3226,14 +3314,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
                   const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+                  const descendantIds = getDescendantIds(items, node.id);
+                  const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
+                  const isNodeSelected = selectedItemIds.has(node.id);
+                  const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
 
                   return (
                     <React.Fragment key={node.id}>
                       <SprintItemRow
                         item={node}
                         depth={depth}
-                        isSelected={selectedItemIds.has(node.id)}
-                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems)}
+                        isSelected={isNodeSelected}
+                        isIndeterminate={isNodeIndeterminate}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems, true)}
                         isImmutable={isImmutable}
                         onEditItem={setEditingItem}
                         getItemHierarchy={getItemHierarchy}
@@ -3384,7 +3477,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             No stories or tasks in {sprintName}. Allocate backlog items below.
                           </div>
                         ) : sprintViewMode === 'tree' ? (
-                          buildTree(sprintItems).map((node) => renderSprintTreeNode(node))
+                          buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node) => renderSprintTreeNode(node))
                         ) : (
                           sprintItems.map((item) => {
                             const isImmutable =
@@ -3425,7 +3518,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
               {/* Backlog (Unassigned) Swimlane */}
               {(() => {
-                const backlogItems = items.filter((it) => !it.metadata?.sprint);
+                const rawBacklogItems = items.filter((it) => !it.metadata?.sprint);
+                const backlogItems = filterSprintItems(rawBacklogItems);
                 const backlogPoints = backlogItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
                   return acc + (isNaN(p) ? 0 : p);
@@ -3449,14 +3543,19 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   };
                   const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
                   const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+                  const descendantIds = getDescendantIds(items, node.id);
+                  const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
+                  const isNodeSelected = selectedItemIds.has(node.id);
+                  const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
 
                   return (
                     <React.Fragment key={node.id}>
                       <SprintItemRow
                         item={node}
                         depth={depth}
-                        isSelected={selectedItemIds.has(node.id)}
-                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems)}
+                        isSelected={isNodeSelected}
+                        isIndeterminate={isNodeIndeterminate}
+                        onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems, true)}
                         isImmutable={isImmutable}
                         onEditItem={setEditingItem}
                         getItemHierarchy={getItemHierarchy}
@@ -3541,7 +3640,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                             Backlog is empty! All items are assigned to active sprints.
                           </div>
                         ) : sprintViewMode === 'tree' ? (
-                          buildTree(backlogItems).map((node) => renderBacklogTreeNode(node))
+                          buildTree(backlogItems, null, 0, new Set(), sprintComparator).map((node) => renderBacklogTreeNode(node))
                         ) : (
                           backlogItems.map((item) => {
                             const isImmutable =
@@ -3883,6 +3982,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
         isReadOnly={isReadOnly}
+        projects={allProjects}
+        onSelectItem={(item) => setEditingItem(item)}
       />
 
       {/* Board Item Delete Confirmation Modal */}
@@ -4055,6 +4156,30 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         }}
       />
 
+      {/* Quick Add Work Item Modal (TASK-TRK-QUICK-ADD-DIALOG) */}
+      {!isReadOnly && (
+        <QuickAddModal
+          isOpen={isQuickAddOpen}
+          onClose={() => setIsQuickAddOpen(false)}
+          onSubmit={handleCreateItem}
+          currentProjectSlug={projectSlug}
+          isAllProjects={isAllProjects}
+          allProjects={allProjects}
+          hierarchy={projectSettings.hierarchy}
+          statuses={projectSettings.statuses}
+          workspaceMembers={workspaceMembers}
+          myDisplayName={myDisplayName}
+          getHierarchyForProject={(slug) => {
+            const p = allProjects.find((x) => x.slug === slug);
+            return p?.settings?.hierarchy || projectSettings.hierarchy;
+          }}
+          getStatusesForProject={(slug) => {
+            const p = allProjects.find((x) => x.slug === slug);
+            return p?.settings?.statuses || projectSettings.statuses;
+          }}
+        />
+      )}
+
       {/* Standalone Sprint Definitions Modal */}
       <ManageSprintsModal
         isOpen={!isReadOnly && isManageSprintsOpen}
@@ -4064,8 +4189,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         items={items}
       />
 
-      {/* Floating Multi-Item Bulk Actions Toolbar */}
-      {!isReadOnly && (
+      {/* Floating Multi-Item Bulk Actions Toolbar (BUG-TRK-SPRINT-BAR-GLOBAL-LEAK: scoped strictly to sprint view) */}
+      {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (
         <BulkActionsToolbar
           selectedCount={selectedItemIds.size}
           availableSprints={availableSprints}

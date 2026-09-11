@@ -48,6 +48,35 @@ export interface TreeNodeProps {
   ancestorRails?: boolean[];
 }
 
+export const INDENT_STEP = 20;
+
+export function sanitizeTitle(title: string): string {
+  if (!title) return '';
+  return title
+    .replace(/\\\[/g, '[')
+    .replace(/\\\]/g, ']')
+    .replace(/\\([_*\\[\]()#+-.!`])/g, '$1');
+}
+
+export function getLevelBadgeClasses(itemType: string, isUnmapped: boolean): string {
+  if (isUnmapped) {
+    return 'bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase px-2 py-0.5 rounded shrink-0';
+  }
+  const type = (itemType || '').toLowerCase();
+  switch (type) {
+    case 'epic':
+      return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded shrink-0';
+    case 'story':
+      return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-2 py-0.5 rounded shrink-0';
+    case 'task':
+      return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0';
+    case 'subtask':
+      return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded shrink-0';
+    default:
+      return 'bg-slate-800 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0';
+  }
+}
+
 export function TreeNode({
   item,
   getStatusColor,
@@ -80,6 +109,15 @@ export function TreeNode({
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
   const [childError, setChildError] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
+  const dragLeaveTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (dragLeaveTimerRef.current) {
+        clearTimeout(dragLeaveTimerRef.current);
+      }
+    };
+  }, []);
 
   const effectiveStatuses = getItemStatuses ? getItemStatuses(item) : statuses;
   const effectiveHierarchy = getItemHierarchy ? getItemHierarchy(item) : hierarchy;
@@ -93,6 +131,7 @@ export function TreeNode({
   const hasChildren = Boolean(item.children && item.children.length > 0);
   const isCollapsed = Boolean(collapsedNodeIds?.has(item.id));
   const isBeingDragged = isDraggingItemId === item.id;
+  const sanitizedTitle = sanitizeTitle(item.title);
 
   // Determine valid child item types from hierarchy rules
   const validChildTypes = React.useMemo(() => {
@@ -138,6 +177,11 @@ export function TreeNode({
     e.stopPropagation();
     if (isBeingDragged) return;
 
+    if (dragLeaveTimerRef.current) {
+      clearTimeout(dragLeaveTimerRef.current);
+      dragLeaveTimerRef.current = null;
+    }
+
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'move';
     }
@@ -157,9 +201,12 @@ export function TreeNode({
     const offsetY = rawClientY - rect.top;
     const height = rect.height || 1;
 
-    if (offsetY < height * 0.25) {
+    // Expanded drop hitboxes (at least 16px vertical drop corridors or up to 25% height)
+    const threshold = Math.min(Math.max(16, height * 0.25), height * 0.4);
+
+    if (offsetY < threshold) {
       setDropPosition('before');
-    } else if (offsetY > height * 0.75) {
+    } else if (offsetY > height - threshold) {
       setDropPosition('after');
     } else {
       setDropPosition('inside');
@@ -169,12 +216,22 @@ export function TreeNode({
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setDropPosition(null);
+    // 50ms hover debouncing to prevent flickering when moving between adjacent nodes
+    if (dragLeaveTimerRef.current) {
+      clearTimeout(dragLeaveTimerRef.current);
+    }
+    dragLeaveTimerRef.current = setTimeout(() => {
+      setDropPosition(null);
+    }, 50);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (dragLeaveTimerRef.current) {
+      clearTimeout(dragLeaveTimerRef.current);
+      dragLeaveTimerRef.current = null;
+    }
     const draggedId = e.dataTransfer.getData('text/plain') || isDraggingItemId;
     const currentPos = dropPosition || 'inside';
     setDropPosition(null);
@@ -191,8 +248,8 @@ export function TreeNode({
       {dropPosition === 'before' && (
         <div
           data-testid="drop-indicator-before"
-          className="h-1 bg-emerald-400 rounded-full mx-4 my-0.5 shadow-lg shadow-emerald-400/50 animate-pulse"
-          style={{ marginLeft: `${item.depth * 28 + 20}px` }}
+          className="absolute inset-x-0 -top-0.5 h-0.5 bg-emerald-400 pointer-events-none z-30 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
+          style={{ marginLeft: `${item.depth * INDENT_STEP + INDENT_STEP}px` }}
         />
       )}
 
@@ -207,7 +264,7 @@ export function TreeNode({
               key={colDepth}
               data-testid={`ancestor-rail-${colDepth}`}
               className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
-              style={{ left: `${colDepth * 28}px` }}
+              style={{ left: `${colDepth * INDENT_STEP}px` }}
             />
           );
         })}
@@ -217,23 +274,23 @@ export function TreeNode({
           <div
             data-testid="branch-connector-continuation"
             className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
-            style={{ left: `${item.depth * 28}px` }}
+            style={{ left: `${item.depth * INDENT_STEP}px` }}
           />
         )}
 
         <div
           className="flex items-center gap-3 transition-all group"
-          style={{ marginLeft: `${item.depth * 28}px` }}
+          style={{ marginLeft: `${item.depth * INDENT_STEP}px` }}
         >
           {/* Tree Branch Connector */}
           {item.depth > 0 && (
             <div
               data-testid="branch-connector"
-              className="relative w-4 self-stretch flex-shrink-0 flex items-center"
+              className="relative w-4 self-stretch flex-shrink-0 flex items-center pointer-events-none"
             >
               {/* Top-half vertical spine down to 50% + horizontal branch into node */}
               <div
-                className={`absolute top-0 bottom-1/2 left-0 w-full border-l-2 border-b-2 border-slate-700 ${
+                className={`absolute top-0 bottom-1/2 left-0 w-full border-l-2 border-b-2 border-slate-700 pointer-events-none ${
                   isLastChild ? 'rounded-bl-sm' : ''
                 }`}
               />
@@ -276,30 +333,39 @@ export function TreeNode({
           onDrop={handleDrop}
           onDoubleClick={() => onEditItem?.(item)}
           data-testid={`tree-node-card-${item.id}`}
-          className={`flex-1 rounded-lg border p-3 my-1 transition-all shadow-sm relative ${
+          className={`flex-1 rounded-lg border my-1 transition-all shadow-sm relative ${
+            item.depth > 0 ? 'py-1.5 px-3 bg-slate-950/40 border-slate-800/80' : 'py-2.5 px-3 bg-slate-900/70 border-slate-800'
+          } ${
             isBeingDragged
-              ? 'opacity-40 border-dashed border-emerald-500'
+              ? 'opacity-30 border-dashed border-slate-700 bg-slate-900 shadow-md'
               : dropPosition === 'inside'
-              ? 'border-2 border-dashed border-emerald-400 bg-emerald-950/25 shadow-emerald-500/10'
+              ? 'border-2 border-dashed border-emerald-400 bg-emerald-950/35 ring-2 ring-emerald-400/60 shadow-lg shadow-emerald-500/20'
               : unmappedLevelDev || nestingDev
               ? 'border-amber-500/50 bg-amber-950/10'
-              : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
+              : 'hover:border-slate-700'
           } ${nodeIsImmutable ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Rollup Badges */}
-            <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+          {dropPosition === 'inside' && (
+            <div
+              data-testid="drop-indicator-inside"
+              className="absolute inset-0 border-2 border-dashed border-emerald-400 rounded-lg bg-emerald-950/30 flex items-center justify-center pointer-events-none z-10"
+            >
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-900/90 text-emerald-200 border border-emerald-500/60 shadow">
+                Nest inside
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-3 min-w-0">
+            {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
               {!nodeIsImmutable && (
                 <GripVertical className="w-3.5 h-3.5 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
               )}
 
               {/* Level Badge */}
               <span
-                className={`text-xs uppercase font-mono px-2 py-0.5 rounded shrink-0 ${
-                  unmappedLevelDev
-                    ? 'bg-amber-950/80 text-amber-300 border border-amber-500/40'
-                    : 'bg-slate-800 text-slate-300'
-                }`}
+                data-testid={`level-badge-${item.item_type}`}
+                className={getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))}
               >
                 {item.item_type}
               </span>
@@ -312,7 +378,7 @@ export function TreeNode({
                     e.stopPropagation();
                     onOpenReconciliation?.(unmappedLevelDev);
                   }}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors cursor-pointer shrink-0"
                   title={`${unmappedLevelDev.message} (Click to reconcile)`}
                   data-testid="unmapped-level-badge"
                 >
@@ -328,7 +394,7 @@ export function TreeNode({
                     e.stopPropagation();
                     onOpenReconciliation?.(nestingDev);
                   }}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 transition-colors cursor-pointer shrink-0"
                   title={`${nestingDev.message} (Click to reconcile)`}
                   data-testid="nesting-conflict-badge"
                 >
@@ -340,13 +406,14 @@ export function TreeNode({
               {/* Title & Ref ID */}
               <span
                 onClick={() => onEditItem?.(item)}
-                className="font-semibold text-slate-100 hover:text-white transition-colors cursor-pointer truncate"
+                title={sanitizedTitle}
+                className="font-medium text-slate-100 hover:text-white transition-colors cursor-pointer truncate min-w-0 flex-shrink flex-1"
               >
-                {item.title}
+                {sanitizedTitle}
               </span>
 
               {item.external_ref_id && (
-                <span className="text-xs font-mono text-slate-500 shrink-0 font-medium">
+                <span className="text-xs font-mono text-slate-500 shrink-0 whitespace-nowrap font-medium">
                   [{item.external_ref_id}]
                 </span>
               )}
@@ -355,7 +422,7 @@ export function TreeNode({
               {nodeIsImmutable && (
                 <span
                   data-testid="immutable-lock-badge"
-                  className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+                  className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 whitespace-nowrap font-sans"
                   title="Completed item in closed sprint (immutable)"
                 >
                   <Lock className="w-3 h-3 text-purple-400" />
@@ -367,7 +434,7 @@ export function TreeNode({
               {item.descendantCount !== undefined && item.descendantCount > 0 && (
                 <span
                   data-testid="tree-node-subtasks-badge"
-                  className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0"
+                  className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0 whitespace-nowrap"
                   title={
                     isFilteredBySprint
                       ? `${item.descendantCount} descendant item(s) (sprint filtered)`
@@ -377,147 +444,157 @@ export function TreeNode({
                   {item.descendantCount} {item.descendantCount === 1 ? 'subtask' : 'subtasks'}
                 </span>
               )}
-
-              {item.rollupPoints !== undefined && item.rollupPoints > 0 && (
-                <span
-                  data-testid="tree-node-rollup-points-badge"
-                  className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0"
-                  title={
-                    isFilteredBySprint
-                      ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
-                      : `Subtree total: ${item.rollupPoints} pts`
-                  }
-                >
-                  {item.rollupPoints} pts rollup
-                </span>
-              )}
             </div>
 
-            {/* Right side: Assignee, Status, Quick Child Button, Edit */}
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Assignee Selector */}
-              {members && members.length > 0 ? (
-                <div className="relative inline-flex items-center">
-                  <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
-                  <select
-                    value={item.assignee || ''}
-                    disabled={nodeIsImmutable}
-                    onChange={(e) => onUpdateAssignee?.(item.id, e.target.value || null)}
-                    className="text-xs bg-slate-950 border border-slate-800 rounded pl-6 pr-2 py-1 text-slate-300 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed font-mono"
-                    title={nodeIsImmutable ? 'Item is locked in a closed sprint' : 'Assign member'}
-                    data-testid={`assignee-select-${item.id}`}
+            {/* Right section: Rollup Points, Assignee, Status, Actions */}
+            <div className="flex items-center gap-3 shrink-0 ml-auto" data-testid="tree-node-right-columns">
+              {/* Rollup Points Track */}
+              <div className="w-24 shrink-0 flex items-center justify-end" data-testid="col-rollup-points">
+                {item.rollupPoints !== undefined && item.rollupPoints > 0 && (
+                  <span
+                    data-testid="tree-node-rollup-points-badge"
+                    className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
+                    title={
+                      isFilteredBySprint
+                        ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
+                        : `Subtree total: ${item.rollupPoints} pts`
+                    }
                   >
-                    <option value="">Unassigned</option>
-                    {item.assignee && !members.some((m) => m.name === item.assignee) && (
-                      <option value={item.assignee}>{item.assignee}</option>
-                    )}
-                    {members.map((m) => (
-                      <option key={m.id} value={m.name}>
-                        {m.name}
+                    {item.rollupPoints} pts rollup
+                  </span>
+                )}
+              </div>
+
+              {/* Assignee Selector Track */}
+              <div className="w-32 shrink-0 flex items-center" data-testid="col-assignee">
+                {members && members.length > 0 ? (
+                  <div className="relative inline-flex items-center w-full">
+                    <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
+                    <select
+                      value={item.assignee || ''}
+                      disabled={nodeIsImmutable}
+                      onChange={(e) => onUpdateAssignee?.(item.id, e.target.value || null)}
+                      className="w-full text-xs bg-slate-950 border border-slate-800 rounded pl-6 pr-2 py-1 text-slate-300 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed font-mono truncate"
+                      title={nodeIsImmutable ? 'Item is locked in a closed sprint' : 'Assign member'}
+                      data-testid={`assignee-select-${item.id}`}
+                    >
+                      <option value="">Unassigned</option>
+                      {item.assignee && !members.some((m) => m.name === item.assignee) && (
+                        <option value={item.assignee}>{item.assignee}</option>
+                      )}
+                      {members.map((m) => (
+                        <option key={m.id} value={m.name}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono truncate">
+                    <User className="w-3 h-3 text-slate-500 shrink-0" />
+                    <span className="truncate">{item.assignee || 'Unassigned'}</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Status Selector Track */}
+              <div className="w-36 shrink-0 flex items-center gap-1.5" data-testid="col-status">
+                {effectiveStatuses && effectiveStatuses.length > 0 ? (
+                  <select
+                    value={item.status}
+                    disabled={nodeIsImmutable}
+                    onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
+                    className={`w-full text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed truncate ${
+                      unmappedStatusDev ? 'border border-amber-500/60' : 'border border-slate-800'
+                    }`}
+                    style={
+                      statusColor
+                        ? {
+                            backgroundColor: `${statusColor}20`,
+                            color: statusColor,
+                            border: unmappedStatusDev ? '1px solid #f59e0b' : `1px solid ${statusColor}40`,
+                          }
+                        : { backgroundColor: '#020617', color: '#cbd5e1' }
+                    }
+                    title={nodeIsImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
+                    data-testid={`status-select-${item.id}`}
+                  >
+                    {effectiveStatuses.map((st) => (
+                      <option
+                        key={st.id}
+                        value={st.id}
+                        style={{ backgroundColor: '#020617', color: '#cbd5e1' }}
+                      >
+                        {st.label}
                       </option>
                     ))}
                   </select>
-                </div>
-              ) : (
-                <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono">
-                  <User className="w-3 h-3 text-slate-500" />
-                  <span>{item.assignee || 'Unassigned'}</span>
-                </span>
-              )}
+                ) : (
+                  <span
+                    className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 ${
+                      !statusColor ? 'bg-slate-800 text-slate-300' : ''
+                    } ${unmappedStatusDev ? 'border border-amber-500/60' : ''}`}
+                    style={
+                      statusColor
+                        ? {
+                            backgroundColor: `${statusColor}20`,
+                            color: statusColor,
+                            border: unmappedStatusDev ? '1px solid #f59e0b' : `1px solid ${statusColor}40`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {item.status}
+                  </span>
+                )}
 
-              {/* Status Selector */}
-              {effectiveStatuses && effectiveStatuses.length > 0 ? (
-                <select
-                  value={item.status}
-                  disabled={nodeIsImmutable}
-                  onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
-                  className={`text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    unmappedStatusDev ? 'border border-amber-500/60' : 'border border-slate-800'
-                  }`}
-                  style={
-                    statusColor
-                      ? {
-                          backgroundColor: `${statusColor}20`,
-                          color: statusColor,
-                          border: unmappedStatusDev ? '1px solid #f59e0b' : `1px solid ${statusColor}40`,
-                        }
-                      : { backgroundColor: '#020617', color: '#cbd5e1' }
-                  }
-                  title={nodeIsImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
-                  data-testid={`status-select-${item.id}`}
-                >
-                  {effectiveStatuses.map((st) => (
-                    <option
-                      key={st.id}
-                      value={st.id}
-                      style={{ backgroundColor: '#020617', color: '#cbd5e1' }}
-                    >
-                      {st.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <span
-                  className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 ${
-                    !statusColor ? 'bg-slate-800 text-slate-300' : ''
-                  } ${unmappedStatusDev ? 'border border-amber-500/60' : ''}`}
-                  style={
-                    statusColor
-                      ? {
-                          backgroundColor: `${statusColor}20`,
-                          color: statusColor,
-                          border: unmappedStatusDev ? '1px solid #f59e0b' : `1px solid ${statusColor}40`,
-                        }
-                      : undefined
-                  }
-                >
-                  {item.status}
-                </span>
-              )}
+                {unmappedStatusDev && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenReconciliation?.(unmappedStatusDev);
+                    }}
+                    className="text-amber-400 hover:text-amber-300 transition-colors cursor-pointer text-xs shrink-0"
+                    title={`${unmappedStatusDev.message} (Click to reconcile)`}
+                    data-testid="unmapped-status-badge"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
-              {unmappedStatusDev && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenReconciliation?.(unmappedStatusDev);
-                  }}
-                  className="text-amber-400 hover:text-amber-300 transition-colors cursor-pointer text-xs"
-                  title={`${unmappedStatusDev.message} (Click to reconcile)`}
-                  data-testid="unmapped-status-badge"
-                >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                </button>
-              )}
+              {/* Actions Track (Add Child, Edit) */}
+              <div className="w-14 shrink-0 flex items-center justify-end gap-0.5" data-testid="col-actions">
+                {/* Quick Add Child Button */}
+                {!nodeIsImmutable && onCreateChild && validChildTypes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingChild(!isCreatingChild);
+                      setChildError(null);
+                    }}
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    title="Add child task"
+                    data-testid={`add-child-btn-${item.id}`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
-              {/* Quick Add Child Button */}
-              {!nodeIsImmutable && onCreateChild && validChildTypes.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCreatingChild(!isCreatingChild);
-                    setChildError(null);
-                  }}
-                  className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
-                  title="Add child task"
-                  data-testid={`add-child-btn-${item.id}`}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-              )}
-
-              {/* Edit Modal Button */}
-              {onEditItem && (
-                <button
-                  type="button"
-                  onClick={() => onEditItem(item)}
-                  className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
-                  title="Edit work item"
-                  data-testid={`edit-item-btn-${item.id}`}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-              )}
+                {/* Edit Modal Button */}
+                {onEditItem && (
+                  <button
+                    type="button"
+                    onClick={() => onEditItem(item)}
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    title="Edit work item"
+                    data-testid={`edit-item-btn-${item.id}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -527,8 +604,8 @@ export function TreeNode({
       {dropPosition === 'after' && (
         <div
           data-testid="drop-indicator-after"
-          className="h-1 bg-emerald-400 rounded-full mx-4 my-0.5 shadow-lg shadow-emerald-400/50 animate-pulse"
-          style={{ marginLeft: `${item.depth * 28 + 20}px` }}
+          className="absolute inset-x-0 -bottom-0.5 h-0.5 bg-emerald-400 pointer-events-none z-30 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
+          style={{ marginLeft: `${item.depth * INDENT_STEP + INDENT_STEP}px` }}
         />
       )}
 
@@ -537,7 +614,7 @@ export function TreeNode({
         <form
           onSubmit={handleChildSubmit}
           className="flex flex-col gap-1.5 p-2.5 rounded-lg bg-slate-900 border border-emerald-500/40 my-1 shadow-lg"
-          style={{ marginLeft: `${(item.depth + 1) * 28}px` }}
+          style={{ marginLeft: `${(item.depth + 1) * INDENT_STEP}px` }}
           data-testid="inline-create-child-form"
         >
           {childError && (
