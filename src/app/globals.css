@@ -106,3 +106,8 @@ body {
   }
 }
 
+/* Safe-area insets for mobile Android & iOS system navigation bars */
+.safe-area-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
+}
+

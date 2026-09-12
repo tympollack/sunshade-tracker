@@ -52,9 +52,14 @@ export function ProjectSwitcher({
   const updatePosition = () => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const menuWidth = Math.min(256, typeof window !== 'undefined' ? window.innerWidth - 24 : 256);
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
       setCoords({
         top: rect.bottom + 8,
-        left: Math.max(8, rect.left),
+        left: Math.max(12, left),
       });
     }
   };
@@ -108,7 +113,7 @@ export function ProjectSwitcher({
         ) : (
           <Folder className="w-3 h-3 text-emerald-400" />
         )}
-        <span className="max-w-[120px] truncate">{currentProject?.name || currentProjectSlug}</span>
+        <span className="max-w-[100px] truncate shrink min-w-0">{currentProject?.name || currentProjectSlug}</span>
         <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -120,7 +125,7 @@ export function ProjectSwitcher({
             top: coords ? `${coords.top}px` : undefined,
             left: coords ? `${coords.left}px` : undefined,
           }}
-          className="w-56 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/50 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          className="w-64 max-w-[calc(100vw-24px)] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/50 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
           data-testid="project-switcher-dropdown"
         >
           <div className="px-3 py-2 border-b border-slate-800">

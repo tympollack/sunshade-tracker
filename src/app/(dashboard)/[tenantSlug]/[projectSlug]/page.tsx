@@ -49,6 +49,7 @@ import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
@@ -2109,15 +2110,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
       <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap shrink-0">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1 shrink-0" />
-          <span className="text-slate-700">/</span>
+        <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
+          <span className="text-slate-700 shrink-0">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
             currentTenantSlug={tenantSlug}
             workspaces={allWorkspaces}
           />
-          <span className="text-slate-700">/</span>
+          <span className="text-slate-700 shrink-0">/</span>
           {/* Project Switcher */}
           <ProjectSwitcher
             tenantSlug={tenantSlug}
@@ -2129,7 +2130,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
 
         {/* View tabs */}
-        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
@@ -2269,7 +2270,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+      <main className="flex-1 p-6 pb-24 md:pb-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden safe-area-bottom">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
@@ -2328,8 +2329,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             )}
 
             {/* Board Controls Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-1">
-              <div className="flex items-center flex-wrap gap-2">
+            <div
+              data-testid="board-filter-toolbar"
+              className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full py-1 -mx-4 px-4 touch-pan-x sm:mx-0 sm:px-1 sm:flex-wrap sm:justify-between"
+            >
+              <div className="flex items-center gap-2 shrink-0">
                 <FilterMultiSelect
                   label="Status"
                   options={statusFilterOptions}
@@ -2342,13 +2346,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   selectedIds={effectiveSelectedLevels}
                   onChange={setSelectedLevels}
                 />
-                <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-[11px] font-medium text-slate-400">Sprint:</span>
+                <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs shrink-0 whitespace-nowrap min-h-[36px]">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-400 shrink-0">Sprint:</span>
                   <select
                     value={selectedSprint}
                     onChange={(e) => setSelectedSprint(e.target.value)}
-                    className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+                    className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer shrink-0"
                   >
                     <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
                     <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
@@ -2376,23 +2380,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       setSelectedLevels(null);
                       setSelectedSprint('all');
                     }}
-                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors"
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors shrink-0 whitespace-nowrap min-h-[36px] flex items-center"
                   >
                     Reset Filters
                   </button>
                 )}
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 shrink-0">
                 {/* Board Height Presets */}
-                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs">
+                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">
                   <span className="text-[10px] uppercase font-semibold text-slate-500 px-2">Height:</span>
                   {(['compact', 'standard', 'full'] as const).map((h) => (
                     <button
                       key={h}
                       type="button"
                       onClick={() => setBoardHeight(h)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors min-h-[30px] ${
                         boardHeight === h
                           ? 'bg-slate-800 text-white shadow-sm'
                           : 'text-slate-400 hover:text-slate-200'
@@ -2408,10 +2412,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <button
                   type="button"
                   onClick={handleToggleCollapseAll}
-                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs transition-colors flex items-center space-x-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs transition-colors flex items-center space-x-1.5 shrink-0 whitespace-nowrap min-h-[36px]"
                   title="Toggle collapse all columns sideways"
                 >
-                  <ChevronsLeftRight className="w-3.5 h-3.5 text-slate-400" />
+                  <ChevronsLeftRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>{collapsedSideways.size > 0 ? 'Expand All' : 'Collapse All'}</span>
                 </button>
               </div>
@@ -4214,6 +4218,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           <span>{bulkToast}</span>
         </div>
       )}
+
+      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER) */}
+      <MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
     </div>
   );
 }
