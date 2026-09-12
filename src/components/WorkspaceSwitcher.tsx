@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Building2, Plus, Crown, Shield, User as UserIcon, Check } from 'lucide-react';
 
@@ -39,19 +40,58 @@ const TIER_BADGE: Record<string, string> = {
 export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
   const current = workspaces.find((w) => w.slug === currentTenantSlug) ?? workspaces[0];
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 8,
+        left: Math.max(8, rect.left),
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const handleScrollResize = () => updatePosition();
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
         setOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  }, [open]);
+
+  const toggleOpen = () => {
+    if (!open) updatePosition();
+    setOpen((o) => !o);
+  };
 
   const handleSwitch = (workspace: Workspace) => {
     setOpen(false);
@@ -72,9 +112,10 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
     .toUpperCase();
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={triggerRef}
+        onClick={toggleOpen}
         className={`flex items-center space-x-2 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
@@ -99,8 +140,17 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
         />
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-2 w-88 sm:w-96 min-w-[340px] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-50 overflow-hidden">
+      {open && mounted && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: coords ? `${coords.top}px` : undefined,
+            left: coords ? `${coords.left}px` : undefined,
+          }}
+          className="w-88 sm:w-96 min-w-[340px] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          data-testid="workspace-switcher-dropdown"
+        >
           <div className="px-3.5 py-2.5 border-b border-slate-800 flex items-center justify-between">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Your Workspaces
@@ -173,7 +223,8 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
               <span>Create New Workspace…</span>
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

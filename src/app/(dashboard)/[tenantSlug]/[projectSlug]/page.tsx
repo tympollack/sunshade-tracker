@@ -48,6 +48,7 @@ import { TreeNode } from '@/components/TreeNode';
 import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
+import { NavToolsDropdown } from '@/components/NavToolsDropdown';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
@@ -2127,52 +2128,50 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           />
         </div>
 
-        <div className="flex items-center space-x-3 flex-nowrap whitespace-nowrap shrink-0">
-          {/* View tabs */}
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
-            {(['board', 'tree', 'sprint', 'spark', 'schema'] as const).map((tab) => {
-              const icons = {
-                board: <Kanban className="w-3.5 h-3.5" />,
-                tree: <GitFork className="w-3.5 h-3.5" />,
-                sprint: <Calendar className="w-3.5 h-3.5" />,
-                spark: <Cpu className="w-3.5 h-3.5" />,
-                schema: <Settings className="w-3.5 h-3.5" />,
-              };
-              const labels = {
-                board: 'Board',
-                tree: 'Hierarchy Tree',
-                sprint: 'Sprint Planning',
-                spark: 'Gemini Spark Ingestion',
-                schema: 'Dynamic Schema',
-              };
-              return (
-                <button
-                  key={tab}
-                  onClick={() => handleTabChange(tab)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
-                    activeTab === tab
-                      ? 'bg-emerald-500 text-slate-950 shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {icons[tab]}
-                  <span className="hidden md:block">{labels[tab]}</span>
-                </button>
-              );
-            })}
-          </div>
+        {/* View tabs */}
+        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
+          {(['board', 'tree', 'sprint'] as const).map((tab) => {
+            const icons = {
+              board: <Kanban className="w-3.5 h-3.5" />,
+              tree: <GitFork className="w-3.5 h-3.5" />,
+              sprint: <Calendar className="w-3.5 h-3.5" />,
+            };
+            const labels = {
+              board: 'Board',
+              tree: 'Hierarchy Tree',
+              sprint: 'Sprint Planning',
+            };
+            return (
+              <button
+                key={tab}
+                onClick={() => handleTabChange(tab)}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
+                  activeTab === tab
+                    ? 'bg-emerald-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {icons[tab]}
+                <span className="hidden md:block">{labels[tab]}</span>
+              </button>
+            );
+          })}
+          <NavToolsDropdown activeTab={activeTab} onSelectTab={(tab) => handleTabChange(tab)} />
+        </div>
 
+        {/* Right header actions */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           {/* Add Item Quick Button (TASK-TRK-HEADER-ADD-BUTTON) */}
           {!isReadOnly && (
             <button
               type="button"
               onClick={() => setIsQuickAddOpen(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer shrink-0"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
               title="Add Item (Press 'c' or 'n')"
               data-testid="header-add-item-btn"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Item</span>
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span className="whitespace-nowrap">Add Item</span>
               <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
                 N
               </kbd>
@@ -2184,12 +2183,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             <button
               type="button"
               onClick={() => setIsReconciliationModalOpen(true)}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in shrink-0"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-xs font-semibold transition-colors cursor-pointer shadow-sm animate-in fade-in whitespace-nowrap shrink-0"
               title={`${deviations.length} schema deviations detected. Click to review and reconcile.`}
               data-testid="header-deviations-btn"
             >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="hidden sm:inline">{deviations.length} Deviation{deviations.length !== 1 ? 's' : ''}</span>
+              <span className="hidden sm:inline whitespace-nowrap">{deviations.length} Deviation{deviations.length !== 1 ? 's' : ''}</span>
             </button>
           )}
 
@@ -2230,7 +2229,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </span>
               <Link
                 href={`/login?next=/${tenantSlug}/${projectSlug}`}
-                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shrink-0"
+                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shrink-0 whitespace-nowrap"
               >
                 Sign In
               </Link>
@@ -2244,7 +2243,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 </span>
               )}
               {tenantInfo && (
-
                 <UserMenu
                   tenantName={tenantInfo.name}
                   tenantSlug={tenantInfo.slug}
@@ -2271,7 +2269,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 max-w-[1700px] mx-auto w-full">
+      <main className="flex-1 p-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
@@ -2926,7 +2924,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
         {/* TAB 2: HIERARCHY TREE */}
         {activeTab === 'tree' && (
-          <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4">
+          <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full overflow-x-hidden">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-[240px] flex-1">
                 <h3 className="text-lg font-semibold text-white">Hierarchical Tree Structure</h3>
@@ -3038,7 +3036,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
             </div>
 
-            <div className="space-y-3 pt-4">
+            <div className="space-y-3 pt-4 max-w-full overflow-x-hidden">
               {/* Root Drop Zone for unnesting */}
               {!isReadOnly && (
                 <div
