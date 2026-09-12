@@ -287,6 +287,6 @@ describe('BUG-TRK-NAV-ACTIONS-OVERFLOW - Header Tab Consolidation & Safe Right A
     expect(pageContent).toContain('data-testid="header-add-item-btn"');
     expect(pageContent).toContain('whitespace-nowrap shrink-0');
     // Main container overflow-x-hidden
-    expect(pageContent).toContain('<main className="flex-1 p-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">');
+    expect(pageContent).toContain('<main className="flex-1 p-6 pb-24 md:pb-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden safe-area-bottom">');
   });
 });

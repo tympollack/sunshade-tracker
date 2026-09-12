@@ -54,9 +54,14 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
   const updatePosition = () => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const menuWidth = Math.min(384, typeof window !== 'undefined' ? window.innerWidth - 24 : 320);
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
       setCoords({
         top: rect.bottom + 8,
-        left: Math.max(8, rect.left),
+        left: Math.max(12, left),
       });
     }
   };
@@ -125,7 +130,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
         <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold flex-shrink-0">
           {initials}
         </div>
-        <span className="max-w-[140px] truncate">{current?.name ?? '—'}</span>
+        <span className="max-w-[110px] truncate shrink min-w-0">{current?.name ?? '—'}</span>
         {current && (
           <span
             className={`hidden sm:inline-flex text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
@@ -148,7 +153,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
             top: coords ? `${coords.top}px` : undefined,
             left: coords ? `${coords.left}px` : undefined,
           }}
-          className="w-88 sm:w-96 min-w-[340px] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          className="w-80 sm:w-96 max-w-[calc(100vw-24px)] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
           data-testid="workspace-switcher-dropdown"
         >
           <div className="px-3.5 py-2.5 border-b border-slate-800 flex items-center justify-between">

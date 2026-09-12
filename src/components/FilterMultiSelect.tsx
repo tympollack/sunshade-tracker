@@ -72,7 +72,7 @@ export function FilterMultiSelect({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+        className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors shrink-0 whitespace-nowrap min-h-[36px] ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
             : !allSelected
@@ -87,7 +87,7 @@ export function FilterMultiSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-2 w-64 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-50 overflow-hidden">
+        <div className="absolute left-0 top-full mt-2 w-64 max-w-[calc(100vw-24px)] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-50 overflow-hidden">
           {/* Header Controls */}
           <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
