@@ -220,7 +220,7 @@ describe('BUG-TRK-TREE-TABLE-ALIGNMENT - Tabular Tracks & Title Truncation', () 
     // Rollup column track
     const rollupCol = screen.getByTestId('col-rollup-points');
     expect(rollupCol).toBeInTheDocument();
-    expect(rollupCol).toHaveClass('w-24');
+    expect(rollupCol).toHaveClass('w-28');
     expect(rollupCol).toHaveClass('shrink-0');
 
     // Assignee column track

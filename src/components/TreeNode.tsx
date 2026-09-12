@@ -304,7 +304,7 @@ export function TreeNode({
             onClick={() => onToggleCollapse?.(item.id)}
             data-testid={`collapse-toggle-${item.id}`}
             aria-label={isCollapsed ? `Expand ${item.title}` : `Collapse ${item.title}`}
-            className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors shrink-0 cursor-pointer"
+            className="w-5 h-5 flex items-center justify-center p-0.5 rounded text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors shrink-0 cursor-pointer"
           >
             {isCollapsed ? (
               <ChevronRight className="w-4 h-4" />
@@ -313,7 +313,7 @@ export function TreeNode({
             )}
           </button>
         ) : (
-          <div className="w-6 h-6 shrink-0" />
+          <div className="w-5 h-5 shrink-0" />
         )}
 
         {/* Card Component */}
@@ -333,7 +333,7 @@ export function TreeNode({
           onDrop={handleDrop}
           onDoubleClick={() => onEditItem?.(item)}
           data-testid={`tree-node-card-${item.id}`}
-          className={`flex-1 rounded-lg border my-1 transition-all shadow-sm relative ${
+          className={`flex-1 rounded-lg border my-1 transition-all shadow-sm relative min-w-0 max-w-full ${
             item.depth > 0 ? 'py-1.5 px-3 bg-slate-950/40 border-slate-800/80' : 'py-2.5 px-3 bg-slate-900/70 border-slate-800'
           } ${
             isBeingDragged
@@ -355,9 +355,12 @@ export function TreeNode({
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 min-w-0">
+          <div className="flex items-center justify-between gap-3 min-w-0 w-full">
             {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
-            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            <div
+              className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden"
+              data-testid={`tree-node-left-zone-${item.id}`}
+            >
               {!nodeIsImmutable && (
                 <GripVertical className="w-3.5 h-3.5 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
               )}
@@ -365,7 +368,7 @@ export function TreeNode({
               {/* Level Badge */}
               <span
                 data-testid={`level-badge-${item.item_type}`}
-                className={getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))}
+                className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))} w-14 shrink-0 text-center uppercase`}
               >
                 {item.item_type}
               </span>
@@ -413,7 +416,7 @@ export function TreeNode({
               </span>
 
               {item.external_ref_id && (
-                <span className="text-xs font-mono text-slate-500 shrink-0 whitespace-nowrap font-medium">
+                <span className="text-xs font-mono text-slate-400 shrink-0 whitespace-nowrap font-medium">
                   [{item.external_ref_id}]
                 </span>
               )}
@@ -447,9 +450,12 @@ export function TreeNode({
             </div>
 
             {/* Right section: Rollup Points, Assignee, Status, Actions */}
-            <div className="flex items-center gap-3 shrink-0 ml-auto" data-testid="tree-node-right-columns">
+            <div
+              className="flex items-center gap-3 shrink-0 ml-auto"
+              data-testid={`tree-node-right-zone-${item.id}`}
+            >
               {/* Rollup Points Track */}
-              <div className="w-24 shrink-0 flex items-center justify-end" data-testid="col-rollup-points">
+              <div className="w-28 shrink-0 flex items-center justify-end text-right" data-testid="col-rollup-points">
                 {item.rollupPoints !== undefined && item.rollupPoints > 0 && (
                   <span
                     data-testid="tree-node-rollup-points-badge"
@@ -466,7 +472,7 @@ export function TreeNode({
               </div>
 
               {/* Assignee Selector Track */}
-              <div className="w-32 shrink-0 flex items-center" data-testid="col-assignee">
+              <div className="w-32 shrink-0 flex items-center truncate" data-testid="col-assignee">
                 {members && members.length > 0 ? (
                   <div className="relative inline-flex items-center w-full">
                     <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
