@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Plus, Folder, Settings, Layers, Archive } from 'lucide-react';
 
@@ -27,7 +28,10 @@ export function ProjectSwitcher({
 }: ProjectSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
   const isPortfolio = currentProjectSlug === 'portfolio';
   const isAll =
@@ -42,19 +46,57 @@ export function ProjectSwitcher({
     : projects.find((p) => p.slug === currentProjectSlug);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 8,
+        left: Math.max(8, rect.left),
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const handleScrollResize = () => updatePosition();
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
         setOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  }, [open]);
+
+  const toggleOpen = () => {
+    if (!open) updatePosition();
+    setOpen((o) => !o);
+  };
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={triggerRef}
+        onClick={toggleOpen}
+        data-testid="project-switcher-trigger"
         className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
@@ -70,8 +112,17 @@ export function ProjectSwitcher({
         <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-2 w-56 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/50 z-50 overflow-hidden">
+      {open && mounted && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: coords ? `${coords.top}px` : undefined,
+            left: coords ? `${coords.left}px` : undefined,
+          }}
+          className="w-56 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/50 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          data-testid="project-switcher-dropdown"
+        >
           <div className="px-3 py-2 border-b border-slate-800">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               Projects in @{tenantSlug}
@@ -157,7 +208,8 @@ export function ProjectSwitcher({
               <span>Workspace Settings…</span>
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
