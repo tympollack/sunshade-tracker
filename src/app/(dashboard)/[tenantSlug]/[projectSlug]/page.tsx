@@ -2130,15 +2130,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           />
         </div>
 
-        {/* Visible boundary / divider between top nav breadcrumbs and page nav view tabs */}
-        <div
-          className="hidden md:block h-6 w-px bg-slate-700/80 shrink-0 mx-2.5 sm:mx-3.5"
-          aria-hidden="true"
-          data-testid="nav-breadcrumb-page-divider"
-        />
-
         {/* View tabs */}
-        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center" data-testid="top-view-tabs">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:ml-4 lg:ml-6" data-testid="top-view-tabs">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
