@@ -111,3 +111,20 @@ body {
   padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
 }
 
+/* Fixed mobile bottom navigation height and safe area clearance */
+.mobile-bottom-nav {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
+  min-height: calc(3.5rem + max(env(safe-area-inset-bottom, 0px), 0px));
+}
+
+/* Main dashboard content clearance above fixed mobile bottom navigation */
+.main-mobile-clearance {
+  padding-bottom: calc(6rem + max(env(safe-area-inset-bottom, 0px), 0px));
+}
+
+@media (min-width: 768px) {
+  .main-mobile-clearance {
+    padding-bottom: 1.5rem;
+  }
+}
+

@@ -2110,7 +2110,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
-      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
           <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
           <span className="text-slate-700 shrink-0">/</span>
@@ -2168,12 +2168,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             <button
               type="button"
               onClick={() => setIsQuickAddOpen(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center space-x-1 sm:space-x-1.5 p-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
               title="Add Item (Press 'c' or 'n')"
               data-testid="header-add-item-btn"
             >
               <Plus className="w-3.5 h-3.5 shrink-0" />
-              <span className="whitespace-nowrap">Add Item</span>
+              <span className="hidden sm:inline whitespace-nowrap">Add Item</span>
               <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
                 N
               </kbd>
@@ -2271,7 +2271,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 pb-24 md:pb-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden safe-area-bottom">
+      <main className="flex-1 p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
