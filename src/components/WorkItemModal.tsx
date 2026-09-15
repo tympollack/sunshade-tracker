@@ -28,6 +28,8 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import { CopyableRefId } from '@/components/CopyableRefId';
+import { copyToClipboard } from '@/lib/clipboard';
 
 interface ProjectInfo {
   id: string;
@@ -102,6 +104,16 @@ export function WorkItemModal({
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+  const copyIdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const copyGetUrlTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyIdTimeoutRef.current) clearTimeout(copyIdTimeoutRef.current);
+      if (copyGetUrlTimeoutRef.current) clearTimeout(copyGetUrlTimeoutRef.current);
+    };
+  }, []);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
   const isLocked = isSprintLocked || isReadOnly;
@@ -300,12 +312,22 @@ export function WorkItemModal({
     if (!item) return;
     const tenantParam = tenantSlug ? `&tenant_slug=${encodeURIComponent(tenantSlug)}` : '';
     const url = `${window.location.origin}/api/v1/items?id=${item.id}${tenantParam}`;
-    try {
-      await navigator.clipboard.writeText(url);
+    const ok = await copyToClipboard(url);
+    if (ok) {
+      if (copyGetUrlTimeoutRef.current) clearTimeout(copyGetUrlTimeoutRef.current);
       setCopiedGetUrl(true);
-      setTimeout(() => setCopiedGetUrl(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy GET URL', err);
+      copyGetUrlTimeoutRef.current = setTimeout(() => setCopiedGetUrl(false), 2000);
+    }
+  };
+
+  const handleCopyId = async (idOverride?: string) => {
+    if (!item) return;
+    const textToCopy = idOverride || item.external_ref_id || item.id;
+    const ok = await copyToClipboard(textToCopy);
+    if (ok) {
+      if (copyIdTimeoutRef.current) clearTimeout(copyIdTimeoutRef.current);
+      setCopiedId(true);
+      copyIdTimeoutRef.current = setTimeout(() => setCopiedId(false), 2000);
     }
   };
 
@@ -398,18 +420,27 @@ export function WorkItemModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
-          <div className="flex items-center space-x-3 min-w-0">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 flex items-center justify-between gap-2 bg-slate-950/50">
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 overflow-hidden flex-wrap sm:flex-nowrap gap-y-1">
             <span
               className={`text-xs uppercase font-mono px-2.5 py-1 rounded-md border font-semibold shrink-0 ${levelColor.badgeBg} ${levelColor.badgeText} ${levelColor.badgeBorder}`}
             >
               {itemType}
             </span>
-            {item.external_ref_id && (
-              <span className="text-xs font-mono text-slate-400 flex items-center space-x-1 shrink-0">
-                <Hash className="w-3 h-3 text-slate-500" />
-                <span>{item.external_ref_id}</span>
-              </span>
+            {item.external_ref_id ? (
+              <CopyableRefId
+                id={item.external_ref_id}
+                showHash
+                className="text-xs shrink-0"
+              />
+            ) : (
+              <CopyableRefId
+                id={item.id}
+                displayId={item.id.slice(0, 8)}
+                showHash
+                className="text-xs shrink-0"
+                title="Click to copy UUID"
+              />
             )}
             {modalPrUrl && (
               <GitHubBadge
@@ -428,23 +459,46 @@ export function WorkItemModal({
             )}
           </div>
 
-          <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0 ml-auto">
+            {/* One-Click Copy Work Item ID (TRK-05) */}
+            <button
+              type="button"
+              onClick={() => handleCopyId()}
+              data-testid="modal-copy-id-btn"
+              className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-mono bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-emerald-400 flex items-center space-x-1 sm:space-x-1.5 transition-colors border border-slate-700/60 shadow-sm cursor-pointer"
+              title="Copy work item ID"
+              aria-label="Copy work item ID"
+            >
+              {copiedId ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-400 hidden sm:inline">Copied ID</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Copy ID</span>
+                </>
+              )}
+            </button>
+
             {/* Copy GET URL */}
             <button
               type="button"
               onClick={handleCopyGetUrl}
-              className="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-emerald-400 flex items-center space-x-1.5 transition-colors border border-slate-700/60 shadow-sm"
+              className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-mono bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-emerald-400 flex items-center space-x-1 sm:space-x-1.5 transition-colors border border-slate-700/60 shadow-sm cursor-pointer"
               title="Copy item GET API URL"
+              aria-label="Copy item GET API URL"
             >
               {copiedGetUrl ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">Copied</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-400 hidden sm:inline">Copied</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>GET URL</span>
+                  <Copy className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">GET URL</span>
                 </>
               )}
             </button>
@@ -453,7 +507,7 @@ export function WorkItemModal({
               <button
                 type="button"
                 onClick={() => setShowConfirmDelete(true)}
-                className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Delete work item"
               >
                 <Trash2 className="w-4 h-4" />
@@ -461,8 +515,10 @@ export function WorkItemModal({
             )}
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors"
+              data-testid="modal-close-btn"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Close (Esc)"
+              aria-label="Close (Esc)"
             >
               <X className="w-4 h-4" />
             </button>
@@ -571,9 +627,10 @@ export function WorkItemModal({
                             {child.item_type}
                           </span>
                           {child.external_ref_id && (
-                            <span className="text-xs font-mono text-slate-400 shrink-0">
-                              {child.external_ref_id}
-                            </span>
+                            <CopyableRefId
+                              id={child.external_ref_id}
+                              className="text-xs shrink-0"
+                            />
                           )}
                           <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
                             {child.title}

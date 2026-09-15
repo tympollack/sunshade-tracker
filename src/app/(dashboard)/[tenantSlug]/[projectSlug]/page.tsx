@@ -49,7 +49,9 @@ import { UserMenu } from '@/components/UserMenu';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
+import { CopyableRefId } from '@/components/CopyableRefId';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
@@ -2108,16 +2110,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
-      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap shrink-0">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1 shrink-0" />
-          <span className="text-slate-700">/</span>
+      <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+        <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
+          <span className="text-slate-700 shrink-0">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
             currentTenantSlug={tenantSlug}
             workspaces={allWorkspaces}
           />
-          <span className="text-slate-700">/</span>
+          <span className="text-slate-700 shrink-0">/</span>
           {/* Project Switcher */}
           <ProjectSwitcher
             tenantSlug={tenantSlug}
@@ -2129,7 +2131,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
 
         {/* View tabs */}
-        <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:ml-4 lg:ml-6" data-testid="top-view-tabs">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
@@ -2166,12 +2168,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             <button
               type="button"
               onClick={() => setIsQuickAddOpen(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
+              className="flex items-center space-x-1 sm:space-x-1.5 p-1.5 sm:px-3 sm:py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm cursor-pointer whitespace-nowrap shrink-0"
               title="Add Item (Press 'c' or 'n')"
               data-testid="header-add-item-btn"
             >
               <Plus className="w-3.5 h-3.5 shrink-0" />
-              <span className="whitespace-nowrap">Add Item</span>
+              <span className="hidden sm:inline whitespace-nowrap">Add Item</span>
               <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
                 N
               </kbd>
@@ -2269,7 +2271,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+      <main className="flex-1 p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
@@ -2328,8 +2330,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             )}
 
             {/* Board Controls Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-1 py-1">
-              <div className="flex items-center flex-wrap gap-2">
+            <div
+              data-testid="board-filter-toolbar"
+              className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full py-1 -mx-4 px-4 touch-pan-x sm:mx-0 sm:px-1 sm:flex-wrap sm:justify-between"
+            >
+              <div className="flex items-center gap-2 shrink-0">
                 <FilterMultiSelect
                   label="Status"
                   options={statusFilterOptions}
@@ -2342,13 +2347,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   selectedIds={effectiveSelectedLevels}
                   onChange={setSelectedLevels}
                 />
-                <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-[11px] font-medium text-slate-400">Sprint:</span>
+                <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs shrink-0 whitespace-nowrap min-h-[36px]">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-400 shrink-0">Sprint:</span>
                   <select
                     value={selectedSprint}
                     onChange={(e) => setSelectedSprint(e.target.value)}
-                    className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+                    className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer shrink-0"
                   >
                     <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
                     <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
@@ -2376,23 +2381,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       setSelectedLevels(null);
                       setSelectedSprint('all');
                     }}
-                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors"
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors shrink-0 whitespace-nowrap min-h-[36px] flex items-center"
                   >
                     Reset Filters
                   </button>
                 )}
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 shrink-0">
                 {/* Board Height Presets */}
-                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs">
+                <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">
                   <span className="text-[10px] uppercase font-semibold text-slate-500 px-2">Height:</span>
                   {(['compact', 'standard', 'full'] as const).map((h) => (
                     <button
                       key={h}
                       type="button"
                       onClick={() => setBoardHeight(h)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors min-h-[30px] ${
                         boardHeight === h
                           ? 'bg-slate-800 text-white shadow-sm'
                           : 'text-slate-400 hover:text-slate-200'
@@ -2408,10 +2413,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <button
                   type="button"
                   onClick={handleToggleCollapseAll}
-                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs transition-colors flex items-center space-x-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 text-xs transition-colors flex items-center space-x-1.5 shrink-0 whitespace-nowrap min-h-[36px]"
                   title="Toggle collapse all columns sideways"
                 >
-                  <ChevronsLeftRight className="w-3.5 h-3.5 text-slate-400" />
+                  <ChevronsLeftRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>{collapsedSideways.size > 0 ? 'Expand All' : 'Collapse All'}</span>
                 </button>
               </div>
@@ -2624,12 +2629,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         : 'border-slate-800/90'
                                     }`}
                                   >
-                                    {/* Card Top: Level Selector Badge, Project Badge, Ref, Edit & Delete */}
-                                    <div className="flex items-center justify-between text-xs gap-2">
-                                      <div className="flex items-center space-x-1.5 min-w-0">
+                                    {/* Card Top: Level Selector Badge, Reference ID, Project Badge, Edit & Delete */}
+                                    <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
+                                      <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
                                         <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
                                         {/* Quick Level Selector */}
-                                        <div className="relative inline-flex items-center">
+                                        <div className="relative inline-flex items-center shrink-0">
                                           <select
                                             value={item.item_type}
                                             disabled={isCardImmutable}
@@ -2643,7 +2648,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                               color: lvlColor.hex,
                                               borderColor: `${lvlColor.hex}50`,
                                             }}
-                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm"
+                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm shrink-0"
                                             title="Change hierarchy level"
                                           >
                                             {itemHierarchy.map((h) => (
@@ -2662,9 +2667,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                           />
                                         </div>
 
+                                        {/* Work Item Reference ID with One-Click Copy (TRK-05 & BUG-TRK-CARD-REFID-PILL-OVERLAP) */}
+                                        {item.external_ref_id ? (
+                                          <CopyableRefId
+                                            id={item.external_ref_id}
+                                            showHash
+                                            className="text-[10px] font-mono shrink-0 truncate max-w-[140px]"
+                                          />
+                                        ) : (
+                                          <CopyableRefId
+                                            id={item.id}
+                                            displayId={item.id.slice(0, 8)}
+                                            showHash
+                                            className="text-[10px] font-mono shrink-0"
+                                            title="Click to copy UUID"
+                                          />
+                                        )}
+
                                         {isAllProjects && (
                                           <span
-                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[90px] shrink-0"
                                             title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
                                           >
                                             {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
@@ -2672,20 +2694,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         )}
                                       </div>
 
-                                      <div className="flex items-center space-x-1 shrink-0">
-                                          {isCardImmutable && (
-                                            <span
-                                              className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
-                                              title="Completed item in closed sprint (immutable)"
-                                            >
-                                              <Lock className="w-2.5 h-2.5 text-purple-400" />
-                                              <span>Locked</span>
-                                            </span>
-                                          )}
-                                        {item.external_ref_id && (
-                                          <span className="font-mono text-slate-400 text-[10px] flex items-center space-x-0.5">
-                                            <Hash className="w-2.5 h-2.5 text-slate-500" />
-                                            <span>{item.external_ref_id}</span>
+                                      <div className="flex items-center space-x-1 shrink-0 ml-auto">
+                                        {isCardImmutable && (
+                                          <span
+                                            className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+                                            title="Completed item in closed sprint (immutable)"
+                                          >
+                                            <Lock className="w-2.5 h-2.5 text-purple-400" />
+                                            <span>Locked</span>
                                           </span>
                                         )}
                                         <button
@@ -4214,6 +4230,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           <span>{bulkToast}</span>
         </div>
       )}
+
+      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER) */}
+      <MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
     </div>
   );
 }

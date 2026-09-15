@@ -15,6 +15,7 @@ import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { SchemaDeviation } from '@/lib/schema-deviation';
+import { CopyableRefId } from '@/components/CopyableRefId';
 
 export interface SprintItemRowProps {
   item: WorkItem;
@@ -158,9 +159,10 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
         {/* External Ref Tag */}
         {item.external_ref_id && (
-          <span className="text-xs font-mono text-slate-400 shrink-0 font-medium">
-            {item.external_ref_id}
-          </span>
+          <CopyableRefId
+            id={item.external_ref_id}
+            className="text-xs shrink-0 font-medium"
+          />
         )}
 
         {/* GitHub Badges */}

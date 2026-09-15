@@ -188,7 +188,7 @@ describe('BUG-TRK-TOPNAV-HEIGHT-LOCK - Rigid 56px Header & View Tabs Scrollbar P
       'utf-8'
     );
     // Header must lock height to 56px / h-14 with min/max bounds and overflow-hidden
-    expect(pageContent).toContain('h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-4 overflow-hidden');
+    expect(pageContent).toContain('h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden');
     // Tab bar must have horizontal scroll wrapper with no-scrollbar
     expect(pageContent).toContain('overflow-x-auto no-scrollbar shrink-0');
   });
