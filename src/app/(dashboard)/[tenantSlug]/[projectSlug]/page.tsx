@@ -2131,7 +2131,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
 
         {/* View tabs */}
-        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center" data-testid="top-view-tabs">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:ml-4 lg:ml-6" data-testid="top-view-tabs">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
