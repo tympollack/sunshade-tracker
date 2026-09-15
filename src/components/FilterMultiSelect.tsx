@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Check, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, Check } from 'lucide-react';
 
 export interface FilterOption {
   id: string;
@@ -28,17 +29,61 @@ export function FilterMultiSelect({
   className = '',
 }: FilterMultiSelectProps) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const menuWidth = 256; // 16rem = 256px
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
+      setCoords({
+        top: rect.bottom + 6,
+        left: Math.max(8, left),
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const handleScrollResize = () => updatePosition();
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        menuRef.current && !menuRef.current.contains(target)
+      ) {
         setOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [open]);
+
+  const toggleOpen = () => {
+    if (!open) updatePosition();
+    setOpen((o) => !o);
+  };
 
   const allSelected = options.length > 0 && selectedIds.length === options.length;
   const noneSelected = selectedIds.length === 0;
@@ -68,11 +113,12 @@ export function FilterMultiSelect({
   }
 
   return (
-    <div className={`relative inline-block ${className}`} ref={ref}>
+    <div className={`relative inline-block ${className}`}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+        onClick={toggleOpen}
+        className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors shrink-0 whitespace-nowrap min-h-[36px] cursor-pointer ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
             : !allSelected
@@ -86,8 +132,17 @@ export function FilterMultiSelect({
         />
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-2 w-64 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/60 z-50 overflow-hidden">
+      {open && mounted && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: coords ? `${coords.top}px` : undefined,
+            left: coords ? `${coords.left}px` : undefined,
+          }}
+          className="w-64 max-w-[calc(100vw-24px)] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          data-testid={`filter-multiselect-dropdown-${label.toLowerCase()}`}
+        >
           {/* Header Controls */}
           <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
@@ -97,7 +152,7 @@ export function FilterMultiSelect({
               <button
                 type="button"
                 onClick={handleSelectAll}
-                className="text-[10px] px-2 py-0.5 rounded hover:bg-slate-800 text-emerald-400 font-medium transition-colors"
+                className="text-[10px] px-2 py-0.5 rounded hover:bg-slate-800 text-emerald-400 font-medium transition-colors cursor-pointer"
               >
                 All
               </button>
@@ -105,7 +160,7 @@ export function FilterMultiSelect({
               <button
                 type="button"
                 onClick={handleSelectNone}
-                className="text-[10px] px-2 py-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 font-medium transition-colors"
+                className="text-[10px] px-2 py-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 font-medium transition-colors cursor-pointer"
               >
                 None
               </button>
@@ -121,7 +176,7 @@ export function FilterMultiSelect({
                   key={option.id}
                   type="button"
                   onClick={() => handleToggle(option.id)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors ${
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors cursor-pointer ${
                     isChecked
                       ? 'bg-slate-800/80 text-white'
                       : 'text-slate-400 hover:bg-slate-800/40 hover:text-slate-200'
@@ -157,7 +212,8 @@ export function FilterMultiSelect({
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

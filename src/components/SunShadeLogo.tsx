@@ -28,6 +28,10 @@ export interface SunShadeLogoProps {
   href?: string;
   className?: string;
   priority?: boolean;
+  /**
+   * On mobile (<640px), hide typography lockup and render only emblem icon
+   */
+  hideTextOnMobile?: boolean;
 }
 
 const SIZE_MAP = {
@@ -157,6 +161,7 @@ export function SunShadeLogo({
   badgeText = 'v1.0 Live',
   href,
   className = '',
+  hideTextOnMobile = false,
 }: SunShadeLogoProps) {
   const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size].icon;
   const textClass = typeof size === 'number' ? 'text-lg' : SIZE_MAP[size].text;
@@ -164,6 +169,7 @@ export function SunShadeLogo({
 
   const content = (
     <div
+      data-testid="sunshade-logo"
       className={`inline-flex items-center gap-2.5 select-none ${
         variant === 'stacked' ? 'flex-col text-center' : 'flex-row'
       } ${className}`}
@@ -179,7 +185,12 @@ export function SunShadeLogo({
 
       {/* Typography Lockup */}
       {variant !== 'icon' && (
-        <div className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'}`}>
+        <div
+          data-testid="sunshade-logo-text"
+          className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
+            hideTextOnMobile ? 'hidden sm:flex' : ''
+          }`}
+        >
           <div className="flex items-center gap-2">
             <span className={`font-extrabold tracking-tight text-white ${textClass}`}>
               SunShade <span className="text-emerald-400">Tracker</span>
