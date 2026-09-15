@@ -249,6 +249,10 @@ describe('BUG-TRK-TOPNAV-BREATHING-ROOM: Vertical Spacing & Centering', () => {
     expect(pageContent).toContain('data-testid="top-view-tabs"');
     expect(pageContent).toContain('my-auto self-center');
     expect(pageContent).toContain('hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs');
+
+    // Visible boundary / divider between breadcrumbs and page nav
+    expect(pageContent).toContain('data-testid="nav-breadcrumb-page-divider"');
+    expect(pageContent).toContain('hidden md:block h-6 w-px bg-slate-700/80 shrink-0 mx-2.5 sm:mx-3.5');
   });
 });
 
