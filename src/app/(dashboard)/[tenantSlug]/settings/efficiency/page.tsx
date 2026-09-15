@@ -179,12 +179,12 @@ function EfficiencyStatementContent({ tenantSlug }: { tenantSlug: string }) {
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 print:bg-white print:text-black">
       {/* App Header (Hidden in Print) */}
-      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 py-3 flex items-center justify-between sticky top-0 z-40 print:hidden">
-        <div className="flex items-center space-x-2">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-1" />
-          <span className="text-slate-700">/</span>
+      <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-40 print:hidden">
+        <div className="flex items-center space-x-2 min-w-0 shrink">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
+          <span className="text-slate-700 shrink-0">/</span>
           <WorkspaceSwitcher currentTenantSlug={tenantSlug} workspaces={allWorkspaces} />
-          <span className="text-slate-700">/</span>
+          <span className="text-slate-700 shrink-0">/</span>
           <Link
             href={`/${tenantSlug}/settings`}
             className="text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"

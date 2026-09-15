@@ -170,12 +170,12 @@ export function SunShadeLogo({
   const content = (
     <div
       data-testid="sunshade-logo"
-      className={`inline-flex items-center gap-2.5 select-none ${
+      className={`inline-flex items-center gap-2.5 select-none shrink-0 min-w-0 ${
         variant === 'stacked' ? 'flex-col text-center' : 'flex-row'
       } ${className}`}
     >
       {/* Emblem Icon with subtle ambient backdrop */}
-      <div className="relative flex items-center justify-center">
+      <div className="relative flex items-center justify-center shrink-0">
         <div
           className="absolute -inset-1 rounded-full bg-amber-500/10 blur-sm pointer-events-none"
           aria-hidden="true"
@@ -214,7 +214,11 @@ export function SunShadeLogo({
 
   if (href) {
     return (
-      <Link href={href} className="group inline-flex items-center focus:outline-none">
+      <Link
+        href={href}
+        className="group inline-flex items-center focus:outline-none shrink-0 min-w-0"
+        aria-label="SunShade Tracker"
+      >
         {content}
       </Link>
     );
