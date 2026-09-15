@@ -51,6 +51,7 @@ import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
+import { CopyableRefId } from '@/components/CopyableRefId';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
@@ -2130,7 +2131,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
 
         {/* View tabs */}
-        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center" data-testid="top-view-tabs">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
@@ -2628,12 +2629,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         : 'border-slate-800/90'
                                     }`}
                                   >
-                                    {/* Card Top: Level Selector Badge, Project Badge, Ref, Edit & Delete */}
-                                    <div className="flex items-center justify-between text-xs gap-2">
-                                      <div className="flex items-center space-x-1.5 min-w-0">
+                                    {/* Card Top: Level Selector Badge, Reference ID, Project Badge, Edit & Delete */}
+                                    <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
+                                      <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
                                         <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
                                         {/* Quick Level Selector */}
-                                        <div className="relative inline-flex items-center">
+                                        <div className="relative inline-flex items-center shrink-0">
                                           <select
                                             value={item.item_type}
                                             disabled={isCardImmutable}
@@ -2647,7 +2648,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                               color: lvlColor.hex,
                                               borderColor: `${lvlColor.hex}50`,
                                             }}
-                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm"
+                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm shrink-0"
                                             title="Change hierarchy level"
                                           >
                                             {itemHierarchy.map((h) => (
@@ -2666,9 +2667,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                           />
                                         </div>
 
+                                        {/* Work Item Reference ID with One-Click Copy (TRK-05 & BUG-TRK-CARD-REFID-PILL-OVERLAP) */}
+                                        {item.external_ref_id ? (
+                                          <CopyableRefId
+                                            id={item.external_ref_id}
+                                            showHash
+                                            className="text-[10px] font-mono shrink-0 truncate max-w-[140px]"
+                                          />
+                                        ) : (
+                                          <CopyableRefId
+                                            id={item.id}
+                                            displayId={item.id.slice(0, 8)}
+                                            showHash
+                                            className="text-[10px] font-mono shrink-0"
+                                            title="Click to copy UUID"
+                                          />
+                                        )}
+
                                         {isAllProjects && (
                                           <span
-                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[90px] shrink-0"
                                             title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
                                           >
                                             {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
@@ -2676,20 +2694,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                         )}
                                       </div>
 
-                                      <div className="flex items-center space-x-1 shrink-0">
-                                          {isCardImmutable && (
-                                            <span
-                                              className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
-                                              title="Completed item in closed sprint (immutable)"
-                                            >
-                                              <Lock className="w-2.5 h-2.5 text-purple-400" />
-                                              <span>Locked</span>
-                                            </span>
-                                          )}
-                                        {item.external_ref_id && (
-                                          <span className="font-mono text-slate-400 text-[10px] flex items-center space-x-0.5">
-                                            <Hash className="w-2.5 h-2.5 text-slate-500" />
-                                            <span>{item.external_ref_id}</span>
+                                      <div className="flex items-center space-x-1 shrink-0 ml-auto">
+                                        {isCardImmutable && (
+                                          <span
+                                            className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+                                            title="Completed item in closed sprint (immutable)"
+                                          >
+                                            <Lock className="w-2.5 h-2.5 text-purple-400" />
+                                            <span>Locked</span>
                                           </span>
                                         )}
                                         <button

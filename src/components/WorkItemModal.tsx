@@ -28,6 +28,7 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import { CopyableRefId } from '@/components/CopyableRefId';
 
 interface ProjectInfo {
   id: string;
@@ -102,6 +103,7 @@ export function WorkItemModal({
   const [newMetaVal, setNewMetaVal] = useState('');
   const [showAddMeta, setShowAddMeta] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
   const isLocked = isSprintLocked || isReadOnly;
@@ -309,6 +311,30 @@ export function WorkItemModal({
     }
   };
 
+  const handleCopyId = async (idOverride?: string) => {
+    if (!item) return;
+    const textToCopy = idOverride || item.external_ref_id || item.id;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textToCopy);
+      } else if (typeof document !== 'undefined') {
+        const textArea = document.createElement('textarea');
+        textArea.value = textToCopy;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy ID', err);
+    }
+  };
+
   const handleUpdateMetaField = (key: string, rawText: string) => {
     setMetaDrafts((prev) => ({ ...prev, [key]: rawText }));
 
@@ -405,11 +431,20 @@ export function WorkItemModal({
             >
               {itemType}
             </span>
-            {item.external_ref_id && (
-              <span className="text-xs font-mono text-slate-400 flex items-center space-x-1 shrink-0">
-                <Hash className="w-3 h-3 text-slate-500" />
-                <span>{item.external_ref_id}</span>
-              </span>
+            {item.external_ref_id ? (
+              <CopyableRefId
+                id={item.external_ref_id}
+                showHash
+                className="text-xs shrink-0"
+              />
+            ) : (
+              <CopyableRefId
+                id={item.id}
+                displayId={item.id.slice(0, 8)}
+                showHash
+                className="text-xs shrink-0"
+                title="Click to copy UUID"
+              />
             )}
             {modalPrUrl && (
               <GitHubBadge
@@ -429,6 +464,27 @@ export function WorkItemModal({
           </div>
 
           <div className="flex items-center space-x-2 shrink-0">
+            {/* One-Click Copy Work Item ID (TRK-05) */}
+            <button
+              type="button"
+              onClick={() => handleCopyId()}
+              data-testid="modal-copy-id-btn"
+              className="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-emerald-400 flex items-center space-x-1.5 transition-colors border border-slate-700/60 shadow-sm cursor-pointer"
+              title="Copy work item ID"
+            >
+              {copiedId ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-400">Copied ID</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy ID</span>
+                </>
+              )}
+            </button>
+
             {/* Copy GET URL */}
             <button
               type="button"
@@ -571,9 +627,10 @@ export function WorkItemModal({
                             {child.item_type}
                           </span>
                           {child.external_ref_id && (
-                            <span className="text-xs font-mono text-slate-400 shrink-0">
-                              {child.external_ref_id}
-                            </span>
+                            <CopyableRefId
+                              id={child.external_ref_id}
+                              className="text-xs shrink-0"
+                            />
                           )}
                           <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
                             {child.title}
