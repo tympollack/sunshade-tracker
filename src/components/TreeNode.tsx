@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
+import { CopyableRefId } from '@/components/CopyableRefId';
 
 export interface TreeNodeProps {
   item: WorkItemNode;
@@ -416,9 +417,11 @@ export function TreeNode({
               </span>
 
               {item.external_ref_id && (
-                <span className="text-xs font-mono text-slate-400 shrink-0 whitespace-nowrap font-medium">
-                  [{item.external_ref_id}]
-                </span>
+                <CopyableRefId
+                  id={item.external_ref_id}
+                  brackets
+                  className="text-xs shrink-0 whitespace-nowrap font-medium"
+                />
               )}
 
               {/* Immutability Lock Badge */}
