@@ -62,6 +62,13 @@ describe('TRK-05: CopyableRefId Component', () => {
       expect(screen.getByText('Copied!')).toBeInTheDocument();
     });
   });
+
+  it('copyToClipboard copies via navigator.clipboard and returns boolean success status', async () => {
+    const { copyToClipboard } = await import('@/lib/clipboard');
+    const result = await copyToClipboard('TEST-REF-123');
+    expect(result).toBe(true);
+    expect(mockWriteText).toHaveBeenCalledWith('TEST-REF-123');
+  });
 });
 
 describe('TRK-05: WorkItemModal One-Click Copy', () => {
@@ -203,6 +210,31 @@ describe('TRK-05: WorkItemModal One-Click Copy', () => {
     });
     expect(mockWriteText).toHaveBeenCalledWith('SUBTASK-TRK-01');
     expect(onSelectItem).not.toHaveBeenCalled();
+  });
+
+  it('WorkItemModal header action buttons are responsive and collapse labels on mobile to prevent clipping', () => {
+    render(
+      <WorkItemModal
+        item={mockItem}
+        isOpen={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        projectSettings={mockSettings}
+        allItems={[mockItem]}
+      />
+    );
+
+    const copyBtn = screen.getByTestId('modal-copy-id-btn');
+    expect(copyBtn).toHaveClass('p-1.5');
+    expect(copyBtn).toHaveClass('sm:px-2.5');
+
+    const copyBtnLabel = copyBtn.querySelector('span');
+    expect(copyBtnLabel).toHaveClass('hidden');
+    expect(copyBtnLabel).toHaveClass('sm:inline');
+
+    const closeBtn = screen.getByTestId('modal-close-btn');
+    expect(closeBtn).toBeInTheDocument();
   });
 });
 

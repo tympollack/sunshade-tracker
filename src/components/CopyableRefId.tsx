@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Copy, Check, Hash } from 'lucide-react';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export interface CopyableRefIdProps {
   id: string;
@@ -21,29 +22,22 @@ export function CopyableRefId({
   title = 'Click to copy ID',
 }: CopyableRefIdProps) {
   const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(id);
-      } else if (typeof document !== 'undefined') {
-        // Fallback for test / headless environments
-        const textArea = document.createElement('textarea');
-        textArea.value = id;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
+    const ok = await copyToClipboard(id);
+    if (ok) {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy ID', err);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
     }
   };
 
