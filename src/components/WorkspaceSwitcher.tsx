@@ -130,7 +130,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
         <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold flex-shrink-0">
           {initials}
         </div>
-        <span className="max-w-[110px] truncate shrink min-w-0">{current?.name ?? '—'}</span>
+        <span className="max-w-[75px] sm:max-w-[110px] truncate shrink min-w-0">{current?.name ?? '—'}</span>
         {current && (
           <span
             className={`hidden sm:inline-flex text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${

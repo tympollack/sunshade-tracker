@@ -19,7 +19,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Android/iOS System Safety', () => {
-  it('renders fixed bottom navigation shell with Board, Hierarchy, and Sprint buttons on mobile', () => {
+  it('renders fixed bottom navigation shell with Board, Hierarchy, Sprint, and Tools buttons on mobile', () => {
     const handleTabChange = vi.fn();
     render(<MobileBottomNav activeTab="board" onTabChange={handleTabChange} />);
 
@@ -31,21 +31,25 @@ describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Androi
     expect(nav).toHaveClass('z-40');
     expect(nav).toHaveClass('touch-manipulation');
 
-    // Android/iOS safe-area elevation check
+    // Android/iOS safe-area elevation check via classes
     expect(nav).toHaveClass('safe-area-bottom');
+    expect(nav).toHaveClass('mobile-bottom-nav');
 
     // Buttons
     const boardBtn = screen.getByTestId('mobile-nav-board');
     const treeBtn = screen.getByTestId('mobile-nav-tree');
     const sprintBtn = screen.getByTestId('mobile-nav-sprint');
+    const toolsBtn = screen.getByTestId('mobile-nav-tools');
 
     expect(boardBtn).toBeInTheDocument();
     expect(treeBtn).toBeInTheDocument();
     expect(sprintBtn).toBeInTheDocument();
+    expect(toolsBtn).toBeInTheDocument();
 
     expect(boardBtn).toHaveTextContent('Board');
     expect(treeBtn).toHaveTextContent('Hierarchy');
     expect(sprintBtn).toHaveTextContent('Sprint');
+    expect(toolsBtn).toHaveTextContent('Tools');
   });
 
   it('highlights active tab dynamically and renders active indicator pill', () => {
@@ -54,11 +58,20 @@ describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Androi
 
     expect(screen.getByTestId('mobile-nav-active-pill-board')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-nav-active-pill-tree')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mobile-nav-active-pill-tools')).not.toBeInTheDocument();
 
     // Rerender with 'tree'
     rerender(<MobileBottomNav activeTab="tree" onTabChange={handleTabChange} />);
     expect(screen.getByTestId('mobile-nav-active-pill-tree')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-nav-active-pill-board')).not.toBeInTheDocument();
+
+    // Rerender with 'spark' - Tools tab should highlight
+    rerender(<MobileBottomNav activeTab="spark" onTabChange={handleTabChange} />);
+    expect(screen.getByTestId('mobile-nav-active-pill-tools')).toBeInTheDocument();
+
+    // Rerender with 'schema' - Tools tab should highlight
+    rerender(<MobileBottomNav activeTab="schema" onTabChange={handleTabChange} />);
+    expect(screen.getByTestId('mobile-nav-active-pill-tools')).toBeInTheDocument();
   });
 
   it('dispatches onTabChange callback on button taps with minimum 44px touch targets', () => {
@@ -75,6 +88,26 @@ describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Androi
     fireEvent.click(sprintBtn);
     expect(handleTabChange).toHaveBeenCalledWith('sprint');
   });
+
+  it('opens mobile tools menu exposing Gemini Spark and Schema Reconciliation destinations', () => {
+    const handleTabChange = vi.fn();
+    render(<MobileBottomNav activeTab="board" onTabChange={handleTabChange} />);
+
+    const toolsBtn = screen.getByTestId('mobile-nav-tools');
+    fireEvent.click(toolsBtn);
+
+    const toolsMenu = screen.getByTestId('mobile-tools-menu');
+    expect(toolsMenu).toBeInTheDocument();
+
+    const sparkBtn = screen.getByTestId('mobile-nav-tool-spark');
+    const schemaBtn = screen.getByTestId('mobile-nav-tool-schema');
+    expect(sparkBtn).toBeInTheDocument();
+    expect(schemaBtn).toBeInTheDocument();
+
+    fireEvent.click(sparkBtn);
+    expect(handleTabChange).toHaveBeenCalledWith('spark');
+    expect(screen.queryByTestId('mobile-tools-menu')).not.toBeInTheDocument();
+  });
 });
 
 describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse & Breadcrumb Truncation', () => {
@@ -88,7 +121,7 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     expect(textCollapsed).toHaveClass('hidden sm:flex');
   });
 
-  it('WorkspaceSwitcher applies max-w-[110px], truncate, shrink, min-w-0, and mobile max-w on popover', () => {
+  it('WorkspaceSwitcher applies max-w-[75px] sm:max-w-[110px], truncate, shrink, min-w-0, and mobile max-w on popover', () => {
     const workspaces = [
       {
         id: 'ws-1',
@@ -103,7 +136,8 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     render(<WorkspaceSwitcher currentTenantSlug="pym-energy" workspaces={workspaces} />);
 
     const nameSpan = screen.getByText('PYM Energy Solutions Incorporated');
-    expect(nameSpan).toHaveClass('max-w-[110px]');
+    expect(nameSpan).toHaveClass('max-w-[75px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[110px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -116,7 +150,7 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     expect(dropdown).toHaveClass('max-w-[calc(100vw-24px)]');
   });
 
-  it('ProjectSwitcher applies max-w-[100px], truncate, shrink, min-w-0, and mobile max-w on popover', () => {
+  it('ProjectSwitcher applies max-w-[65px] sm:max-w-[100px], truncate, shrink, min-w-0, and mobile max-w on popover', () => {
     const projects = [
       { id: 'p1', slug: 'cozy-project-name', name: 'Cozy Smart Home System Operations' },
     ];
@@ -130,7 +164,8 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     );
 
     const nameSpan = screen.getByText('Cozy Smart Home System Operations');
-    expect(nameSpan).toHaveClass('max-w-[100px]');
+    expect(nameSpan).toHaveClass('max-w-[65px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[100px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -144,7 +179,7 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
 });
 
 describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Filter Targets', () => {
-  it('FilterMultiSelect trigger button has shrink-0, whitespace-nowrap, min-h-[36px], and max-w-[calc(100vw-24px)] popover', () => {
+  it('FilterMultiSelect trigger button has shrink-0, whitespace-nowrap, min-h-[36px], and portaled max-w-[calc(100vw-24px)] popover', () => {
     const options = [
       { id: 'todo', label: 'To Do' },
       { id: 'done', label: 'Done' },
@@ -165,11 +200,13 @@ describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Fil
     expect(button).toHaveClass('min-h-[36px]');
 
     fireEvent.click(button);
-    const popover = screen.getByText('Filter by Status').closest('div[class*="absolute"]');
+    const popover = screen.getByTestId('filter-multiselect-dropdown-status');
+    expect(popover).toBeInTheDocument();
     expect(popover).toHaveClass('max-w-[calc(100vw-24px)]');
+    expect(popover).toHaveStyle({ position: 'fixed' });
   });
 
-  it('verifies page.tsx Board Controls Toolbar provides horizontal touch scroll with touch-pan-x and safe bottom area', () => {
+  it('verifies page.tsx Board Controls Toolbar provides horizontal touch scroll with touch-pan-x and main-mobile-clearance', () => {
     const pageContent = fs.readFileSync(
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
       'utf-8'
@@ -185,8 +222,19 @@ describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Fil
     // MobileBottomNav must be mounted
     expect(pageContent).toContain('<MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />');
 
-    // Main container must apply safe area bottom padding
-    expect(pageContent).toContain('pb-24 md:pb-6');
-    expect(pageContent).toContain('safe-area-bottom');
+    // Main container must apply main-mobile-clearance
+    expect(pageContent).toContain('main-mobile-clearance');
+
+    // Header must have responsive horizontal padding and mobile collapsed Add Item button
+    expect(pageContent).toContain('px-2 sm:px-4');
+    expect(pageContent).toContain('<span className="hidden sm:inline whitespace-nowrap">Add Item</span>');
+
+    // globals.css must define main-mobile-clearance and mobile-bottom-nav
+    const cssContent = fs.readFileSync(
+      path.resolve(__dirname, '../src/app/globals.css'),
+      'utf-8'
+    );
+    expect(cssContent).toContain('.main-mobile-clearance');
+    expect(cssContent).toContain('.mobile-bottom-nav');
   });
 });

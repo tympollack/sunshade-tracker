@@ -102,7 +102,7 @@ export function ProjectSwitcher({
         ref={triggerRef}
         onClick={toggleOpen}
         data-testid="project-switcher-trigger"
-        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+        className={`flex items-center space-x-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
             : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
@@ -113,7 +113,7 @@ export function ProjectSwitcher({
         ) : (
           <Folder className="w-3 h-3 text-emerald-400" />
         )}
-        <span className="max-w-[100px] truncate shrink min-w-0">{currentProject?.name || currentProjectSlug}</span>
+        <span className="max-w-[65px] sm:max-w-[100px] truncate shrink min-w-0">{currentProject?.name || currentProjectSlug}</span>
         <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
