@@ -238,3 +238,59 @@ describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Fil
     expect(cssContent).toContain('.mobile-bottom-nav');
   });
 });
+
+describe('BUG-TRK-MOBILE-HEADER-BRAND-COLLAPSE - Reclaim Horizontal Space via Brand Collapse', () => {
+  it('renders SunShadeLogo emblem across all viewports with shrink-0 min-w-0 bounding and accessible aria-label', () => {
+    render(<SunShadeLogo variant="horizontal" size="xs" href="/" hideTextOnMobile={true} />);
+
+    // Link must maintain accessible aria-label="SunShade Tracker"
+    const link = screen.getByRole('link', { name: /SunShade Tracker/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '/');
+    expect(link).toHaveClass('shrink-0');
+    expect(link).toHaveClass('min-w-0');
+
+    // Root logo container must have shrink-0 min-w-0
+    const logoContainer = screen.getByTestId('sunshade-logo');
+    expect(logoContainer).toHaveClass('shrink-0');
+    expect(logoContainer).toHaveClass('min-w-0');
+
+    // Text lockup must be hidden on mobile (<640px)
+    const textLockup = screen.getByTestId('sunshade-logo-text');
+    expect(textLockup).toHaveClass('hidden sm:flex');
+  });
+
+  it('preserves full text lockup and live badge on desktop viewports (>=640px)', () => {
+    render(<SunShadeLogo variant="horizontal" size="sm" showBadge={true} badgeText="v1.0 Live" hideTextOnMobile={true} />);
+
+    const textLockup = screen.getByTestId('sunshade-logo-text');
+    expect(textLockup).toBeInTheDocument();
+    expect(textLockup).toHaveTextContent('SunShade Tracker');
+    expect(textLockup).toHaveTextContent('v1.0 Live');
+    expect(textLockup).toHaveClass('hidden sm:flex');
+  });
+
+  it('verifies dashboard headers pass hideTextOnMobile and shrink-0 to SunShadeLogo', () => {
+    // Check main dashboard page
+    const dashboardPage = fs.readFileSync(
+      path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
+      'utf-8'
+    );
+    expect(dashboardPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
+
+    // Check settings page
+    const settingsPage = fs.readFileSync(
+      path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/settings/page.tsx'),
+      'utf-8'
+    );
+    expect(settingsPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
+
+    // Check efficiency page
+    const efficiencyPage = fs.readFileSync(
+      path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/settings/efficiency/page.tsx'),
+      'utf-8'
+    );
+    expect(efficiencyPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
+  });
+});
+
