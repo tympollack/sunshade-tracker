@@ -38,6 +38,7 @@ export default function DocsPage() {
               showBadge
               badgeText="Docs"
               href="/"
+              hideTextOnMobile
             />
             <nav className="hidden md:flex items-center space-x-5 text-xs font-medium text-slate-400">
               <a href="#overview" className="hover:text-orange-400 transition-colors">Overview</a>
