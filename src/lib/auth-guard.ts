@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { createServerClient } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/db';
 import { Tenant } from '@/types/tracker';
@@ -216,11 +217,15 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
       };
     }
 
+    const keyHash = createHash('sha256').update(apiKey).digest('hex');
     const service = supabaseAdmin;
-    let tenantQuery: any = service
-      .from('tenants')
-      .select('*')
-      .eq('api_key', apiKey);
+    let tenantQuery: any = service.from('tenants').select('*');
+
+    if (typeof tenantQuery.or === 'function') {
+      tenantQuery = tenantQuery.or(`api_key_hash.eq.${keyHash},api_key.eq.${apiKey}`);
+    } else {
+      tenantQuery = tenantQuery.eq('api_key', apiKey);
+    }
 
     if (typeof tenantQuery.is === 'function') {
       tenantQuery = tenantQuery.is('deleted_at', null);
