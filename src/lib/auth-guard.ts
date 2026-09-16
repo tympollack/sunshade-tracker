@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { createServerClient } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/db';
 import { Tenant } from '@/types/tracker';
@@ -206,27 +207,50 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
       apiKey = xApiKey.trim();
     }
 
-    if (!apiKey) {
+    // Reject missing API keys or keys containing PostgREST filter injection characters
+    if (!apiKey || /[,\(\)"'\r\n\t]/.test(apiKey)) {
       return {
         context: null,
         errorResponse: NextResponse.json(
-          { error: 'Missing or malformed Authorization header. Expected: Bearer tk_live_...' },
+          { error: 'Invalid API Key or tenant not found' },
           { status: 401 }
         ),
       };
     }
 
+    const keyHash = createHash('sha256').update(apiKey).digest('hex');
     const service = supabaseAdmin;
+
+    // 1. Primary lookup by cryptographic SHA-256 hash (constant-length hex string, injection-free)
     let tenantQuery: any = service
       .from('tenants')
       .select('*')
-      .eq('api_key', apiKey);
+      .eq('api_key_hash', keyHash);
 
     if (typeof tenantQuery.is === 'function') {
       tenantQuery = tenantQuery.is('deleted_at', null);
     }
 
-    const { data: tenant, error: tenantErr } = await tenantQuery.single();
+    let { data: tenant, error: tenantErr } = await tenantQuery.single();
+
+    // 2. Legacy fallback: lookup by plaintext api_key using parameterized .eq()
+    // Using .eq() rather than string interpolation in .or() prevents PostgREST filter injection.
+    if (!tenant) {
+      let legacyQuery: any = service
+        .from('tenants')
+        .select('*')
+        .eq('api_key', apiKey);
+
+      if (typeof legacyQuery.is === 'function') {
+        legacyQuery = legacyQuery.is('deleted_at', null);
+      }
+
+      const legacyRes = await legacyQuery.single();
+      if (legacyRes?.data) {
+        tenant = legacyRes.data;
+        tenantErr = null;
+      }
+    }
 
     if (tenantErr || !tenant) {
       return {

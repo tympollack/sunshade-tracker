@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
           tier,
           owner_id,
           metadata,
-          api_key,
+          api_key_preview,
           created_at,
           deleted_at
         )
@@ -217,8 +217,10 @@ export async function GET(req: NextRequest) {
         name: tenant.name,
         tier: tenant.tier,
         owner_id: tenant.owner_id,
-        // Mask API key — first 20 chars only for identification
-        api_key_preview: tenant.api_key ? `${tenant.api_key.substring(0, 20)}...` : null,
+        // Mask API key — prefer persisted preview, fallback to masking api_key if legacy
+        api_key_preview:
+          tenant.api_key_preview ||
+          (tenant.api_key ? `${tenant.api_key.substring(0, 20)}...` : null),
         created_at: tenant.created_at,
         role: m.role,
         member_since: m.created_at,
