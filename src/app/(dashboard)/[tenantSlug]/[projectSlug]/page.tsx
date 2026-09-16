@@ -117,14 +117,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
 
-  // Tree View Filtering & Sorting States (PRJ-02)
-  const [treeStatusFilter, setTreeStatusFilter] = useState<string>('all');
-  const [treeTypeFilter, setTreeTypeFilter] = useState<string>('all');
+  // Tree View Filtering & Sorting States (PRJ-02, TRK-07)
+  const [treeSelectedStatuses, setTreeSelectedStatuses] = useState<string[] | null>(null);
+  const [treeSelectedLevels, setTreeSelectedLevels] = useState<string[] | null>(null);
   const [treeSortBy, setTreeSortBy] = useState<string>('order_index');
 
-  // Sprint Planning View Filtering & Sorting States (PRJ-02)
-  const [sprintStatusFilter, setSprintStatusFilter] = useState<string>('all');
-  const [sprintTypeFilter, setSprintTypeFilter] = useState<string>('all');
+  // Sprint Planning View Filtering & Sorting States (PRJ-02, TRK-07)
+  const [sprintSelectedStatuses, setSprintSelectedStatuses] = useState<string[] | null>(null);
+  const [sprintSelectedLevels, setSprintSelectedLevels] = useState<string[] | null>(null);
   const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
 
   const treeSortComparator = useMemo(() => {
@@ -148,31 +148,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     };
   }, [treeSortBy]);
 
-  // Tree items filtered by selectedSprint, status, and level (PRJ-02)
-  const treeFilteredItems = useMemo(() => {
-    let res = items;
-    if (selectedSprint !== 'all') {
-      if (selectedSprint === '__none__') {
-        res = res.filter((it) => !it.metadata?.sprint);
-      } else {
-        res = res.filter((it) => it.metadata?.sprint === selectedSprint);
-      }
-    }
-    if (treeStatusFilter !== 'all') {
-      res = res.filter((it) => it.status === treeStatusFilter);
-    }
-    if (treeTypeFilter !== 'all') {
-      res = res.filter((it) => it.item_type === treeTypeFilter);
-    }
-    return res;
-  }, [items, selectedSprint, treeStatusFilter, treeTypeFilter]);
-
-  const treeItems = useMemo(
-    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
-    [treeFilteredItems, treeSortComparator]
-  );
-  const allTreeItems = useMemo(() => buildTree(items), [items]);
-
   const sprintComparator = useMemo(() => {
     return (a: WorkItem, b: WorkItem): number => {
       if (sprintSortBy === 'points_desc') {
@@ -193,20 +168,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       return (a.order_index ?? 0) - (b.order_index ?? 0);
     };
   }, [sprintSortBy]);
-
-  const filterSprintItems = useCallback(
-    (itemsList: WorkItem[]) => {
-      let res = itemsList;
-      if (sprintStatusFilter !== 'all') {
-        res = res.filter((it) => it.status === sprintStatusFilter);
-      }
-      if (sprintTypeFilter !== 'all') {
-        res = res.filter((it) => it.item_type === sprintTypeFilter);
-      }
-      return [...res].sort(sprintComparator);
-    },
-    [sprintStatusFilter, sprintTypeFilter, sprintComparator]
-  );
 
   // Interactive Hierarchy Tree states (STORY-TRK-HIERARCHY-UX)
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
@@ -373,6 +334,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [ingestResponse, setIngestResponse] = useState<any>(null);
   const [isIngesting, setIsIngesting] = useState(false);
 
+  // Spark Ingestion Overrides (TRK-08)
+  const [sparkOverrideProject, setSparkOverrideProject] = useState<string>('');
+  const [sparkOverrideSprint, setSparkOverrideSprint] = useState<string>('');
+  const [sparkOverrideAssignee, setSparkOverrideAssignee] = useState<string>('');
+
   // Quick Add modal state (TASK-TRK-QUICK-ADD-DIALOG)
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [selectedSchemaProjectSlug, setSelectedSchemaProjectSlug] = useState('');
@@ -449,6 +415,66 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     if (selectedLevels !== null) return selectedLevels;
     return projectSettings.hierarchy.map((h) => h.type);
   }, [selectedLevels, projectSettings.hierarchy]);
+
+  // Tree and Sprint Planning Multi-Select Effective Filters (TRK-07)
+  const effectiveTreeStatuses = useMemo(() => {
+    if (treeSelectedStatuses !== null) return treeSelectedStatuses;
+    return projectSettings.statuses.map((s) => s.id);
+  }, [treeSelectedStatuses, projectSettings.statuses]);
+
+  const effectiveTreeLevels = useMemo(() => {
+    if (treeSelectedLevels !== null) return treeSelectedLevels;
+    return projectSettings.hierarchy.map((h) => h.type);
+  }, [treeSelectedLevels, projectSettings.hierarchy]);
+
+  const effectiveSprintStatuses = useMemo(() => {
+    if (sprintSelectedStatuses !== null) return sprintSelectedStatuses;
+    return projectSettings.statuses.map((s) => s.id);
+  }, [sprintSelectedStatuses, projectSettings.statuses]);
+
+  const effectiveSprintLevels = useMemo(() => {
+    if (sprintSelectedLevels !== null) return sprintSelectedLevels;
+    return projectSettings.hierarchy.map((h) => h.type);
+  }, [sprintSelectedLevels, projectSettings.hierarchy]);
+
+  // Tree items filtered by selectedSprint, status, and level (PRJ-02, TRK-07)
+  const treeFilteredItems = useMemo(() => {
+    let res = items;
+    if (selectedSprint !== 'all') {
+      if (selectedSprint === '__none__') {
+        res = res.filter((it) => !it.metadata?.sprint);
+      } else {
+        res = res.filter((it) => it.metadata?.sprint === selectedSprint);
+      }
+    }
+    if (treeSelectedStatuses !== null) {
+      res = res.filter((it) => effectiveTreeStatuses.includes(it.status));
+    }
+    if (treeSelectedLevels !== null) {
+      res = res.filter((it) => effectiveTreeLevels.includes(it.item_type));
+    }
+    return res;
+  }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels]);
+
+  const treeItems = useMemo(
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
+    [treeFilteredItems, treeSortComparator]
+  );
+  const allTreeItems = useMemo(() => buildTree(items), [items]);
+
+  const filterSprintItems = useCallback(
+    (itemsList: WorkItem[]) => {
+      let res = itemsList;
+      if (sprintSelectedStatuses !== null) {
+        res = res.filter((it) => effectiveSprintStatuses.includes(it.status));
+      }
+      if (sprintSelectedLevels !== null) {
+        res = res.filter((it) => effectiveSprintLevels.includes(it.item_type));
+      }
+      return [...res].sort(sprintComparator);
+    },
+    [sprintSelectedStatuses, effectiveSprintStatuses, sprintSelectedLevels, effectiveSprintLevels, sprintComparator]
+  );
 
   // Detect schema deviations (unmapped levels, statuses, nesting conflicts)
   const deviations = useMemo(() => {
@@ -1347,7 +1373,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
-    if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
+    const currentProj = allProjects.find((p) => p.slug === projectSlug);
+    if (updates.project_id && (!currentProj || updates.project_id !== currentProj.id)) {
+      const destProject = allProjects.find((p) => p.id === updates.project_id);
+      const childCount = items.filter((it) => it.parent_id === itemId).length;
+      const projName = destProject?.name || 'new project';
+      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${projName}`);
+      setTimeout(() => setBulkToast(null), 4000);
+      fetchData();
+    } else if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
       fetchData();
     }
   };
@@ -2032,6 +2066,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     setLastIngestedItemIds(null);
     try {
       const parsed = JSON.parse(sparkPayload);
+      if (sparkOverrideProject) {
+        parsed.override_project_slug = sparkOverrideProject;
+      }
+      if (sparkOverrideSprint) {
+        parsed.override_sprint = sparkOverrideSprint;
+      }
+      if (sparkOverrideAssignee) {
+        parsed.override_assignee = sparkOverrideAssignee;
+      }
       // Now uses session-based apiFetch — the ingest endpoint accepts both
       // session cookies (dashboard) and Bearer API keys (headless pipelines)
       const res = await apiFetch('/api/v1/items/ingest', {
@@ -2984,38 +3027,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     ))}
                   </select>
                 </div>
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-xs text-slate-400">Status:</span>
-                  <select
-                    value={treeStatusFilter}
-                    onChange={(e) => setTreeStatusFilter(e.target.value)}
-                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                    data-testid="tree-status-filter"
-                  >
-                    <option value="all">All Statuses</option>
-                    {projectSettings.statuses.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label || s.id}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-xs text-slate-400">Level:</span>
-                  <select
-                    value={treeTypeFilter}
-                    onChange={(e) => setTreeTypeFilter(e.target.value)}
-                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                    data-testid="tree-level-filter"
-                  >
-                    <option value="all">All Levels</option>
-                    {projectSettings.hierarchy.map((h) => (
-                      <option key={h.type} value={h.type}>
-                        {h.label || h.type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FilterMultiSelect
+                  label="Status"
+                  options={statusFilterOptions}
+                  selectedIds={effectiveTreeStatuses}
+                  onChange={setTreeSelectedStatuses}
+                />
+                <FilterMultiSelect
+                  label="Level"
+                  options={levelFilterOptions}
+                  selectedIds={effectiveTreeLevels}
+                  onChange={setTreeSelectedLevels}
+                />
                 <div className="flex items-center space-x-1.5">
                   <span className="text-xs text-slate-400">Sort:</span>
                   <select
@@ -3031,13 +3054,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     <option value="title_desc">Title (Z to A)</option>
                   </select>
                 </div>
-                {(selectedSprint !== 'all' || treeStatusFilter !== 'all' || treeTypeFilter !== 'all' || treeSortBy !== 'order_index') && (
+                {(selectedSprint !== 'all' ||
+                  (treeSelectedStatuses !== null && effectiveTreeStatuses.length < projectSettings.statuses.length) ||
+                  (treeSelectedLevels !== null && effectiveTreeLevels.length < projectSettings.hierarchy.length) ||
+                  treeSortBy !== 'order_index') && (
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedSprint('all');
-                      setTreeStatusFilter('all');
-                      setTreeTypeFilter('all');
+                      setTreeSelectedStatuses(null);
+                      setTreeSelectedLevels(null);
                       setTreeSortBy('order_index');
                     }}
                     className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
@@ -3200,38 +3226,18 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   )}
                 </button>
 
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-xs text-slate-400">Status:</span>
-                  <select
-                    value={sprintStatusFilter}
-                    onChange={(e) => setSprintStatusFilter(e.target.value)}
-                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                    data-testid="sprint-status-filter"
-                  >
-                    <option value="all">All Statuses</option>
-                    {projectSettings.statuses.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label || s.id}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-xs text-slate-400">Level:</span>
-                  <select
-                    value={sprintTypeFilter}
-                    onChange={(e) => setSprintTypeFilter(e.target.value)}
-                    className="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
-                    data-testid="sprint-level-filter"
-                  >
-                    <option value="all">All Levels</option>
-                    {projectSettings.hierarchy.map((h) => (
-                      <option key={h.type} value={h.type}>
-                        {h.label || h.type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FilterMultiSelect
+                  label="Status"
+                  options={statusFilterOptions}
+                  selectedIds={effectiveSprintStatuses}
+                  onChange={setSprintSelectedStatuses}
+                />
+                <FilterMultiSelect
+                  label="Level"
+                  options={levelFilterOptions}
+                  selectedIds={effectiveSprintLevels}
+                  onChange={setSprintSelectedLevels}
+                />
                 <div className="flex items-center space-x-1.5">
                   <span className="text-xs text-slate-400">Sort:</span>
                   <select
@@ -3247,12 +3253,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     <option value="title_desc">Title (Z to A)</option>
                   </select>
                 </div>
-                {(sprintStatusFilter !== 'all' || sprintTypeFilter !== 'all' || sprintSortBy !== 'order_index') && (
+                {((sprintSelectedStatuses !== null && effectiveSprintStatuses.length < projectSettings.statuses.length) ||
+                  (sprintSelectedLevels !== null && effectiveSprintLevels.length < projectSettings.hierarchy.length) ||
+                  sprintSortBy !== 'order_index') && (
                   <button
                     type="button"
                     onClick={() => {
-                      setSprintStatusFilter('all');
-                      setSprintTypeFilter('all');
+                      setSprintSelectedStatuses(null);
+                      setSprintSelectedLevels(null);
                       setSprintSortBy('order_index');
                     }}
                     className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
@@ -3300,14 +3308,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const completedItems = sprintItems.filter((it) =>
                   ['done', 'closed', 'complete', 'completed'].includes(it.status)
                 );
-                const progressPct =
-                  sprintItems.length > 0
-                    ? Math.round((completedItems.length / sprintItems.length) * 100)
-                    : 0;
-
                 const sprintDef = projectSettings.sprint_settings?.sprints?.find(
                   (s: any) => s.name === sprintName || s.id === sprintName
                 );
+                const isCompletedSprint = sprintDef?.status === 'completed';
+                const progressPct =
+                  sprintItems.length > 0
+                    ? Math.round((completedItems.length / sprintItems.length) * 100)
+                    : isCompletedSprint
+                    ? 100
+                    : 0;
                 const isCurrent = sprintDef?.is_current ?? (availableSprints[0] === sprintName);
                 const isCollapsed = collapsedSprints.has(sprintName);
                 const allSprintSelected =
@@ -3718,6 +3728,89 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   <span>The public demo workspace is read-only. Ingesting work items requires workspace membership.</span>
                 </div>
               )}
+              {/* TRK-08: Property Overrides */}
+              <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 space-y-2.5" data-testid="spark-ingest-overrides">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Property Overrides (Optional)
+                  </span>
+                  {(sparkOverrideProject || sparkOverrideSprint || sparkOverrideAssignee) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSparkOverrideProject('');
+                        setSparkOverrideSprint('');
+                        setSparkOverrideAssignee('');
+                      }}
+                      className="text-[10px] text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                      data-testid="spark-reset-overrides-btn"
+                    >
+                      Clear Overrides
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-slate-400">Target Project</label>
+                    <select
+                      value={sparkOverrideProject}
+                      disabled={isReadOnly}
+                      onChange={(e) => setSparkOverrideProject(e.target.value)}
+                      className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50"
+                      data-testid="spark-override-project-select"
+                    >
+                      <option value="">Payload Project ({allProjects.find((p) => p.slug === projectSlug)?.name || projectSlug})</option>
+                      {allProjects.map((p) => (
+                        <option key={p.id} value={p.slug}>
+                          {p.name} ({p.slug})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-slate-400">Sprint Override</label>
+                    <select
+                      value={sparkOverrideSprint}
+                      disabled={isReadOnly}
+                      onChange={(e) => setSparkOverrideSprint(e.target.value)}
+                      className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50"
+                      data-testid="spark-override-sprint-select"
+                    >
+                      <option value="">Keep Payload Sprint</option>
+                      <option value="__none__">Backlog (Unassigned)</option>
+                      {availableSprints.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-slate-400">Assignee Override</label>
+                    <select
+                      value={sparkOverrideAssignee}
+                      disabled={isReadOnly}
+                      onChange={(e) => setSparkOverrideAssignee(e.target.value)}
+                      className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50"
+                      data-testid="spark-override-assignee-select"
+                    >
+                      <option value="">Keep Payload Assignee</option>
+                      <option value="__unassigned__">Unassigned</option>
+                      {Array.from(
+                        new Set([
+                          ...workspaceMembers.map((m) => m.full_name).filter(Boolean),
+                          ...items.map((i) => i.assignee).filter((a): a is string => typeof a === 'string' && a.length > 0),
+                        ])
+                      ).map((member) => (
+                        <option key={member} value={member}>
+                          {member}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <textarea
                 rows={16}
                 value={sparkPayload}

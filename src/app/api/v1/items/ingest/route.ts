@@ -15,14 +15,19 @@ export async function POST(req: NextRequest) {
     if (auth.errorResponse) return auth.errorResponse;
     const { tenant } = auth.context;
 
-    // 2. Parse Body & Resolve Target Project
+    // 2. Parse Body & Resolve Target Project (with optional TRK-08 overrides)
     const body = await req.json();
-    const { project_slug, items } = body as {
+    const { project_slug, items, override_project_slug, override_sprint, override_assignee } = body as {
       project_slug: string;
       items: IngestItemPayload[];
+      override_project_slug?: string;
+      override_sprint?: string | null;
+      override_assignee?: string | null;
     };
 
-    if (!project_slug || !Array.isArray(items) || items.length === 0) {
+    const effectiveProjectSlug = override_project_slug || project_slug;
+
+    if (!effectiveProjectSlug || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
         { error: 'Body must include "project_slug" and a non-empty "items" array' },
         { status: 400 }
@@ -34,7 +39,7 @@ export async function POST(req: NextRequest) {
       .from('projects')
       .select('id, slug, name, settings')
       .eq('tenant_id', tenant.id)
-      .eq('slug', project_slug);
+      .eq('slug', effectiveProjectSlug);
 
     if (typeof projectQuery.is === 'function') {
       projectQuery = projectQuery.is('deleted_at', null); // only ingest into active projects
@@ -43,7 +48,7 @@ export async function POST(req: NextRequest) {
     const { data: project, error: projErr } = await projectQuery.single();
 
     if (projErr || !project) {
-      return NextResponse.json({ error: `Project '${project_slug}' not found` }, { status: 404 });
+      return NextResponse.json({ error: `Project '${effectiveProjectSlug}' not found` }, { status: 404 });
     }
 
     const settings = project.settings || {};
@@ -148,6 +153,24 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const effectiveMetadata = { ...(item.metadata || {}) };
+      if (override_sprint !== undefined) {
+        if (override_sprint === '__none__' || override_sprint === null) {
+          delete effectiveMetadata.sprint;
+        } else if (override_sprint) {
+          effectiveMetadata.sprint = override_sprint;
+        }
+      }
+
+      let effectiveAssignee = item.assignee || null;
+      if (override_assignee !== undefined) {
+        if (override_assignee === '__unassigned__' || override_assignee === null || override_assignee === '') {
+          effectiveAssignee = null;
+        } else {
+          effectiveAssignee = override_assignee;
+        }
+      }
+
       const itemPayload = {
         tenant_id: tenant.id,
         project_id: project.id,
@@ -157,9 +180,9 @@ export async function POST(req: NextRequest) {
         status: item.status || defaultStatus,
         title: item.title,
         description: item.description || null,
-        assignee: item.assignee || null,
+        assignee: effectiveAssignee,
         order_index: item.order_index ?? currentOrder,
-        metadata: item.metadata || {},
+        metadata: effectiveMetadata,
         updated_at: new Date().toISOString()
       };
 

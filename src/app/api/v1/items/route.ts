@@ -650,10 +650,13 @@ export async function PATCH(req: NextRequest) {
       }
 
       if (parentItem.project_id !== targetProjectId) {
-        return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
-      }
-
-      if (projectSettings?.hierarchy?.length) {
+        if (isProjectReassignment) {
+          // Gracefully detach parent if reassigning project across boundaries
+          updateFields.parent_id = null;
+        } else {
+          return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
+        }
+      } else if (projectSettings?.hierarchy?.length) {
         const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, projectSettings.hierarchy);
         if (!nestCheck.valid) {
           if (parent_id !== undefined) {

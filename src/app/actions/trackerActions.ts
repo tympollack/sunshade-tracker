@@ -150,26 +150,53 @@ export async function reassignWorkItemProject(
     const descendantIds = getDescendantIds(tenantItems || [], itemId);
     const allAffectedIds = [itemId, ...descendantIds];
 
-    // 6. Update target item (clear parent_id when migrating across projects)
+    // 6. Check if target item's existing parent belongs to a different project than newProjectId
+    let shouldDisconnectParent = false;
+    const oldParentId = targetItem.parent_id;
+    if (oldParentId) {
+      const { data: parentItem } = await service
+        .from('work_items')
+        .select('id, project_id')
+        .eq('id', oldParentId)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (!parentItem || parentItem.project_id !== newProjectId) {
+        shouldDisconnectParent = true;
+      }
+    }
+
     const nowIso = new Date().toISOString();
-    await service
+    const targetUpdateFields: Record<string, any> = {
+      project_id: newProjectId,
+      updated_at: nowIso,
+    };
+    if (shouldDisconnectParent) {
+      targetUpdateFields.parent_id = null;
+    }
+
+    const { error: updateTargetErr } = await service
       .from('work_items')
-      .update({
-        project_id: newProjectId,
-        parent_id: null,
-        updated_at: nowIso,
-      })
+      .update(targetUpdateFields)
       .eq('id', itemId);
+
+    if (updateTargetErr) {
+      return { success: false, error: updateTargetErr.message };
+    }
 
     // Update descendants to new project_id
     if (descendantIds.length > 0) {
-      await service
+      const { error: updateDescErr } = await service
         .from('work_items')
         .update({
           project_id: newProjectId,
           updated_at: nowIso,
         })
         .in('id', descendantIds);
+
+      if (updateDescErr) {
+        return { success: false, error: updateDescErr.message };
+      }
     }
 
     // 7. Audit log for migration
@@ -177,6 +204,17 @@ export async function reassignWorkItemProject(
       user.user_metadata?.full_name ??
       user.user_metadata?.name ??
       (user.email ? user.email.split('@')[0] : 'User');
+
+    const changedFields: Record<string, any> = {
+      project_id: { before: targetItem.project_id, after: newProjectId },
+    };
+    if (shouldDisconnectParent) {
+      changedFields.parent_id = {
+        before: oldParentId,
+        after: null,
+        note: 'Parent detached due to project migration',
+      };
+    }
 
     const { recordAuditLog } = await import('@/lib/audit-log');
     await recordAuditLog({
@@ -186,9 +224,7 @@ export async function reassignWorkItemProject(
       actor_id: user.id,
       actor_name: userName,
       action: 'update',
-      changed_fields: {
-        project_id: { before: targetItem.project_id, after: newProjectId },
-      },
+      changed_fields: changedFields,
     }).catch(() => {});
 
     return { success: true, updatedCount: allAffectedIds.length };

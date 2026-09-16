@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, Plus, User, ChevronDown, Loader2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, Plus, User, UserX, ChevronDown, Loader2 } from 'lucide-react';
 import { HierarchyLevel, StatusDefinition } from '@/types/tracker';
 
 export interface ProjectOption {
@@ -156,17 +157,62 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
     }
   }, [currentStatuses, status]);
 
-  // Handle outside click for assignee dropdown
+  const [assigneeCoords, setAssigneeCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    flipUp: boolean;
+  } | null>(null);
+  const assigneeBtnRef = useRef<HTMLButtonElement>(null);
+  const assigneeMenuRef = useRef<HTMLDivElement>(null);
+
+  const updateAssigneePosition = () => {
+    if (assigneeBtnRef.current) {
+      const rect = assigneeBtnRef.current.getBoundingClientRect();
+      const collisionPadding = 12;
+      const estimatedHeight = 220;
+      const spaceBelow = window.innerHeight - rect.bottom - collisionPadding;
+      const flipUp = spaceBelow < estimatedHeight && rect.top > estimatedHeight;
+      const menuWidth = Math.max(200, rect.width);
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - collisionPadding) {
+        left = Math.max(collisionPadding, window.innerWidth - menuWidth - collisionPadding);
+      }
+
+      setAssigneeCoords({
+        top: flipUp ? Math.max(collisionPadding, rect.top - 6) : rect.bottom + 6,
+        left: Math.max(collisionPadding, left),
+        width: menuWidth,
+        flipUp,
+      });
+    }
+  };
+
+  // Handle positioning, scroll/resize, and outside click for assignee dropdown
   useEffect(() => {
+    if (!assigneeDropdownOpen) return;
+    updateAssigneePosition();
+
+    const handleScrollResize = () => updateAssigneePosition();
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (assigneeDropdownRef.current && !assigneeDropdownRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        assigneeBtnRef.current && !assigneeBtnRef.current.contains(target) &&
+        assigneeMenuRef.current && !assigneeMenuRef.current.contains(target)
+      ) {
         setAssigneeDropdownOpen(false);
       }
     };
-    if (assigneeDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
+    document.addEventListener('mousedown', handleClickOutside);
+
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, [assigneeDropdownOpen]);
 
   // Handle global Escape key to close modal
@@ -288,7 +334,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             e.preventDefault();
             handleSubmit(false);
           }}
-          className="p-6 space-y-4"
+          className="p-6 space-y-4 max-h-[85vh] overflow-y-auto pb-6"
         >
           {/* Project Selector (Portfolio / All Projects mode) */}
           {isAllProjects && allProjects.length > 0 && (
@@ -373,15 +419,19 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
           {/* Grid: Assignee & External Ref */}
           <div className="grid grid-cols-2 gap-3">
             {/* Assignee Picker */}
-            <div className="space-y-1.5" ref={assigneeDropdownRef}>
+            <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
                 Assignee
               </label>
               <div className="relative">
                 <button
+                  ref={assigneeBtnRef}
                   type="button"
-                  onClick={() => setAssigneeDropdownOpen((v) => !v)}
-                  className="w-full flex items-center justify-between px-3 py-2 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors"
+                  onClick={() => {
+                    if (!assigneeDropdownOpen) updateAssigneePosition();
+                    setAssigneeDropdownOpen((v) => !v);
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-200 focus:outline-none transition-colors cursor-pointer"
                   data-testid="quick-add-assignee-btn"
                 >
                   <div className="flex items-center space-x-2 truncate">
@@ -395,12 +445,44 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                   />
                 </button>
 
-                {assigneeDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1.5 w-full min-w-[200px] rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 z-50 p-1.5 space-y-1">
+                {assigneeDropdownOpen && typeof document !== 'undefined' && createPortal(
+                  <div
+                    ref={assigneeMenuRef}
+                    style={{
+                      position: 'fixed',
+                      top: assigneeCoords?.top ?? 0,
+                      left: assigneeCoords?.left ?? 0,
+                      width: assigneeCoords?.width ?? 200,
+                      transform: assigneeCoords?.flipUp ? 'translateY(-100%)' : 'none',
+                      zIndex: 9999,
+                    }}
+                    className="rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/80 p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-100"
+                    data-testid="quick-add-assignee-menu"
+                  >
                     <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                       Select Assignee
                     </div>
 
+                    {/* Default Unassigned Choice First */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssignee('');
+                        setAssigneeDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                        !assignee
+                          ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[9px]">
+                        <UserX className="w-3 h-3 text-slate-400" />
+                      </div>
+                      <span className="italic">Unassigned</span>
+                    </button>
+
+                    {/* Me Option */}
                     <button
                       type="button"
                       onClick={() => {
@@ -417,24 +499,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                         Me
                       </div>
                       <span className="truncate">{myDisplayName}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAssignee('');
-                        setAssigneeDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                        !assignee
-                          ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                      }`}
-                    >
-                      <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[9px]">
-                        —
-                      </div>
-                      <span className="italic">Unassigned</span>
                     </button>
 
                     {workspaceMembers.filter((m) => m.full_name && m.full_name !== myDisplayName).length > 0 && (
@@ -466,7 +530,8 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                           ))}
                       </div>
                     )}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             </div>

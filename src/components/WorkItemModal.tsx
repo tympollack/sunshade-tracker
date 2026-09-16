@@ -21,6 +21,7 @@ import {
   ArrowRight,
   RefreshCw,
   Lock,
+  Loader2,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition, AuditLogEntry } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
@@ -195,15 +196,73 @@ export function WorkItemModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, showConfirmDelete, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
 
+  const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
+  const [isLoadingParents, setIsLoadingParents] = useState(false);
+
+  // Dynamically refresh parent item options when reassigning project (BUG-TRK-REASSIGN-PARENT-OPTIONS)
+  useEffect(() => {
+    if (!item) return;
+    const targetProjId = selectedProjectId || item.project_id;
+    if (!targetProjId) return;
+
+    // If changing project, check if current parent belongs to new project. If not, reset to None.
+    const knownMatching = allItems.filter((i) => i.project_id === targetProjId);
+    if (parentId && targetProjId !== item.project_id) {
+      const parentMatches = knownMatching.some((i) => i.id === parentId);
+      if (!parentMatches) {
+        setParentId('');
+      }
+    }
+
+    if (targetProjId === item.project_id) {
+      setProjectCandidateItems(allItems.filter((i) => i.project_id === item.project_id));
+      setIsLoadingParents(false);
+      return;
+    }
+
+    if (knownMatching.length > 0) {
+      setProjectCandidateItems(knownMatching);
+    }
+
+    let isCancelled = false;
+    setIsLoadingParents(true);
+    fetch(`/api/v1/items?project_id=${targetProjId}`, {
+      headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isCancelled && data?.items) {
+          setProjectCandidateItems(data.items);
+          if (parentId && !data.items.some((it: WorkItem) => it.id === parentId)) {
+            setParentId('');
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isCancelled) setIsLoadingParents(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedProjectId, item?.id, item?.project_id, allItems, tenantSlug]);
+
   if (!isOpen || !item) return null;
 
-  // Determine allowed parents based on selected itemType
+  // Determine allowed parents based on selected itemType and effective project
   const currentHierarchyConfig = projectSettings.hierarchy.find((h) => h.type === itemType);
   const allowedParentTypes = currentHierarchyConfig?.allowed_parents || [];
-  const eligibleParents = allItems.filter(
+  const targetProjId = selectedProjectId || item.project_id;
+  const parentPool =
+    projectCandidateItems.length > 0
+      ? projectCandidateItems
+      : allItems.filter((other) => other.project_id === targetProjId);
+
+  const eligibleParents = parentPool.filter(
     (other) =>
       other.id !== item.id &&
-      other.project_id === item.project_id &&
+      other.project_id === targetProjId &&
       allowedParentTypes.includes(other.item_type)
   );
 
@@ -970,18 +1029,28 @@ export function WorkItemModal({
 
             {/* Parent Item */}
             <div className="space-y-1.5 sm:col-span-2">
-              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-                Parent Item{' '}
-                {allowedParentTypes.length > 0 && (
-                  <span className="text-slate-500 normal-case font-mono">
-                    (Allowed: {allowedParentTypes.join(', ')})
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <span>
+                  Parent Item{' '}
+                  {allowedParentTypes.length > 0 && (
+                    <span className="text-slate-500 normal-case font-mono">
+                      (Allowed: {allowedParentTypes.join(', ')})
+                    </span>
+                  )}
+                </span>
+                {isLoadingParents && (
+                  <span className="text-[11px] text-emerald-400 flex items-center space-x-1 lowercase font-normal">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>loading parents...</span>
                   </span>
                 )}
               </label>
               <select
                 value={parentId}
                 onChange={(e) => setParentId(e.target.value)}
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                disabled={isLoadingParents}
+                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 disabled:opacity-60"
+                data-testid="item-parent-select"
               >
                 <option value="">None (Top Level)</option>
                 {eligibleParents.map((p) => (
