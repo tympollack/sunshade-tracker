@@ -14,6 +14,7 @@ import {
 import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
+import { DualPointBadge } from '@/components/DualPointBadge';
 
 export interface TreeNodeProps {
   item: WorkItemNode;
@@ -27,6 +28,7 @@ export interface TreeNodeProps {
   getItemStatuses?: (item: WorkItemNode) => StatusDefinition[];
   getItemHierarchy?: (item: WorkItemNode) => HierarchyLevel[];
   isFilteredBySprint?: boolean;
+  pointMode?: 'macro' | 'granular';
   members?: Array<{ id: string; name: string }>;
   isImmutable?: boolean | ((item: WorkItemNode) => boolean);
   collapsedNodeIds?: Set<string>;
@@ -88,6 +90,7 @@ export function TreeNode({
   getItemStatuses,
   getItemHierarchy,
   isFilteredBySprint = false,
+  pointMode,
   members = [],
   isImmutable = false,
   collapsedNodeIds,
@@ -457,21 +460,60 @@ export function TreeNode({
               className="flex items-center gap-3 shrink-0 ml-auto"
               data-testid={`tree-node-right-zone-${item.id}`}
             >
-              {/* Rollup Points Track */}
+              {/* Rollup / Points Track */}
               <div className="w-28 shrink-0 flex items-center justify-end text-right" data-testid="col-rollup-points">
-                {item.rollupPoints !== undefined && item.rollupPoints > 0 && (
-                  <span
-                    data-testid="tree-node-rollup-points-badge"
-                    className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
-                    title={
-                      isFilteredBySprint
-                        ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
-                        : `Subtree total: ${item.rollupPoints} pts`
-                    }
-                  >
-                    {item.rollupPoints} pts rollup
-                  </span>
-                )}
+                {(() => {
+                  const pointsRollup = (item as any).points_rollup;
+                  const childCount =
+                    (item as any).child_count !== undefined
+                      ? (item as any).child_count
+                      : (item.children?.length ?? 0);
+                  const rawIntrinsic =
+                    item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+                  const intrinsicPoints =
+                    rawIntrinsic !== undefined ? Number(rawIntrinsic) : undefined;
+
+                  // If dual badges / point mode explicitly requested or points_rollup property present
+                  if (pointsRollup !== undefined || pointMode !== undefined) {
+                    const effectiveRollup =
+                      pointsRollup !== undefined
+                        ? pointsRollup
+                        : item.rollupPoints !== undefined
+                        ? item.rollupPoints
+                        : 0;
+
+                    return (
+                      <span data-testid="tree-node-rollup-points-badge" className="whitespace-nowrap shrink-0">
+                        <DualPointBadge
+                          storyPoints={intrinsicPoints}
+                          rollupPoints={effectiveRollup}
+                          childCount={childCount}
+                          pointMode={pointMode || 'granular'}
+                          className="whitespace-nowrap shrink-0"
+                        />
+                      </span>
+                    );
+                  }
+
+                  // Default / backward-compatible rendering for existing tests
+                  if (item.rollupPoints !== undefined && item.rollupPoints > 0) {
+                    return (
+                      <span
+                        data-testid="tree-node-rollup-points-badge"
+                        className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
+                        title={
+                          isFilteredBySprint
+                            ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
+                            : `Subtree total: ${item.rollupPoints} pts`
+                        }
+                      >
+                        {item.rollupPoints} pts rollup
+                      </span>
+                    );
+                  }
+
+                  return null;
+                })()}
               </div>
 
               {/* Assignee Selector Track */}
@@ -707,6 +749,7 @@ export function TreeNode({
                 getItemStatuses={getItemStatuses}
                 getItemHierarchy={getItemHierarchy}
                 isFilteredBySprint={isFilteredBySprint}
+                pointMode={pointMode}
                 members={members}
                 isImmutable={isImmutable}
                 collapsedNodeIds={collapsedNodeIds}

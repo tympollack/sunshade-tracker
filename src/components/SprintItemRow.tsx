@@ -38,6 +38,7 @@ export interface SprintItemRowProps {
   isTreeMode?: boolean;
   childCount?: number;
   rollupPoints?: number;
+  pointMode?: 'macro' | 'granular';
 }
 
 export const SprintItemRow: React.FC<SprintItemRowProps> = ({
@@ -61,6 +62,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   isTreeMode = false,
   childCount = 0,
   rollupPoints = 0,
+  pointMode,
 }) => {
   const itemHierarchy = getItemHierarchy(item);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
@@ -205,7 +207,9 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             title={`Branch rollup total: ${rollupPoints} pts`}
             data-testid="tree-rollup-points-badge"
           >
-            {rollupPoints} pts rollup
+            {pointMode === 'macro' && item.metadata?.story_points !== undefined
+              ? `${item.metadata.story_points} pts intrinsic`
+              : `${rollupPoints} pts rollup`}
           </span>
         )}
       </div>
