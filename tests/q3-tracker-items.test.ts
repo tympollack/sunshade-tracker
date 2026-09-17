@@ -469,5 +469,298 @@ describe('Q3 Tracker Items Verification Suite', () => {
       expect(descUpdatedFields.project_id).toBe('new-project-id');
       expect(descUpdatedIds).toEqual(['child-item-1']);
     });
+
+    it('should reject workspace viewers from moving items if they are not the workspace owner', async () => {
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'target-item-id',
+                    tenant_id: 'tenant-test-123',
+                    project_id: 'old-project-id',
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'tenant_members') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { role: 'viewer' },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: null, // Not the owner
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const result = await reassignWorkItemProject('target-item-id', 'new-project-id');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Forbidden: Workspace viewers have read-only access');
+    });
+
+    it('should rollback root item reassignment when descendant cascade fails', async () => {
+      const rolledBackUpdates: any[] = [];
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn((cols: string) => ({
+              eq: vi.fn((field: string, val: any) => {
+                if (field === 'tenant_id') {
+                  return Promise.resolve({
+                    data: [
+                      { id: 'target-item-id', parent_id: null },
+                      { id: 'child-item-1', parent_id: 'target-item-id' },
+                    ],
+                    error: null,
+                  });
+                }
+                return {
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'target-item-id',
+                      tenant_id: 'tenant-test-123',
+                      project_id: 'old-project-id',
+                      parent_id: null,
+                    },
+                    error: null,
+                  }),
+                };
+              }),
+            })),
+            update: vi.fn((fields: any) => ({
+              eq: vi.fn((field: string, idVal: any) => {
+                rolledBackUpdates.push({ id: idVal, ...fields });
+                return Promise.resolve({ error: null });
+              }),
+              in: vi.fn((field: string, ids: any) => {
+                // Simulate failure on descendant update
+                return Promise.resolve({ error: { message: 'Database lock timeout on child rows' } });
+              }),
+            })),
+          } as any;
+        }
+        if (table === 'tenant_members') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { role: 'admin' },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'new-project-id', slug: 'new-proj', name: 'New Project' },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const result = await reassignWorkItemProject('target-item-id', 'new-project-id');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Reassignment was rolled back');
+
+      // Verify that a rollback update was executed restoring original project_id
+      const rollbackCall = rolledBackUpdates.find((u) => u.id === 'target-item-id' && u.project_id === 'old-project-id');
+      expect(rollbackCall).toBeDefined();
+    });
+
+    it('should reject reassignment if item_type is not supported in destination project', async () => {
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'target-item-id',
+                    tenant_id: 'tenant-test-123',
+                    project_id: 'old-project-id',
+                    item_type: 'epic',
+                    status: 'planned',
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'tenant_members') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { role: 'admin' },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'new-project-id',
+                      slug: 'new-proj',
+                      name: 'Simple Task Project',
+                      settings: {
+                        hierarchy: [{ type: 'task', label: 'Task', level: 1 }],
+                        statuses: [{ id: 'planned', label: 'Planned' }],
+                      },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const result = await reassignWorkItemProject('target-item-id', 'new-project-id');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Item type 'epic' is not supported in destination project 'Simple Task Project'");
+    });
+  });
+
+  // TRK-08: Ingest Override Validation edge cases
+  describe('TRK-08: Ingest Override Validation', () => {
+    it('should reject invalid override_project_slug with non-alphanumeric characters', async () => {
+      const payload = {
+        project_slug: 'valid-slug',
+        override_project_slug: 'invalid slug with spaces!',
+        items: [{ title: 'Item 1' }],
+      };
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const res = await ingestHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Invalid "override_project_slug"');
+    });
+
+    it('should reject override_sprint not present in managed_sprints when configured', async () => {
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'proj-1',
+                        slug: 'proj-1',
+                        settings: {
+                          sprint_settings: {
+                            managed_sprints: [
+                              { id: 'sp-1', name: 'Sprint 2026-Q1' },
+                              { id: 'sp-2', name: 'Sprint 2026-Q2' },
+                            ],
+                          },
+                        },
+                      },
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const payload = {
+        project_slug: 'proj-1',
+        override_sprint: 'Non-Existent Sprint',
+        items: [{ title: 'Item 1' }],
+      };
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const res = await ingestHandler(req);
+      expect(res.status).toBe(422);
+      const json = await res.json();
+      expect(json.error).toContain('Must match an existing sprint in this project');
+    });
+
+    it('should reject override_assignee containing illegal control characters', async () => {
+      const payload = {
+        project_slug: 'valid-slug',
+        override_assignee: '<script>alert(1)</script>',
+        items: [{ title: 'Item 1' }],
+      };
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const res = await ingestHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Invalid "override_assignee"');
+    });
   });
 });

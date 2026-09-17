@@ -90,6 +90,7 @@ export async function GET(req: NextRequest) {
           tier,
           owner_id,
           metadata,
+          api_key,
           api_key_preview,
           created_at,
           deleted_at

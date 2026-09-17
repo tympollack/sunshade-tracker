@@ -25,6 +25,59 @@ export async function POST(req: NextRequest) {
       override_assignee?: string | null;
     };
 
+    // Validate override fields
+    if (override_project_slug !== undefined && override_project_slug !== null) {
+      if (typeof override_project_slug !== 'string') {
+        return NextResponse.json(
+          { error: '"override_project_slug" must be a string' },
+          { status: 400 }
+        );
+      }
+      const trimmedProj = override_project_slug.trim();
+      if (trimmedProj.length === 0 || trimmedProj.length > 100 || !/^[a-z0-9-_]+$/i.test(trimmedProj)) {
+        return NextResponse.json(
+          { error: 'Invalid "override_project_slug". Must be 1-100 alphanumeric, hyphen, or underscore characters.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (override_sprint !== undefined && override_sprint !== null) {
+      if (typeof override_sprint !== 'string') {
+        return NextResponse.json(
+          { error: '"override_sprint" must be a string or null' },
+          { status: 400 }
+        );
+      }
+      const trimmedSprint = override_sprint.trim();
+      if (trimmedSprint !== '__none__') {
+        if (trimmedSprint.length === 0 || trimmedSprint.length > 100 || /[\r\n\t<>]/.test(trimmedSprint)) {
+          return NextResponse.json(
+            { error: 'Invalid "override_sprint". Must be 1-100 characters without illegal control characters.' },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
+    if (override_assignee !== undefined && override_assignee !== null) {
+      if (typeof override_assignee !== 'string') {
+        return NextResponse.json(
+          { error: '"override_assignee" must be a string or null' },
+          { status: 400 }
+        );
+      }
+      const trimmedAssignee = override_assignee.trim();
+      if (trimmedAssignee !== '__unassigned__' && trimmedAssignee !== '') {
+        if (trimmedAssignee.length > 100 || /[\r\n\t<>]/.test(trimmedAssignee)) {
+          return NextResponse.json(
+            { error: 'Invalid "override_assignee". Must be 1-100 characters without illegal control characters.' },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     const effectiveProjectSlug = override_project_slug || project_slug;
 
     if (!effectiveProjectSlug || !Array.isArray(items) || items.length === 0) {
@@ -52,6 +105,54 @@ export async function POST(req: NextRequest) {
     }
 
     const settings = project.settings || {};
+
+    // Validate override_sprint against managed_sprints if configured
+    if (
+      override_sprint &&
+      override_sprint !== '__none__' &&
+      Array.isArray(settings?.sprint_settings?.managed_sprints) &&
+      settings.sprint_settings.managed_sprints.length > 0
+    ) {
+      const match = settings.sprint_settings.managed_sprints.some(
+        (s: any) =>
+          s.name?.toLowerCase() === override_sprint.trim().toLowerCase() ||
+          s.id === override_sprint.trim()
+      );
+      if (!match) {
+        return NextResponse.json(
+          { error: `Invalid "override_sprint" '${override_sprint}'. Must match an existing sprint in this project.` },
+          { status: 422 }
+        );
+      }
+    }
+
+    // Validate override_assignee against tenant members
+    if (
+      override_assignee &&
+      override_assignee !== '__unassigned__' &&
+      override_assignee.trim() !== ''
+    ) {
+      try {
+        const resolver = await getTenantMemberRecipients(tenant.id);
+        const recipient = resolver.resolve(override_assignee.trim());
+        const membersTable: any = supabaseAdmin.from('tenant_members');
+        if (membersTable && typeof membersTable.select === 'function') {
+          const { count } = await membersTable
+            .select('*', { count: 'exact', head: true })
+            .eq('tenant_id', tenant.id);
+
+          if (typeof count === 'number' && count > 0 && !recipient) {
+            return NextResponse.json(
+              { error: `Invalid "override_assignee" '${override_assignee}': member not found in workspace.` },
+              { status: 422 }
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn('[tracker:ingest] Error validating assignee against workspace members:', err);
+      }
+    }
+
     const defaultStatus = settings.statuses?.[0]?.id || 'not_started';
     const defaultType = settings.hierarchy?.[settings.hierarchy.length - 1]?.type || 'task';
 

@@ -207,8 +207,17 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
       apiKey = xApiKey.trim();
     }
 
-    // Reject missing API keys or keys containing PostgREST filter injection characters
-    if (!apiKey || /[,\(\)"'\r\n\t]/.test(apiKey)) {
+    if (!apiKey) {
+      return {
+        context: null,
+        errorResponse: NextResponse.json(
+          { error: 'Missing or malformed Authorization header. Expected: Bearer tk_live_...' },
+          { status: 401 }
+        ),
+      };
+    }
+
+    if (/[,\(\)"'\r\n\t]/.test(apiKey)) {
       return {
         context: null,
         errorResponse: NextResponse.json(
@@ -221,34 +230,59 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
     const keyHash = createHash('sha256').update(apiKey).digest('hex');
     const service = supabaseAdmin;
 
+    let tenant: any = null;
+    let tenantErr: any = null;
+
+    const execTenantQuery = async (query: any) => {
+      if (typeof query?.maybeSingle === 'function') {
+        return query.maybeSingle();
+      }
+      if (typeof query?.single === 'function') {
+        return query.single();
+      }
+      return { data: null, error: null };
+    };
+
     // 1. Primary lookup by cryptographic SHA-256 hash (constant-length hex string, injection-free)
-    let tenantQuery: any = service
-      .from('tenants')
-      .select('*')
-      .eq('api_key_hash', keyHash);
+    try {
+      let tenantQuery: any = service
+        .from('tenants')
+        .select('*')
+        .eq('api_key_hash', keyHash);
 
-    if (typeof tenantQuery.is === 'function') {
-      tenantQuery = tenantQuery.is('deleted_at', null);
+      if (typeof tenantQuery.is === 'function') {
+        tenantQuery = tenantQuery.is('deleted_at', null);
+      }
+
+      const res = await execTenantQuery(tenantQuery);
+      if (res?.data) {
+        tenant = res.data;
+      }
+    } catch {
+      // Ignore hash lookup errors (e.g. column not yet migrated in external database)
     }
-
-    let { data: tenant, error: tenantErr } = await tenantQuery.single();
 
     // 2. Legacy fallback: lookup by plaintext api_key using parameterized .eq()
     // Using .eq() rather than string interpolation in .or() prevents PostgREST filter injection.
     if (!tenant) {
-      let legacyQuery: any = service
-        .from('tenants')
-        .select('*')
-        .eq('api_key', apiKey);
+      try {
+        let legacyQuery: any = service
+          .from('tenants')
+          .select('*')
+          .eq('api_key', apiKey);
 
-      if (typeof legacyQuery.is === 'function') {
-        legacyQuery = legacyQuery.is('deleted_at', null);
-      }
+        if (typeof legacyQuery.is === 'function') {
+          legacyQuery = legacyQuery.is('deleted_at', null);
+        }
 
-      const legacyRes = await legacyQuery.single();
-      if (legacyRes?.data) {
-        tenant = legacyRes.data;
-        tenantErr = null;
+        const legacyRes = await execTenantQuery(legacyQuery);
+        if (legacyRes?.data) {
+          tenant = legacyRes.data;
+        } else if (legacyRes?.error) {
+          tenantErr = legacyRes.error;
+        }
+      } catch (err) {
+        tenantErr = err;
       }
     }
 

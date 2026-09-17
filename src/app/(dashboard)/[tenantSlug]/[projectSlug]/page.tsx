@@ -55,6 +55,7 @@ import { CopyableRefId } from '@/components/CopyableRefId';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
+import { reassignWorkItemProject } from '@/app/actions/trackerActions';
 import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
@@ -557,6 +558,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   useEffect(() => {
     setSelectedStatuses(null);
     setSelectedLevels(null);
+    setTreeSelectedStatuses(null);
+    setTreeSelectedLevels(null);
+    setSprintSelectedStatuses(null);
+    setSprintSelectedLevels(null);
     setSelectedSprint('all');
     setLoadedProjectSlug(null);
     setDismissedBoardDeviationBanner(false);
@@ -1359,6 +1364,41 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
   // ─── Save work item from modal ───────────────────────────────────────────
   const handleSaveModalItem = async (itemId: string, updates: Partial<WorkItem>) => {
+    const currentProj = allProjects.find((p) => p.slug === projectSlug);
+    const isMovingProject = Boolean(
+      updates.project_id && (!currentProj || updates.project_id !== currentProj.id)
+    );
+
+    if (isMovingProject && updates.project_id) {
+      // 1. Invoke reassignWorkItemProject server action
+      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug);
+      if (!moveResult.success) {
+        throw new Error(moveResult.error || 'Failed to reassign work item project');
+      }
+
+      // 2. If there are other updates (excluding project_id), update them via PATCH
+      const otherUpdates = { ...updates };
+      delete otherUpdates.project_id;
+      if (Object.keys(otherUpdates).length > 0) {
+        const res = await apiFetch('/api/v1/items', {
+          method: 'PATCH',
+          body: JSON.stringify({ id: itemId, ...otherUpdates }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Failed to save changes (${res.status})`);
+        }
+      }
+
+      const destProject = allProjects.find((p) => p.id === updates.project_id);
+      const childCount = Math.max(0, (moveResult.updatedCount ?? 1) - 1);
+      const projName = destProject?.name || 'new project';
+      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${projName}`);
+      setTimeout(() => setBulkToast(null), 4000);
+      fetchData();
+      return;
+    }
+
     const res = await apiFetch('/api/v1/items', {
       method: 'PATCH',
       body: JSON.stringify({ id: itemId, ...updates }),
@@ -1373,15 +1413,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
-    const currentProj = allProjects.find((p) => p.slug === projectSlug);
-    if (updates.project_id && (!currentProj || updates.project_id !== currentProj.id)) {
-      const destProject = allProjects.find((p) => p.id === updates.project_id);
-      const childCount = items.filter((it) => it.parent_id === itemId).length;
-      const projName = destProject?.name || 'new project';
-      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${projName}`);
-      setTimeout(() => setBulkToast(null), 4000);
-      fetchData();
-    } else if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
+    if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
       fetchData();
     }
   };

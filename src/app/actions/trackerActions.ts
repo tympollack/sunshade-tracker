@@ -126,18 +126,54 @@ export async function reassignWorkItemProject(
       if (!owned) {
         return { success: false, error: 'Forbidden: Access to workspace denied' };
       }
+    } else if (membership.role === 'viewer') {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('owner_id', user.id)
+        .eq('id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (!owned) {
+        return {
+          success: false,
+          error: 'Forbidden: Workspace viewers have read-only access and cannot move items',
+        };
+      }
     }
 
     // 4. Verify destination project exists in tenant
     const { data: destProject, error: projErr } = await service
       .from('projects')
-      .select('id, slug, name')
+      .select('id, slug, name, settings')
       .eq('tenant_id', tenantId)
       .eq('id', newProjectId)
       .single();
 
     if (projErr || !destProject) {
       return { success: false, error: 'Destination project not found in this workspace' };
+    }
+
+    // Validate target item type and status against destination project schema
+    if (destProject.settings?.hierarchy?.length) {
+      const allowedTypes = destProject.settings.hierarchy.map((h: any) => h.type);
+      if (!allowedTypes.includes(targetItem.item_type)) {
+        return {
+          success: false,
+          error: `Item type '${targetItem.item_type}' is not supported in destination project '${destProject.name}'. Allowed types: [${allowedTypes.join(', ')}]`,
+        };
+      }
+    }
+
+    if (destProject.settings?.statuses?.length) {
+      const allowedStatuses = destProject.settings.statuses.map((s: any) => s.id);
+      if (!allowedStatuses.includes(targetItem.status)) {
+        return {
+          success: false,
+          error: `Status '${targetItem.status}' is not supported in destination project '${destProject.name}'. Allowed statuses: [${allowedStatuses.join(', ')}]`,
+        };
+      }
     }
 
     // 5. Recursively find all descendant item IDs
@@ -195,7 +231,20 @@ export async function reassignWorkItemProject(
         .in('id', descendantIds);
 
       if (updateDescErr) {
-        return { success: false, error: updateDescErr.message };
+        // Roll back the target item reassignment to prevent partial migrations
+        await service
+          .from('work_items')
+          .update({
+            project_id: targetItem.project_id,
+            parent_id: targetItem.parent_id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', itemId);
+
+        return {
+          success: false,
+          error: `Failed to update descendant items: ${updateDescErr.message}. Reassignment was rolled back.`,
+        };
       }
     }
 
