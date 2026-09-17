@@ -458,7 +458,7 @@ export async function bulkReassignProjects(
       actor_name: userName,
       action: 'update' as const,
       changed_fields: {
-        project_id: { after: newProjectId },
+        project_id: { before: null, after: newProjectId },
       },
     }));
     await recordBulkAuditLogs(auditEntries).catch(() => {});

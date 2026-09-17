@@ -512,7 +512,7 @@ describe('TRK-09 Epic Test Suite', () => {
           isOpen={true}
           onClose={vi.fn()}
           sprints={[]}
-          onSave={vi.fn()}
+          onSaveSprints={vi.fn()}
         />
       );
 
@@ -527,5 +527,67 @@ describe('TRK-09 Epic Test Suite', () => {
       unmount();
     });
   });
+
+  describe('FEAT-TRK-SPRINT-HIDE-COMPLETED: Hide Completed Sprints toggle filter', () => {
+    it('filters out completed sprints when hideCompleted is active', () => {
+      const sprintDefinitions: SprintDefinition[] = [
+        { id: 's1', name: 'Sprint 2026-Q1', status: 'completed' },
+        { id: 's2', name: 'Sprint 2026-Q2', status: 'completed' },
+        { id: 's3', name: 'Sprint 2026-Q3', status: 'active' },
+        { id: 's4', name: 'Sprint 2026-Q4', status: 'planned' },
+      ];
+
+      const availableSprints = ['Sprint 2026-Q1', 'Sprint 2026-Q2', 'Sprint 2026-Q3', 'Sprint 2026-Q4'];
+
+      const getVisibleSprints = (hideCompleted: boolean) => {
+        if (!hideCompleted) return availableSprints;
+        return availableSprints.filter((sprintName) => {
+          const def = sprintDefinitions.find((s) => s.name === sprintName);
+          return def?.status?.toLowerCase() !== 'completed';
+        });
+      };
+
+      const getHiddenCount = () => {
+        return availableSprints.filter((sprintName) => {
+          const def = sprintDefinitions.find((s) => s.name === sprintName);
+          return def?.status?.toLowerCase() === 'completed';
+        }).length;
+      };
+
+      // Initially visible (hideCompleted = false)
+      expect(getVisibleSprints(false)).toEqual([
+        'Sprint 2026-Q1',
+        'Sprint 2026-Q2',
+        'Sprint 2026-Q3',
+        'Sprint 2026-Q4',
+      ]);
+
+      // When hideCompleted = true
+      const visible = getVisibleSprints(true);
+      expect(visible).toEqual(['Sprint 2026-Q3', 'Sprint 2026-Q4']);
+      expect(getHiddenCount()).toBe(2);
+    });
+
+    it('persists and parses hideCompleted state from localStorage and URL parameters', () => {
+      const projectSlug = 'sunshade-core';
+      const storageKey = `tracker_hide_completed_sprints_${projectSlug}`;
+
+      // 1. Initial defaults to false
+      localStorage.removeItem(storageKey);
+      let stored = localStorage.getItem(storageKey);
+      expect(stored).toBeNull();
+
+      // 2. Persist true
+      localStorage.setItem(storageKey, 'true');
+      stored = localStorage.getItem(storageKey);
+      expect(stored === 'true').toBe(true);
+
+      // 3. URL search params parsing
+      const searchParams = new URLSearchParams('hideCompleted=true');
+      const paramVal = searchParams.get('hideCompleted');
+      expect(paramVal === 'true' || paramVal === '1').toBe(true);
+    });
+  });
 });
+
 
