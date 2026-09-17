@@ -290,10 +290,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
     try {
       const stored = localStorage.getItem(`tracker_hide_completed_sprints_${projectSlug}`);
-      if (stored !== null) {
-        setHideCompletedSprints(stored === 'true');
-      }
-    } catch {}
+      setHideCompletedSprints(stored === 'true');
+    } catch {
+      setHideCompletedSprints(false);
+    }
   }, [projectSlug]);
 
   const handleToggleHideCompletedSprints = () => {
@@ -1726,6 +1726,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const handleBulkChangeProject = async (targetProjectId: string) => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     if (selectedList.length === 0 || !targetProjectId) return;
+
+    const lockedItems = selectedList.filter((it) =>
+      isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (lockedItems.length > 0) {
+      setBulkToast(
+        `Cannot change project: ${lockedItems.length} item(s) are locked in completed sprints.`
+      );
+      setTimeout(() => setBulkToast(null), 4000);
+      return;
+    }
 
     const targetProj = allProjects.find(
       (p) => p.id === targetProjectId || p.slug === targetProjectId

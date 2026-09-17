@@ -64,12 +64,8 @@ export function getAllowedChildTypes(
     }
   }
 
-  // 3. Fallback defaults
-  if (parentType === 'epic') return ['story'];
-  if (parentType === 'story') return ['task'];
-  if (parentType === 'task') return ['subtask'];
-
-  return hierarchy.map((h) => h.type);
+  // 3. Leaf item in configured hierarchy: return empty array
+  return [];
 }
 
 export function AssociatedItemsTab({
@@ -102,7 +98,7 @@ export function AssociatedItemsTab({
   // Inline child creation state
   const [isCreatingChild, setIsCreatingChild] = useState(false);
   const [childTitle, setChildTitle] = useState('');
-  const [childType, setChildType] = useState(() => allowedChildTypes[0] || 'task');
+  const [childType, setChildType] = useState(() => allowedChildTypes[0] || '');
   const [childStatus, setChildStatus] = useState(() => projectSettings.statuses?.[0]?.id || 'backlog');
   const [childAssignee, setChildAssignee] = useState('');
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
@@ -111,12 +107,20 @@ export function AssociatedItemsTab({
   // Extensibility section toggle
   const [isRelatedExpanded, setIsRelatedExpanded] = useState(false);
 
-  // Keep childType valid if allowed types change
+  // Reset child creation state and synchronize childType and childStatus when item or projectSettings change
   React.useEffect(() => {
-    if (allowedChildTypes.length > 0 && !allowedChildTypes.includes(childType)) {
-      setChildType(allowedChildTypes[0]);
-    }
-  }, [allowedChildTypes, childType]);
+    setIsCreatingChild(false);
+    setCreationError(null);
+    setChildTitle('');
+    setChildAssignee('');
+    setChildType(allowedChildTypes[0] || '');
+
+    const validStatusIds = (projectSettings.statuses || []).map((s) => s.id);
+    setChildStatus((prev) => {
+      if (prev && validStatusIds.includes(prev)) return prev;
+      return validStatusIds[0] || 'backlog';
+    });
+  }, [item.id, projectSettings, allowedChildTypes]);
 
   const handleCreateChildSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,15 +284,21 @@ export function AssociatedItemsTab({
           </div>
 
           {!isReadOnly && !isCreatingChild && (
-            <button
-              type="button"
-              onClick={() => setIsCreatingChild(true)}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1 transition-colors cursor-pointer"
-              data-testid="add-child-item-btn"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Child Item</span>
-            </button>
+            allowedChildTypes.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setIsCreatingChild(true)}
+                className="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1 transition-colors cursor-pointer"
+                data-testid="add-child-item-btn"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Child Item</span>
+              </button>
+            ) : (
+              <span className="text-[11px] text-slate-500 italic" data-testid="leaf-item-indicator">
+                (Leaf item)
+              </span>
+            )
           )}
         </div>
 
@@ -431,9 +441,10 @@ export function AssociatedItemsTab({
             data-testid="no-child-items"
           >
             <Layers className="w-8 h-8 text-slate-600 mx-auto" />
-            <p className="text-xs text-slate-400 font-medium">No child items found</p>
             <p className="text-[11px] text-slate-500">
-              Tasks, stories, or sub-items can be linked to this item by creating a child item above or selecting this item as their parent.
+              {allowedChildTypes.length > 0
+                ? 'Tasks, stories, or sub-items can be linked to this item by creating a child item above or selecting this item as their parent.'
+                : 'This item type is a leaf node in the project hierarchy and cannot have child items.'}
             </p>
           </div>
         ) : (

@@ -331,6 +331,10 @@ export async function bulkReassignProjects(
     }
 
     const tenantId = targetItems[0].tenant_id;
+    const hasMixedTenants = targetItems.some((it) => it.tenant_id !== tenantId);
+    if (hasMixedTenants || targetItems.length !== itemIds.length) {
+      return { success: false, error: 'All items must belong to the same authorized workspace' };
+    }
 
     // 3. Validate user access to tenant
     const { data: membership } = await service
@@ -397,6 +401,37 @@ export async function bulkReassignProjects(
     const allAffectedIds = Array.from(new Set([...itemIds, ...allDescendantIds]));
     const affectedIdSet = new Set(allAffectedIds);
 
+    // Validate destination project schema compatibility (DEVIN-REVIEW)
+    const destSettings = destProject.settings as any;
+    if (destSettings?.hierarchy?.length || destSettings?.statuses?.length) {
+      const { data: affectedDetails } = await service
+        .from('work_items')
+        .select('id, title, item_type, status')
+        .in('id', allAffectedIds);
+
+      const validTypes = destSettings?.hierarchy?.length
+        ? new Set(destSettings.hierarchy.map((h: any) => String(h.type).toLowerCase()))
+        : null;
+      const validStatuses = destSettings?.statuses?.length
+        ? new Set(destSettings.statuses.map((s: any) => String(s.id).toLowerCase()))
+        : null;
+
+      for (const it of affectedDetails || []) {
+        if (validTypes && it.item_type && !validTypes.has(String(it.item_type).toLowerCase())) {
+          return {
+            success: false,
+            error: `Cannot move items: item "${it.title || it.id}" has type "${it.item_type}" which is not supported in destination project.`,
+          };
+        }
+        if (validStatuses && it.status && !validStatuses.has(String(it.status).toLowerCase())) {
+          return {
+            success: false,
+            error: `Cannot move items: item "${it.title || it.id}" has status "${it.status}" which is not supported in destination project.`,
+          };
+        }
+      }
+    }
+
     // 6. Disconnect parent_id for any migrated item whose parent is NOT in allAffectedIds
     // and whose parent belongs to a different project
     const itemsWithParents = targetItems.filter((it) => it.parent_id && !affectedIdSet.has(it.parent_id));
@@ -419,14 +454,26 @@ export async function bulkReassignProjects(
     const nowIso = new Date().toISOString();
 
     if (parentIdsToDetach.length > 0) {
-      await service
+      let detachQuery: any = service
         .from('work_items')
         .update({ parent_id: null, updated_at: nowIso })
         .in('id', parentIdsToDetach);
+
+      if (typeof detachQuery?.eq === 'function') {
+        detachQuery = detachQuery.eq('tenant_id', tenantId);
+      }
+      const { error: detachErr } = await detachQuery;
+
+      if (detachErr) {
+        return {
+          success: false,
+          error: `Failed to disconnect cross-project parents: ${detachErr.message}`,
+        };
+      }
     }
 
     // Update all affected items to new project_id
-    const { error: updateErr } = await service
+    let updateQuery: any = service
       .from('work_items')
       .update({
         project_id: newProjectId,
@@ -434,11 +481,16 @@ export async function bulkReassignProjects(
       })
       .in('id', allAffectedIds);
 
+    if (typeof updateQuery?.eq === 'function') {
+      updateQuery = updateQuery.eq('tenant_id', tenantId);
+    }
+    const { error: updateErr } = await updateQuery;
+
     if (updateErr) {
       return { success: false, error: updateErr.message };
     }
 
-    // Synchronize audit logs
+    // Synchronize audit logs project_id to match destination project so fk constraint is satisfied and audit history moves with item
     const auditTable = service.from('audit_logs') as any;
     if (typeof auditTable?.update === 'function') {
       await auditTable
