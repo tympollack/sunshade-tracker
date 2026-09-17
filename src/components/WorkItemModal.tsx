@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   Trash2,
@@ -21,9 +21,10 @@ import {
   ArrowRight,
   RefreshCw,
   Lock,
+  Loader2,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition, AuditLogEntry } from '@/types/tracker';
-import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
+import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadata';
@@ -114,8 +115,43 @@ export function WorkItemModal({
       if (copyGetUrlTimeoutRef.current) clearTimeout(copyGetUrlTimeoutRef.current);
     };
   }, []);
+
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
-  const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, projectSettings) : false;
+
+  const effectiveProjectSettings = useMemo(() => {
+    if (selectedProjectId && projects && projects.length > 0) {
+      const destProj = projects.find((p) => p.id === selectedProjectId || p.slug === selectedProjectId);
+      if (destProj?.settings) {
+        return {
+          ...destProj.settings,
+          hierarchy: (destProj.settings.hierarchy || []).map((h: any) => ({
+            ...h,
+            color: h.color || getDefaultLevelHex(h.level),
+          })),
+        };
+      }
+    }
+    return projectSettings;
+  }, [selectedProjectId, projects, projectSettings]);
+
+  // Keep itemType and status aligned with effectiveProjectSettings when selectedProjectId changes
+  useEffect(() => {
+    if (!effectiveProjectSettings) return;
+    if (itemType && effectiveProjectSettings.hierarchy?.length) {
+      const isTypeValid = effectiveProjectSettings.hierarchy.some((h) => h.type === itemType);
+      if (!isTypeValid) {
+        setItemType(effectiveProjectSettings.hierarchy[0]?.type || 'task');
+      }
+    }
+    if (status && effectiveProjectSettings.statuses?.length) {
+      const isStatusValid = effectiveProjectSettings.statuses.some((s) => s.id === status);
+      if (!isStatusValid) {
+        setStatus(effectiveProjectSettings.statuses[0]?.id || 'backlog');
+      }
+    }
+  }, [selectedProjectId, effectiveProjectSettings]);
+
+  const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, effectiveProjectSettings) : false;
   const isLocked = isSprintLocked || isReadOnly;
 
   // Navigation tabs: details | children | activity
@@ -195,15 +231,73 @@ export function WorkItemModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, showConfirmDelete, title, description, status, itemType, parentId, assignee, externalRef, metadata, metaErrors]);
 
+  const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
+  const [isLoadingParents, setIsLoadingParents] = useState(false);
+
+  // Dynamically refresh parent item options when reassigning project (BUG-TRK-REASSIGN-PARENT-OPTIONS)
+  useEffect(() => {
+    if (!item) return;
+    const targetProjId = selectedProjectId || item.project_id;
+    if (!targetProjId) return;
+
+    // If changing project, check if current parent belongs to new project. If not, reset to None.
+    const knownMatching = allItems.filter((i) => i.project_id === targetProjId);
+    if (parentId && targetProjId !== item.project_id) {
+      const parentMatches = knownMatching.some((i) => i.id === parentId);
+      if (!parentMatches) {
+        setParentId('');
+      }
+    }
+
+    if (targetProjId === item.project_id) {
+      setProjectCandidateItems(allItems.filter((i) => i.project_id === item.project_id));
+      setIsLoadingParents(false);
+      return;
+    }
+
+    if (knownMatching.length > 0) {
+      setProjectCandidateItems(knownMatching);
+    }
+
+    let isCancelled = false;
+    setIsLoadingParents(true);
+    fetch(`/api/v1/items?project_id=${targetProjId}`, {
+      headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isCancelled && data?.items) {
+          setProjectCandidateItems(data.items);
+          if (parentId && !data.items.some((it: WorkItem) => it.id === parentId)) {
+            setParentId('');
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isCancelled) setIsLoadingParents(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedProjectId, item?.id, item?.project_id, allItems, tenantSlug]);
+
   if (!isOpen || !item) return null;
 
-  // Determine allowed parents based on selected itemType
-  const currentHierarchyConfig = projectSettings.hierarchy.find((h) => h.type === itemType);
+  // Determine allowed parents based on selected itemType and effective project
+  const currentHierarchyConfig = effectiveProjectSettings.hierarchy.find((h) => h.type === itemType);
   const allowedParentTypes = currentHierarchyConfig?.allowed_parents || [];
-  const eligibleParents = allItems.filter(
+  const targetProjId = selectedProjectId || item.project_id;
+  const parentPool =
+    projectCandidateItems.length > 0
+      ? projectCandidateItems
+      : allItems.filter((other) => other.project_id === targetProjId);
+
+  const eligibleParents = parentPool.filter(
     (other) =>
       other.id !== item.id &&
-      other.project_id === item.project_id &&
+      other.project_id === targetProjId &&
       allowedParentTypes.includes(other.item_type)
   );
 
@@ -223,7 +317,7 @@ export function WorkItemModal({
     ])
   );
 
-  const levelColor = getHierarchyLevelColor(itemType, projectSettings.hierarchy);
+  const levelColor = getHierarchyLevelColor(itemType, effectiveProjectSettings.hierarchy);
   const { prUrl: modalPrUrl, commitHash: modalCommitHash, repo: modalRepo, owner: modalOwner } = extractGitHubMetadata(metadata);
 
   const handleSave = async () => {
@@ -605,8 +699,8 @@ export function WorkItemModal({
               ) : (
                 <div className="space-y-2">
                   {childItems.map((child) => {
-                    const childColor = getHierarchyLevelColor(child.item_type, projectSettings.hierarchy);
-                    const childStatus = projectSettings.statuses.find((s) => s.id === child.status);
+                    const childColor = getHierarchyLevelColor(child.item_type, effectiveProjectSettings.hierarchy);
+                    const childStatus = effectiveProjectSettings.statuses.find((s) => s.id === child.status);
                     const childPoints = child.metadata?.story_points ?? child.metadata?.points ?? child.metadata?.estimate;
 
                     return (
@@ -742,8 +836,8 @@ export function WorkItemModal({
                                 if (!diff) return null;
 
                                 if (key === 'status') {
-                                  const beforeDef = projectSettings.statuses.find((s) => s.id === diff.before);
-                                  const afterDef = projectSettings.statuses.find((s) => s.id === diff.after);
+                                  const beforeDef = effectiveProjectSettings.statuses.find((s) => s.id === diff.before);
+                                  const afterDef = effectiveProjectSettings.statuses.find((s) => s.id === diff.after);
                                   return (
                                     <div key={key} className="flex items-center space-x-2 text-xs">
                                       <span className="text-slate-500 capitalize">Status:</span>
@@ -869,7 +963,7 @@ export function WorkItemModal({
                 onChange={(e) => setStatus(e.target.value)}
                 className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
               >
-                {projectSettings.statuses.map((st: StatusDefinition) => (
+                {effectiveProjectSettings.statuses.map((st: StatusDefinition) => (
                   <option key={st.id} value={st.id}>
                     {st.label}
                   </option>
@@ -887,7 +981,7 @@ export function WorkItemModal({
                 onChange={(e) => {
                   setItemType(e.target.value);
                   // Reset parent if current parent doesn't match new allowed parents
-                  const newCfg = projectSettings.hierarchy.find((h) => h.type === e.target.value);
+                  const newCfg = effectiveProjectSettings.hierarchy.find((h) => h.type === e.target.value);
                   const allowed = newCfg?.allowed_parents || [];
                   const parentItem = allItems.find((i) => i.id === parentId);
                   if (parentItem && !allowed.includes(parentItem.item_type)) {
@@ -896,7 +990,7 @@ export function WorkItemModal({
                 }}
                 className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
               >
-                {projectSettings.hierarchy.map((h) => (
+                {effectiveProjectSettings.hierarchy.map((h) => (
                   <option key={h.type} value={h.type}>
                     {h.label} (Level {h.level})
                   </option>
@@ -970,18 +1064,28 @@ export function WorkItemModal({
 
             {/* Parent Item */}
             <div className="space-y-1.5 sm:col-span-2">
-              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-                Parent Item{' '}
-                {allowedParentTypes.length > 0 && (
-                  <span className="text-slate-500 normal-case font-mono">
-                    (Allowed: {allowedParentTypes.join(', ')})
+              <label className="text-xs font-medium text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <span>
+                  Parent Item{' '}
+                  {allowedParentTypes.length > 0 && (
+                    <span className="text-slate-500 normal-case font-mono">
+                      (Allowed: {allowedParentTypes.join(', ')})
+                    </span>
+                  )}
+                </span>
+                {isLoadingParents && (
+                  <span className="text-[11px] text-emerald-400 flex items-center space-x-1 lowercase font-normal">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>loading parents...</span>
                   </span>
                 )}
               </label>
               <select
                 value={parentId}
                 onChange={(e) => setParentId(e.target.value)}
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                disabled={isLoadingParents}
+                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 disabled:opacity-60"
+                data-testid="item-parent-select"
               >
                 <option value="">None (Top Level)</option>
                 {eligibleParents.map((p) => (
@@ -1012,10 +1116,10 @@ export function WorkItemModal({
             </div>
 
             {/* Suggested Fields from Project Schema */}
-            {projectSettings.custom_fields && projectSettings.custom_fields.length > 0 && (
+            {effectiveProjectSettings.custom_fields && effectiveProjectSettings.custom_fields.length > 0 && (
               <div className="flex items-center flex-wrap gap-1.5 pt-1">
                 <span className="text-[10px] text-slate-500 font-mono">Suggested fields:</span>
-                {projectSettings.custom_fields
+                {effectiveProjectSettings.custom_fields
                   .filter((f) => !(f in metadata))
                   .map((f) => (
                     <button

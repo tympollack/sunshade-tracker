@@ -42,7 +42,9 @@ export interface Tenant {
   id: string;
   slug: string;
   name: string;
-  api_key: string;
+  api_key?: string | null;
+  api_key_hash?: string | null;
+  api_key_preview?: string | null;
   owner_id?: string | null;
   tier: string;
   metadata: Record<string, any>;

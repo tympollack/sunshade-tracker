@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { createServerClient } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/db';
 import { Tenant } from '@/types/tracker';
@@ -216,17 +217,74 @@ export async function authenticateApiKey(req: NextRequest): Promise<AuthResult> 
       };
     }
 
-    const service = supabaseAdmin;
-    let tenantQuery: any = service
-      .from('tenants')
-      .select('*')
-      .eq('api_key', apiKey);
-
-    if (typeof tenantQuery.is === 'function') {
-      tenantQuery = tenantQuery.is('deleted_at', null);
+    if (/[,\(\)"'\r\n\t]/.test(apiKey)) {
+      return {
+        context: null,
+        errorResponse: NextResponse.json(
+          { error: 'Invalid API Key or tenant not found' },
+          { status: 401 }
+        ),
+      };
     }
 
-    const { data: tenant, error: tenantErr } = await tenantQuery.single();
+    const keyHash = createHash('sha256').update(apiKey).digest('hex');
+    const service = supabaseAdmin;
+
+    let tenant: any = null;
+    let tenantErr: any = null;
+
+    const execTenantQuery = async (query: any) => {
+      if (typeof query?.maybeSingle === 'function') {
+        return query.maybeSingle();
+      }
+      if (typeof query?.single === 'function') {
+        return query.single();
+      }
+      return { data: null, error: null };
+    };
+
+    // 1. Primary lookup by cryptographic SHA-256 hash (constant-length hex string, injection-free)
+    try {
+      let tenantQuery: any = service
+        .from('tenants')
+        .select('*')
+        .eq('api_key_hash', keyHash);
+
+      if (typeof tenantQuery.is === 'function') {
+        tenantQuery = tenantQuery.is('deleted_at', null);
+      }
+
+      const res = await execTenantQuery(tenantQuery);
+      if (res?.data) {
+        tenant = res.data;
+      }
+    } catch {
+      // Ignore hash lookup errors (e.g. column not yet migrated in external database)
+    }
+
+    // 2. Legacy fallback: lookup by plaintext api_key using parameterized .eq()
+    // Using .eq() rather than string interpolation in .or() prevents PostgREST filter injection.
+    if (!tenant) {
+      try {
+        let legacyQuery: any = service
+          .from('tenants')
+          .select('*')
+          .eq('api_key', apiKey);
+
+        if (typeof legacyQuery.is === 'function') {
+          legacyQuery = legacyQuery.is('deleted_at', null);
+        }
+
+        const legacyRes = await execTenantQuery(legacyQuery);
+        if (legacyRes?.data) {
+          tenant = legacyRes.data;
+        } else if (legacyRes?.error) {
+          tenantErr = legacyRes.error;
+        }
+      } catch (err) {
+        tenantErr = err;
+      }
+    }
 
     if (tenantErr || !tenant) {
       return {
