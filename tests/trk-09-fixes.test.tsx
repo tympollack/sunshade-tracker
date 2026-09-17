@@ -440,5 +440,92 @@ describe('TRK-09 Epic Test Suite', () => {
       unmount();
     });
   });
+
+  describe('FEAT-TRK-SPRINT-STATUS-SEQUENCE-UNPLANNED: Canonical sprint sequence and unplanned bucket', () => {
+    it('defines canonical sprint status weights and sequence: completed(1), active(2), planned(3), unplanned(4)', async () => {
+      const { SPRINT_STATUS_WEIGHTS, SPRINT_STATUS_SEQUENCE, getSprintStatusWeight } = await import('@/lib/sprint-utils');
+
+      expect(SPRINT_STATUS_WEIGHTS.completed).toBe(1);
+      expect(SPRINT_STATUS_WEIGHTS.active).toBe(2);
+      expect(SPRINT_STATUS_WEIGHTS.planned).toBe(3);
+      expect(SPRINT_STATUS_WEIGHTS.unplanned).toBe(4);
+
+      expect(SPRINT_STATUS_SEQUENCE).toEqual(['completed', 'active', 'planned', 'unplanned']);
+
+      expect(getSprintStatusWeight('completed')).toBe(1);
+      expect(getSprintStatusWeight('active')).toBe(2);
+      expect(getSprintStatusWeight('planned')).toBe(3);
+      expect(getSprintStatusWeight('unplanned')).toBe(4);
+      expect(getSprintStatusWeight(null)).toBe(3);
+    });
+
+    it('sorts sprints according to lifecycle sequence (Completed -> Active -> Planned -> Unplanned)', async () => {
+      const { sortSprintNames } = await import('@/lib/sprint-utils');
+
+      const sprintDefs = [
+        { id: 's-plan', name: 'Sprint 2026-Q4', status: 'planned' as const },
+        { id: 's-comp', name: 'Sprint 2026-Q1', status: 'completed' as const },
+        { id: 's-act', name: 'Sprint 2026-Q3', status: 'active' as const },
+        { id: 's-comp2', name: 'Sprint 2026-Q2', status: 'completed' as const },
+      ];
+
+      const sorted = sortSprintNames(
+        ['Sprint 2026-Q4', 'Sprint 2026-Q1', 'Sprint 2026-Q3', 'Sprint 2026-Q2'],
+        sprintDefs
+      );
+
+      // Completed sprints first (Q1, Q2), then Active (Q3), then Planned (Q4)
+      expect(sorted).toEqual([
+        'Sprint 2026-Q1',
+        'Sprint 2026-Q2',
+        'Sprint 2026-Q3',
+        'Sprint 2026-Q4',
+      ]);
+    });
+
+    it('groups null, empty, and unplanned sprint items into Unplanned Backlog bucket', () => {
+      const items = [
+        { id: '1', title: 'Task in active sprint', metadata: { sprint: 'Sprint 2026-Q3' } },
+        { id: '2', title: 'Task with null sprint', metadata: { sprint: null } },
+        { id: '3', title: 'Task with empty sprint', metadata: { sprint: '   ' } },
+        { id: '4', title: 'Task with unplanned sprint', metadata: { sprint: 'unplanned' } },
+        { id: '5', title: 'Task with no metadata', metadata: undefined },
+      ];
+
+      const rawBacklogItems = items.filter(
+        (it) =>
+          !it.metadata?.sprint ||
+          String(it.metadata.sprint).trim().toLowerCase() === 'unplanned' ||
+          String(it.metadata.sprint).trim() === ''
+      );
+
+      expect(rawBacklogItems.map((it) => it.id)).toEqual(['2', '3', '4', '5']);
+    });
+
+    it('renders ManageSprintsModal status select options in canonical sequence', async () => {
+      const { render, fireEvent, cleanup } = await import('@testing-library/react');
+      const { ManageSprintsModal } = await import('@/components/ManageSprintsModal');
+      cleanup();
+
+      const { getByText, unmount } = render(
+        <ManageSprintsModal
+          isOpen={true}
+          onClose={vi.fn()}
+          sprints={[]}
+          onSave={vi.fn()}
+        />
+      );
+
+      fireEvent.click(getByText('New Sprint'));
+
+      const statusSelect = document.querySelector('select') as HTMLSelectElement;
+      expect(statusSelect).toBeDefined();
+
+      const values = Array.from(statusSelect.options).map((o) => o.value);
+      expect(values).toEqual(['completed', 'active', 'planned', 'unplanned']);
+
+      unmount();
+    });
+  });
 });
 

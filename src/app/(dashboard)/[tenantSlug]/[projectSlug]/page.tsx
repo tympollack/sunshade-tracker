@@ -511,11 +511,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const availableSprints = useMemo(() => {
     const set = new Set<string>();
     (projectSettings.sprint_settings?.sprints || []).forEach((s: any) => {
-      if (s.name) set.add(s.name);
+      if (s.name && s.status !== 'unplanned' && s.name.toLowerCase() !== 'unplanned') {
+        set.add(s.name);
+      }
     });
     items.forEach((it) => {
       if (it.metadata?.sprint) {
-        set.add(String(it.metadata.sprint));
+        const s = String(it.metadata.sprint).trim();
+        if (s && s.toLowerCase() !== 'unplanned' && s !== '__none__') {
+          set.add(s);
+        }
       }
     });
     return sortSprintNames(Array.from(set), projectSettings.sprint_settings?.sprints);
@@ -3600,9 +3605,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 );
               })}
 
-              {/* Backlog (Unassigned) Swimlane */}
+              {/* Unplanned Backlog Swimlane (FEAT-TRK-SPRINT-STATUS-SEQUENCE-UNPLANNED) */}
               {(() => {
-                const rawBacklogItems = items.filter((it) => !it.metadata?.sprint);
+                const rawBacklogItems = items.filter(
+                  (it) =>
+                    !it.metadata?.sprint ||
+                    String(it.metadata.sprint).trim().toLowerCase() === 'unplanned' ||
+                    String(it.metadata.sprint).trim() === ''
+                );
                 const backlogItems = filterSprintItems(rawBacklogItems);
                 const backlogPoints = backlogItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
@@ -3708,7 +3718,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                         <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
                         <h4 className="text-base font-semibold text-white">
-                          Product Backlog (Unassigned)
+                          Unplanned Backlog
                         </h4>
                         <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
                           {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}

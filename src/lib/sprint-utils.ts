@@ -3,11 +3,30 @@ import { SprintDefinition, WorkItem, ProjectSettings } from '@/types/tracker';
 const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
 
 /**
+ * Canonical sprint status weights (FEAT-TRK-SPRINT-STATUS-SEQUENCE-UNPLANNED):
+ * Completed (1) -> Active (2) -> Planned (3) -> Unplanned (4)
+ */
+export const SPRINT_STATUS_WEIGHTS: Record<string, number> = {
+  completed: 1,
+  active: 2,
+  planned: 3,
+  unplanned: 4,
+};
+
+export const SPRINT_STATUS_SEQUENCE = ['completed', 'active', 'planned', 'unplanned'] as const;
+
+export function getSprintStatusWeight(status?: string | null): number {
+  if (!status) return 3; // Default to planned
+  const normalized = String(status).toLowerCase().trim();
+  return SPRINT_STATUS_WEIGHTS[normalized] ?? 3;
+}
+
+/**
  * Natural chronological comparison between two sprints.
- * 1. Chronological order by start_date if both have dates.
- * 2. Sprints with start_date precede sprints without.
- * 3. Fall back to natural alphanumeric comparison on sprint names
- *    (e.g., "Sprint 2" comes before "Sprint 10", "Sprint 2026-Q1" before "Sprint 2026-Q2").
+ * 1. Primary sorting by canonical lifecycle status weight (Completed -> Active -> Planned -> Unplanned).
+ * 2. Chronological order by start_date if both have dates.
+ * 3. Sprints with start_date precede sprints without.
+ * 4. Fall back to natural alphanumeric comparison on sprint names.
  */
 export function compareSprints(
   a: string | SprintDefinition,
@@ -19,6 +38,15 @@ export function compareSprints(
 
   const defA = typeof a === 'object' ? a : sprintMap?.get(nameA);
   const defB = typeof b === 'object' ? b : sprintMap?.get(nameB);
+
+  // 1. Primary sort by canonical lifecycle status weight
+  if (defA?.status || defB?.status) {
+    const weightA = getSprintStatusWeight(defA?.status);
+    const weightB = getSprintStatusWeight(defB?.status);
+    if (weightA !== weightB) {
+      return weightA - weightB;
+    }
+  }
 
   const startA = defA?.start_date ? new Date(defA.start_date).getTime() : null;
   const startB = defB?.start_date ? new Date(defB.start_date).getTime() : null;
@@ -125,6 +153,13 @@ export function getSprintStatusBadge(status?: string | null): {
         bg: 'bg-purple-500/20',
         text: 'text-purple-300',
         border: 'border-purple-500/30',
+      };
+    case 'unplanned':
+      return {
+        label: 'Unplanned',
+        bg: 'bg-slate-500/20',
+        text: 'text-slate-300',
+        border: 'border-slate-500/30',
       };
     case 'planned':
     default:
