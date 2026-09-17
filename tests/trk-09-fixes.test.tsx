@@ -394,5 +394,51 @@ describe('TRK-09 Epic Test Suite', () => {
       unmount();
     });
   });
+
+  describe('BUG-TRK-SPRINT-DUPLICATE-ACTIVE-PILL: Single status badge per sprint row', () => {
+    it('renders exactly one status badge for an active sprint without duplicate Active pills', async () => {
+      const { render, cleanup } = await import('@testing-library/react');
+      const { getSprintStatusBadge } = await import('@/lib/sprint-utils');
+      cleanup();
+
+      // Test component mirroring sprint header badge rendering
+      const SprintHeaderMock: React.FC<{
+        sprintName: string;
+        sprintDef?: { status: string; is_current?: boolean };
+        isCurrent: boolean;
+      }> = ({ sprintName, sprintDef, isCurrent }) => {
+        const canonicalStatus = sprintDef?.status || (isCurrent ? 'active' : 'planned');
+        const badge = getSprintStatusBadge(canonicalStatus);
+
+        return (
+          <div data-testid={`sprint-header-${sprintName}`}>
+            <h4 className="text-base font-semibold text-white">
+              <span>{sprintName}</span>
+            </h4>
+            <span
+              data-testid={`sprint-status-badge-${sprintName}`}
+              className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${badge.bg} ${badge.text} ${badge.border}`}
+            >
+              {canonicalStatus}
+            </span>
+          </div>
+        );
+      };
+
+      const { getAllByText, queryAllByText, unmount } = render(
+        <SprintHeaderMock
+          sprintName="Sprint 2026-Q3"
+          sprintDef={{ status: 'active', is_current: true }}
+          isCurrent={true}
+        />
+      );
+
+      // Verify exactly one "active" badge is rendered
+      const activePills = queryAllByText(/active/i);
+      expect(activePills.length).toBe(1);
+
+      unmount();
+    });
+  });
 });
 

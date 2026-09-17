@@ -3499,27 +3499,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           }`}
                         />
 
-                        <h4 className="text-base font-semibold text-white flex items-center space-x-2">
+                        <h4 className="text-base font-semibold text-white">
                           <span>{sprintName}</span>
-                          {isCurrent && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-sans font-medium border border-emerald-500/30">
-                              Active
-                            </span>
-                          )}
                         </h4>
 
-                        {/* Sprint Status Badge */}
-                        {sprintDef && (
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${
-                              getSprintStatusBadge(sprintDef.status).bg
-                            } ${getSprintStatusBadge(sprintDef.status).text} ${
-                              getSprintStatusBadge(sprintDef.status).border
-                            }`}
-                          >
-                            {sprintDef.status}
-                          </span>
-                        )}
+                        {/* Canonical Sprint Status Badge (BUG-TRK-SPRINT-DUPLICATE-ACTIVE-PILL) */}
+                        {(() => {
+                          const canonicalStatus = sprintDef?.status || (isCurrent ? 'active' : 'planned');
+                          const badge = getSprintStatusBadge(canonicalStatus);
+                          return (
+                            <span
+                              data-testid={`sprint-status-badge-${sprintName}`}
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${badge.bg} ${badge.text} ${badge.border}`}
+                            >
+                              {canonicalStatus}
+                            </span>
+                          );
+                        })()}
 
                         {/* Date Range Badge */}
                         {sprintDef && (sprintDef.start_date || sprintDef.end_date) && (
