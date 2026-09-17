@@ -19,7 +19,7 @@ export interface SprintDefinition {
   start_date?: string | null;
   end_date?: string | null;
   goal?: string | null;
-  status: 'planned' | 'active' | 'completed';
+  status: 'planned' | 'active' | 'completed' | 'unplanned';
   is_current?: boolean;
 }
 

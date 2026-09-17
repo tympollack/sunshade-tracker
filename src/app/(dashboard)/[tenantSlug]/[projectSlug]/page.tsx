@@ -38,6 +38,7 @@ import {
   Clock,
   Check,
   Eye,
+  EyeOff,
   Archive,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
@@ -55,7 +56,7 @@ import { CopyableRefId } from '@/components/CopyableRefId';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
-import { reassignWorkItemProject } from '@/app/actions/trackerActions';
+import { reassignWorkItemProject, bulkReassignProjects } from '@/app/actions/trackerActions';
 import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
@@ -260,6 +261,61 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       setCollapsedSprints(new Set());
     }
   }, [projectSlug]);
+
+  const [hideCompletedSprints, setHideCompletedSprints] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('hideCompleted');
+      if (urlParam === 'true' || urlParam === '1') return true;
+      if (urlParam === 'false' || urlParam === '0') return false;
+      try {
+        const stored = localStorage.getItem(`tracker_hide_completed_sprints_${projectSlug}`);
+        if (stored !== null) return stored === 'true';
+      } catch {}
+    } else if (typeof searchParams?.hideCompleted === 'string') {
+      return searchParams.hideCompleted === 'true' || searchParams.hideCompleted === '1';
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParam = new URLSearchParams(window.location.search).get('hideCompleted');
+    if (urlParam === 'true' || urlParam === '1') {
+      setHideCompletedSprints(true);
+      return;
+    }
+    if (urlParam === 'false' || urlParam === '0') {
+      setHideCompletedSprints(false);
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(`tracker_hide_completed_sprints_${projectSlug}`);
+      setHideCompletedSprints(stored === 'true');
+    } catch {
+      setHideCompletedSprints(false);
+    }
+  }, [projectSlug]);
+
+  const handleToggleHideCompletedSprints = () => {
+    setHideCompletedSprints((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`tracker_hide_completed_sprints_${projectSlug}`, String(next));
+        } catch {}
+        const url = new URL(window.location.href);
+        if (next) {
+          url.searchParams.set('hideCompleted', 'true');
+        } else {
+          url.searchParams.delete('hideCompleted');
+        }
+        const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+        window.history.replaceState(window.history.state, '', nextUrl);
+      }
+      return next;
+    });
+  };
+
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
@@ -511,15 +567,39 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const availableSprints = useMemo(() => {
     const set = new Set<string>();
     (projectSettings.sprint_settings?.sprints || []).forEach((s: any) => {
-      if (s.name) set.add(s.name);
+      if (s.name && s.status !== 'unplanned' && s.name.toLowerCase() !== 'unplanned') {
+        set.add(s.name);
+      }
     });
     items.forEach((it) => {
       if (it.metadata?.sprint) {
-        set.add(String(it.metadata.sprint));
+        const s = String(it.metadata.sprint).trim();
+        if (s && s.toLowerCase() !== 'unplanned' && s !== '__none__') {
+          set.add(s);
+        }
       }
     });
     return sortSprintNames(Array.from(set), projectSettings.sprint_settings?.sprints);
   }, [items, projectSettings.sprint_settings]);
+
+  const hiddenCompletedSprintsCount = useMemo(() => {
+    return availableSprints.filter((sprintName) => {
+      const sprintDef = projectSettings.sprint_settings?.sprints?.find(
+        (s: any) => s.name === sprintName || s.id === sprintName
+      );
+      return sprintDef?.status?.toLowerCase() === 'completed';
+    }).length;
+  }, [availableSprints, projectSettings.sprint_settings]);
+
+  const visibleSprints = useMemo(() => {
+    if (!hideCompletedSprints) return availableSprints;
+    return availableSprints.filter((sprintName) => {
+      const sprintDef = projectSettings.sprint_settings?.sprints?.find(
+        (s: any) => s.name === sprintName || s.id === sprintName
+      );
+      return sprintDef?.status?.toLowerCase() !== 'completed';
+    });
+  }, [availableSprints, hideCompletedSprints, projectSettings.sprint_settings]);
 
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);
   const lastSprintInitializedProjectRef = useRef<string | null>(null);
@@ -1463,7 +1543,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   };
 
   const handleToggleCollapseAllSprints = () => {
-    const allKeys = [...availableSprints, '__backlog__'];
+    const allKeys = [...visibleSprints, '__backlog__'];
     setCollapsedSprints((prev) => {
       const next = prev.size === allKeys.length ? new Set<string>() : new Set<string>(allKeys);
       try {
@@ -1638,6 +1718,49 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       setBulkToast(`Network error moving items: ${err?.message || 'Failed to communicate with server'}`);
       setTimeout(() => setBulkToast(null), 4000);
       fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkChangeProject = async (targetProjectId: string) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    if (selectedList.length === 0 || !targetProjectId) return;
+
+    const lockedItems = selectedList.filter((it) =>
+      isItemImmutableDueToCompletedSprint(it, projectSettings)
+    );
+    if (lockedItems.length > 0) {
+      setBulkToast(
+        `Cannot change project: ${lockedItems.length} item(s) are locked in completed sprints.`
+      );
+      setTimeout(() => setBulkToast(null), 4000);
+      return;
+    }
+
+    const targetProj = allProjects.find(
+      (p) => p.id === targetProjectId || p.slug === targetProjectId
+    );
+    const targetProjectName = targetProj ? targetProj.name : 'new project';
+
+    setIsBulkApplying(true);
+    try {
+      const selectedIds = selectedList.map((it) => it.id);
+      const res = await bulkReassignProjects(selectedIds, targetProjectId, tenantSlug);
+
+      if (!res.success) {
+        setBulkToast(`Failed to change project: ${res.error || 'Server rejected migration'}`);
+        setTimeout(() => setBulkToast(null), 4000);
+      } else {
+        const movedCount = res.updatedCount || selectedIds.length;
+        setBulkToast(`Moved ${movedCount} items to ${targetProjectName}.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+        fetchData();
+      }
+    } catch (err: any) {
+      setBulkToast(`Error changing project: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
     } finally {
       setIsBulkApplying(false);
     }
@@ -3245,7 +3368,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors flex items-center space-x-1.5 cursor-pointer"
                   data-testid="sprint-toggle-all-collapse"
                 >
-                  {collapsedSprints.size === (availableSprints.length + 1) ? (
+                  {collapsedSprints.size === (visibleSprints.length + 1) ? (
                     <>
                       <Maximize2 className="w-3.5 h-3.5" />
                       <span>Expand All</span>
@@ -3255,6 +3378,34 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       <Minimize2 className="w-3.5 h-3.5" />
                       <span>Collapse All</span>
                     </>
+                  )}
+                </button>
+
+                {/* Hide Completed Sprints Toggle */}
+                <button
+                  type="button"
+                  onClick={handleToggleHideCompletedSprints}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors flex items-center space-x-1.5 cursor-pointer ${
+                    hideCompletedSprints
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  }`}
+                  data-testid="sprint-hide-completed-toggle"
+                  title={hideCompletedSprints ? 'Show completed sprints' : 'Hide completed sprints'}
+                >
+                  {hideCompletedSprints ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                  <span>Hide Completed Sprints</span>
+                  {hideCompletedSprints && hiddenCompletedSprintsCount > 0 && (
+                    <span
+                      className="text-[10px] text-emerald-400 font-mono ml-0.5"
+                      data-testid="sprint-hidden-completed-count"
+                    >
+                      ({hiddenCompletedSprintsCount} completed sprint{hiddenCompletedSprintsCount === 1 ? '' : 's'} hidden)
+                    </span>
                   )}
                 </button>
 
@@ -3322,7 +3473,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center space-x-2">
                   <span className="text-slate-500">Planned Sprints:</span>
                   <span className="font-mono font-bold text-emerald-400">
-                    {availableSprints.length}
+                    {visibleSprints.length}
                   </span>
                 </div>
               </div>
@@ -3330,7 +3481,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
             {/* Sprint Groups */}
             <div className="space-y-6">
-              {(availableSprints.length === 0 ? ['Sprint 1'] : availableSprints).map((sprintName) => {
+              {visibleSprints.length === 0 && availableSprints.length > 0 && (
+                <div
+                  className="p-8 text-center rounded-xl border border-dashed border-slate-800 bg-slate-900/30 text-slate-400 text-sm"
+                  data-testid="all-sprints-hidden-banner"
+                >
+                  All completed sprints are hidden ({hiddenCompletedSprintsCount} hidden).
+                </div>
+              )}
+              {(visibleSprints.length === 0 ? (availableSprints.length === 0 ? ['Sprint 1'] : []) : visibleSprints).map((sprintName) => {
                 const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
                 const sprintItems = filterSprintItems(rawSprintItems);
                 const totalPoints = sprintItems.reduce((acc, it) => {
@@ -3467,27 +3626,23 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           }`}
                         />
 
-                        <h4 className="text-base font-semibold text-white flex items-center space-x-2">
+                        <h4 className="text-base font-semibold text-white">
                           <span>{sprintName}</span>
-                          {isCurrent && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-sans font-medium border border-emerald-500/30">
-                              Active
-                            </span>
-                          )}
                         </h4>
 
-                        {/* Sprint Status Badge */}
-                        {sprintDef && (
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${
-                              getSprintStatusBadge(sprintDef.status).bg
-                            } ${getSprintStatusBadge(sprintDef.status).text} ${
-                              getSprintStatusBadge(sprintDef.status).border
-                            }`}
-                          >
-                            {sprintDef.status}
-                          </span>
-                        )}
+                        {/* Canonical Sprint Status Badge (BUG-TRK-SPRINT-DUPLICATE-ACTIVE-PILL) */}
+                        {(() => {
+                          const canonicalStatus = sprintDef?.status || (isCurrent ? 'active' : 'planned');
+                          const badge = getSprintStatusBadge(canonicalStatus);
+                          return (
+                            <span
+                              data-testid={`sprint-status-badge-${sprintName}`}
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-medium border capitalize ${badge.bg} ${badge.text} ${badge.border}`}
+                            >
+                              {canonicalStatus}
+                            </span>
+                          );
+                        })()}
 
                         {/* Date Range Badge */}
                         {sprintDef && (sprintDef.start_date || sprintDef.end_date) && (
@@ -3572,9 +3727,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 );
               })}
 
-              {/* Backlog (Unassigned) Swimlane */}
+              {/* Unplanned Backlog Swimlane (FEAT-TRK-SPRINT-STATUS-SEQUENCE-UNPLANNED) */}
               {(() => {
-                const rawBacklogItems = items.filter((it) => !it.metadata?.sprint);
+                const rawBacklogItems = items.filter(
+                  (it) =>
+                    !it.metadata?.sprint ||
+                    String(it.metadata.sprint).trim().toLowerCase() === 'unplanned' ||
+                    String(it.metadata.sprint).trim() === ''
+                );
                 const backlogItems = filterSprintItems(rawBacklogItems);
                 const backlogPoints = backlogItems.reduce((acc, it) => {
                   const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
@@ -3680,7 +3840,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
                         <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
                         <h4 className="text-base font-semibold text-white">
-                          Product Backlog (Unassigned)
+                          Unplanned Backlog
                         </h4>
                         <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
                           {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
@@ -4123,6 +4283,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         isReadOnly={isReadOnly}
         projects={allProjects}
         onSelectItem={(item) => setEditingItem(item)}
+        onCreateChildItem={handleCreateItem}
+        onRefresh={fetchData}
       />
 
       {/* Board Item Delete Confirmation Modal */}
@@ -4334,10 +4496,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           selectedCount={selectedItemIds.size}
           availableSprints={availableSprints}
           statuses={projectSettings.statuses || []}
+          projects={allProjects}
+          currentProjectId={allProjects.find((p) => p.slug === projectSlug)?.id}
           onMoveToSprint={handleBulkMoveSprint}
           onSetStatus={handleBulkSetStatus}
           onAssignMember={handleBulkAssign}
           onAdjustPoints={handleBulkAdjustPoints}
+          onChangeProject={handleBulkChangeProject}
           onDeleteSelected={handleBulkDelete}
           onClearSelection={handleDeselectAll}
           isApplying={isBulkApplying}

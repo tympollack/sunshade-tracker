@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Bell, CheckCheck, Loader2, Sparkles, X, ExternalLink, Clock } from 'lucide-react';
 import { InAppNotification } from '@/types/tracker';
@@ -35,11 +36,29 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
     // Fallback when rendered outside Next.js App Router context
   }
   const [isOpen, setIsOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; right: number } | null>(null);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const updatePosition = useCallback(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const collisionPadding = 16;
+      setCoords({
+        top: rect.bottom + 8,
+        right: Math.max(collisionPadding, window.innerWidth - rect.right),
+      });
+    }
+  }, []);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -65,27 +84,49 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
     return () => clearInterval(interval);
   }, [fetchNotifications]);
 
-  // Handle outside click to close dropdown
+  // Handle outside click, escape key, resize and scroll listeners
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+    if (!isOpen) return;
+
+    updatePosition();
+    const handleScrollResize = () => updatePosition();
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
         setIsOpen(false);
       }
     }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        panelRef.current && !panelRef.current.contains(target)
+      ) {
+        setIsOpen(false);
+      }
     }
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleClickOutside);
+
     return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+      document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isOpen]);
+  }, [isOpen, updatePosition]);
 
   const handleToggleOpen = () => {
     const next = !isOpen;
-    setIsOpen(next);
     if (next) {
+      updatePosition();
       fetchNotifications();
     }
+    setIsOpen(next);
   };
 
   const handleMarkAllRead = async () => {
@@ -151,9 +192,10 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
   };
 
   return (
-    <div className="relative inline-block text-left" ref={dropdownRef}>
+    <div className="relative inline-block text-left">
       {/* Bell Button */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={handleToggleOpen}
         aria-label="Notifications"
@@ -167,89 +209,113 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
         )}
       </button>
 
-      {/* Popover Dropdown */}
-      {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/60">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                Notifications
-              </span>
-              {unreadCount > 0 && (
-                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 rounded-md border border-emerald-500/30">
-                  {unreadCount} unread
+      {/* Popover Portaled to document.body (BUG-TRK-NOTIF-POPOUT-ZINDEX) */}
+      {isOpen && mounted && typeof document !== 'undefined' && createPortal(
+        <>
+          {/* Backdrop Overlay with blur to break out of stacking context */}
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[99] animate-in fade-in duration-100"
+            onClick={() => setIsOpen(false)}
+            aria-hidden="true"
+            data-testid="notification-backdrop"
+          />
+
+          {/* Elevated Popover Panel */}
+          <div
+            ref={panelRef}
+            style={{
+              position: 'fixed',
+              top: coords ? `${coords.top}px` : undefined,
+              right: coords ? `${coords.right}px` : undefined,
+              maxHeight: 'calc(100vh - 32px)',
+            }}
+            role="dialog"
+            aria-label="Notifications"
+            data-testid="notification-popover"
+            className="w-80 sm:w-96 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-800 shadow-2xl z-[100] overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-150"
+          >
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/60 shrink-0">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                  Notifications
                 </span>
+                {unreadCount > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 rounded-md border border-emerald-500/30">
+                    {unreadCount} unread
+                  </span>
+                )}
+              </div>
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  disabled={isMarkingAll}
+                  className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition-colors disabled:opacity-50"
+                  title="Mark all as read"
+                >
+                  {isMarkingAll ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <CheckCheck className="w-3.5 h-3.5" />
+                  )}
+                  <span>Mark all read</span>
+                </button>
               )}
             </div>
-            {unreadCount > 0 && (
-              <button
-                type="button"
-                onClick={handleMarkAllRead}
-                disabled={isMarkingAll}
-                className="text-xs text-slate-400 hover:text-emerald-400 flex items-center space-x-1 transition-colors disabled:opacity-50"
-                title="Mark all as read"
-              >
-                {isMarkingAll ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <CheckCheck className="w-3.5 h-3.5" />
-                )}
-                <span>Mark all read</span>
-              </button>
-            )}
-          </div>
 
-          {/* List */}
-          <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60">
-            {notifications.length === 0 ? (
-              <div className="p-8 text-center space-y-2">
-                <Bell className="w-8 h-8 text-slate-600 mx-auto" />
-                <p className="text-xs text-slate-400 font-medium">No notifications yet</p>
-                <p className="text-[11px] text-slate-500">
-                  You will be notified when items are assigned or changed.
-                </p>
-              </div>
-            ) : (
-              notifications.map((notif) => (
-                <div
-                  key={notif.id}
-                  onClick={() => handleClickNotification(notif)}
-                  className={`p-3.5 transition-colors cursor-pointer flex items-start space-x-3 ${
-                    notif.read ? 'bg-slate-900/40 hover:bg-slate-800/40' : 'bg-emerald-950/20 hover:bg-emerald-950/30'
-                  }`}
-                >
-                  {/* Unread indicator dot */}
-                  <div className="pt-1 shrink-0">
-                    <div
-                      className={`w-2 h-2 rounded-full ${
-                        notif.read ? 'bg-transparent' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
-                      }`}
-                    />
-                  </div>
+            {/* List */}
+            <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60 custom-scrollbar">
+              {notifications.length === 0 ? (
+                <div className="p-8 text-center space-y-2">
+                  <Bell className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-xs text-slate-400 font-medium">No notifications yet</p>
+                  <p className="text-[11px] text-slate-500">
+                    You will be notified when items are assigned or changed.
+                  </p>
+                </div>
+              ) : (
+                notifications.map((notif) => (
+                  <div
+                    key={notif.id}
+                    onClick={() => handleClickNotification(notif)}
+                    className={`p-3.5 transition-colors cursor-pointer flex items-start space-x-3 ${
+                      notif.read ? 'bg-slate-900/40 hover:bg-slate-800/40' : 'bg-emerald-950/20 hover:bg-emerald-950/30'
+                    }`}
+                  >
+                    {/* Unread indicator dot */}
+                    <div className="pt-1 shrink-0">
+                      <div
+                        className={`w-2 h-2 rounded-full ${
+                          notif.read ? 'bg-transparent' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]'
+                        }`}
+                      />
+                    </div>
 
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <p className="text-xs text-slate-200 leading-snug">
-                      <span className="font-semibold text-white">
-                        {notif.actor_name || 'Someone'}
-                      </span>{' '}
-                      <span className="text-slate-300">{notif.action}</span>
-                    </p>
-                    {notif.item_title && (
-                      <p className="text-xs font-medium text-emerald-400 truncate">
-                        {notif.item_title}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <p className="text-xs text-slate-200 leading-snug">
+                        <span className="font-semibold text-white">
+                          {notif.actor_name || 'Someone'}
+                        </span>{' '}
+                        <span className="text-slate-300">{notif.action}</span>
                       </p>
-                    )}
-                    <div className="flex items-center space-x-1 text-[10px] text-slate-500">
-                      <Clock className="w-2.5 h-2.5" />
-                      <span>{timeAgo(notif.created_at)}</span>
+                      {notif.item_title && (
+                        <p className="text-xs font-medium text-emerald-400 truncate">
+                          {notif.item_title}
+                        </p>
+                      )}
+                      <div className="flex items-center space-x-1 text-[10px] text-slate-500">
+                        <Clock className="w-2.5 h-2.5" />
+                        <span>{timeAgo(notif.created_at)}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        </>,
+        document.body
       )}
     </div>
   );
