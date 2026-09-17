@@ -55,7 +55,7 @@ import { CopyableRefId } from '@/components/CopyableRefId';
 import { BoardSkeleton } from '@/components/LoadingSkeleton';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { WorkItemModal } from '@/components/WorkItemModal';
-import { reassignWorkItemProject } from '@/app/actions/trackerActions';
+import { reassignWorkItemProject, bulkReassignProjects } from '@/app/actions/trackerActions';
 import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { GitHubBadge } from '@/components/GitHubBadge';
@@ -1638,6 +1638,38 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       setBulkToast(`Network error moving items: ${err?.message || 'Failed to communicate with server'}`);
       setTimeout(() => setBulkToast(null), 4000);
       fetchData();
+    } finally {
+      setIsBulkApplying(false);
+    }
+  };
+
+  const handleBulkChangeProject = async (targetProjectId: string) => {
+    const selectedList = items.filter((it) => selectedItemIds.has(it.id));
+    if (selectedList.length === 0 || !targetProjectId) return;
+
+    const targetProj = allProjects.find(
+      (p) => p.id === targetProjectId || p.slug === targetProjectId
+    );
+    const targetProjectName = targetProj ? targetProj.name : 'new project';
+
+    setIsBulkApplying(true);
+    try {
+      const selectedIds = selectedList.map((it) => it.id);
+      const res = await bulkReassignProjects(selectedIds, targetProjectId, tenantSlug);
+
+      if (!res.success) {
+        setBulkToast(`Failed to change project: ${res.error || 'Server rejected migration'}`);
+        setTimeout(() => setBulkToast(null), 4000);
+      } else {
+        const movedCount = res.updatedCount || selectedIds.length;
+        setBulkToast(`Moved ${movedCount} items to ${targetProjectName}.`);
+        setTimeout(() => setBulkToast(null), 3000);
+        setSelectedItemIds(new Set());
+        fetchData();
+      }
+    } catch (err: any) {
+      setBulkToast(`Error changing project: ${err?.message || 'Failed to communicate with server'}`);
+      setTimeout(() => setBulkToast(null), 4000);
     } finally {
       setIsBulkApplying(false);
     }
@@ -4334,10 +4366,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           selectedCount={selectedItemIds.size}
           availableSprints={availableSprints}
           statuses={projectSettings.statuses || []}
+          projects={allProjects}
+          currentProjectId={allProjects.find((p) => p.slug === projectSlug)?.id}
           onMoveToSprint={handleBulkMoveSprint}
           onSetStatus={handleBulkSetStatus}
           onAssignMember={handleBulkAssign}
           onAdjustPoints={handleBulkAdjustPoints}
+          onChangeProject={handleBulkChangeProject}
           onDeleteSelected={handleBulkDelete}
           onClearSelection={handleDeselectAll}
           isApplying={isBulkApplying}

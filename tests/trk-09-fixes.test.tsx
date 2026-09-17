@@ -267,5 +267,132 @@ describe('TRK-09 Epic Test Suite', () => {
       unmount();
     });
   });
+
+  describe('FEAT-TRK-GROUP-MENU-CHANGE-PROJECT: Bulk project reassignment in toolbar and action', () => {
+    it('executes bulkReassignProjects and updates items and audit logs atomically', async () => {
+      const { bulkReassignProjects } = await import('@/app/actions/trackerActions');
+
+      const items = [
+        { id: 'i1', tenant_id: 'tenant-test-123', project_id: 'proj-old', parent_id: null },
+        { id: 'i2', tenant_id: 'tenant-test-123', project_id: 'proj-old', parent_id: 'i1' },
+      ];
+
+      const destProject = {
+        id: 'proj-dest',
+        slug: 'dest-proj',
+        name: 'Destination Project',
+        settings: {},
+      };
+
+      const updatedWorkItems: any[] = [];
+      const updatedAuditLogs: any[] = [];
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockImplementation((col: string, vals: string[]) => ({
+              data: items.filter((it) => vals.includes(it.id)),
+              error: null,
+            })),
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              if (col === 'tenant_id') {
+                return { data: items, error: null };
+              }
+              return { data: null, error: null };
+            }),
+            update: vi.fn().mockImplementation((payload: any) => ({
+              in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+                updatedWorkItems.push({ payload, ids });
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: destProject, error: null }),
+          };
+        }
+        if (table === 'tenant_members') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { role: 'admin' }, error: null }),
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            update: vi.fn().mockImplementation((payload: any) => ({
+              in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+                updatedAuditLogs.push({ payload, ids });
+                return {
+                  eq: vi.fn().mockResolvedValue({ error: null }),
+                };
+              }),
+            })),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        };
+      });
+
+      const res = await bulkReassignProjects(['i1'], 'proj-dest', 'sunshade');
+      expect(res.success).toBe(true);
+      expect(res.updatedCount).toBe(2);
+      expect(updatedWorkItems.length).toBeGreaterThan(0);
+      expect(updatedWorkItems[0].payload.project_id).toBe('proj-dest');
+      expect(updatedAuditLogs.length).toBeGreaterThan(0);
+      expect(updatedAuditLogs[0].payload.project_id).toBe('proj-dest');
+    });
+
+    it('renders Change Project dropdown in BulkActionsToolbar and calls onChangeProject', async () => {
+      const { render, fireEvent, cleanup } = await import('@testing-library/react');
+      const { BulkActionsToolbar } = await import('@/components/BulkActionsToolbar');
+      cleanup();
+
+      const handleChangeProject = vi.fn();
+      const projects = [
+        { id: 'proj-current', name: 'Current Project', slug: 'current' },
+        { id: 'proj-target', name: 'Target Project', slug: 'target' },
+      ];
+
+      const { getByTestId, unmount } = render(
+        <BulkActionsToolbar
+          selectedCount={2}
+          availableSprints={['Sprint 1']}
+          statuses={[{ id: 'todo', label: 'Todo', color: '#ccc', order: 0 }]}
+          projects={projects}
+          currentProjectId="proj-current"
+          onChangeProject={handleChangeProject}
+          onMoveToSprint={vi.fn()}
+          onSetStatus={vi.fn()}
+          onAssignMember={vi.fn()}
+          onAdjustPoints={vi.fn()}
+          onDeleteSelected={vi.fn()}
+          onClearSelection={vi.fn()}
+        />
+      );
+
+      const projectSelect = getByTestId('bulk-change-project-select') as HTMLSelectElement;
+      expect(projectSelect).toBeDefined();
+
+      // Current project is filtered out
+      const optionTexts = Array.from(projectSelect.options).map((o) => o.textContent);
+      expect(optionTexts).not.toContain('Current Project');
+      expect(optionTexts).toContain('Target Project');
+
+      // Selecting triggers handler
+      fireEvent.change(projectSelect, { target: { value: 'proj-target' } });
+      expect(handleChangeProject).toHaveBeenCalledWith('proj-target');
+
+      unmount();
+    });
+  });
 });
 

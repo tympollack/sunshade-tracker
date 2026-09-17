@@ -292,3 +292,184 @@ export async function reassignWorkItemProject(
   }
 }
 
+/**
+ * Server action to reassign a batch of work items and all their recursive descendants to a new project.
+ */
+export async function bulkReassignProjects(
+  itemIds: string[],
+  newProjectId: string,
+  tenantSlug?: string
+): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
+  try {
+    if (!itemIds || itemIds.length === 0 || !newProjectId) {
+      return { success: false, error: 'Item IDs and new project ID are required' };
+    }
+
+    // 1. Authenticate caller session
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // 2. Fetch the target items to identify tenant
+    const { data: targetItems, error: itemsErr } = await service
+      .from('work_items')
+      .select('id, tenant_id, project_id, parent_id, item_type, status')
+      .in('id', itemIds);
+
+    if (itemsErr || !targetItems || targetItems.length === 0) {
+      return { success: false, error: 'No valid work items found' };
+    }
+
+    const tenantId = targetItems[0].tenant_id;
+
+    // 3. Validate user access to tenant
+    const { data: membership } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (!membership) {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('owner_id', user.id)
+        .eq('id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (!owned) {
+        return { success: false, error: 'Forbidden: Access to workspace denied' };
+      }
+    } else if (membership.role === 'viewer') {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('owner_id', user.id)
+        .eq('id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (!owned) {
+        return {
+          success: false,
+          error: 'Forbidden: Workspace viewers have read-only access and cannot move items',
+        };
+      }
+    }
+
+    // 4. Verify destination project exists in tenant
+    const { data: destProject, error: projErr } = await service
+      .from('projects')
+      .select('id, slug, name, settings')
+      .eq('tenant_id', tenantId)
+      .eq('id', newProjectId)
+      .single();
+
+    if (projErr || !destProject) {
+      return { success: false, error: 'Destination project not found in this workspace' };
+    }
+
+    // 5. Recursively find all descendant item IDs across all selected items
+    const { data: tenantItems } = await service
+      .from('work_items')
+      .select('id, parent_id')
+      .eq('tenant_id', tenantId);
+
+    const { getDescendantIds } = await import('@/lib/tree');
+    const allDescendantIds = new Set<string>();
+    for (const id of itemIds) {
+      const descendants = getDescendantIds(tenantItems || [], id);
+      descendants.forEach((d) => allDescendantIds.add(d));
+    }
+
+    const allAffectedIds = Array.from(new Set([...itemIds, ...allDescendantIds]));
+    const affectedIdSet = new Set(allAffectedIds);
+
+    // 6. Disconnect parent_id for any migrated item whose parent is NOT in allAffectedIds
+    // and whose parent belongs to a different project
+    const itemsWithParents = targetItems.filter((it) => it.parent_id && !affectedIdSet.has(it.parent_id));
+    const parentIdsToDetach: string[] = [];
+    if (itemsWithParents.length > 0) {
+      const parentIdsToCheck = Array.from(new Set(itemsWithParents.map((it) => it.parent_id!)));
+      const { data: parents } = await service
+        .from('work_items')
+        .select('id, project_id')
+        .in('id', parentIdsToCheck);
+
+      const parentProjectMap = new Map((parents || []).map((p) => [p.id, p.project_id]));
+      for (const it of itemsWithParents) {
+        if (it.parent_id && parentProjectMap.get(it.parent_id) !== newProjectId) {
+          parentIdsToDetach.push(it.id);
+        }
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+
+    if (parentIdsToDetach.length > 0) {
+      await service
+        .from('work_items')
+        .update({ parent_id: null, updated_at: nowIso })
+        .in('id', parentIdsToDetach);
+    }
+
+    // Update all affected items to new project_id
+    const { error: updateErr } = await service
+      .from('work_items')
+      .update({
+        project_id: newProjectId,
+        updated_at: nowIso,
+      })
+      .in('id', allAffectedIds);
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
+    // Synchronize audit logs
+    await service
+      .from('audit_logs')
+      .update({ project_id: newProjectId })
+      .in('item_id', allAffectedIds)
+      .eq('tenant_id', tenantId);
+
+    // 7. Record bulk audit log
+    const userName =
+      user.user_metadata?.full_name ??
+      user.user_metadata?.name ??
+      (user.email ? user.email.split('@')[0] : 'User');
+
+    const { recordBulkAuditLogs } = await import('@/lib/audit-log');
+    const auditEntries = allAffectedIds.map((itemId) => ({
+      tenant_id: tenantId,
+      project_id: newProjectId,
+      item_id: itemId,
+      actor_id: user.id,
+      actor_name: userName,
+      action: 'update' as const,
+      changed_fields: {
+        project_id: { after: newProjectId },
+      },
+    }));
+    await recordBulkAuditLogs(auditEntries).catch(() => {});
+
+    return { success: true, updatedCount: allAffectedIds.length };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Failed to reassign work items to new project',
+    };
+  }
+}
+
+
