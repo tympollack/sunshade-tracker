@@ -12,11 +12,18 @@ const appDir = path.join(rootDir, 'src', 'app');
 // Ensure target directories exist
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 
-// Source image paths from the SunShade ecosystem
-const sourceHubIconPath = 'c:/Users/Tymz/dev/github/sunshade-hub-ui/apps/next/public/logo-icon.png';
-const fallbackSourcePath = 'c:/Users/Tymz/dev/github/sss_logo_trans.png';
+// Source image paths from the SunShade ecosystem (resolved relative to repo root)
+const localPublicIconPath = path.join(publicDir, 'logo-icon.png');
+const sourceHubIconPath = path.resolve(rootDir, '..', 'sunshade-hub-ui', 'apps', 'next', 'public', 'logo-icon.png');
+const fallbackSourcePath = path.resolve(rootDir, '..', 'sss_logo_trans.png');
 
-const sourceIconPath = fs.existsSync(sourceHubIconPath) ? sourceHubIconPath : fallbackSourcePath;
+const sourceIconPath = fs.existsSync(localPublicIconPath)
+  ? localPublicIconPath
+  : fs.existsSync(sourceHubIconPath)
+  ? sourceHubIconPath
+  : fs.existsSync(fallbackSourcePath)
+  ? fallbackSourcePath
+  : localPublicIconPath;
 console.log(`Using source emblem from: ${sourceIconPath}`);
 
 // ─── 1. Generate SVG Icon (Pure Vector, theme-compatible) ───────────────────

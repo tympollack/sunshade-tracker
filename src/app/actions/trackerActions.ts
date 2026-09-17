@@ -126,18 +126,54 @@ export async function reassignWorkItemProject(
       if (!owned) {
         return { success: false, error: 'Forbidden: Access to workspace denied' };
       }
+    } else if (membership.role === 'viewer') {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('owner_id', user.id)
+        .eq('id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (!owned) {
+        return {
+          success: false,
+          error: 'Forbidden: Workspace viewers have read-only access and cannot move items',
+        };
+      }
     }
 
     // 4. Verify destination project exists in tenant
     const { data: destProject, error: projErr } = await service
       .from('projects')
-      .select('id, slug, name')
+      .select('id, slug, name, settings')
       .eq('tenant_id', tenantId)
       .eq('id', newProjectId)
       .single();
 
     if (projErr || !destProject) {
       return { success: false, error: 'Destination project not found in this workspace' };
+    }
+
+    // Validate target item type and status against destination project schema
+    if (destProject.settings?.hierarchy?.length) {
+      const allowedTypes = destProject.settings.hierarchy.map((h: any) => h.type);
+      if (!allowedTypes.includes(targetItem.item_type)) {
+        return {
+          success: false,
+          error: `Item type '${targetItem.item_type}' is not supported in destination project '${destProject.name}'. Allowed types: [${allowedTypes.join(', ')}]`,
+        };
+      }
+    }
+
+    if (destProject.settings?.statuses?.length) {
+      const allowedStatuses = destProject.settings.statuses.map((s: any) => s.id);
+      if (!allowedStatuses.includes(targetItem.status)) {
+        return {
+          success: false,
+          error: `Status '${targetItem.status}' is not supported in destination project '${destProject.name}'. Allowed statuses: [${allowedStatuses.join(', ')}]`,
+        };
+      }
     }
 
     // 5. Recursively find all descendant item IDs
@@ -150,26 +186,66 @@ export async function reassignWorkItemProject(
     const descendantIds = getDescendantIds(tenantItems || [], itemId);
     const allAffectedIds = [itemId, ...descendantIds];
 
-    // 6. Update target item (clear parent_id when migrating across projects)
+    // 6. Check if target item's existing parent belongs to a different project than newProjectId
+    let shouldDisconnectParent = false;
+    const oldParentId = targetItem.parent_id;
+    if (oldParentId) {
+      const { data: parentItem } = await service
+        .from('work_items')
+        .select('id, project_id')
+        .eq('id', oldParentId)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (!parentItem || parentItem.project_id !== newProjectId) {
+        shouldDisconnectParent = true;
+      }
+    }
+
     const nowIso = new Date().toISOString();
-    await service
+    const targetUpdateFields: Record<string, any> = {
+      project_id: newProjectId,
+      updated_at: nowIso,
+    };
+    if (shouldDisconnectParent) {
+      targetUpdateFields.parent_id = null;
+    }
+
+    const { error: updateTargetErr } = await service
       .from('work_items')
-      .update({
-        project_id: newProjectId,
-        parent_id: null,
-        updated_at: nowIso,
-      })
+      .update(targetUpdateFields)
       .eq('id', itemId);
+
+    if (updateTargetErr) {
+      return { success: false, error: updateTargetErr.message };
+    }
 
     // Update descendants to new project_id
     if (descendantIds.length > 0) {
-      await service
+      const { error: updateDescErr } = await service
         .from('work_items')
         .update({
           project_id: newProjectId,
           updated_at: nowIso,
         })
         .in('id', descendantIds);
+
+      if (updateDescErr) {
+        // Roll back the target item reassignment to prevent partial migrations
+        await service
+          .from('work_items')
+          .update({
+            project_id: targetItem.project_id,
+            parent_id: targetItem.parent_id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', itemId);
+
+        return {
+          success: false,
+          error: `Failed to update descendant items: ${updateDescErr.message}. Reassignment was rolled back.`,
+        };
+      }
     }
 
     // 7. Audit log for migration
@@ -177,6 +253,17 @@ export async function reassignWorkItemProject(
       user.user_metadata?.full_name ??
       user.user_metadata?.name ??
       (user.email ? user.email.split('@')[0] : 'User');
+
+    const changedFields: Record<string, any> = {
+      project_id: { before: targetItem.project_id, after: newProjectId },
+    };
+    if (shouldDisconnectParent) {
+      changedFields.parent_id = {
+        before: oldParentId,
+        after: null,
+        note: 'Parent detached due to project migration',
+      };
+    }
 
     const { recordAuditLog } = await import('@/lib/audit-log');
     await recordAuditLog({
@@ -186,9 +273,7 @@ export async function reassignWorkItemProject(
       actor_id: user.id,
       actor_name: userName,
       action: 'update',
-      changed_fields: {
-        project_id: { before: targetItem.project_id, after: newProjectId },
-      },
+      changed_fields: changedFields,
     }).catch(() => {});
 
     return { success: true, updatedCount: allAffectedIds.length };

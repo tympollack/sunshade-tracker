@@ -537,6 +537,8 @@ export async function PATCH(req: NextRequest) {
 
     let isProjectReassignment = false;
     let targetProjectId = existingItem.project_id;
+    let effectiveProjectSettings = projectSettings;
+
     if (project_id !== undefined && project_id !== existingItem.project_id) {
       const { data: targetProj } = await supabaseAdmin
         .from('projects')
@@ -550,6 +552,7 @@ export async function PATCH(req: NextRequest) {
       }
       isProjectReassignment = true;
       targetProjectId = project_id;
+      effectiveProjectSettings = targetProj.settings;
       updateFields.project_id = project_id;
       // In project reassignment, clear parent_id if moving across projects and no new parent specified
       if (parent_id === undefined && existingItem.parent_id) {
@@ -568,14 +571,15 @@ export async function PATCH(req: NextRequest) {
       updateFields.metadata = metadata;
     }
 
-    // Validate item_type
-    if (item_type !== undefined) {
-      if (projectSettings?.hierarchy?.length) {
-        const typeValid = projectSettings.hierarchy.some((h: any) => h.type === item_type);
+    // Validate item_type against effective project schema
+    const effectiveType = item_type !== undefined ? item_type : existingItem.item_type;
+    if (item_type !== undefined || isProjectReassignment) {
+      if (effectiveProjectSettings?.hierarchy?.length) {
+        const typeValid = effectiveProjectSettings.hierarchy.some((h: any) => h.type === effectiveType);
         if (!typeValid) {
           return NextResponse.json(
             {
-              error: `Invalid item_type '${item_type}'. Allowed types: [${projectSettings.hierarchy
+              error: `Invalid item_type '${effectiveType}'. Allowed types in ${isProjectReassignment ? 'destination project' : 'project'}: [${effectiveProjectSettings.hierarchy
                 .map((h: any) => h.type)
                 .join(', ')}]`,
             },
@@ -583,17 +587,20 @@ export async function PATCH(req: NextRequest) {
           );
         }
       }
-      updateFields.item_type = item_type;
+      if (item_type !== undefined) {
+        updateFields.item_type = item_type;
+      }
     }
 
-    // Validate status
-    if (status !== undefined) {
-      if (projectSettings?.statuses?.length) {
-        const statusValid = projectSettings.statuses.some((s: any) => s.id === status);
+    // Validate status against effective project schema
+    const effectiveStatus = status !== undefined ? status : existingItem.status;
+    if (status !== undefined || isProjectReassignment) {
+      if (effectiveProjectSettings?.statuses?.length) {
+        const statusValid = effectiveProjectSettings.statuses.some((s: any) => s.id === effectiveStatus);
         if (!statusValid) {
           return NextResponse.json(
             {
-              error: `Invalid status '${status}'. Allowed statuses: [${projectSettings.statuses
+              error: `Invalid status '${effectiveStatus}'. Allowed statuses in ${isProjectReassignment ? 'destination project' : 'project'}: [${effectiveProjectSettings.statuses
                 .map((s: any) => s.id)
                 .join(', ')}]`,
             },
@@ -601,7 +608,9 @@ export async function PATCH(req: NextRequest) {
           );
         }
       }
-      updateFields.status = status;
+      if (status !== undefined) {
+        updateFields.status = status;
+      }
     }
 
     // Validate and persist external_ref_id
@@ -630,7 +639,6 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Validate parent_id and hierarchy nesting
-    const effectiveType = item_type !== undefined ? item_type : existingItem.item_type;
     const effectiveParentId = parent_id !== undefined ? parent_id : existingItem.parent_id;
 
     if (effectiveParentId) {
@@ -650,11 +658,14 @@ export async function PATCH(req: NextRequest) {
       }
 
       if (parentItem.project_id !== targetProjectId) {
-        return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
-      }
-
-      if (projectSettings?.hierarchy?.length) {
-        const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, projectSettings.hierarchy);
+        if (isProjectReassignment) {
+          // Gracefully detach parent if reassigning project across boundaries
+          updateFields.parent_id = null;
+        } else {
+          return NextResponse.json({ error: 'Parent item must belong to the same project' }, { status: 400 });
+        }
+      } else if (effectiveProjectSettings?.hierarchy?.length) {
+        const nestCheck = validateHierarchyNesting(parentItem.item_type, effectiveType, effectiveProjectSettings.hierarchy);
         if (!nestCheck.valid) {
           if (parent_id !== undefined) {
             return NextResponse.json({ error: nestCheck.message }, { status: 422 });
@@ -697,7 +708,7 @@ export async function PATCH(req: NextRequest) {
         .eq('tenant_id', authCtx.tenant.id);
       const descendantIds = getDescendantIds(tenantItems || [], id);
       if (descendantIds.length > 0) {
-        await supabaseAdmin
+        const { error: descErr } = await supabaseAdmin
           .from('work_items')
           .update({
             project_id: project_id,
@@ -705,6 +716,26 @@ export async function PATCH(req: NextRequest) {
           })
           .in('id', descendantIds)
           .eq('tenant_id', authCtx.tenant.id);
+
+        if (descErr) {
+          // Rollback the root item update to avoid partial migration
+          await supabaseAdmin
+            .from('work_items')
+            .update({
+              project_id: existingItem.project_id,
+              parent_id: existingItem.parent_id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', id)
+            .eq('tenant_id', authCtx.tenant.id);
+
+          return NextResponse.json(
+            {
+              error: `Failed to cascade project reassignment to child items: ${descErr.message}. The reassignment was rolled back.`,
+            },
+            { status: 500 }
+          );
+        }
       }
     }
 

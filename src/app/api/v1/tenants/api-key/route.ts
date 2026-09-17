@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 
@@ -25,20 +26,49 @@ export async function POST(req: NextRequest) {
     const randomSuffix = crypto.randomUUID().replace(/-/g, '').substring(0, 16);
     const newApiKey = `tk_live_${authCtx.tenant.slug}_${randomSuffix}`;
     const preview = `${newApiKey.substring(0, 20)}...`;
+    const keyHash = createHash('sha256').update(newApiKey).digest('hex');
+
+    const updatePayload: Record<string, any> = {
+      api_key: newApiKey,
+      api_key_preview: preview,
+      api_key_hash: keyHash,
+      updated_at: new Date().toISOString(),
+    };
 
     let updateQuery: any = supabaseAdmin
       .from('tenants')
-      .update({
-        api_key: newApiKey,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', authCtx.tenant.id);
 
     if (typeof updateQuery.is === 'function') {
       updateQuery = updateQuery.is('deleted_at', null);
     }
 
-    const { error } = await updateQuery;
+    let { error } = await updateQuery;
+
+    // Graceful fallback if api_key_hash or api_key_preview columns are missing in the schema
+    if (
+      error &&
+      error.message &&
+      (error.message.includes('api_key_hash') || error.message.includes('api_key_preview'))
+    ) {
+      const fallbackPayload: Record<string, any> = {
+        api_key: newApiKey,
+        updated_at: new Date().toISOString(),
+      };
+      if (!error.message.includes('api_key_preview')) {
+        fallbackPayload.api_key_preview = preview;
+      }
+      let retryQuery: any = supabaseAdmin
+        .from('tenants')
+        .update(fallbackPayload)
+        .eq('id', authCtx.tenant.id);
+      if (typeof retryQuery.is === 'function') {
+        retryQuery = retryQuery.is('deleted_at', null);
+      }
+      const retryRes = await retryQuery;
+      error = retryRes.error;
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
