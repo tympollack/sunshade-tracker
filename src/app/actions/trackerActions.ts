@@ -248,6 +248,13 @@ export async function reassignWorkItemProject(
       }
     }
 
+    // Synchronize audit logs project_id to match destination project
+    await service
+      .from('audit_logs')
+      .update({ project_id: newProjectId })
+      .in('item_id', allAffectedIds)
+      .eq('tenant_id', tenantId);
+
     // 7. Audit log for migration
     const userName =
       user.user_metadata?.full_name ??
