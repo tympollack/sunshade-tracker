@@ -191,3 +191,85 @@ export function isItemImmutableDueToCompletedSprint(
 
   return sprintDef?.status === 'completed';
 }
+
+/**
+ * Checks whether a parent_id value effectively represents an unparented root item.
+ */
+function isUnparented(parentId: string | null | undefined): boolean {
+  if (!parentId) return true;
+  const trimmed = String(parentId).trim();
+  return (
+    !trimmed ||
+    trimmed.toLowerCase() === 'null' ||
+    trimmed.toLowerCase() === 'undefined' ||
+    trimmed.toLowerCase() === 'none'
+  );
+}
+
+/**
+ * Decouples sprint story point totals from parent container cards by extracting
+ * exclusively leaf execution work items (items that have no children within the sprint items).
+ */
+export function getSprintLeafItems(items: WorkItem[]): WorkItem[] {
+  if (!items || items.length === 0) return [];
+
+  // 1. Build an adjacency set of all parent_id references present among the given items
+  const parentRefIds = new Set<string>();
+  for (const item of items) {
+    if (item.parent_id && !isUnparented(item.parent_id) && item.parent_id !== item.id) {
+      parentRefIds.add(item.parent_id);
+    }
+  }
+
+  // 2. An item is a leaf if its id (or external_ref_id) does not appear in the parent set
+  return items.filter((item) => {
+    if (parentRefIds.has(item.id)) return false;
+    if (item.external_ref_id && parentRefIds.has(item.external_ref_id)) return false;
+    return true;
+  });
+}
+
+/**
+ * Calculates sprint point totals exclusively across leaf work items (items with 0 children in the sprint)
+ * to eliminate parent-child double-counting.
+ */
+export function calculateSprintLeafPoints(items: WorkItem[]): number {
+  const leafItems = getSprintLeafItems(items);
+  return leafItems.reduce((acc, it) => {
+    const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+    return acc + (isNaN(p) || p < 0 ? 0 : p);
+  }, 0);
+}
+
+/**
+ * Extracts root-level items in the sprint (items that have no parent in the sprint scope).
+ */
+export function getSprintRootItems(items: WorkItem[]): WorkItem[] {
+  if (!items || items.length === 0) return [];
+
+  const itemIdSet = new Set<string>();
+  for (const item of items) {
+    itemIdSet.add(item.id);
+    if (item.external_ref_id) {
+      itemIdSet.add(item.external_ref_id);
+    }
+  }
+
+  return items.filter((item) => {
+    if (isUnparented(item.parent_id) || item.parent_id === item.id) {
+      return true;
+    }
+    return !itemIdSet.has(item.parent_id!);
+  });
+}
+
+/**
+ * Calculates macro roadmap capacity by summing intrinsic estimates of root-level items in the sprint.
+ */
+export function calculateSprintMacroPoints(items: WorkItem[]): number {
+  const rootItems = getSprintRootItems(items);
+  return rootItems.reduce((acc, it) => {
+    const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
+    return acc + (isNaN(p) || p < 0 ? 0 : p);
+  }, 0);
+}

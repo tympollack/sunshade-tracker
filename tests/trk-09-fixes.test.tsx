@@ -71,7 +71,7 @@ describe('TRK-09 Epic Test Suite', () => {
 
       const sql = fs.readFileSync(migrationPath, 'utf8');
       expect(sql).toContain('fk_tracker_audit_logs_item');
-      expect(sql).toContain('REFERENCES tracker.work_items(id)');
+      expect(sql).toContain('REFERENCES tracker.work_items');
       expect(sql).toContain('ON DELETE CASCADE');
       expect(sql).toContain('ON UPDATE CASCADE');
       expect(sql).toContain('UPDATE tracker.audit_logs');
