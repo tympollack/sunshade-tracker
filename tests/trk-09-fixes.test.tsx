@@ -162,4 +162,110 @@ describe('TRK-09 Epic Test Suite', () => {
       expect(auditLogsUpdated[0].ids).toEqual(expect.arrayContaining(['item-root-1', 'child-1']));
     });
   });
+
+  describe('BUG-TRK-NOTIF-POPOUT-ZINDEX: Portal, elevation, and dismissal', () => {
+    it('renders notification popover into document.body with z-[100] and backdrop z-[99]', async () => {
+      const { render, waitFor, cleanup, fireEvent, within } = await import('@testing-library/react');
+      const { NotificationBell } = await import('@/components/NotificationBell');
+      cleanup();
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          unread_count: 1,
+          notifications: [
+            {
+              id: 'n1',
+              tenant_id: 'tenant-test-123',
+              actor_name: 'Devin',
+              action: 'assigned you',
+              item_title: 'Fix popout z-index',
+              read: false,
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
+
+      const { getByRole, unmount } = render(<NotificationBell tenantSlug="sunshade" />);
+
+      const bellButton = getByRole('button', { name: /Notifications/i });
+      fireEvent.click(bellButton);
+
+      await waitFor(() => {
+        const popover = within(document.body).getByTestId('notification-popover');
+        expect(popover).toBeDefined();
+        expect(popover.className).toContain('z-[100]');
+
+        const backdrop = within(document.body).getByTestId('notification-backdrop');
+        expect(backdrop).toBeDefined();
+        expect(backdrop.className).toContain('z-[99]');
+        expect(backdrop.className).toContain('backdrop-blur-sm');
+
+        expect(document.body.contains(popover)).toBe(true);
+      });
+      unmount();
+    });
+
+    it('dismisses notification popover on Escape key press', async () => {
+      const { render, waitFor, cleanup, fireEvent, within } = await import('@testing-library/react');
+      const { NotificationBell } = await import('@/components/NotificationBell');
+      cleanup();
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          unread_count: 0,
+          notifications: [],
+        }),
+      });
+
+      const { getByRole, unmount } = render(<NotificationBell tenantSlug="sunshade" />);
+
+      const bellButton = getByRole('button', { name: /Notifications/i });
+      fireEvent.click(bellButton);
+
+      await waitFor(() => {
+        expect(within(document.body).getByTestId('notification-popover')).toBeDefined();
+      });
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      await waitFor(() => {
+        expect(within(document.body).queryByTestId('notification-popover')).toBeNull();
+      });
+      unmount();
+    });
+
+    it('dismisses notification popover on backdrop click', async () => {
+      const { render, waitFor, cleanup, fireEvent, within } = await import('@testing-library/react');
+      const { NotificationBell } = await import('@/components/NotificationBell');
+      cleanup();
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          unread_count: 0,
+          notifications: [],
+        }),
+      });
+
+      const { getByRole, unmount } = render(<NotificationBell tenantSlug="sunshade" />);
+
+      const bellButton = getByRole('button', { name: /Notifications/i });
+      fireEvent.click(bellButton);
+
+      await waitFor(() => {
+        expect(within(document.body).getByTestId('notification-backdrop')).toBeDefined();
+      });
+
+      fireEvent.click(within(document.body).getByTestId('notification-backdrop'));
+
+      await waitFor(() => {
+        expect(within(document.body).queryByTestId('notification-popover')).toBeNull();
+      });
+      unmount();
+    });
+  });
 });
+
