@@ -46,7 +46,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
   const [formStartDate, setFormStartDate] = useState('');
   const [formEndDate, setFormEndDate] = useState('');
   const [formGoal, setFormGoal] = useState('');
-  const [formStatus, setFormStatus] = useState<'planned' | 'active' | 'completed'>('planned');
+  const [formStatus, setFormStatus] = useState<'completed' | 'active' | 'planned' | 'unplanned'>('planned');
 
   useEffect(() => {
     if (isOpen) {
@@ -286,9 +286,10 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                     onChange={(e) => setFormStatus(e.target.value as any)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 cursor-pointer"
                   >
-                    <option value="planned">Planned</option>
-                    <option value="active">Active</option>
                     <option value="completed">Completed</option>
+                    <option value="active">Active</option>
+                    <option value="planned">Planned</option>
+                    <option value="unplanned">Unplanned</option>
                   </select>
                 </div>
 

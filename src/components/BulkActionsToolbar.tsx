@@ -17,10 +17,13 @@ interface BulkActionsToolbarProps {
   availableSprints: string[];
   statuses: StatusDefinition[];
   members?: Array<{ id: string; name: string }>;
+  projects?: Array<{ id: string; name: string; slug: string }>;
+  currentProjectId?: string;
   onMoveToSprint: (targetSprint: string) => void;
   onSetStatus: (targetStatus: string) => void;
   onAssignMember: (targetAssignee: string | null) => void;
   onAdjustPoints: (points: number) => void;
+  onChangeProject?: (targetProjectId: string) => void;
   onDeleteSelected: () => void;
   onClearSelection: () => void;
   isApplying?: boolean;
@@ -31,10 +34,13 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
   availableSprints,
   statuses,
   members = [],
+  projects = [],
+  currentProjectId,
   onMoveToSprint,
   onSetStatus,
   onAssignMember,
   onAdjustPoints,
+  onChangeProject,
   onDeleteSelected,
   onClearSelection,
   isApplying = false,
@@ -139,6 +145,34 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
           </select>
         </div>
       ) : null}
+
+      {/* Action: Change Project (FEAT-TRK-GROUP-MENU-CHANGE-PROJECT) */}
+      {projects && projects.length > 0 && onChangeProject && (
+        <div className="relative inline-flex items-center">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) onChangeProject(e.target.value);
+            }}
+            disabled={isApplying}
+            className="bg-slate-950 hover:bg-slate-800 text-xs font-medium text-amber-400 border border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-500 cursor-pointer disabled:opacity-50 transition-colors"
+            title="Move selected items to another project"
+            aria-label="Change project"
+            data-testid="bulk-change-project-select"
+          >
+            <option value="" disabled>
+              Change Project →
+            </option>
+            {projects
+              .filter((p) => !currentProjectId || (p.id !== currentProjectId && p.slug !== currentProjectId))
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
 
       {/* Action: Adjust Story Points Popover */}
       <div className="relative inline-flex items-center">

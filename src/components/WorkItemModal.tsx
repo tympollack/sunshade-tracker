@@ -31,6 +31,8 @@ import { extractGitHubMetadata, isGitHubMetadataKey } from '@/lib/github-metadat
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { copyToClipboard } from '@/lib/clipboard';
+import { AssociatedItemsTab } from '@/components/AssociatedItemsTab';
+import { QuickAddPayload } from '@/components/QuickAddModal';
 
 interface ProjectInfo {
   id: string;
@@ -53,6 +55,8 @@ interface WorkItemModalProps {
   isReadOnly?: boolean;
   projects?: ProjectInfo[];
   onSelectItem?: (item: WorkItem) => void;
+  onCreateChildItem?: (payload: QuickAddPayload) => Promise<WorkItem | void>;
+  onRefresh?: () => Promise<void> | void;
 }
 
 function formatModalTimestamp(isoString?: string | null): string {
@@ -87,6 +91,8 @@ export function WorkItemModal({
   isReadOnly = false,
   projects = [],
   onSelectItem,
+  onCreateChildItem,
+  onRefresh,
 }: WorkItemModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -154,8 +160,9 @@ export function WorkItemModal({
   const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, effectiveProjectSettings) : false;
   const isLocked = isSprintLocked || isReadOnly;
 
-  // Navigation tabs: details | children | activity
-  const [activeTab, setActiveTab] = useState<'details' | 'children' | 'activity'>('details');
+  // Navigation tabs: details | associated | activity (supporting 'children' as alias)
+  const [activeTab, setActiveTab] = useState<'details' | 'associated' | 'children' | 'activity'>('details');
+  const isAssociatedTab = activeTab === 'associated' || activeTab === 'children';
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const lastFetchedItemIdRef = useRef<string | null>(null);
@@ -634,21 +641,24 @@ export function WorkItemModal({
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('children')}
+            onClick={() => setActiveTab('associated')}
             data-testid="modal-tab-children"
             className={`py-2.5 px-3 text-xs font-semibold border-b-2 flex items-center space-x-1.5 transition-colors ${
-              activeTab === 'children'
+              isAssociatedTab
                 ? 'border-emerald-500 text-emerald-400'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Children</span>
-            {childItems.length > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/60">
-                {childItems.length}
-              </span>
-            )}
+            <span data-testid="modal-tab-associated" className="flex items-center space-x-1.5">
+              <Layers className="w-3.5 h-3.5" />
+              <span>Associated Items</span>
+              <span className="sr-only"> Children</span>
+              {childItems.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                  {childItems.length}
+                </span>
+              )}
+            </span>
           </button>
           <button
             type="button"
@@ -674,86 +684,20 @@ export function WorkItemModal({
 
         {/* Modal Body */}
         <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
-          {activeTab === 'children' ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Layers className="w-4 h-4 text-emerald-400" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Child Work Items
-                  </span>
-                  <span className="px-2 py-0.5 text-xs font-mono rounded-full bg-slate-800 text-slate-300">
-                    {childItems.length}
-                  </span>
-                </div>
-              </div>
-
-              {childItems.length === 0 ? (
-                <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl space-y-2">
-                  <Layers className="w-8 h-8 text-slate-600 mx-auto" />
-                  <p className="text-xs text-slate-400 font-medium">No child items found</p>
-                  <p className="text-[11px] text-slate-500">
-                    Tasks, stories, or sub-items can be linked to this item by setting this item as their parent.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {childItems.map((child) => {
-                    const childColor = getHierarchyLevelColor(child.item_type, effectiveProjectSettings.hierarchy);
-                    const childStatus = effectiveProjectSettings.statuses.find((s) => s.id === child.status);
-                    const childPoints = child.metadata?.story_points ?? child.metadata?.points ?? child.metadata?.estimate;
-
-                    return (
-                      <div
-                        key={child.id}
-                        onClick={() => {
-                          if (onSelectItem) {
-                            onSelectItem(child);
-                          }
-                        }}
-                        data-testid={`child-item-row-${child.id}`}
-                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 hover:bg-slate-900/60 transition-colors flex items-center justify-between gap-3 cursor-pointer group"
-                      >
-                        <div className="flex items-center space-x-3 min-w-0 flex-1">
-                          <span
-                            className={`text-[10px] uppercase font-mono font-semibold px-2 py-0.5 rounded border shrink-0 ${childColor.badgeBg} ${childColor.badgeText} ${childColor.badgeBorder}`}
-                          >
-                            {child.item_type}
-                          </span>
-                          {child.external_ref_id && (
-                            <CopyableRefId
-                              id={child.external_ref_id}
-                              className="text-xs shrink-0"
-                            />
-                          )}
-                          <span className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
-                            {child.title}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center space-x-3 shrink-0">
-                          {childPoints !== undefined && childPoints !== null && (
-                            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded">
-                              {childPoints} pts
-                            </span>
-                          )}
-                          {child.assignee && (
-                            <span className="text-xs text-slate-400 flex items-center space-x-1">
-                              <User className="w-3 h-3 text-slate-500" />
-                              <span className="truncate max-w-[100px]">{child.assignee}</span>
-                            </span>
-                          )}
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                            {childStatus?.label || child.status}
-                          </span>
-                          <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400 transition-colors" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+          {isAssociatedTab ? (
+            item ? (
+              <AssociatedItemsTab
+                item={item}
+                allItems={allItems}
+                projectSettings={effectiveProjectSettings}
+                workspaceMembers={workspaceMembers}
+                isReadOnly={isReadOnly}
+                tenantSlug={tenantSlug}
+                onSelectItem={onSelectItem}
+                onCreateChildItem={onCreateChildItem}
+                onRefresh={onRefresh}
+              />
+            ) : null
           ) : activeTab === 'activity' ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between">

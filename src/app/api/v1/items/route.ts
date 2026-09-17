@@ -737,6 +737,14 @@ export async function PATCH(req: NextRequest) {
           );
         }
       }
+
+      // Synchronize audit_logs project_id for migrated items
+      const allAffectedIds = [id, ...(descendantIds || [])];
+      await supabaseAdmin
+        .from('audit_logs')
+        .update({ project_id: project_id })
+        .in('item_id', allAffectedIds)
+        .eq('tenant_id', authCtx.tenant.id);
     }
 
     // Cascade sprint change to all descendants
