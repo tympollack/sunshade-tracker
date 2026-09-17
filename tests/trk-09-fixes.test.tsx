@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { SprintDefinition, WorkItem, ProjectSettings } from '@/types/tracker';
 import { reassignWorkItemProject } from '@/app/actions/trackerActions';
 import { PATCH as itemsPatchHandler } from '@/app/api/v1/items/route';
 import { supabaseAdmin } from '@/lib/db';
@@ -586,6 +587,256 @@ describe('TRK-09 Epic Test Suite', () => {
       const searchParams = new URLSearchParams('hideCompleted=true');
       const paramVal = searchParams.get('hideCompleted');
       expect(paramVal === 'true' || paramVal === '1').toBe(true);
+    });
+  });
+
+  describe('FEAT-TRK-MODAL-ASSOCIATED-ITEMS: Associated Items tab, parent preview, inline child creation', () => {
+    const mockSettings: ProjectSettings = {
+      statuses: [
+        { id: 'todo', label: 'To Do', category: 'todo', color: '#94a3b8' },
+        { id: 'in_progress', label: 'In Progress', category: 'in_progress', color: '#38bdf8' },
+        { id: 'done', label: 'Done', category: 'done', color: '#34d399' },
+      ],
+      hierarchy: [
+        { level: 1, type: 'epic', label: 'Epic', color: '#a855f7', allowed_parents: [] },
+        { level: 2, type: 'story', label: 'Story', color: '#3b82f6', allowed_parents: ['epic'] },
+        { level: 3, type: 'task', label: 'Task', color: '#10b981', allowed_parents: ['story'] },
+        { level: 4, type: 'subtask', label: 'Subtask', color: '#f59e0b', allowed_parents: ['task'] },
+      ],
+    };
+
+    it('resolves allowed child types according to hierarchy schema', async () => {
+      const { getAllowedChildTypes } = await import('@/components/AssociatedItemsTab');
+
+      expect(getAllowedChildTypes('epic', mockSettings.hierarchy)).toEqual(['story']);
+      expect(getAllowedChildTypes('story', mockSettings.hierarchy)).toEqual(['task']);
+      expect(getAllowedChildTypes('task', mockSettings.hierarchy)).toEqual(['subtask']);
+    });
+
+    it('renders "None (Top Level)" when current work item has no parent', async () => {
+      const { render, cleanup } = await import('@testing-library/react');
+      const { AssociatedItemsTab } = await import('@/components/AssociatedItemsTab');
+      cleanup();
+
+      const topItem: WorkItem = {
+        id: 'top-item-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: null,
+        title: 'Top Level Epic',
+        item_type: 'epic',
+        status: 'todo',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { getByTestId, queryByTestId, unmount } = render(
+        <AssociatedItemsTab
+          item={topItem}
+          allItems={[topItem]}
+          projectSettings={mockSettings}
+        />
+      );
+
+      expect(getByTestId('parent-item-none')).toBeDefined();
+      expect(queryByTestId('parent-item-card')).toBeNull();
+      unmount();
+    });
+
+    it('renders parent work item card with clickable link when parent_id exists', async () => {
+      const { render, fireEvent, cleanup } = await import('@testing-library/react');
+      const { AssociatedItemsTab } = await import('@/components/AssociatedItemsTab');
+      cleanup();
+
+      const onSelectItem = vi.fn();
+
+      const parentItem: WorkItem = {
+        id: 'parent-epic-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: null,
+        external_ref_id: 'EPIC-101',
+        title: 'Core Platform Architecture',
+        item_type: 'epic',
+        status: 'in_progress',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const childStory: WorkItem = {
+        id: 'child-story-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: 'parent-epic-1',
+        external_ref_id: 'STORY-201',
+        title: 'Database Schema Updates',
+        item_type: 'story',
+        status: 'todo',
+        order_index: 2000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { getByTestId, queryByTestId, unmount } = render(
+        <AssociatedItemsTab
+          item={childStory}
+          allItems={[parentItem, childStory]}
+          projectSettings={mockSettings}
+          onSelectItem={onSelectItem}
+        />
+      );
+
+      expect(queryByTestId('parent-item-none')).toBeNull();
+      const parentCard = getByTestId('parent-item-card');
+      expect(parentCard).toBeDefined();
+      expect(parentCard.textContent).toContain('Core Platform Architecture');
+      expect(parentCard.textContent).toContain('EPIC-101');
+
+      fireEvent.click(parentCard);
+      expect(onSelectItem).toHaveBeenCalledWith(parentItem);
+
+      unmount();
+    });
+
+    it('renders child work items list and handles inline child creation', async () => {
+      const { render, fireEvent, cleanup, act } = await import('@testing-library/react');
+      const { AssociatedItemsTab } = await import('@/components/AssociatedItemsTab');
+      cleanup();
+
+      const onCreateChildItem = vi.fn().mockResolvedValue(undefined);
+
+      const storyItem: WorkItem = {
+        id: 'story-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: null,
+        external_ref_id: 'STORY-100',
+        title: 'User Authentication',
+        item_type: 'story',
+        status: 'in_progress',
+        order_index: 1000,
+        metadata: { sprint: 'Sprint 2026-Q3' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const existingChild: WorkItem = {
+        id: 'task-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: 'story-1',
+        external_ref_id: 'TASK-101',
+        title: 'Implement OAuth Token Refresh',
+        item_type: 'task',
+        status: 'todo',
+        order_index: 1500,
+        assignee: 'Alice',
+        metadata: { story_points: 3 },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { getByTestId, getByText, unmount } = render(
+        <AssociatedItemsTab
+          item={storyItem}
+          allItems={[storyItem, existingChild]}
+          projectSettings={mockSettings}
+          onCreateChildItem={onCreateChildItem}
+        />
+      );
+
+      // Verify existing child item rendered
+      const childRow = getByTestId('child-item-row-task-1');
+      expect(childRow).toBeDefined();
+      expect(childRow.textContent).toContain('Implement OAuth Token Refresh');
+      expect(childRow.textContent).toContain('TASK-101');
+      expect(childRow.textContent).toContain('Alice');
+      expect(childRow.textContent).toContain('3 pts');
+
+      // Click + Add Child Item button
+      const addBtn = getByTestId('add-child-item-btn');
+      await act(async () => {
+        fireEvent.click(addBtn);
+      });
+
+      // Form is now visible
+      const form = getByTestId('add-child-form');
+      expect(form).toBeDefined();
+
+      // Check default item_type for child of 'story' is 'task'
+      const typeSelect = getByTestId('child-type-select') as HTMLSelectElement;
+      expect(typeSelect.value).toBe('task');
+
+      // Type title and submit
+      const titleInput = getByTestId('child-title-input');
+      await act(async () => {
+        fireEvent.change(titleInput, { target: { value: 'Implement Session Revocation' } });
+      });
+
+      const submitBtn = getByTestId('submit-child-btn');
+      await act(async () => {
+        fireEvent.click(submitBtn);
+      });
+
+      expect(onCreateChildItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: 'proj-1',
+          parent_id: 'story-1',
+          title: 'Implement Session Revocation',
+          item_type: 'task',
+          status: 'todo',
+        })
+      );
+
+      unmount();
+    });
+
+    it('toggles collapsible Related Items / References section', async () => {
+      const { render, fireEvent, cleanup, act } = await import('@testing-library/react');
+      const { AssociatedItemsTab } = await import('@/components/AssociatedItemsTab');
+      cleanup();
+
+      const item: WorkItem = {
+        id: 'item-1',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        parent_id: null,
+        title: 'Standalone Task',
+        item_type: 'task',
+        status: 'todo',
+        order_index: 1000,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { getByTestId, queryByTestId, unmount } = render(
+        <AssociatedItemsTab
+          item={item}
+          allItems={[item]}
+          projectSettings={mockSettings}
+        />
+      );
+
+      // Section is initially collapsed
+      expect(queryByTestId('related-item-input')).toBeNull();
+
+      // Click toggle
+      const toggle = getByTestId('related-items-toggle');
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      // Expanded content is now visible
+      expect(getByTestId('related-item-input')).toBeDefined();
+      expect(getByTestId('link-related-item-btn')).toBeDefined();
+
+      unmount();
     });
   });
 });

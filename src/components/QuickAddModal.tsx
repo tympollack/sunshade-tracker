@@ -22,12 +22,15 @@ export interface WorkspaceMemberOption {
 }
 
 export interface QuickAddPayload {
-  project_slug: string;
+  project_slug?: string;
+  project_id?: string;
   title: string;
   item_type: string;
   status: string;
   assignee: string | null;
-  external_ref_id: string | null;
+  external_ref_id?: string | null;
+  parent_id?: string | null;
+  metadata?: Record<string, any>;
 }
 
 export interface QuickAddModalProps {

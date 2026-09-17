@@ -4272,6 +4272,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         isReadOnly={isReadOnly}
         projects={allProjects}
         onSelectItem={(item) => setEditingItem(item)}
+        onCreateChildItem={handleCreateItem}
+        onRefresh={fetchData}
       />
 
       {/* Board Item Delete Confirmation Modal */}

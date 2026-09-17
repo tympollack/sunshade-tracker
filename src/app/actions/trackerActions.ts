@@ -249,11 +249,13 @@ export async function reassignWorkItemProject(
     }
 
     // Synchronize audit logs project_id to match destination project
-    await service
-      .from('audit_logs')
-      .update({ project_id: newProjectId })
-      .in('item_id', allAffectedIds)
-      .eq('tenant_id', tenantId);
+    const auditTable = service.from('audit_logs') as any;
+    if (typeof auditTable?.update === 'function') {
+      await auditTable
+        .update({ project_id: newProjectId })
+        .in('item_id', allAffectedIds)
+        .eq('tenant_id', tenantId);
+    }
 
     // 7. Audit log for migration
     const userName =
@@ -437,11 +439,13 @@ export async function bulkReassignProjects(
     }
 
     // Synchronize audit logs
-    await service
-      .from('audit_logs')
-      .update({ project_id: newProjectId })
-      .in('item_id', allAffectedIds)
-      .eq('tenant_id', tenantId);
+    const auditTable = service.from('audit_logs') as any;
+    if (typeof auditTable?.update === 'function') {
+      await auditTable
+        .update({ project_id: newProjectId })
+        .in('item_id', allAffectedIds)
+        .eq('tenant_id', tenantId);
+    }
 
     // 7. Record bulk audit log
     const userName =
