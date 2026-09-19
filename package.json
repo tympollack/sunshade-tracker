@@ -14,7 +14,8 @@
     "generate:assets": "node scripts/generate-assets.mjs"
   },
   "dependencies": {
-    "@sunshade/ui": "file:./packages/ui",
+    "@digitalcanopy/supabase": "^0.1.0",
+    "@digitalcanopy/ui": "^0.1.0",
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.49.1",
     "clsx": "^2.1.1",
@@ -26,6 +27,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
     "@types/node": "^22.13.4",
