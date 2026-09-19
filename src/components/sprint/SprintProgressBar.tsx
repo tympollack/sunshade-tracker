@@ -63,24 +63,41 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
 
       {/* Acrylic Track */}
       <div
-        className="relative h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.06] p-[1px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] backdrop-blur-sm flex gap-1"
+        className="relative h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.06] p-[1px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] backdrop-blur-sm flex"
         data-testid="sprint-progress-bar"
       >
+        {/* Continuous Specular Glare Reflection across the entire liquid cylinder */}
+        <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none z-20" />
+
         {segments.length > 0 ? (
-          segments.map((seg) => (
-            <div
-              key={seg.id}
-              data-testid={`sprint-progress-segment-${seg.id}`}
-              style={{
-                width: `${seg.pct}%`,
-                backgroundColor: seg.color,
-              }}
-              className="relative h-full rounded-full transition-all duration-500 min-w-0"
-            >
-              {/* Specular Glare Reflection */}
-              <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
-            </div>
-          ))
+          segments.map((seg, idx) => {
+            const isFirst = idx === 0;
+            const isLast = idx === segments.length - 1;
+            return (
+              <div
+                key={seg.id}
+                data-testid={`sprint-progress-segment-${seg.id}`}
+                style={{
+                  width: `${seg.pct}%`,
+                  backgroundColor: seg.color,
+                }}
+                className={`relative h-full transition-all duration-500 min-w-0 ${
+                  isFirst ? 'rounded-l-full' : ''
+                } ${isLast ? 'rounded-r-full' : ''}`}
+              >
+                {/* Subtle directional gradient lighting for rich liquid depth */}
+                <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-transparent to-black/20 pointer-events-none" />
+
+                {/* Soft gradient edge blending between adjacent status colors */}
+                {idx > 0 && (
+                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/20 to-transparent pointer-events-none z-10" />
+                )}
+                {!isLast && (
+                  <div className="absolute right-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-transparent to-black/20 pointer-events-none z-10" />
+                )}
+              </div>
+            );
+          })
         ) : (
           /* Glowing Fill Bar */
           <div
@@ -94,12 +111,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
               width: isFilled100 ? '100%' : '0%',
               backgroundColor: isFilled100 ? '#22c55e' : undefined,
             }}
-          >
-            {isFilled100 && (
-              /* Specular Glare Reflection */
-              <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
-            )}
-          </div>
+          />
         )}
       </div>
 
