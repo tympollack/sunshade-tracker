@@ -113,8 +113,22 @@ body {
 
 /* Fixed mobile bottom navigation height and safe area clearance */
 .mobile-bottom-nav {
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
-  min-height: calc(3.5rem + max(env(safe-area-inset-bottom, 0px), 0px));
+  bottom: -2px !important;
+  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 0px) + 2px);
+  min-height: calc(3.5rem + max(env(safe-area-inset-bottom, 0px), 0px) + 2px);
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+.mobile-bottom-nav::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background-color: #020617; /* matches slate-950 */
+  pointer-events: none;
 }
 
 /* Main dashboard content clearance above fixed mobile bottom navigation */

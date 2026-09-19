@@ -51,13 +51,13 @@ describe('Hierarchy UX - TASK-TRK-HIER-ROLLUP-METRICS', () => {
     expect(tree).toHaveLength(1);
     const epicNode = tree[0];
 
-    // Epic has 1 story + 2 tasks = 3 descendants, points = 0 + 5 + 3 + 2 = 10 pts
+    // Epic has 1 story + 2 tasks = 3 descendants, leaf rollup = 3 + 2 = 5 pts (BUG-TRK-TREE-LEAF-DOUBLE-COUNT)
     expect(epicNode.descendantCount).toBe(3);
-    expect(epicNode.rollupPoints).toBe(10);
+    expect(epicNode.rollupPoints).toBe(5);
 
     const storyNode = epicNode.children![0];
     expect(storyNode.descendantCount).toBe(2);
-    expect(storyNode.rollupPoints).toBe(10); // 5 own + 3 + 2 = 10 pts
+    expect(storyNode.rollupPoints).toBe(5);
 
     render(
       <TreeNode
@@ -68,9 +68,10 @@ describe('Hierarchy UX - TASK-TRK-HIER-ROLLUP-METRICS', () => {
       />
     );
 
-    // Epic displays rollup badges
-    expect(screen.getByText('3 subtasks')).toBeInTheDocument();
-    expect(screen.getAllByText('10 pts rollup')).toHaveLength(2);
+    // Epic displays discreet subtask counter (FEAT-TRK-HIERARCHY-ROW-DECLUTTER) and leaf rollup points
+    expect(screen.getByText('(3)')).toBeInTheDocument();
+    expect(screen.getByText('(2)')).toBeInTheDocument();
+    expect(screen.getAllByText('5 pts rollup')).toHaveLength(2);
   });
 
   it('indicates sprint filtering in rollup badges tooltip when isFilteredBySprint is true', () => {

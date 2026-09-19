@@ -87,6 +87,7 @@ export const SprintPlanningView: React.FC<SprintPlanningViewProps> = ({
                 items={sprintItems}
                 pointMode={pointMode}
                 sprintDef={sprintDef}
+                statuses={projectSettings?.statuses}
                 isCollapsed={isCollapsed}
                 onToggleCollapse={() => onToggleCollapseSprint?.(sprintName)}
                 isAllSelected={isAllSelected}

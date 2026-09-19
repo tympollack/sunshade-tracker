@@ -31,15 +31,15 @@ export const PointModeSwitcher: React.FC<PointModeSwitcherProps> = ({
         data-testid="point-mode-macro-btn"
         aria-pressed={mode === 'macro'}
         onClick={() => onChange('macro')}
-        className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md font-medium text-xs transition-all cursor-pointer ${
+        className={`flex items-center justify-center space-x-1.5 px-2.5 py-1 rounded-md font-medium text-xs transition-all cursor-pointer flex-1 sm:flex-initial ${
           mode === 'macro'
             ? 'bg-slate-800 text-slate-100 shadow-sm border border-slate-700/80'
             : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
         }`}
         title="View container sizing (top-level intrinsic estimates & roadmap capacity)"
       >
-        <Layers className="w-3 h-3 text-slate-400" />
-        <span>Macro (Top-Level)</span>
+        <Layers className="w-3 h-3 text-slate-400 shrink-0" />
+        <span className="whitespace-nowrap">Macro<span className="hidden sm:inline"> (Top-Level)</span></span>
       </button>
 
       <button
@@ -47,15 +47,15 @@ export const PointModeSwitcher: React.FC<PointModeSwitcherProps> = ({
         data-testid="point-mode-granular-btn"
         aria-pressed={mode === 'granular'}
         onClick={() => onChange('granular')}
-        className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md font-medium text-xs transition-all cursor-pointer ${
+        className={`flex items-center justify-center space-x-1.5 px-2.5 py-1 rounded-md font-medium text-xs transition-all cursor-pointer flex-1 sm:flex-initial ${
           mode === 'granular'
             ? 'bg-emerald-950/80 text-emerald-300 shadow-sm border border-emerald-800/80'
             : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
         }`}
         title="View leaf-level execution workload (true burn & child task rollups)"
       >
-        <Network className="w-3 h-3 text-emerald-400" />
-        <span>Granular (Leaf)</span>
+        <Network className="w-3 h-3 text-emerald-400 shrink-0" />
+        <span className="whitespace-nowrap">Granular<span className="hidden sm:inline"> (Leaf)</span></span>
       </button>
     </div>
   );

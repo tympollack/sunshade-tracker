@@ -32,6 +32,10 @@ export interface SunShadeLogoProps {
    * On mobile (<640px), hide typography lockup and render only emblem icon
    */
   hideTextOnMobile?: boolean;
+  /**
+   * Hide typography lockup on scroll to condense breadcrumbs to icons/symbols
+   */
+  hideTextOnScroll?: boolean;
 }
 
 const SIZE_MAP = {
@@ -162,20 +166,21 @@ export function SunShadeLogo({
   href,
   className = '',
   hideTextOnMobile = false,
+  hideTextOnScroll = false,
 }: SunShadeLogoProps) {
   const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size].icon;
-  const textClass = typeof size === 'number' ? 'text-lg' : SIZE_MAP[size].text;
-  const taglineClass = typeof size === 'number' ? 'text-[10px]' : SIZE_MAP[size].tagline;
+  const textClass = typeof size === 'string' ? SIZE_MAP[size].text : 'text-sm';
+  const taglineClass = typeof size === 'string' ? SIZE_MAP[size].tagline : 'text-[9px]';
 
   const content = (
     <div
       data-testid="sunshade-logo"
       className={`inline-flex items-center gap-2.5 select-none shrink-0 min-w-0 ${
         variant === 'stacked' ? 'flex-col text-center' : 'flex-row'
-      } ${className}`}
+      } transition-transform duration-200 group-hover:scale-[1.01] ${className}`}
     >
-      {/* Emblem Icon with subtle ambient backdrop */}
-      <div className="relative flex items-center justify-center shrink-0">
+      {/* Radiant Canopy Emblem */}
+      <div className="relative shrink-0 flex items-center justify-center">
         <div
           className="absolute -inset-1 rounded-full bg-amber-500/10 blur-sm pointer-events-none"
           aria-hidden="true"
@@ -189,7 +194,7 @@ export function SunShadeLogo({
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
             hideTextOnMobile ? 'hidden sm:flex' : ''
-          }`}
+          } ${hideTextOnScroll ? 'sm:hidden' : ''}`}
         >
           <div className="flex items-center gap-2">
             <span className={`font-extrabold tracking-tight text-white ${textClass}`}>

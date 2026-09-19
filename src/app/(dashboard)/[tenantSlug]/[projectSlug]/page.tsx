@@ -40,7 +40,9 @@ import {
   Eye,
   EyeOff,
   Archive,
+  Search,
 } from 'lucide-react';
+import { GlobalSearchModal } from '@/components/GlobalSearchModal';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { buildTree, isDescendantOf, getDescendantIds, isEffectivelyUnparented } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
@@ -70,6 +72,7 @@ import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
+import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -319,6 +322,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       return next;
     });
   };
+
+  // Scroll detection to condense breadcrumbs (BUG-TRK-NAV-BREADCRUMB-OVERFLOW)
+  const [isScrolled, setIsScrolled] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Point Mode State (FEAT-TRK-MACRO-VS-LEAF-VIEW-TOGGLE)
   const [pointMode, setPointMode] = useState<'granular' | 'macro'>(() => {
@@ -2232,6 +2246,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
   };
 
+  // ─── Global Pop-Open Search State & Shortcut (FEAT-TRK-SEARCH-POPOVER) ───
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
   // ─── Global Keyboard Shortcuts for Quick Add (TASK-TRK-HEADER-ADD-BUTTON) ─
   useEffect(() => {
     if (isReadOnly) return;
@@ -2255,6 +2272,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       // Ignore if any modal is currently open
       if (
         isQuickAddOpen ||
+        isSearchOpen ||
         editingItem ||
         isManageSprintsOpen ||
         isReconciliationModalOpen ||
@@ -2275,6 +2293,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [
     isReadOnly,
     isQuickAddOpen,
+    isSearchOpen,
     editingItem,
     isManageSprintsOpen,
     isReconciliationModalOpen,
@@ -2283,6 +2302,33 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     cascadePromptState,
     cascadeCompletionState,
   ]);
+
+  useEffect(() => {
+    const handleSearchKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K or Ctrl+K opens/toggles search modal
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+        return;
+      }
+
+      // '/' opens search when not actively typing in an input element
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const activeEl = document.activeElement as HTMLElement | null;
+        if (activeEl) {
+          const tag = activeEl.tagName?.toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || activeEl.isContentEditable) {
+            return;
+          }
+        }
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleSearchKeyDown);
+    return () => window.removeEventListener('keydown', handleSearchKeyDown);
+  }, []);
 
   // ─── Gemini Spark ingest ─────────────────────────────────────────────────
   const handleRunSparkIngest = async () => {
@@ -2381,12 +2427,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       {/* ── Top App Header ──────────────────────────────────────────────── */}
       <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextOnScroll={isScrolled} />
           <span className="text-slate-700 shrink-0">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
             currentTenantSlug={tenantSlug}
             workspaces={allWorkspaces}
+            isScrolled={isScrolled}
           />
           <span className="text-slate-700 shrink-0">/</span>
           {/* Project Switcher */}
@@ -2396,6 +2443,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             projects={allProjects}
             onArchiveCurrentProject={() => setIsArchiveModalOpen(true)}
             isReadOnly={isReadOnly}
+            isScrolled={isScrolled}
           />
         </div>
 
@@ -2408,7 +2456,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               sprint: <Calendar className="w-3.5 h-3.5" />,
             };
             const labels = {
-              board: 'Board',
+              board: 'Kanban',
               tree: 'Hierarchy Tree',
               sprint: 'Sprint Planning',
             };
@@ -2423,7 +2471,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 }`}
               >
                 {icons[tab]}
-                <span className="hidden md:block">{labels[tab]}</span>
+                <span className="hidden xl:inline">{labels[tab]}</span>
               </button>
             );
           })}
@@ -2432,6 +2480,21 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
         {/* Right header actions */}
         <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {/* Global Search Button (FEAT-TRK-SEARCH-POPOVER) */}
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen(true)}
+            className="flex items-center space-x-1 sm:space-x-1.5 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            title="Search Work Items (Press '/' or Cmd+K)"
+            data-testid="header-search-btn"
+          >
+            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="hidden md:inline whitespace-nowrap">Search...</span>
+            <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-800 rounded border border-slate-700">
+              /
+            </kbd>
+          </button>
+
           {/* Add Item Quick Button (TASK-TRK-HEADER-ADD-BUTTON) */}
           {!isReadOnly && (
             <button
@@ -2640,6 +2703,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     })}
                   </select>
                 </div>
+                <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
                 {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
                   effectiveSelectedLevels.length < projectSettings.hierarchy.length ||
                   selectedSprint !== 'all') && (
@@ -3352,9 +3416,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const renderSprintTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
                   const childCount = (node.children || []).length;
                   const getSubtreePoints = (n: WorkItemNode): number => {
-                    let sum =
-                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
-                    for (const c of n.children || []) {
+                    const children = n.children || [];
+                    if (children.length === 0) {
+                      return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    }
+                    let sum = 0;
+                    for (const c of children) {
                       sum += getSubtreePoints(c);
                     }
                     return sum;
@@ -3504,15 +3571,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           </span>
                         )}
 
-                        <div className="flex items-center space-x-2 min-w-[140px]">
-                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-emerald-500 transition-all rounded-full"
-                              style={{ width: `${progressPct}%` }}
+                        {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
+                        {(() => {
+                          const segs = projectSettings.statuses
+                            .map((st) => {
+                              const count = sprintItems.filter(
+                                (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
+                              ).length;
+                              const pct = sprintItems.length > 0 ? Math.round((count / sprintItems.length) * 100) : 0;
+                              return { id: st.id, label: st.label, color: st.color, count, pct };
+                            })
+                            .filter((s) => s.count > 0);
+
+                          return (
+                            <SprintProgressBar
+                              progressPct={progressPct}
+                              segments={segs}
+                              isCompletedSprint={isCompletedSprint}
                             />
-                          </div>
-                          <span className="text-xs font-mono text-slate-400">{progressPct}%</span>
-                        </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -3586,9 +3664,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const renderBacklogTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
                   const childCount = (node.children || []).length;
                   const getSubtreePoints = (n: WorkItemNode): number => {
-                    let sum =
-                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
-                    for (const c of n.children || []) {
+                    const children = n.children || [];
+                    if (children.length === 0) {
+                      return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    }
+                    let sum = 0;
+                    for (const c of children) {
                       sum += getSubtreePoints(c);
                     }
                     return sum;
@@ -4363,8 +4444,22 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
       )}
 
-      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER) */}
-      <MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+      {/* Global Search Pop-Open Modal (FEAT-TRK-SEARCH-POPOVER) */}
+      <GlobalSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        items={items}
+        onSelectItem={(item) => setEditingItem(item)}
+        projectSettings={projectSettings}
+      />
+
+      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER, FEAT-TRK-MOBILE-POINT-SWITCHER) */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        pointMode={pointMode}
+        onPointModeChange={handlePointModeChange}
+      />
     </div>
   );
 }

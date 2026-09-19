@@ -62,10 +62,15 @@ export interface Project {
   slug: string;
   description?: string | null;
   settings: ProjectSettings;
+  order_index?: number;
   created_at: string;
   updated_at: string;
   /** Soft-delete timestamp. NULL = active. Set to ISO string when deleted. */
   deleted_at?: string | null;
+}
+
+export interface ReorderProjectsPayload {
+  items: Array<{ project_id: string; order_index: number }>;
 }
 
 export interface WorkItem {

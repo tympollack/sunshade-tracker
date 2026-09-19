@@ -28,7 +28,27 @@ import {
   RotateCcw,
   Globe,
   Eye,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { UserMenu } from '@/components/UserMenu';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
@@ -50,6 +70,118 @@ function slugify(str: string): string {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .substring(0, 40);
+}
+
+interface SortableProjectItemProps {
+  proj: any;
+  tenantSlug: string;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  isFirst?: boolean;
+  isLast?: boolean;
+}
+
+function SortableProjectItem({
+  proj,
+  tenantSlug,
+  onMoveUp,
+  onMoveDown,
+  isFirst,
+  isLast,
+}: SortableProjectItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: proj.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-testid={`project-item-${proj.id}`}
+      className={`p-4 rounded-lg bg-slate-950 border transition-colors flex items-center justify-between group ${
+        isDragging
+          ? 'opacity-50 border-emerald-500 z-30 shadow-lg'
+          : 'border-slate-800 hover:border-slate-700'
+      }`}
+    >
+      <div className="flex items-center space-x-3 min-w-0">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          data-testid={`project-drag-handle-${proj.id}`}
+          className="p-1 -ml-1 text-slate-600 hover:text-slate-300 rounded cursor-grab active:cursor-grabbing transition-colors focus:outline-none"
+          title="Drag to reorder project"
+          aria-label={`Drag to reorder project ${proj.name}`}
+        >
+          <GripVertical className="w-4 h-4 shrink-0" />
+        </button>
+
+        <div className="flex flex-col -space-y-1">
+          {onMoveUp && (
+            <button
+              type="button"
+              onClick={onMoveUp}
+              disabled={isFirst}
+              data-testid={`project-move-up-${proj.id}`}
+              className="p-0.5 text-slate-600 hover:text-slate-300 disabled:opacity-20 disabled:hover:text-slate-600 transition-colors"
+              title="Move project up"
+            >
+              <ArrowUp className="w-3 h-3" />
+            </button>
+          )}
+          {onMoveDown && (
+            <button
+              type="button"
+              onClick={onMoveDown}
+              disabled={isLast}
+              data-testid={`project-move-down-${proj.id}`}
+              className="p-0.5 text-slate-600 hover:text-slate-300 disabled:opacity-20 disabled:hover:text-slate-600 transition-colors"
+              title="Move project down"
+            >
+              <ArrowDown className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        <Folder className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="min-w-0 truncate">
+          <span className="text-sm font-semibold text-white">{proj.name}</span>
+          <span className="ml-2 text-xs font-mono text-slate-500">/{proj.slug}</span>
+          {proj.description && (
+            <p className="text-xs text-slate-400 mt-0.5 truncate">{proj.description}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center space-x-2 shrink-0">
+        <Link
+          href={`/${tenantSlug}/${proj.slug}?tab=schema`}
+          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition-colors flex items-center space-x-1.5"
+        >
+          <Settings className="w-3 h-3 text-slate-400" />
+          <span>Schema Settings</span>
+        </Link>
+        <Link
+          href={`/${tenantSlug}/${proj.slug}`}
+          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-medium text-white transition-colors flex items-center space-x-1.5"
+        >
+          <span>Open Board</span>
+          <ExternalLink className="w-3 h-3" />
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 export default function WorkspaceSettingsPage(props: PageProps) {
@@ -85,6 +217,11 @@ export default function WorkspaceSettingsPage(props: PageProps) {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
+
+  // Project manual reordering state (FEAT-TRK-PROJECT-MODAL-REORDER)
+  const [projectList, setProjectList] = useState<any[]>([]);
+  const [isReordering, setIsReordering] = useState(false);
+  const [reorderSuccess, setReorderSuccess] = useState(false);
 
   // Notification Preferences state
   const [notificationPrefs, setNotificationPrefs] = useState({
@@ -131,8 +268,16 @@ export default function WorkspaceSettingsPage(props: PageProps) {
             `Workspace "@${tenantSlug}" was not found or you are not an active member.`
           );
           setTenantInfo(null);
+          setProjectList([]);
         } else {
           setTenantInfo(current);
+          const initialProjects = (current.projects || []).slice().sort((a: any, b: any) => {
+            const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
+            const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          });
+          setProjectList(initialProjects);
         }
       } else if (res.status === 401) {
         setFetchError('Session expired. Please sign in again.');
@@ -146,6 +291,62 @@ export default function WorkspaceSettingsPage(props: PageProps) {
       setLoading(false);
     }
   }, [apiFetch, tenantSlug]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const persistReorder = async (updatedProjects: any[]) => {
+    setIsReordering(true);
+    const payload = updatedProjects.map((p, idx) => ({
+      project_id: p.id,
+      order_index: (idx + 1) * 1000,
+    }));
+
+    try {
+      const res = await apiFetch('/api/v1/projects/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ items: payload }),
+      });
+      if (res.ok) {
+        setReorderSuccess(true);
+        setTimeout(() => setReorderSuccess(false), 2500);
+      }
+    } catch (err) {
+      console.error('Failed to persist project reordering:', err);
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  const handleMoveProject = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= projectList.length) return;
+    const reordered = arrayMove(projectList, index, targetIndex);
+    setProjectList(reordered);
+    persistReorder(reordered);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = projectList.findIndex((p) => p.id === active.id);
+    const newIndex = projectList.findIndex((p) => p.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const reordered = arrayMove(projectList, oldIndex, newIndex);
+      setProjectList(reordered);
+      persistReorder(reordered);
+    }
+  };
 
   const loadArchivedProjects = useCallback(async () => {
     setLoadingArchived(true);
@@ -803,9 +1004,24 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                 <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
                   Workspace Projects
                 </h2>
+                {reorderSuccess && (
+                  <span
+                    data-testid="projects-reorder-success"
+                    className="text-xs text-emerald-400 font-medium flex items-center space-x-1 animate-in fade-in"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Order updated</span>
+                  </span>
+                )}
+                {isReordering && (
+                  <span className="text-xs text-slate-400 flex items-center space-x-1">
+                    <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                    <span>Saving order…</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Projects within this workspace. Schema rules and status definitions are configured per-project on each project board.
+                Projects within this workspace. Drag handles allow manual reordering to customize display order.
               </p>
             </div>
             <button
@@ -895,41 +1111,31 @@ export default function WorkspaceSettingsPage(props: PageProps) {
           )}
 
           <div className="space-y-2">
-            {projects.length ? (
-              projects.map((proj: any) => (
-                <div
-                  key={proj.id}
-                  className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between hover:border-slate-700 transition-colors"
+            {projectList.length ? (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={projectList.map((p) => p.id)}
+                  strategy={verticalListSortingStrategy}
                 >
-                  <div className="flex items-center space-x-3">
-                    <Folder className="w-4 h-4 text-emerald-400" />
-                    <div>
-                      <span className="text-sm font-semibold text-white">{proj.name}</span>
-                      <span className="ml-2 text-xs font-mono text-slate-500">/{proj.slug}</span>
-                      {proj.description && (
-                        <p className="text-xs text-slate-400 mt-0.5">{proj.description}</p>
-                      )}
-                    </div>
+                  <div className="space-y-2" data-testid="sortable-projects-list">
+                    {projectList.map((proj: any, idx: number) => (
+                      <SortableProjectItem
+                        key={proj.id}
+                        proj={proj}
+                        tenantSlug={tenantSlug}
+                        onMoveUp={() => handleMoveProject(idx, 'up')}
+                        onMoveDown={() => handleMoveProject(idx, 'down')}
+                        isFirst={idx === 0}
+                        isLast={idx === projectList.length - 1}
+                      />
+                    ))}
                   </div>
-
-                  <div className="flex items-center space-x-2">
-                    <Link
-                      href={`/${tenantSlug}/${proj.slug}?tab=schema`}
-                      className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition-colors flex items-center space-x-1.5"
-                    >
-                      <Settings className="w-3 h-3 text-slate-400" />
-                      <span>Schema Settings</span>
-                    </Link>
-                    <Link
-                      href={`/${tenantSlug}/${proj.slug}`}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-medium text-white transition-colors flex items-center space-x-1.5"
-                    >
-                      <span>Open Board</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </div>
-                </div>
-              ))
+                </SortableContext>
+              </DndContext>
             ) : (
               <div className="text-center py-10 px-4 rounded-xl border border-dashed border-slate-800 space-y-3">
                 <Folder className="w-8 h-8 text-slate-600 mx-auto" />
@@ -996,8 +1202,12 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                       <p className="text-xs text-slate-500 mt-0.5">
                         {proj.deleted_at ? `Archived on ${new Date(proj.deleted_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}` : 'Archived'}
                         {typeof proj.item_count === 'number' ? ` · ${proj.item_count} ${proj.item_count === 1 ? 'work item' : 'work items'}` : ''}
-                        {proj.description ? ` · ${proj.description}` : ''}
                       </p>
+                      {proj.description && (
+                        <p className="mt-1 text-slate-400 block text-xs break-words">
+                          {proj.description}
+                        </p>
+                      )}
                     </div>
                   </div>
 

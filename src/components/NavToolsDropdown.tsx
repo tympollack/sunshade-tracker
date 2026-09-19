@@ -88,7 +88,7 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
         title="Workspace Tools"
       >
         <Wrench className="w-3.5 h-3.5" />
-        <span>Tools</span>
+        <span className="hidden xl:inline">Tools</span>
         <ChevronDown
           className={`w-3 h-3 text-slate-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}
         />
@@ -124,8 +124,8 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
           >
             <Cpu className="w-4 h-4 text-emerald-400 shrink-0" />
             <div className="flex flex-col text-left">
-              <span className="font-medium text-slate-100">Gemini Spark</span>
-              <span className="text-[10px] text-slate-400">AI backlog ingestion</span>
+              <span className="font-medium text-slate-100">JSON Ingestion</span>
+              <span className="text-[10px] text-slate-400">Backlog ingestion</span>
             </div>
           </button>
 

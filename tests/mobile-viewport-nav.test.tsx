@@ -46,7 +46,7 @@ describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Androi
     expect(sprintBtn).toBeInTheDocument();
     expect(toolsBtn).toBeInTheDocument();
 
-    expect(boardBtn).toHaveTextContent('Board');
+    expect(boardBtn).toHaveTextContent('Kanban');
     expect(treeBtn).toHaveTextContent('Hierarchy');
     expect(sprintBtn).toHaveTextContent('Sprint');
     expect(toolsBtn).toHaveTextContent('Tools');
@@ -102,6 +102,7 @@ describe('BUG-TRK-MOBILE-VIEW-SWITCHER - Mobile Bottom Navigation Shell & Androi
     const sparkBtn = screen.getByTestId('mobile-nav-tool-spark');
     const schemaBtn = screen.getByTestId('mobile-nav-tool-schema');
     expect(sparkBtn).toBeInTheDocument();
+    expect(sparkBtn).toHaveTextContent('JSON Ingestion');
     expect(schemaBtn).toBeInTheDocument();
 
     fireEvent.click(sparkBtn);
@@ -136,8 +137,8 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     render(<WorkspaceSwitcher currentTenantSlug="pym-energy" workspaces={workspaces} />);
 
     const nameSpan = screen.getByText('PYM Energy Solutions Incorporated');
-    expect(nameSpan).toHaveClass('max-w-[75px]');
-    expect(nameSpan).toHaveClass('sm:max-w-[110px]');
+    expect(nameSpan).toHaveClass('max-w-[70px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[90px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -165,7 +166,7 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
 
     const nameSpan = screen.getByText('Cozy Smart Home System Operations');
     expect(nameSpan).toHaveClass('max-w-[65px]');
-    expect(nameSpan).toHaveClass('sm:max-w-[100px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[85px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -220,7 +221,9 @@ describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Fil
     expect(pageContent).toContain('className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800');
 
     // MobileBottomNav must be mounted
-    expect(pageContent).toContain('<MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />');
+    expect(pageContent).toContain('<MobileBottomNav');
+    expect(pageContent).toContain('activeTab={activeTab}');
+    expect(pageContent).toContain('onTabChange={handleTabChange}');
 
     // Main container must apply main-mobile-clearance
     expect(pageContent).toContain('main-mobile-clearance');
@@ -276,7 +279,7 @@ describe('BUG-TRK-MOBILE-HEADER-BRAND-COLLAPSE - Reclaim Horizontal Space via Br
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
       'utf-8'
     );
-    expect(dashboardPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
+    expect(dashboardPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile');
 
     // Check settings page
     const settingsPage = fs.readFileSync(

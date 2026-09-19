@@ -14,9 +14,10 @@ interface Workspace {
   projects: { id: string; slug: string; name: string }[];
 }
 
-interface WorkspaceSwitcherProps {
+export interface WorkspaceSwitcherProps {
   currentTenantSlug: string;
   workspaces: Workspace[];
+  isScrolled?: boolean;
 }
 
 const ROLE_ICON: Record<string, React.ReactNode> = {
@@ -37,7 +38,7 @@ const TIER_BADGE: Record<string, string> = {
   free: 'bg-slate-800 text-slate-500 border-slate-700',
 };
 
-export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = false }: WorkspaceSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
@@ -130,7 +131,13 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
         <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold flex-shrink-0">
           {initials}
         </div>
-        <span className="max-w-[75px] sm:max-w-[110px] truncate shrink min-w-0">{current?.name ?? '—'}</span>
+        <span
+          className={`${
+            isScrolled ? 'hidden md:hidden' : 'max-w-[70px] sm:max-w-[90px] xl:max-w-[120px]'
+          } truncate shrink min-w-0 transition-all duration-200`}
+        >
+          {current?.name ?? '—'}
+        </span>
         {current && (
           <span
             className={`hidden sm:inline-flex text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${

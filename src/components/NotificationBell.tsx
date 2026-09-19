@@ -60,6 +60,8 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
     }
   }, []);
 
+  const lastLatestAtRef = useRef<string | null>(null);
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch('/api/v1/notifications', {
@@ -69,20 +71,51 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
       });
       if (res.ok) {
         const data = await res.json();
-        setNotifications(data.notifications || []);
+        const list = data.notifications || [];
+        setNotifications(list);
         setUnreadCount(data.unread_count || 0);
+        if (list.length > 0 && list[0].created_at) {
+          lastLatestAtRef.current = list[0].created_at;
+        }
       }
     } catch {
       // Graceful ignore
     }
   }, [tenantSlug]);
 
-  // Initial fetch and 30s background poll
+  // Delta polling: checks unread count and new records since last known timestamp (FEAT-TRK-NOTIFICATIONS-DELTA-POLL)
+  const pollDelta = useCallback(async () => {
+    try {
+      const query = lastLatestAtRef.current
+        ? `?since=${encodeURIComponent(lastLatestAtRef.current)}`
+        : '';
+      const res = await fetch(`/api/v1/notifications/unread-count${query}`, {
+        headers: {
+          'x-tenant-slug': tenantSlug,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadCount(data.unread_count || 0);
+        if (data.latest_at) {
+          lastLatestAtRef.current = data.latest_at;
+        }
+        if (data.has_new) {
+          // Revalidate full notifications list only when new items are detected
+          fetchNotifications();
+        }
+      }
+    } catch {
+      // Graceful ignore
+    }
+  }, [tenantSlug, fetchNotifications]);
+
+  // Initial fetch and 120s (2 min) lightweight delta poll
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
+    const interval = setInterval(pollDelta, 120000);
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [fetchNotifications, pollDelta]);
 
   // Handle outside click, escape key, resize and scroll listeners
   useEffect(() => {
