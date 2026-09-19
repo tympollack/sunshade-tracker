@@ -2653,6 +2653,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     })}
                   </select>
                 </div>
+                <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
                 {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
                   effectiveSelectedLevels.length < projectSettings.hierarchy.length ||
                   selectedSprint !== 'all') && (
@@ -4382,8 +4383,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
         </div>
       )}
 
-      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER) */}
-      <MobileBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+      {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER, FEAT-TRK-MOBILE-POINT-SWITCHER) */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        pointMode={pointMode}
+        onPointModeChange={handlePointModeChange}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SprintHeader } from '@/components/sprint/SprintHeader';
 import { WorkItem } from '@/types/tracker';
 
@@ -82,5 +83,30 @@ describe('FEAT-TRK-MACRO-VS-LEAF-VIEW-TOGGLE: Point Mode Switcher & View Toggle'
       <SprintHeader sprintName="Sprint 2026-Q3" items={items} pointMode="macro" />
     );
     expect(pointsBadge).toHaveTextContent('13 pts roadmap capacity');
+  });
+
+  it('MobileBottomNav exposes PointModeSwitcher in mobile tools drawer for Board & Tree', () => {
+    const onTabChange = vi.fn();
+    const onPointModeChange = vi.fn();
+
+    const { rerender } = render(
+      <MobileBottomNav
+        activeTab="board"
+        onTabChange={onTabChange}
+        pointMode="granular"
+        onPointModeChange={onPointModeChange}
+      />
+    );
+
+    // Open tools menu
+    const toolsBtn = screen.getByTestId('mobile-nav-tools');
+    fireEvent.click(toolsBtn);
+
+    const drawerSection = screen.getByTestId('mobile-point-mode-drawer-section');
+    expect(drawerSection).toBeInTheDocument();
+
+    const macroBtn = screen.getByTestId('point-mode-macro-btn');
+    fireEvent.click(macroBtn);
+    expect(onPointModeChange).toHaveBeenCalledWith('macro');
   });
 });

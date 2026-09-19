@@ -3,13 +3,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Kanban, GitFork, Calendar, Wrench, Cpu, Settings, X } from 'lucide-react';
 import { DashboardTab } from '@/components/rev_trk_02';
+import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 
 export interface MobileBottomNavProps {
   activeTab: DashboardTab;
   onTabChange: (tab: DashboardTab) => void;
+  pointMode?: 'macro' | 'granular';
+  onPointModeChange?: (mode: 'macro' | 'granular') => void;
 }
 
-export function MobileBottomNav({ activeTab, onTabChange }: MobileBottomNavProps) {
+export function MobileBottomNav({
+  activeTab,
+  onTabChange,
+  pointMode,
+  onPointModeChange,
+}: MobileBottomNavProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
@@ -56,6 +64,24 @@ export function MobileBottomNav({ activeTab, onTabChange }: MobileBottomNavProps
               <X className="w-3 h-3" />
             </button>
           </div>
+
+          {/* Point Mode Switcher for Board & Hierarchy (FEAT-TRK-MOBILE-POINT-SWITCHER) */}
+          {(activeTab === 'board' || activeTab === 'tree') && onPointModeChange && pointMode && (
+            <div className="px-2 py-2 border-b border-slate-800/80 mb-1 bg-slate-950/60 rounded-lg" data-testid="mobile-point-mode-drawer-section">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                <span>Point Mode</span>
+                <span className="text-[9px] font-mono text-emerald-400">{pointMode === 'granular' ? 'Rollup' : 'Intrinsic'}</span>
+              </div>
+              <PointModeSwitcher
+                mode={pointMode}
+                onChange={(m) => {
+                  onPointModeChange(m);
+                  setToolsOpen(false);
+                }}
+                className="w-full flex"
+              />
+            </div>
+          )}
 
           <button
             type="button"
