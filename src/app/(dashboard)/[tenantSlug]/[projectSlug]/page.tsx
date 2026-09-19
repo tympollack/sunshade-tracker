@@ -40,7 +40,9 @@ import {
   Eye,
   EyeOff,
   Archive,
+  Search,
 } from 'lucide-react';
+import { GlobalSearchModal } from '@/components/GlobalSearchModal';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { buildTree, isDescendantOf, getDescendantIds, isEffectivelyUnparented } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
@@ -2243,6 +2245,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }
   };
 
+  // ─── Global Pop-Open Search State & Shortcut (FEAT-TRK-SEARCH-POPOVER) ───
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
   // ─── Global Keyboard Shortcuts for Quick Add (TASK-TRK-HEADER-ADD-BUTTON) ─
   useEffect(() => {
     if (isReadOnly) return;
@@ -2266,6 +2271,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       // Ignore if any modal is currently open
       if (
         isQuickAddOpen ||
+        isSearchOpen ||
         editingItem ||
         isManageSprintsOpen ||
         isReconciliationModalOpen ||
@@ -2286,6 +2292,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   }, [
     isReadOnly,
     isQuickAddOpen,
+    isSearchOpen,
     editingItem,
     isManageSprintsOpen,
     isReconciliationModalOpen,
@@ -2294,6 +2301,33 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     cascadePromptState,
     cascadeCompletionState,
   ]);
+
+  useEffect(() => {
+    const handleSearchKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K or Ctrl+K opens/toggles search modal
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+        return;
+      }
+
+      // '/' opens search when not actively typing in an input element
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const activeEl = document.activeElement as HTMLElement | null;
+        if (activeEl) {
+          const tag = activeEl.tagName?.toUpperCase();
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || activeEl.isContentEditable) {
+            return;
+          }
+        }
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleSearchKeyDown);
+    return () => window.removeEventListener('keydown', handleSearchKeyDown);
+  }, []);
 
   // ─── Gemini Spark ingest ─────────────────────────────────────────────────
   const handleRunSparkIngest = async () => {
@@ -2445,6 +2479,21 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
         {/* Right header actions */}
         <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {/* Global Search Button (FEAT-TRK-SEARCH-POPOVER) */}
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen(true)}
+            className="flex items-center space-x-1 sm:space-x-1.5 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            title="Search Work Items (Press '/' or Cmd+K)"
+            data-testid="header-search-btn"
+          >
+            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="hidden md:inline whitespace-nowrap">Search...</span>
+            <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-800 rounded border border-slate-700">
+              /
+            </kbd>
+          </button>
+
           {/* Add Item Quick Button (TASK-TRK-HEADER-ADD-BUTTON) */}
           {!isReadOnly && (
             <button
@@ -4382,6 +4431,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
           <span>{bulkToast}</span>
         </div>
       )}
+
+      {/* Global Search Pop-Open Modal (FEAT-TRK-SEARCH-POPOVER) */}
+      <GlobalSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        items={items}
+        onSelectItem={(item) => setEditingItem(item)}
+        projectSettings={projectSettings}
+      />
 
       {/* Mobile Bottom Navigation (BUG-TRK-MOBILE-VIEW-SWITCHER, FEAT-TRK-MOBILE-POINT-SWITCHER) */}
       <MobileBottomNav
