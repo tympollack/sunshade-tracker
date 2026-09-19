@@ -63,6 +63,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   onDragOver,
   onDrop,
 }) => {
+  const [isDescExpanded, setIsDescExpanded] = React.useState(false);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
 
   const effectiveChildCount =
@@ -218,14 +219,43 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         </div>
       </div>
 
-      {/* Card Title */}
-      <h4 className="text-sm font-medium text-slate-100 leading-snug min-w-0">
-        {item.title}
-      </h4>
+      {/* Card Title & Description Toggle */}
+      <div className="flex items-start justify-between gap-1.5 min-w-0">
+        <h4 className="text-sm font-medium text-slate-100 leading-snug min-w-0 flex-1 break-words">
+          {item.title}
+        </h4>
+        {item.description && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsDescExpanded((prev) => !prev);
+            }}
+            aria-expanded={isDescExpanded}
+            aria-label={isDescExpanded ? 'Collapse description' : 'Expand description'}
+            data-testid={`card-expand-desc-btn-${item.id}`}
+            title={item.description}
+            className="p-1 -mr-1 -mt-0.5 text-slate-500 hover:text-slate-300 rounded transition-colors shrink-0 cursor-pointer hover:bg-slate-900 touch-manipulation"
+          >
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                isDescExpanded ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+        )}
+      </div>
 
       {/* Card Description */}
       {item.description && (
-        <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+        <p
+          title={item.description}
+          data-testid={`card-description-${item.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className={`text-xs text-slate-400 leading-relaxed transition-all break-words ${
+            isDescExpanded ? 'line-clamp-none' : 'line-clamp-2'
+          }`}
+        >
           {item.description}
         </p>
       )}

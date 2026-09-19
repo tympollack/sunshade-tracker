@@ -108,6 +108,7 @@ export function TreeNode({
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [isCreatingChild, setIsCreatingChild] = useState(false);
   const [childTitle, setChildTitle] = useState('');
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
@@ -413,11 +414,36 @@ export function TreeNode({
               {/* Title & Ref ID */}
               <span
                 onClick={() => onEditItem?.(item)}
-                title={sanitizedTitle}
+                title={item.description ? `${sanitizedTitle} — ${item.description}` : sanitizedTitle}
                 className="font-medium text-slate-100 hover:text-white transition-colors cursor-pointer truncate min-w-0 flex-shrink flex-1"
               >
                 {sanitizedTitle}
               </span>
+
+              {item.description && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDescExpanded((prev) => !prev);
+                  }}
+                  aria-expanded={isDescExpanded}
+                  aria-label={
+                    isDescExpanded
+                      ? `Collapse description for ${sanitizedTitle}`
+                      : `Expand description for ${sanitizedTitle}`
+                  }
+                  data-testid={`tree-expand-desc-btn-${item.id}`}
+                  title={item.description}
+                  className="p-1 -my-1 text-slate-500 hover:text-slate-300 rounded transition-colors shrink-0 cursor-pointer hover:bg-slate-800 touch-manipulation"
+                >
+                  <ChevronDown
+                    className={`w-3 h-3 transition-transform duration-200 ${
+                      isDescExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              )}
 
               {item.external_ref_id && (
                 <CopyableRefId
@@ -648,6 +674,18 @@ export function TreeNode({
               </div>
             </div>
           </div>
+
+          {/* Inline Description Accordion (FEAT-TRK-MOBILE-TOUCH-EXPAND-DESC) */}
+          {item.description && isDescExpanded && (
+            <div
+              data-testid={`tree-node-description-${item.id}`}
+              title={item.description}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 pt-2 border-t border-slate-800/80 text-xs text-slate-400 leading-relaxed break-words"
+            >
+              {item.description}
+            </div>
+          )}
         </div>
       </div>
 
