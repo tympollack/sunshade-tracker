@@ -194,22 +194,13 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
         </span>
       </div>
 
-      <div className="flex items-center space-x-4 shrink-0">
-        {sprintDef?.goal && (
-          <span
-            className="text-xs font-medium text-slate-300 tracking-wide max-w-xs truncate hidden md:inline-block"
-            title={sprintDef.goal}
-            data-testid="header-goal"
-          >
-            Goal: {sprintDef.goal}
-          </span>
-        )}
-
+      <div className="flex items-center shrink-0">
         {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
         <SprintProgressBar
           progressPct={progressPct}
           segments={statusBreakdown}
           isCompletedSprint={isCompletedSprint}
+          goal={sprintDef?.goal || undefined}
         />
       </div>
     </div>

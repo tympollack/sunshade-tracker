@@ -14,6 +14,7 @@ export interface SprintProgressBarProps {
   progressPct: number;
   segments: ProgressStatusSegment[];
   isCompletedSprint?: boolean;
+  goal?: string;
   label?: string;
   className?: string;
 }
@@ -22,15 +23,21 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   progressPct,
   segments,
   isCompletedSprint = false,
+  goal,
   label,
   className = '',
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const isFilled100 = isCompletedSprint || progressPct === 100;
+  const displayGoal = goal
+    ? goal.startsWith('Goal:')
+      ? goal
+      : `Goal: ${goal}`
+    : label || 'Goal: Progress';
 
   return (
     <div
-      className={`relative flex items-center space-x-2 min-w-[140px] sm:min-w-[180px] cursor-pointer select-none ${
+      className={`relative flex w-full sm:w-auto min-w-[200px] sm:min-w-[260px] flex-col gap-2 rounded-xl border border-white/[0.08] bg-slate-950/40 p-3.5 backdrop-blur-md cursor-pointer select-none ${
         isHovered ? 'z-50' : 'z-10'
       } ${className}`}
       onMouseEnter={() => setIsHovered(true)}
@@ -38,23 +45,27 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       onClick={() => setIsHovered((prev) => !prev)}
       data-testid="sprint-progress-container"
     >
-      {label && (
+      <div className="flex items-center justify-between text-xs">
         <span
-          className="text-xs font-medium text-slate-300 tracking-wide truncate max-w-xs shrink-0"
-          data-testid="progress-label"
+          className="font-medium text-slate-300 truncate mr-2"
+          title={displayGoal}
+          data-testid="header-goal"
         >
-          {label}
+          {displayGoal}
         </span>
-      )}
+        <span
+          className="font-mono font-semibold tabular-nums text-slate-100 shrink-0"
+          data-testid="header-progress"
+        >
+          {progressPct}%
+        </span>
+      </div>
 
-      {/* Frosted Acrylic Track (Frosted Glass / Liquid Capsule) */}
+      {/* Acrylic Track */}
       <div
-        className="flex-1 h-2.5 bg-white/[0.07] backdrop-blur-sm rounded-full border border-white/10 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)] overflow-hidden flex gap-1 relative"
+        className="relative h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.06] p-[1px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] backdrop-blur-sm flex gap-1"
         data-testid="sprint-progress-bar"
       >
-        {/* Specular glass reflection sheen across track */}
-        <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/25 to-transparent rounded-t-full pointer-events-none z-20" />
-
         {segments.length > 0 ? (
           segments.map((seg) => (
             <div
@@ -64,21 +75,19 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
                 width: `${seg.pct}%`,
                 backgroundColor: seg.color,
               }}
-              className="h-full rounded-full relative overflow-hidden transition-all duration-500 ease-out min-w-0"
+              className="relative h-full rounded-full transition-all duration-500 min-w-0"
             >
-              {/* Directional gradient overlay */}
-              <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/25 pointer-events-none" />
-
-              {/* Glass Specular Sheen */}
-              <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/35 to-transparent rounded-t-full pointer-events-none" />
+              {/* Specular Glare Reflection */}
+              <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
             </div>
           ))
         ) : (
+          /* Glowing Fill Bar */
           <div
             data-testid="sprint-progress-empty-or-completed"
-            className={`h-full rounded-full relative overflow-hidden transition-all duration-500 ease-out ${
+            className={`relative h-full rounded-full transition-all duration-500 ${
               isFilled100
-                ? 'bg-emerald-500 bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+                ? 'bg-emerald-500 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
                 : 'bg-transparent'
             }`}
             style={{
@@ -87,19 +96,12 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
             }}
           >
             {isFilled100 && (
-              <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/35 to-transparent rounded-t-full pointer-events-none" />
+              /* Specular Glare Reflection */
+              <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
             )}
           </div>
         )}
       </div>
-
-      {/* Percentage text with tabular numbers */}
-      <span
-        className="text-xs font-mono font-semibold text-slate-100 tabular-nums w-9 text-right shrink-0"
-        data-testid="header-progress"
-      >
-        {progressPct}%
-      </span>
 
       {/* Hover / Tap Breakdown Popover (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
       {isHovered && (
