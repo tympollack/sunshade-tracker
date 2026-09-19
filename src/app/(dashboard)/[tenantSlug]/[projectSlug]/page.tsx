@@ -2456,7 +2456,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               sprint: <Calendar className="w-3.5 h-3.5" />,
             };
             const labels = {
-              board: 'Board',
+              board: 'Kanban',
               tree: 'Hierarchy Tree',
               sprint: 'Sprint Planning',
             };

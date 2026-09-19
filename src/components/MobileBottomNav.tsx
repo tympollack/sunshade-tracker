@@ -38,7 +38,7 @@ export function MobileBottomNav({
   }, [toolsOpen]);
 
   const primaryTabs = [
-    { id: 'board' as const, label: 'Board', icon: Kanban },
+    { id: 'board' as const, label: 'Kanban', icon: Kanban },
     { id: 'tree' as const, label: 'Hierarchy', icon: GitFork },
     { id: 'sprint' as const, label: 'Sprint', icon: Calendar },
   ];
@@ -98,8 +98,8 @@ export function MobileBottomNav({
           >
             <Cpu className="w-4 h-4 text-emerald-400 shrink-0" />
             <div className="flex flex-col text-left">
-              <span className="font-medium text-slate-100">Gemini Spark</span>
-              <span className="text-[10px] text-slate-400">AI backlog ingestion</span>
+              <span className="font-medium text-slate-100">JSON Ingestion</span>
+              <span className="text-[10px] text-slate-400">Backlog ingestion</span>
             </div>
           </button>
 

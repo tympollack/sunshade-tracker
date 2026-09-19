@@ -124,8 +124,8 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
           >
             <Cpu className="w-4 h-4 text-emerald-400 shrink-0" />
             <div className="flex flex-col text-left">
-              <span className="font-medium text-slate-100">Gemini Spark</span>
-              <span className="text-[10px] text-slate-400">AI backlog ingestion</span>
+              <span className="font-medium text-slate-100">JSON Ingestion</span>
+              <span className="text-[10px] text-slate-400">Backlog ingestion</span>
             </div>
           </button>
 

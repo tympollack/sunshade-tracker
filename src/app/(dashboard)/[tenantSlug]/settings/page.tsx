@@ -996,8 +996,12 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                       <p className="text-xs text-slate-500 mt-0.5">
                         {proj.deleted_at ? `Archived on ${new Date(proj.deleted_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}` : 'Archived'}
                         {typeof proj.item_count === 'number' ? ` · ${proj.item_count} ${proj.item_count === 1 ? 'work item' : 'work items'}` : ''}
-                        {proj.description ? ` · ${proj.description}` : ''}
                       </p>
+                      {proj.description && (
+                        <p className="mt-1 text-slate-400 block text-xs break-words">
+                          {proj.description}
+                        </p>
+                      )}
                     </div>
                   </div>
 
