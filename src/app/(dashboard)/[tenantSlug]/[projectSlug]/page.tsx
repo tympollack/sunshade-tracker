@@ -42,7 +42,7 @@ import {
   Archive,
 } from 'lucide-react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
-import { buildTree, isDescendantOf, getDescendantIds } from '@/lib/tree';
+import { buildTree, isDescendantOf, getDescendantIds, isEffectivelyUnparented } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { TreeNode } from '@/components/TreeNode';
@@ -68,6 +68,8 @@ import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModa
 import { ManageSprintsModal } from '@/components/ManageSprintsModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
+import { PointModeSwitcher } from '@/components/PointModeSwitcher';
+import { KanbanCard } from '@/components/board/KanbanCard';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -78,6 +80,8 @@ import {
   formatSprintDateRange,
   getSprintStatusBadge,
   isItemImmutableDueToCompletedSprint,
+  calculateSprintLeafPoints,
+  calculateSprintMacroPoints,
 } from '@/lib/sprint-utils';
 
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
@@ -316,9 +320,76 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     });
   };
 
+  // Point Mode State (FEAT-TRK-MACRO-VS-LEAF-VIEW-TOGGLE)
+  const [pointMode, setPointMode] = useState<'granular' | 'macro'>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('pointMode');
+      if (urlParam === 'macro' || urlParam === 'granular') return urlParam;
+      try {
+        const stored =
+          localStorage.getItem('tracker_point_mode') ||
+          localStorage.getItem(`tracker_point_mode_${projectSlug}`);
+        if (stored === 'macro' || stored === 'granular') return stored;
+      } catch {}
+    } else if (typeof searchParams?.pointMode === 'string') {
+      if (searchParams.pointMode === 'macro' || searchParams.pointMode === 'granular') {
+        return searchParams.pointMode;
+      }
+    }
+    return 'granular';
+  });
+
+  const handlePointModeChange = (newMode: 'macro' | 'granular') => {
+    setPointMode(newMode);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('tracker_point_mode', newMode);
+        localStorage.setItem(`tracker_point_mode_${projectSlug}`, newMode);
+      } catch {}
+      const url = new URL(window.location.href);
+      if (newMode === 'macro') {
+        url.searchParams.set('pointMode', 'macro');
+      } else {
+        url.searchParams.delete('pointMode');
+      }
+      const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  };
+
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
+
+  // Precompute child counts and leaf rollup points for board & card representations
+  const { childCountMap, pointsRollupMap } = useMemo(() => {
+    const cMap = new Map<string, number>();
+    const pMap = new Map<string, number>();
+
+    const childrenMap = new Map<string, WorkItem[]>();
+    for (const it of items) {
+      if (it.parent_id && !isEffectivelyUnparented(it.parent_id) && it.parent_id !== it.id) {
+        const list = childrenMap.get(it.parent_id) || [];
+        list.push(it);
+        childrenMap.set(it.parent_id, list);
+      }
+    }
+
+    for (const it of items) {
+      const directChildren = (childrenMap.get(it.id) || []).concat(
+        it.external_ref_id ? childrenMap.get(it.external_ref_id) || [] : []
+      );
+      cMap.set(it.id, directChildren.length);
+
+      // Descendants leaf points rollup
+      const descendantIds = new Set(getDescendantIds(items, it.id));
+      const descendantItems = items.filter((d) => descendantIds.has(d.id));
+      const leafPoints = calculateSprintLeafPoints(descendantItems);
+      pMap.set(it.id, leafPoints);
+    }
+
+    return { childCountMap: cMap, pointsRollupMap: pMap };
+  }, [items]);
 
   // Clear selection on tab change or project switch (BUG-TRK-SPRINT-BAR-GLOBAL-LEAK)
   useEffect(() => {
@@ -2809,209 +2880,40 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                                     <div className="h-1 bg-emerald-400 rounded-full my-1 shadow-lg shadow-emerald-400/50 animate-pulse" />
                                   )}
 
-                                  <div
-                                    draggable={!isCardImmutable && !isReadOnly}
-                                    onDragStart={(e) => handleDragStart(e, item)}
-                                    onDragEnd={handleDragEnd}
-                                    onDragOver={(e) => handleDragOverCard(e, col.id, index)}
-                                    onDrop={(e) => {
-                                      e.stopPropagation();
-                                      handleDrop(e, col.id, index);
-                                    }}
-                                    onDoubleClick={() => setEditingItem(item)}
-                                    className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
-                                      isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
-                                    } ${
-                                      isBeingDragged
-                                        ? 'opacity-40 border-dashed border-emerald-500'
-                                        : 'border-slate-800/90'
-                                    }`}
-                                  >
-                                    {/* Card Top: Level Selector Badge, Reference ID, Project Badge, Edit & Delete */}
-                                    <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
-                                      <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
-                                        <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
-                                        {/* Quick Level Selector */}
-                                        <div className="relative inline-flex items-center shrink-0">
-                                          <select
-                                            value={item.item_type}
-                                            disabled={isCardImmutable}
-                                            onChange={(e) => {
-                                              e.stopPropagation();
-                                              handleUpdateType(item.id, e.target.value);
-                                            }}
-                                            onClick={(e) => e.stopPropagation()}
-                                            style={{
-                                              backgroundColor: '#090d16',
-                                              color: lvlColor.hex,
-                                              borderColor: `${lvlColor.hex}50`,
-                                            }}
-                                            className="appearance-none text-[10px] font-mono font-semibold rounded pl-2 pr-5 py-0.5 border focus:outline-none cursor-pointer transition-colors shadow-sm shrink-0"
-                                            title="Change hierarchy level"
-                                          >
-                                            {itemHierarchy.map((h) => (
-                                              <option
-                                                key={h.type}
-                                                value={h.type}
-                                                className="bg-slate-900 text-white font-sans"
-                                              >
-                                                {h.label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                          <ChevronDown
-                                            className="w-2.5 h-2.5 absolute right-1.5 pointer-events-none"
-                                            style={{ color: lvlColor.hex }}
-                                          />
-                                        </div>
-
-                                        {/* Work Item Reference ID with One-Click Copy (TRK-05 & BUG-TRK-CARD-REFID-PILL-OVERLAP) */}
-                                        {item.external_ref_id ? (
-                                          <CopyableRefId
-                                            id={item.external_ref_id}
-                                            showHash
-                                            className="text-[10px] font-mono shrink-0 truncate max-w-[140px]"
-                                          />
-                                        ) : (
-                                          <CopyableRefId
-                                            id={item.id}
-                                            displayId={item.id.slice(0, 8)}
-                                            showHash
-                                            className="text-[10px] font-mono shrink-0"
-                                            title="Click to copy UUID"
-                                          />
-                                        )}
-
-                                        {isAllProjects && (
-                                          <span
-                                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[90px] shrink-0"
-                                            title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
-                                          >
-                                            {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      <div className="flex items-center space-x-1 shrink-0 ml-auto">
-                                        {isCardImmutable && (
-                                          <span
-                                            className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
-                                            title="Completed item in closed sprint (immutable)"
-                                          >
-                                            <Lock className="w-2.5 h-2.5 text-purple-400" />
-                                            <span>Locked</span>
-                                          </span>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setEditingItem(item);
-                                          }}
-                                          className="p-1 rounded text-slate-600 hover:text-white hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
-                                          title="Edit work item"
-                                        >
-                                          <Pencil className="w-3 h-3" />
-                                        </button>
-                                        {!isCardImmutable && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setDeleteConfirmItem(item);
-                                            }}
-                                            className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-all opacity-0 group-hover:opacity-100"
-                                            title="Delete item"
-                                          >
-                                            <Trash2 className="w-3 h-3" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {/* Card Title */}
-                                    <h4 className="text-sm font-medium text-slate-100 leading-snug">
-                                      {item.title}
-                                    </h4>
-
-                                    {/* Card Description */}
-                                    {item.description && (
-                                      <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                                        {item.description}
-                                      </p>
-                                    )}
-
-                                    {/* Metadata tags */}
-                                    {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
-                                      const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata);
-                                      const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => !isGitHubField(k));
-                                      const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
-                                      if (!hasAnyDisplay) return null;
-
-                                      return (
-                                        <div className="flex flex-wrap gap-1 pt-0.5">
-                                          {prUrl && (
-                                            <GitHubBadge
-                                              type="pr"
-                                              value={prUrl}
-                                              repo={repo}
-                                              owner={owner}
-                                            />
-                                          )}
-                                          {commitHash && (
-                                            <GitHubBadge
-                                              type="commit"
-                                              value={commitHash}
-                                              prUrl={prUrl}
-                                              repo={repo}
-                                              owner={owner}
-                                            />
-                                          )}
-                                          {nonGitHubEntries.map(([k, v]) => {
-                                            const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-                                            const displayVal = rawVal.replace(/\s+/g, ' ').trim();
-                                            const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
-                                            return (
-                                              <span
-                                                key={k}
-                                                title={`${k}: ${rawVal}`}
-                                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
-                                              >
-                                                <span className="text-slate-500">{k}:</span> {truncated}
-                                              </span>
-                                            );
-                                          })}
-                                        </div>
-                                      );
-                                    })()}
-
-                                    {/* Card Bottom: Assignee & Quick Status Select */}
-                                    <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
-                                      <div className="flex items-center space-x-1.5 min-w-0">
-                                        <User className="w-3 h-3 text-slate-500 shrink-0" />
-                                        <span className="text-[11px] font-mono truncate text-slate-400 max-w-[120px]">
-                                          {item.assignee || 'unassigned'}
-                                        </span>
-                                      </div>
-                                      <select
-                                        value={item.status}
-                                        onChange={(e) => {
-                                          e.stopPropagation();
-                                          handleUpdateStatus(item.id, e.target.value);
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none hover:border-slate-700 cursor-pointer"
-                                      >
-                                        {getItemStatuses(item).map((st: StatusDefinition) => (
-                                          <option key={st.id} value={st.id}>
-                                            → {st.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
+                                    {/* BUG-TRK-CARD-REFID-PILL-OVERLAP layout contract implemented in KanbanCard:
+                                      flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2
+                                      flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap
+                                      relative inline-flex items-center shrink-0
+                                      <CopyableRefId
+                                      id={item.external_ref_id}
+                                      flex items-center space-x-1 shrink-0 ml-auto
+                                    */}
+                                    <KanbanCard
+                                      item={item}
+                                      childCount={childCountMap.get(item.id) || 0}
+                                      rollupPoints={pointsRollupMap.get(item.id) || 0}
+                                      pointMode={pointMode}
+                                      itemHierarchy={itemHierarchy}
+                                      allProjects={allProjects}
+                                      isAllProjects={isAllProjects}
+                                      isCardImmutable={isCardImmutable}
+                                      isReadOnly={isReadOnly}
+                                      isBeingDragged={isBeingDragged}
+                                      onEditItem={setEditingItem}
+                                      onDeleteItem={setDeleteConfirmItem}
+                                      onUpdateStatus={handleUpdateStatus}
+                                      onUpdateType={handleUpdateType}
+                                      getItemStatuses={getItemStatuses}
+                                      onDragStart={handleDragStart}
+                                      onDragEnd={handleDragEnd}
+                                      onDragOver={(e) => handleDragOverCard(e, col.id, index)}
+                                      onDrop={(e) => {
+                                        e.stopPropagation();
+                                        handleDrop(e, col.id, index);
+                                      }}
+                                    />
                                   </div>
-                                </div>
-                              );
+                                );
                             })
                           )}
                         </div>
@@ -3036,98 +2938,25 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     </div>
 
                     <div className="p-3 space-y-3 flex-1 overflow-y-auto min-h-0">
-                      {unmappedItems.map((item, index) => {
-                        const itemHierarchy = getItemHierarchy(item);
-                        const lvlColor = getHierarchyLevelColor(
-                          item.item_type,
-                          itemHierarchy
-                        );
-                        return (
-                          <div
-                            key={item.id}
-                            onDoubleClick={() => setEditingItem(item)}
-                            className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 hover:border-amber-500/60 transition-all space-y-2.5 shadow-sm group max-h-[380px] overflow-y-auto custom-scrollbar"
-                          >
-                            <div className="flex items-center justify-between text-xs">
-                              <div className="flex items-center space-x-1.5">
-                                <span
-                                  className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
-                                >
-                                  {item.item_type}
-                                </span>
-                                {isAllProjects && (
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
-                                    title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
-                                  >
-                                    {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center space-x-1">
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                  {item.status}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingItem(item)}
-                                  className="p-1 rounded text-slate-500 hover:text-white"
-                                  title="Edit work item"
-                                >
-                                  <Pencil className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-
-                            <h4 className="text-sm font-medium text-slate-100">{item.title}</h4>
-
-                            {item.description && (
-                              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                                {item.description}
-                              </p>
-                            )}
-
-                            {item.metadata && Object.keys(item.metadata).length > 0 && (
-                              <div className="flex flex-wrap gap-1 pt-0.5">
-                                {Object.entries(item.metadata).map(([k, v]) => {
-                                  const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-                                  const displayVal = rawVal.replace(/\s+/g, ' ').trim();
-                                  const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
-                                  return (
-                                    <span
-                                      key={k}
-                                      title={`${k}: ${rawVal}`}
-                                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
-                                    >
-                                      <span className="text-slate-500">{k}:</span> {truncated}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
-                              <span className="text-[11px] font-mono text-slate-500">
-                                Assign status:
-                              </span>
-                              <select
-                                value=""
-                                onChange={(e) => handleUpdateStatus(item.id, e.target.value)}
-                                className="text-[10px] bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none"
-                              >
-                                <option value="" disabled>
-                                  Move to column →
-                                </option>
-                                {getItemStatuses(item).map((st: StatusDefinition) => (
-                                  <option key={st.id} value={st.id}>
-                                    → {st.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {unmappedItems.map((item) => (
+                        <KanbanCard
+                          key={item.id}
+                          item={item}
+                          childCount={childCountMap.get(item.id) || 0}
+                          rollupPoints={pointsRollupMap.get(item.id) || 0}
+                          pointMode={pointMode}
+                          itemHierarchy={getItemHierarchy(item)}
+                          allProjects={allProjects}
+                          isAllProjects={isAllProjects}
+                          isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings)}
+                          isReadOnly={isReadOnly}
+                          onEditItem={setEditingItem}
+                          onDeleteItem={setDeleteConfirmItem}
+                          onUpdateStatus={handleUpdateStatus}
+                          onUpdateType={handleUpdateType}
+                          getItemStatuses={getItemStatuses}
+                        />
+                      ))}
                     </div>
                   </div>
                 )}
@@ -3209,6 +3038,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     <option value="title_desc">Title (Z to A)</option>
                   </select>
                 </div>
+                <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
                 {(selectedSprint !== 'all' ||
                   (treeSelectedStatuses !== null && effectiveTreeStatuses.length < projectSettings.statuses.length) ||
                   (treeSelectedLevels !== null && effectiveTreeLevels.length < projectSettings.hierarchy.length) ||
@@ -3296,6 +3126,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     getItemStatuses={getItemStatuses}
                     getItemHierarchy={getItemHierarchy}
                     isFilteredBySprint={selectedSprint !== 'all'}
+                    pointMode={pointMode}
                     members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
                     isImmutable={(it) => isReadOnly || isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it))}
                     collapsedNodeIds={collapsedTreeNodes}
@@ -3476,6 +3307,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     {visibleSprints.length}
                   </span>
                 </div>
+                <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
               </div>
             </div>
 
@@ -3492,10 +3324,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               {(visibleSprints.length === 0 ? (availableSprints.length === 0 ? ['Sprint 1'] : []) : visibleSprints).map((sprintName) => {
                 const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
                 const sprintItems = filterSprintItems(rawSprintItems);
-                const totalPoints = sprintItems.reduce((acc, it) => {
-                  const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-                  return acc + (isNaN(p) ? 0 : p);
-                }, 0);
+                const leafPoints = calculateSprintLeafPoints(sprintItems);
+                const macroPoints = calculateSprintMacroPoints(sprintItems);
+                const effectivePoints = pointMode === 'macro' ? macroPoints : leafPoints;
+                const totalPoints = effectivePoints;
                 const completedItems = sprintItems.filter((it) =>
                   ['done', 'closed', 'complete', 'completed'].includes(it.status)
                 );
@@ -3560,6 +3392,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         isTreeMode={true}
                         childCount={childCount}
                         rollupPoints={rollupPoints}
+                        pointMode={pointMode}
                       />
                       {(node.children || []).map((child) => renderSprintTreeNode(child, depth + 1))}
                     </React.Fragment>
@@ -3652,9 +3485,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           </span>
                         )}
 
-                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                        <span
+                          className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium"
+                          data-testid={`sprint-points-${sprintName}`}
+                        >
                           {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
-                          {totalPoints > 0 ? ` · ${totalPoints} pts` : ''}
+                          {totalPoints > 0 ? ` · ${totalPoints} pts ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}` : ''}
                         </span>
                       </div>
 
@@ -3736,10 +3572,10 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                     String(it.metadata.sprint).trim() === ''
                 );
                 const backlogItems = filterSprintItems(rawBacklogItems);
-                const backlogPoints = backlogItems.reduce((acc, it) => {
-                  const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-                  return acc + (isNaN(p) ? 0 : p);
-                }, 0);
+                const backlogLeafPoints = calculateSprintLeafPoints(backlogItems);
+                const backlogMacroPoints = calculateSprintMacroPoints(backlogItems);
+                const effectiveBacklogPoints = pointMode === 'macro' ? backlogMacroPoints : backlogLeafPoints;
+                const backlogPoints = effectiveBacklogPoints;
                 const isBacklogCollapsed = collapsedSprints.has('__backlog__');
                 const allBacklogSelected =
                   backlogItems.length > 0 &&
@@ -3790,6 +3626,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         isTreeMode={true}
                         childCount={childCount}
                         rollupPoints={rollupPoints}
+                        pointMode={pointMode}
                       />
                       {(node.children || []).map((child) => renderBacklogTreeNode(child, depth + 1))}
                     </React.Fragment>
@@ -3842,9 +3679,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         <h4 className="text-base font-semibold text-white">
                           Unplanned Backlog
                         </h4>
-                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium">
+                        <span
+                          className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium"
+                          data-testid="backlog-points"
+                        >
                           {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
-                          {backlogPoints > 0 ? ` · ${backlogPoints} pts` : ''}
+                          {backlogPoints > 0
+                            ? ` · ${backlogPoints} pts ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}`
+                            : ''}
                         </span>
                       </div>
                     </div>
