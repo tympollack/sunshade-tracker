@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Clock, Layers, Network } from 'lucide-react';
-import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { WorkItem, SprintDefinition, StatusDefinition } from '@/types/tracker';
 import {
   calculateSprintLeafPoints,
   calculateSprintMacroPoints,
@@ -15,6 +15,7 @@ export interface SprintHeaderProps {
   items: WorkItem[];
   pointMode?: 'macro' | 'granular';
   sprintDef?: SprintDefinition;
+  statuses?: StatusDefinition[];
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   isAllSelected?: boolean;
@@ -26,6 +27,13 @@ export interface SprintHeaderProps {
 
 const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
 
+const DEFAULT_STATUSES: StatusDefinition[] = [
+  { id: 'todo', label: 'To Do', color: '#94a3b8', order: 1 },
+  { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+  { id: 'in_review', label: 'In Review', color: '#fbbf24', order: 3 },
+  { id: 'done', label: 'Done', color: '#34d399', order: 4 },
+];
+
 /**
  * Sprint swimlane header component displaying sprint metadata, progress bar,
  * and point capacity calculated according to active pointMode (FEAT-TRK-LEAF-NODE-SUM-CALC).
@@ -35,6 +43,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   items,
   pointMode = 'granular',
   sprintDef,
+  statuses,
   isCollapsed = false,
   onToggleCollapse,
   isAllSelected = false,
@@ -43,8 +52,50 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   isReadOnly = false,
   className = '',
 }) => {
+  const [isHovered, setIsHovered] = useState(false);
   const leafPoints = calculateSprintLeafPoints(items);
   const macroPoints = calculateSprintMacroPoints(items);
+
+  // Dynamic status schema resolution
+  const effectiveStatuses = useMemo(() => {
+    const list = statuses && statuses.length > 0 ? [...statuses] : [...DEFAULT_STATUSES];
+    const knownIds = new Set(list.map((s) => s.id.toLowerCase()));
+    for (const it of items) {
+      const st = (it.status || '').toLowerCase().trim();
+      if (st && !knownIds.has(st)) {
+        list.push({
+          id: st,
+          label: st.charAt(0).toUpperCase() + st.slice(1).replace(/_/g, ' '),
+          color: '#64748b',
+          order: list.length + 1,
+        });
+        knownIds.add(st);
+      }
+    }
+    return list;
+  }, [statuses, items]);
+
+  const totalItemsCount = items.length;
+
+  // Segment breakdown per status
+  const statusBreakdown = useMemo(() => {
+    if (totalItemsCount === 0) return [];
+    return effectiveStatuses
+      .map((st) => {
+        const count = items.filter(
+          (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
+        ).length;
+        const pct = totalItemsCount > 0 ? Math.round((count / totalItemsCount) * 100) : 0;
+        return {
+          id: st.id,
+          label: st.label,
+          color: st.color,
+          count,
+          pct,
+        };
+      })
+      .filter((seg) => seg.count > 0);
+  }, [effectiveStatuses, items, totalItemsCount]);
 
   const completedItems = items.filter((it) => {
     const st = (it.status || '').toLowerCase().trim();
@@ -154,16 +205,77 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
           </span>
         )}
 
-        <div className="flex items-center space-x-2 min-w-[140px]">
-          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-emerald-500 transition-all rounded-full"
-              style={{ width: `${progressPct}%` }}
-            />
+        {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
+        <div
+          className="relative flex items-center space-x-2 min-w-[140px] sm:min-w-[180px] cursor-pointer select-none"
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+          onClick={() => setIsHovered((prev) => !prev)}
+          data-testid="sprint-progress-container"
+        >
+          {/* Stacked Multi-Segment Progress Bar */}
+          <div
+            className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden flex"
+            data-testid="sprint-progress-bar"
+          >
+            {statusBreakdown.length > 0 ? (
+              statusBreakdown.map((seg) => (
+                <div
+                  key={seg.id}
+                  data-testid={`sprint-progress-segment-${seg.id}`}
+                  style={{
+                    width: `${seg.pct}%`,
+                    backgroundColor: seg.color,
+                  }}
+                  className="h-full transition-all duration-300 first:rounded-l-full last:rounded-r-full"
+                  title={`${seg.label}: ${seg.count} (${seg.pct}%)`}
+                />
+              ))
+            ) : (
+              <div
+                className="h-full bg-slate-700 transition-all rounded-full"
+                style={{ width: isCompletedSprint ? '100%' : '0%' }}
+              />
+            )}
           </div>
-          <span className="text-xs font-mono text-slate-400 w-9 text-right" data-testid="header-progress">
+
+          {/* Complete % by default */}
+          <span
+            className="text-xs font-mono text-slate-300 w-9 text-right font-medium shrink-0"
+            data-testid="header-progress"
+          >
             {progressPct}%
           </span>
+
+          {/* Hover / Tap Breakdown Popover */}
+          {isHovered && statusBreakdown.length > 0 && (
+            <div
+              data-testid="sprint-progress-breakdown"
+              className="absolute right-0 bottom-full mb-2 z-40 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] animate-in fade-in zoom-in-95 duration-100"
+            >
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">
+                <span>Status Breakdown</span>
+                <span className="font-mono text-emerald-400 font-bold">{progressPct}% Complete</span>
+              </div>
+              <div className="space-y-1">
+                {statusBreakdown.map((seg) => (
+                  <div key={seg.id} className="flex items-center justify-between gap-4 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: seg.color }}
+                      />
+                      <span className="text-slate-200">{seg.label}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-mono">
+                      <span className="text-slate-300 font-medium">{seg.count}</span>
+                      <span className="text-slate-500">({seg.pct}%)</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

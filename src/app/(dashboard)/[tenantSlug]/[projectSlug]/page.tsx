@@ -72,6 +72,7 @@ import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
+import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { NotificationBell } from '@/components/NotificationBell';
@@ -3570,15 +3571,26 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                           </span>
                         )}
 
-                        <div className="flex items-center space-x-2 min-w-[140px]">
-                          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-emerald-500 transition-all rounded-full"
-                              style={{ width: `${progressPct}%` }}
+                        {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
+                        {(() => {
+                          const segs = projectSettings.statuses
+                            .map((st) => {
+                              const count = sprintItems.filter(
+                                (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
+                              ).length;
+                              const pct = sprintItems.length > 0 ? Math.round((count / sprintItems.length) * 100) : 0;
+                              return { id: st.id, label: st.label, color: st.color, count, pct };
+                            })
+                            .filter((s) => s.count > 0);
+
+                          return (
+                            <SprintProgressBar
+                              progressPct={progressPct}
+                              segments={segs}
+                              isCompletedSprint={isCompletedSprint}
                             />
-                          </div>
-                          <span className="text-xs font-mono text-slate-400">{progressPct}%</span>
-                        </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
