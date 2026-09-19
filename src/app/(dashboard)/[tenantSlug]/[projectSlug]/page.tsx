@@ -3365,9 +3365,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const renderSprintTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
                   const childCount = (node.children || []).length;
                   const getSubtreePoints = (n: WorkItemNode): number => {
-                    let sum =
-                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
-                    for (const c of n.children || []) {
+                    const children = n.children || [];
+                    if (children.length === 0) {
+                      return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    }
+                    let sum = 0;
+                    for (const c of children) {
                       sum += getSubtreePoints(c);
                     }
                     return sum;
@@ -3599,9 +3602,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const renderBacklogTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
                   const childCount = (node.children || []).length;
                   const getSubtreePoints = (n: WorkItemNode): number => {
-                    let sum =
-                      Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
-                    for (const c of n.children || []) {
+                    const children = n.children || [];
+                    if (children.length === 0) {
+                      return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                    }
+                    let sum = 0;
+                    for (const c of children) {
                       sum += getSubtreePoints(c);
                     }
                     return sum;

@@ -8,14 +8,19 @@ export type { WorkItemNode };
 function computeSubtreeMetrics(node: WorkItemNode): { descendantCount: number; rollupPoints: number } {
   const ownPoints = Number(node.metadata?.story_points ?? node.metadata?.points ?? node.metadata?.estimate ?? 0) || 0;
   let descendantCount = 0;
-  let totalPoints = ownPoints;
+  let childRollupSum = 0;
+  const children = node.children || [];
 
-  for (const child of node.children || []) {
+  for (const child of children) {
     descendantCount += 1;
     const childMetrics = computeSubtreeMetrics(child);
     descendantCount += childMetrics.descendantCount;
-    totalPoints += childMetrics.rollupPoints;
+    childRollupSum += childMetrics.rollupPoints;
   }
+
+  // BUG-TRK-TREE-LEAF-DOUBLE-COUNT: Leaf rollup mode strictly sums leaf nodes without adding
+  // parent item's intrinsic points when children exist.
+  const totalPoints = children.length > 0 ? childRollupSum : ownPoints;
 
   node.descendantCount = descendantCount;
   node.rollupPoints = totalPoints;
