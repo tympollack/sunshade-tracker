@@ -120,6 +120,78 @@ export async function getInAppNotifications(
   }
 }
 
+export interface NotificationUnreadDelta {
+  unread_count: number;
+  has_new: boolean;
+  latest_at: string | null;
+}
+
+/**
+ * Lightweight delta calculation for background polling (FEAT-TRK-NOTIFICATIONS-DELTA-POLL).
+ * Queries unread count and latest created_at without hydrating notification entities.
+ */
+export async function getNotificationUnreadDelta(
+  tenantId: string,
+  userId: string,
+  since?: string | null
+): Promise<NotificationUnreadDelta> {
+  try {
+    let unread_count = 0;
+    let latest_at: string | null = null;
+
+    // 1. Unread count
+    try {
+      const countQuery: any = supabaseAdmin
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .eq('user_id', userId)
+        .eq('read', false);
+
+      const { count, error: countErr } = await countQuery;
+      if (!countErr && typeof count === 'number') {
+        unread_count = count;
+      }
+    } catch {}
+
+    // 2. Latest notification created_at
+    try {
+      let latestQuery: any = supabaseAdmin
+        .from('notifications')
+        .select('created_at')
+        .eq('tenant_id', tenantId)
+        .eq('user_id', userId);
+
+      if (typeof latestQuery.order === 'function') {
+        latestQuery = latestQuery.order('created_at', { ascending: false });
+      }
+      if (typeof latestQuery.limit === 'function') {
+        latestQuery = latestQuery.limit(1);
+      }
+
+      const { data: latestData } = await latestQuery;
+      if (Array.isArray(latestData) && latestData.length > 0) {
+        latest_at = latestData[0].created_at || null;
+      }
+    } catch {}
+
+    // 3. Determine if new notifications arrived since caller's checkpoint
+    let has_new = false;
+    if (since && latest_at) {
+      const sinceMs = new Date(since).getTime();
+      const latestMs = new Date(latest_at).getTime();
+      has_new = !isNaN(sinceMs) && !isNaN(latestMs) && latestMs > sinceMs;
+    } else if (!since && unread_count > 0) {
+      has_new = true;
+    }
+
+    return { unread_count, has_new, latest_at };
+  } catch (err: any) {
+    console.warn('[tracker:notifications] Exception in getNotificationUnreadDelta:', err?.message || err);
+    return { unread_count: 0, has_new: false, latest_at: null };
+  }
+}
+
 /**
  * Marks notifications as read.
  */
