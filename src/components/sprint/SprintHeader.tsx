@@ -122,7 +122,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   return (
     <div
       data-testid={`sprint-header-${sprintName}`}
-      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none ${className}`}
+      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none relative z-30 ${className}`}
     >
       <div className="flex items-center space-x-3 min-w-0">
         {onToggleCollapse && (
