@@ -19,17 +19,6 @@ export interface SprintProgressBarProps {
   className?: string;
 }
 
-const BACKLOG_STATUS_IDS = new Set([
-  'todo',
-  'to_do',
-  'to-do',
-  'backlog',
-  'not_started',
-  'not-started',
-  'unstarted',
-  'open',
-]);
-
 const COMPLETED_STATUS_IDS = new Set([
   'done',
   'closed',
@@ -57,58 +46,103 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       : `Goal: ${goal}`
     : label || 'Goal: Progress';
 
-  // Compute active segments that represent in-flight or completed work
-  const activeSegments = useMemo(() => {
-    return segments.filter(
-      (s) => !BACKLOG_STATUS_IDS.has(s.id.toLowerCase()) && (s.count > 0 || s.pct > 0)
+  // Order segments: completed on the left, then remaining statuses by highest to lowest %
+  const orderedSegments = useMemo(() => {
+    const active = segments.filter((s) => s.count > 0 || s.pct > 0);
+    if (active.length === 0) return [];
+
+    // Separate completed from non-completed statuses
+    const completed = active.filter((s) =>
+      COMPLETED_STATUS_IDS.has(s.id.toLowerCase())
     );
+    const nonCompleted = active.filter(
+      (s) => !COMPLETED_STATUS_IDS.has(s.id.toLowerCase())
+    );
+
+    // Completed on the left (sorted by % descending if multiple completed)
+    completed.sort((a, b) => b.pct - a.pct);
+
+    // Remaining statuses in order of highest to lowest %
+    nonCompleted.sort((a, b) => b.pct - a.pct);
+
+    return [...completed, ...nonCompleted];
   }, [segments]);
 
-  // Compute smooth diagonal (/) linear gradient between status colors
+  // Compute smooth diagonal (120deg, /) linear gradient with diagonal-width crossovers
   const gradientStyle = useMemo(() => {
-    if (isFilled100) {
-      // 100% complete: luminous emerald-teal liquid fill
+    if (
+      isFilled100 &&
+      (orderedSegments.length === 0 ||
+        (orderedSegments.length === 1 &&
+          COMPLETED_STATUS_IDS.has(orderedSegments[0].id.toLowerCase())))
+    ) {
+      // 100% complete sprint: luminous emerald-teal liquid fill
       return {
-        background: 'linear-gradient(115deg, #10b981 0%, #14b8a6 50%, #34d399 100%)',
+        background: 'linear-gradient(120deg, #10b981 0%, #14b8a6 50%, #34d399 100%)',
         boxShadow: '0 0 10px rgba(16, 185, 129, 0.4)',
       };
     }
 
-    if (activeSegments.length >= 2) {
-      // Smooth diagonal (/) transition across active status stages
-      const stops = activeSegments
-        .map((seg, idx) => {
-          const stopPct = Math.round((idx / (activeSegments.length - 1)) * 100);
-          return `${seg.color} ${stopPct}%`;
-        })
-        .join(', ');
+    if (orderedSegments.length === 0) {
       return {
-        background: `linear-gradient(115deg, ${stops})`,
-        boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
+        background: 'linear-gradient(120deg, #10b981 0%, #14b8a6 50%, #34d399 100%)',
+        boxShadow: '0 0 10px rgba(16, 185, 129, 0.4)',
       };
     }
 
-    if (activeSegments.length === 1) {
-      const activeColor = activeSegments[0].color;
-      const isCompleted = COMPLETED_STATUS_IDS.has(activeSegments[0].id.toLowerCase());
-      if (isCompleted) {
-        return {
-          background: `linear-gradient(115deg, ${activeColor} 0%, #34d399 100%)`,
-          boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
-        };
+    if (orderedSegments.length === 1) {
+      const col = orderedSegments[0].color;
+      return {
+        background: `linear-gradient(120deg, ${col} 0%, ${col} 100%)`,
+        boxShadow: `0 0 10px ${col}40`,
+      };
+    }
+
+    // Calculate cumulative percentages across the 100% bar
+    const totalPct = orderedSegments.reduce((sum, s) => sum + s.pct, 0);
+    let cumulative = 0;
+    const boundaries: { color: string; endPct: number }[] = [];
+
+    for (let i = 0; i < orderedSegments.length; i++) {
+      const seg = orderedSegments[i];
+      if (i === orderedSegments.length - 1) {
+        cumulative = 100;
+      } else {
+        cumulative += totalPct > 0 ? (seg.pct / totalPct) * 100 : seg.pct;
       }
-      return {
-        background: `linear-gradient(115deg, ${activeColor} 0%, #10b981 100%)`,
-        boxShadow: '0 0 10px rgba(249, 115, 22, 0.35)',
-      };
+      boundaries.push({
+        color: seg.color,
+        endPct: Math.round(cumulative * 10) / 10,
+      });
     }
 
-    // Default: warm peach/amber to emerald diagonal gradient inspired by the reference design
+    // Build stops with a sleek diagonal crossover (no wider than the diagonal slant ~2.4%)
+    const stops: string[] = [];
+    stops.push(`${boundaries[0].color} 0%`);
+
+    for (let i = 0; i < boundaries.length - 1; i++) {
+      const currColor = boundaries[i].color;
+      const nextColor = boundaries[i + 1].color;
+      const bPct = boundaries[i].endPct;
+
+      // Crossover band: 1.2% before boundary to 1.2% after boundary (no wider than diagonal slant)
+      const stopBefore = Math.max(0, Math.round((bPct - 1.2) * 10) / 10);
+      const stopAfter = Math.min(100, Math.round((bPct + 1.2) * 10) / 10);
+
+      stops.push(`${currColor} ${stopBefore}%`);
+      stops.push(`${nextColor} ${stopAfter}%`);
+    }
+
+    stops.push(`${boundaries[boundaries.length - 1].color} 100%`);
+
     return {
-      background: 'linear-gradient(115deg, #f97316 0%, #10b981 100%)',
-      boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
+      background: `linear-gradient(120deg, ${stops.join(', ')})`,
+      boxShadow: '0 0 10px rgba(34, 197, 94, 0.3)',
     };
-  }, [isFilled100, activeSegments]);
+  }, [isFilled100, orderedSegments]);
+
+  const isFullWidth = orderedSegments.length > 0 || isFilled100;
+  const fillWidth = isFullWidth ? '100%' : `${progressPct}%`;
 
   return (
     <div
@@ -141,19 +175,19 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
         className="relative h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.06] p-[1px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] backdrop-blur-sm"
         data-testid="sprint-progress-bar"
       >
-        {/* Glowing Fill Bar with diagonal (/) gradient between states */}
+        {/* Glowing Fill Bar with diagonal (/) gradient across status percentages */}
         <div
           data-testid="sprint-progress-empty-or-completed"
           className="relative h-full rounded-full bg-emerald-500 transition-all duration-500"
           style={{
-            width: `${progressPct}%`,
+            width: fillWidth,
             backgroundColor: '#22c55e',
             backgroundImage: gradientStyle.background,
             boxShadow: gradientStyle.boxShadow,
           }}
         >
-          {progressPct > 0 && (
-            /* Specular Glare Reflection */
+          {fillWidth !== '0%' && (
+            /* Specular Glare Reflection across the entire liquid cylinder */
             <div className="absolute inset-x-0 top-0 h-[40%] rounded-t-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
           )}
         </div>

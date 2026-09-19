@@ -114,4 +114,30 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     expect(breakdown).toHaveTextContent('100% Complete');
     expect(breakdown).toHaveTextContent('Completed sprint (no remaining items)');
   });
+
+  it('renders full bar across in percentages of status with complete on left, ordered by highest to lowest %, and diagonal crossover', () => {
+    render(
+      <SprintProgressBar
+        progressPct={40}
+        segments={[
+          { id: 'not_started', label: 'Not Started', color: '#94a3b8', count: 2, pct: 40 },
+          { id: 'in_review', label: 'In Review', color: '#f59e0b', count: 1, pct: 20 },
+          { id: 'complete', label: 'Complete', color: '#22c55e', count: 2, pct: 40 },
+        ]}
+      />
+    );
+
+    const filledBar = screen.getByTestId('sprint-progress-empty-or-completed');
+    expect(filledBar).toHaveStyle({ width: '100%' });
+
+    // Verify background image has complete on the left (0-40%), grey in middle (40-80%), orange at end (80-100%)
+    // with diagonal (120deg) crossover stops
+    expect(filledBar.style.backgroundImage).toContain('linear-gradient(120deg');
+    expect(filledBar.style.backgroundImage).toContain('#22c55e 0%');
+    expect(filledBar.style.backgroundImage).toContain('#22c55e 38.8%');
+    expect(filledBar.style.backgroundImage).toContain('#94a3b8 41.2%');
+    expect(filledBar.style.backgroundImage).toContain('#94a3b8 78.8%');
+    expect(filledBar.style.backgroundImage).toContain('#f59e0b 81.2%');
+    expect(filledBar.style.backgroundImage).toContain('#f59e0b 100%');
+  });
 });
