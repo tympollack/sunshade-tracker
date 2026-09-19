@@ -88,7 +88,7 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
         title="Workspace Tools"
       >
         <Wrench className="w-3.5 h-3.5" />
-        <span>Tools</span>
+        <span className="hidden xl:inline">Tools</span>
         <ChevronDown
           className={`w-3 h-3 text-slate-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}
         />

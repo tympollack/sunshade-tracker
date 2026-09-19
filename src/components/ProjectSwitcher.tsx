@@ -11,12 +11,13 @@ interface Project {
   name: string;
 }
 
-interface ProjectSwitcherProps {
+export interface ProjectSwitcherProps {
   tenantSlug: string;
   currentProjectSlug: string;
   projects: Project[];
   onArchiveCurrentProject?: () => void;
   isReadOnly?: boolean;
+  isScrolled?: boolean;
 }
 
 export function ProjectSwitcher({
@@ -25,6 +26,7 @@ export function ProjectSwitcher({
   projects,
   onArchiveCurrentProject,
   isReadOnly = false,
+  isScrolled = false,
 }: ProjectSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -113,7 +115,13 @@ export function ProjectSwitcher({
         ) : (
           <Folder className="w-3 h-3 text-emerald-400" />
         )}
-        <span className="max-w-[65px] sm:max-w-[100px] truncate shrink min-w-0">{currentProject?.name || currentProjectSlug}</span>
+        <span
+          className={`${
+            isScrolled ? 'hidden md:hidden' : 'max-w-[65px] sm:max-w-[85px] xl:max-w-[110px]'
+          } truncate shrink min-w-0 transition-all duration-200`}
+        >
+          {currentProject?.name || currentProjectSlug}
+        </span>
         <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
