@@ -80,7 +80,9 @@ export const SprintPlanningView: React.FC<SprintPlanningViewProps> = ({
             <div
               key={sprintName}
               data-testid={`sprint-swimlane-${sprintName}`}
-              className="rounded-xl border border-slate-800 bg-slate-900/20 overflow-hidden shadow-sm"
+              className={`rounded-xl border border-slate-800 bg-slate-900/20 shadow-sm relative hover:z-20 ${
+                isCollapsed ? 'rounded-xl' : ''
+              }`}
             >
               <SprintHeader
                 sprintName={sprintName}

@@ -24,10 +24,13 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   className = '',
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const isFilled100 = isCompletedSprint || progressPct === 100;
 
   return (
     <div
-      className={`relative flex items-center space-x-2 min-w-[140px] sm:min-w-[180px] cursor-pointer select-none ${className}`}
+      className={`relative flex items-center space-x-2 min-w-[140px] sm:min-w-[180px] cursor-pointer select-none ${
+        isHovered ? 'z-50' : 'z-10'
+      } ${className}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={() => setIsHovered((prev) => !prev)}
@@ -53,8 +56,14 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
           ))
         ) : (
           <div
-            className="h-full bg-slate-700 transition-all rounded-full"
-            style={{ width: isCompletedSprint ? '100%' : '0%' }}
+            data-testid="sprint-progress-empty-or-completed"
+            className={`h-full transition-all rounded-full ${
+              isFilled100 ? 'bg-emerald-500' : 'bg-slate-700'
+            }`}
+            style={{
+              width: isFilled100 ? '100%' : '0%',
+              backgroundColor: isFilled100 ? '#22c55e' : undefined,
+            }}
           />
         )}
       </div>
@@ -68,32 +77,38 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       </span>
 
       {/* Hover / Tap Breakdown Popover (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
-      {isHovered && segments.length > 0 && (
+      {isHovered && (
         <div
           data-testid="sprint-progress-breakdown"
-          className="absolute right-0 bottom-full mb-2 z-40 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] animate-in fade-in zoom-in-95 duration-100"
+          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">
             <span>Status Breakdown</span>
             <span className="font-mono text-emerald-400 font-bold">{progressPct}% Complete</span>
           </div>
-          <div className="space-y-1">
-            {segments.map((seg) => (
-              <div key={seg.id} className="flex items-center justify-between gap-4 text-[11px]">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: seg.color }}
-                  />
-                  <span className="text-slate-200">{seg.label}</span>
+          {segments.length > 0 ? (
+            <div className="space-y-1">
+              {segments.map((seg) => (
+                <div key={seg.id} className="flex items-center justify-between gap-4 text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: seg.color }}
+                    />
+                    <span className="text-slate-200">{seg.label}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="text-slate-300 font-medium">{seg.count}</span>
+                    <span className="text-slate-500">({seg.pct}%)</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 font-mono">
-                  <span className="text-slate-300 font-medium">{seg.count}</span>
-                  <span className="text-slate-500">({seg.pct}%)</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-400 italic">
+              {isCompletedSprint ? 'Completed sprint (no remaining items)' : 'No items allocated to sprint'}
+            </div>
+          )}
         </div>
       )}
     </div>

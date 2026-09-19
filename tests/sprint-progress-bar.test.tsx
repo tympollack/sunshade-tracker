@@ -83,8 +83,35 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     fireEvent.click(container);
     expect(screen.getByTestId('sprint-progress-breakdown')).toBeInTheDocument();
 
+    // Verify context bubble is positioned downward to prevent showing underneath sprints above it
+    expect(screen.getByTestId('sprint-progress-breakdown')).toHaveClass('top-full mt-2 z-50');
+
     // Tap again toggles closed
     fireEvent.click(container);
     expect(screen.queryByTestId('sprint-progress-breakdown')).not.toBeInTheDocument();
+  });
+
+  it('fills in progress bar at 100% with emerald color when completed sprint has 0 items', () => {
+    render(
+      <SprintProgressBar
+        progressPct={100}
+        segments={[]}
+        isCompletedSprint={true}
+      />
+    );
+
+    const progressLabel = screen.getByTestId('header-progress');
+    expect(progressLabel).toHaveTextContent('100%');
+
+    const filledBar = screen.getByTestId('sprint-progress-empty-or-completed');
+    expect(filledBar).toHaveStyle({ width: '100%', backgroundColor: 'rgb(34, 197, 94)' });
+    expect(filledBar).toHaveClass('bg-emerald-500');
+
+    // On hover, displays 100% complete message
+    const container = screen.getByTestId('sprint-progress-container');
+    fireEvent.mouseEnter(container);
+    const breakdown = screen.getByTestId('sprint-progress-breakdown');
+    expect(breakdown).toHaveTextContent('100% Complete');
+    expect(breakdown).toHaveTextContent('Completed sprint (no remaining items)');
   });
 });

@@ -3469,11 +3469,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 return (
                   <div
                     key={sprintName}
-                    className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+                    className={`rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative hover:z-20 ${
+                      isCollapsed ? 'rounded-xl' : ''
+                    }`}
                     data-testid={`sprint-swimlane-${sprintName}`}
                   >
                     {/* Sprint Header */}
-                    <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                    <div
+                      className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
+                        isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'
+                      }`}
+                    >
                       <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                         {/* Collapse Chevron Button */}
                         <button
