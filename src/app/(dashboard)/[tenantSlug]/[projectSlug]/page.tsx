@@ -3570,7 +3570,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       <div className="flex items-center space-x-4">
                         {sprintDef?.goal && (
                           <span
-                            className="text-xs text-slate-400 italic max-w-xs truncate hidden md:inline-block"
+                            className="text-xs font-medium text-slate-300 tracking-wide max-w-xs truncate hidden md:inline-block"
                             title={sprintDef.goal}
                           >
                             Goal: {sprintDef.goal}

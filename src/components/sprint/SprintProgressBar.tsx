@@ -14,6 +14,7 @@ export interface SprintProgressBarProps {
   progressPct: number;
   segments: ProgressStatusSegment[];
   isCompletedSprint?: boolean;
+  label?: string;
   className?: string;
 }
 
@@ -21,6 +22,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   progressPct,
   segments,
   isCompletedSprint = false,
+  label,
   className = '',
 }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -36,66 +38,64 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       onClick={() => setIsHovered((prev) => !prev)}
       data-testid="sprint-progress-container"
     >
-      {/* Stacked Multi-Segment Progress Bar with Tactile Depth */}
+      {label && (
+        <span
+          className="text-xs font-medium text-slate-300 tracking-wide truncate max-w-xs shrink-0"
+          data-testid="progress-label"
+        >
+          {label}
+        </span>
+      )}
+
+      {/* Frosted Acrylic Track (Frosted Glass / Liquid Capsule) */}
       <div
-        className="flex-1 h-3 bg-slate-950/90 rounded-full border border-slate-800/80 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.85)] overflow-hidden flex relative"
+        className="flex-1 h-2.5 bg-white/[0.07] backdrop-blur-sm rounded-full border border-white/10 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)] overflow-hidden flex gap-1 relative"
         data-testid="sprint-progress-bar"
       >
-        {/* Subtle glass reflection highlight across the top half */}
-        <div className="absolute inset-x-0 top-0 h-[45%] bg-gradient-to-b from-white/20 to-transparent pointer-events-none z-10 rounded-t-full" />
+        {/* Specular glass reflection sheen across track */}
+        <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/25 to-transparent rounded-t-full pointer-events-none z-20" />
 
         {segments.length > 0 ? (
-          segments.map((seg, idx) => {
-            const isLast = idx === segments.length - 1;
-            return (
-              <div
-                key={seg.id}
-                data-testid={`sprint-progress-segment-${seg.id}`}
-                style={{
-                  width: `${seg.pct}%`,
-                  backgroundColor: seg.color,
-                }}
-                className="h-full transition-all duration-300 relative"
-              >
-                {/* Diagonal gradient overlay across the segment for tactile lighting */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-black/20 via-transparent to-white/20 pointer-events-none" />
+          segments.map((seg) => (
+            <div
+              key={seg.id}
+              data-testid={`sprint-progress-segment-${seg.id}`}
+              style={{
+                width: `${seg.pct}%`,
+                backgroundColor: seg.color,
+              }}
+              className="h-full rounded-full relative overflow-hidden transition-all duration-500 ease-out min-w-0"
+            >
+              {/* Directional gradient overlay */}
+              <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/25 pointer-events-none" />
 
-                {/* Soft gradient edge transitions between adjacent status segments */}
-                {idx > 0 && (
-                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/30 to-transparent pointer-events-none z-10" />
-                )}
-                {!isLast && (
-                  <div className="absolute right-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-transparent to-black/30 pointer-events-none z-10" />
-                )}
-
-                {/* Diagonal divider line between states */}
-                {!isLast && seg.pct > 0 && (
-                  <div className="absolute -right-1 top-0 bottom-0 w-2 z-20 pointer-events-none flex items-center justify-center">
-                    <div className="w-[1.5px] h-full transform -skew-x-[20deg] bg-slate-950/90 shadow-[0_0_2px_rgba(0,0,0,0.8)] border-r border-white/30" />
-                  </div>
-                )}
-              </div>
-            );
-          })
+              {/* Glass Specular Sheen */}
+              <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/35 to-transparent rounded-t-full pointer-events-none" />
+            </div>
+          ))
         ) : (
           <div
             data-testid="sprint-progress-empty-or-completed"
-            className={`h-full transition-all rounded-full ${
+            className={`h-full rounded-full relative overflow-hidden transition-all duration-500 ease-out ${
               isFilled100
-                ? 'bg-emerald-500 bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.35)]'
-                : 'bg-slate-800/60'
+                ? 'bg-emerald-500 bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_12px_rgba(16,185,129,0.35)]'
+                : 'bg-transparent'
             }`}
             style={{
               width: isFilled100 ? '100%' : '0%',
               backgroundColor: isFilled100 ? '#22c55e' : undefined,
             }}
-          />
+          >
+            {isFilled100 && (
+              <div className="absolute inset-x-0 top-0 h-[40%] bg-gradient-to-b from-white/35 to-transparent rounded-t-full pointer-events-none" />
+            )}
+          </div>
         )}
       </div>
 
-      {/* Complete % by default */}
+      {/* Percentage text with tabular numbers */}
       <span
-        className="text-xs font-mono text-slate-300 w-9 text-right font-medium shrink-0"
+        className="text-xs font-mono font-semibold text-slate-100 tabular-nums w-9 text-right shrink-0"
         data-testid="header-progress"
       >
         {progressPct}%
@@ -105,11 +105,11 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       {isHovered && (
         <div
           data-testid="sprint-progress-breakdown"
-          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-700/80 shadow-[0_12px_32px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.06)] text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
+          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-white/10 shadow-[0_12px_32px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.06)] text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">
             <span>Status Breakdown</span>
-            <span className="font-mono text-emerald-400 font-bold">{progressPct}% Complete</span>
+            <span className="font-mono text-emerald-400 font-bold tabular-nums">{progressPct}% Complete</span>
           </div>
           {segments.length > 0 ? (
             <div className="space-y-1">
@@ -123,14 +123,14 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
                     <span className="text-slate-200">{seg.label}</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-mono">
-                    <span className="text-slate-300 font-medium">{seg.count}</span>
-                    <span className="text-slate-500">({seg.pct}%)</span>
+                    <span className="text-slate-300 font-medium tabular-nums">{seg.count}</span>
+                    <span className="text-slate-500 tabular-nums">({seg.pct}%)</span>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="text-[11px] text-slate-400 italic">
+            <div className="text-[11px] text-slate-400">
               {isCompletedSprint ? 'Completed sprint (no remaining items)' : 'No items allocated to sprint'}
             </div>
           )}
