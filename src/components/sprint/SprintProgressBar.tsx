@@ -80,7 +80,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       {isHovered && (
         <div
           data-testid="sprint-progress-breakdown"
-          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] animate-in fade-in zoom-in-95 duration-100"
+          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">
             <span>Status Breakdown</span>

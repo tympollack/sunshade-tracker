@@ -3469,14 +3469,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 return (
                   <div
                     key={sprintName}
-                    className={`rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative hover:z-20 ${
+                    className={`rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative hover:z-30 ${
                       isCollapsed ? 'rounded-xl' : ''
                     }`}
                     data-testid={`sprint-swimlane-${sprintName}`}
                   >
                     {/* Sprint Header */}
                     <div
-                      className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
+                      className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 relative z-30 ${
                         isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'
                       }`}
                     >
