@@ -38,10 +38,17 @@ export async function GET(req: NextRequest) {
       ) {
         const { data: demoProjects } = await service
           .from('projects')
-          .select('id, tenant_id, slug, name, description, created_at')
+          .select('id, tenant_id, slug, name, description, settings, order_index, created_at')
           .eq('tenant_id', publicTenant.id)
           .is('deleted_at', null)
           .order('created_at', { ascending: true });
+
+        const sortedDemoProjects = (demoProjects || []).slice().sort((a: any, b: any) => {
+          const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
+          const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
+          if (aOrder !== bOrder) return aOrder - bOrder;
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        });
 
         return {
           id: publicTenant.id,
@@ -53,7 +60,7 @@ export async function GET(req: NextRequest) {
           created_at: publicTenant.created_at,
           role: 'viewer',
           member_since: publicTenant.created_at,
-          projects: demoProjects || [],
+          projects: sortedDemoProjects || [],
           members: [],
           is_public: true,
           metadata: publicTenant.metadata || {},
@@ -141,7 +148,7 @@ export async function GET(req: NextRequest) {
 
     const { data: allProjects } = await service
       .from('projects')
-      .select('id, tenant_id, slug, name, description, created_at')
+      .select('id, tenant_id, slug, name, description, settings, order_index, created_at')
       .in('tenant_id', tenantIds)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
@@ -151,6 +158,16 @@ export async function GET(req: NextRequest) {
     for (const p of allProjects || []) {
       if (!projectsByTenant[p.tenant_id]) projectsByTenant[p.tenant_id] = [];
       projectsByTenant[p.tenant_id].push(p);
+    }
+
+    // Sort projects for each tenant by order_index ASC
+    for (const tid of Object.keys(projectsByTenant)) {
+      projectsByTenant[tid].sort((a: any, b: any) => {
+        const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
+        const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
     }
 
     // Fetch all members for all tenant IDs the user is a member of
