@@ -45,17 +45,38 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
         <div className="absolute inset-x-0 top-0 h-[45%] bg-gradient-to-b from-white/20 to-transparent pointer-events-none z-10 rounded-t-full" />
 
         {segments.length > 0 ? (
-          segments.map((seg) => (
-            <div
-              key={seg.id}
-              data-testid={`sprint-progress-segment-${seg.id}`}
-              style={{
-                width: `${seg.pct}%`,
-                backgroundColor: seg.color,
-              }}
-              className="h-full transition-all duration-300 first:rounded-l-full last:rounded-r-full border-r border-black/25 last:border-r-0 relative"
-            />
-          ))
+          segments.map((seg, idx) => {
+            const isLast = idx === segments.length - 1;
+            return (
+              <div
+                key={seg.id}
+                data-testid={`sprint-progress-segment-${seg.id}`}
+                style={{
+                  width: `${seg.pct}%`,
+                  backgroundColor: seg.color,
+                }}
+                className="h-full transition-all duration-300 relative"
+              >
+                {/* Diagonal gradient overlay across the segment for tactile lighting */}
+                <div className="absolute inset-0 bg-gradient-to-tr from-black/20 via-transparent to-white/20 pointer-events-none" />
+
+                {/* Soft gradient edge transitions between adjacent status segments */}
+                {idx > 0 && (
+                  <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-black/30 to-transparent pointer-events-none z-10" />
+                )}
+                {!isLast && (
+                  <div className="absolute right-0 top-0 bottom-0 w-2.5 bg-gradient-to-r from-transparent to-black/30 pointer-events-none z-10" />
+                )}
+
+                {/* Diagonal divider line between states */}
+                {!isLast && seg.pct > 0 && (
+                  <div className="absolute -right-1 top-0 bottom-0 w-2 z-20 pointer-events-none flex items-center justify-center">
+                    <div className="w-[1.5px] h-full transform -skew-x-[20deg] bg-slate-950/90 shadow-[0_0_2px_rgba(0,0,0,0.8)] border-r border-white/30" />
+                  </div>
+                )}
+              </div>
+            );
+          })
         ) : (
           <div
             data-testid="sprint-progress-empty-or-completed"
