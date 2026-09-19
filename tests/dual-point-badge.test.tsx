@@ -1,16 +1,41 @@
-﻿import React from 'react';
+import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DualPointBadge } from '@/components/DualPointBadge';
 
 describe('FEAT-TRK-DUAL-POINT-BADGE-UI: Dual Intrinsic vs. Rollup Point Badges', () => {
-  it('renders a compound badge when intrinsic estimate differs from subtask rollup', () => {
+  it('renders single rollup pill and suppresses intrinsic pill by default in granular mode (FEAT-TRK-HIERARCHY-ROW-DECLUTTER)', () => {
     render(
       <DualPointBadge
         storyPoints={8}
         rollupPoints={13}
         childCount={3}
         pointMode="granular"
+      />
+    );
+
+    const badge = screen.getByTestId('dual-point-badge');
+    expect(badge).toBeInTheDocument();
+
+    // Rollup pill rendered
+    const rollupPill = screen.getByTestId('dual-point-badge-rollup');
+    expect(rollupPill).toHaveTextContent('Σ 13 pts');
+
+    // Intrinsic pill is suppressed from default view
+    expect(screen.queryByTestId('dual-point-badge-intrinsic')).toBeNull();
+
+    // Tooltip surfaces intrinsic estimate
+    expect(badge).toHaveAttribute('title', 'Intrinsic Estimate: 8 pts');
+  });
+
+  it('renders compound badge when showCompound is explicitly enabled', () => {
+    render(
+      <DualPointBadge
+        storyPoints={8}
+        rollupPoints={13}
+        childCount={3}
+        pointMode="granular"
+        showCompound={true}
       />
     );
 
@@ -28,7 +53,7 @@ describe('FEAT-TRK-DUAL-POINT-BADGE-UI: Dual Intrinsic vs. Rollup Point Badges',
     // Tooltip
     expect(badge).toHaveAttribute(
       'title',
-      'Macro estimate: 8 pts | Active child tasks: 13 pts'
+      'Intrinsic Estimate: 8 pts | Active child tasks: 13 pts'
     );
   });
 

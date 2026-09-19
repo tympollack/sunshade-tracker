@@ -7,21 +7,20 @@ export interface DualPointBadgeProps {
   rollupPoints?: number | null;    // calculated child/leaf rollup points
   childCount?: number;             // number of child items
   pointMode?: 'macro' | 'granular';
+  showCompound?: boolean;          // explicitly enable compound pill if needed
   className?: string;
   testId?: string;
 }
 
 /**
- * Renders points badge with dual intrinsic vs. rollup support (FEAT-TRK-DUAL-POINT-BADGE-UI):
+ * Renders points badge with dual intrinsic vs. rollup support (FEAT-TRK-DUAL-POINT-BADGE-UI & FEAT-TRK-HIERARCHY-ROW-DECLUTTER):
  * - If pointMode === 'macro': displays raw intrinsic estimate ({storyPoints} pts).
  * - If item has children (childCount > 0):
- *   - If intrinsic points exist and differ from rollup: compound badge
- *     - Left pill: Σ {rollupPoints} pts (emerald theme)
- *     - Right pill: Est: {storyPoints} (slate theme)
- *     - Tooltip: Macro estimate: X pts | Active child tasks: Y pts
- *   - If intrinsic points equal rollup or don't exist: single Σ {rollupPoints} pts pill.
+ *   - By default in granular mode: single unified rollup point pill (Σ {rollupPoints} pts)
+ *     with hover tooltip surfacing intrinsic estimate (title="Intrinsic Estimate: {storyPoints} pts").
+ *   - If showCompound is explicitly enabled and intrinsic differs from rollup: compound badge.
  * - If item is a leaf (childCount === 0):
- *   - Single point pill: {storyPoints} pts.
+ *   - Single compact pill: {storyPoints} pts.
  *
  * Enforces whitespace-nowrap and shrink-0 to prevent long titles from wrapping.
  */
@@ -30,6 +29,7 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
   rollupPoints,
   childCount = 0,
   pointMode = 'granular',
+  showCompound = false,
   className = '',
   testId = 'dual-point-badge',
 }) => {
@@ -58,13 +58,13 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
   // Granular mode:
   // 1. Container with children
   if (hasChildren) {
-    // If intrinsic points exist and differ from rollup: compound badge
-    if (hasIntrinsic && hasRollup && intrinsic !== rollup) {
+    // If showCompound is explicitly enabled and both points exist: compound badge
+    if (showCompound && hasIntrinsic && hasRollup && intrinsic !== rollup) {
       return (
         <div
           data-testid={testId}
           className={`inline-flex items-center shrink-0 whitespace-nowrap select-none ${className}`}
-          title={`Macro estimate: ${intrinsic} pts | Active child tasks: ${rollup} pts`}
+          title={`Intrinsic Estimate: ${intrinsic} pts | Active child tasks: ${rollup} pts`}
         >
           <span
             data-testid={`${testId}-rollup`}
@@ -82,6 +82,7 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
       );
     }
 
+    // Default (FEAT-TRK-HIERARCHY-ROW-DECLUTTER): Single unified rollup point pill by default
     if (hasRollup) {
       return (
         <span
@@ -89,11 +90,11 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
           className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 shrink-0 whitespace-nowrap select-none ${className}`}
           title={
             hasIntrinsic
-              ? `Macro estimate: ${intrinsic} pts | Active child tasks: ${rollup} pts`
+              ? `Intrinsic Estimate: ${intrinsic} pts`
               : `Active child tasks: ${rollup} pts`
           }
         >
-          Σ {rollup} pts
+          <span data-testid={`${testId}-rollup`}>Σ {rollup} pts</span>
         </span>
       );
     }
@@ -103,9 +104,9 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
         <span
           data-testid={testId}
           className={`text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-slate-700/60 shrink-0 whitespace-nowrap select-none ${className}`}
-          title={`Macro estimate: ${intrinsic} pts`}
+          title={`Intrinsic Estimate: ${intrinsic} pts`}
         >
-          Est: {intrinsic}
+          {intrinsic} pts
         </span>
       );
     }

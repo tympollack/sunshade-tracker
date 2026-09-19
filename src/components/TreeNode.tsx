@@ -449,7 +449,7 @@ export function TreeNode({
                 <CopyableRefId
                   id={item.external_ref_id}
                   brackets
-                  className="text-xs shrink-0 whitespace-nowrap font-medium"
+                  className="text-slate-500 hover:text-slate-300 text-xs font-mono shrink-0 whitespace-nowrap"
                 />
               )}
 
@@ -465,18 +465,18 @@ export function TreeNode({
                 </span>
               )}
 
-              {/* Recursive Rollup Badges */}
+              {/* Recursive Rollup Badges - discreet counter (FEAT-TRK-HIERARCHY-ROW-DECLUTTER) */}
               {item.descendantCount !== undefined && item.descendantCount > 0 && (
                 <span
                   data-testid="tree-node-subtasks-badge"
-                  className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0 whitespace-nowrap"
+                  className="text-slate-400 text-xs font-mono shrink-0 whitespace-nowrap"
                   title={
                     isFilteredBySprint
                       ? `${item.descendantCount} descendant item(s) (sprint filtered)`
                       : `${item.descendantCount} descendant item(s)`
                   }
                 >
-                  {item.descendantCount} {item.descendantCount === 1 ? 'subtask' : 'subtasks'}
+                  ({item.descendantCount})
                 </span>
               )}
             </div>
@@ -493,7 +493,9 @@ export function TreeNode({
                   const childCount =
                     (item as any).child_count !== undefined
                       ? (item as any).child_count
-                      : (item.children?.length ?? 0);
+                      : (item.children && item.children.length > 0)
+                      ? item.children.length
+                      : (item.descendantCount ?? 0);
                   const rawIntrinsic =
                     item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
                   const intrinsicPoints =
