@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 
 export interface ProgressStatusSegment {
   id: string;
@@ -19,6 +19,28 @@ export interface SprintProgressBarProps {
   className?: string;
 }
 
+const BACKLOG_STATUS_IDS = new Set([
+  'todo',
+  'to_do',
+  'to-do',
+  'backlog',
+  'not_started',
+  'not-started',
+  'unstarted',
+  'open',
+]);
+
+const COMPLETED_STATUS_IDS = new Set([
+  'done',
+  'closed',
+  'complete',
+  'completed',
+  'shipped',
+  'approved',
+  'published',
+  'resolved',
+]);
+
 export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   progressPct,
   segments,
@@ -35,6 +57,59 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       : `Goal: ${goal}`
     : label || 'Goal: Progress';
 
+  // Compute active segments that represent in-flight or completed work
+  const activeSegments = useMemo(() => {
+    return segments.filter(
+      (s) => !BACKLOG_STATUS_IDS.has(s.id.toLowerCase()) && (s.count > 0 || s.pct > 0)
+    );
+  }, [segments]);
+
+  // Compute smooth diagonal (/) linear gradient between status colors
+  const gradientStyle = useMemo(() => {
+    if (isFilled100) {
+      // 100% complete: luminous emerald-teal liquid fill
+      return {
+        background: 'linear-gradient(115deg, #10b981 0%, #14b8a6 50%, #34d399 100%)',
+        boxShadow: '0 0 10px rgba(16, 185, 129, 0.4)',
+      };
+    }
+
+    if (activeSegments.length >= 2) {
+      // Smooth diagonal (/) transition across active status stages
+      const stops = activeSegments
+        .map((seg, idx) => {
+          const stopPct = Math.round((idx / (activeSegments.length - 1)) * 100);
+          return `${seg.color} ${stopPct}%`;
+        })
+        .join(', ');
+      return {
+        background: `linear-gradient(115deg, ${stops})`,
+        boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
+      };
+    }
+
+    if (activeSegments.length === 1) {
+      const activeColor = activeSegments[0].color;
+      const isCompleted = COMPLETED_STATUS_IDS.has(activeSegments[0].id.toLowerCase());
+      if (isCompleted) {
+        return {
+          background: `linear-gradient(115deg, ${activeColor} 0%, #34d399 100%)`,
+          boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
+        };
+      }
+      return {
+        background: `linear-gradient(115deg, ${activeColor} 0%, #10b981 100%)`,
+        boxShadow: '0 0 10px rgba(249, 115, 22, 0.35)',
+      };
+    }
+
+    // Default: warm peach/amber to emerald diagonal gradient inspired by the reference design
+    return {
+      background: 'linear-gradient(115deg, #f97316 0%, #10b981 100%)',
+      boxShadow: '0 0 10px rgba(16, 185, 129, 0.35)',
+    };
+  }, [isFilled100, activeSegments]);
+
   return (
     <div
       className={`relative flex w-full sm:w-auto min-w-[200px] sm:min-w-[260px] flex-col gap-2 rounded-xl border border-white/[0.08] bg-slate-950/40 p-3.5 backdrop-blur-md cursor-pointer select-none ${
@@ -47,7 +122,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
     >
       <div className="flex items-center justify-between text-xs">
         <span
-          className="font-medium text-slate-300 truncate mr-2"
+          className="font-medium text-slate-300 truncate mr-2 tracking-wide"
           title={displayGoal}
           data-testid="header-goal"
         >
@@ -66,13 +141,15 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
         className="relative h-2.5 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.06] p-[1px] shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] backdrop-blur-sm"
         data-testid="sprint-progress-bar"
       >
-        {/* Glowing Fill Bar (Matches the 100% bar, filled to progressPct%) */}
+        {/* Glowing Fill Bar with diagonal (/) gradient between states */}
         <div
           data-testid="sprint-progress-empty-or-completed"
-          className="relative h-full rounded-full bg-emerald-500 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.4)] transition-all duration-500"
+          className="relative h-full rounded-full bg-emerald-500 transition-all duration-500"
           style={{
             width: `${progressPct}%`,
             backgroundColor: '#22c55e',
+            backgroundImage: gradientStyle.background,
+            boxShadow: gradientStyle.boxShadow,
           }}
         >
           {progressPct > 0 && (
