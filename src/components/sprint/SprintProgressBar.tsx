@@ -36,11 +36,14 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       onClick={() => setIsHovered((prev) => !prev)}
       data-testid="sprint-progress-container"
     >
-      {/* Stacked Multi-Segment Progress Bar */}
+      {/* Stacked Multi-Segment Progress Bar with Tactile Depth */}
       <div
-        className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden flex"
+        className="flex-1 h-3 bg-slate-950/90 rounded-full border border-slate-800/80 shadow-[inset_0_1.5px_3px_rgba(0,0,0,0.85)] overflow-hidden flex relative"
         data-testid="sprint-progress-bar"
       >
+        {/* Subtle glass reflection highlight across the top half */}
+        <div className="absolute inset-x-0 top-0 h-[45%] bg-gradient-to-b from-white/20 to-transparent pointer-events-none z-10 rounded-t-full" />
+
         {segments.length > 0 ? (
           segments.map((seg) => (
             <div
@@ -50,15 +53,16 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
                 width: `${seg.pct}%`,
                 backgroundColor: seg.color,
               }}
-              className="h-full transition-all duration-300 first:rounded-l-full last:rounded-r-full"
-              title={`${seg.label}: ${seg.count} (${seg.pct}%)`}
+              className="h-full transition-all duration-300 first:rounded-l-full last:rounded-r-full border-r border-black/25 last:border-r-0 relative"
             />
           ))
         ) : (
           <div
             data-testid="sprint-progress-empty-or-completed"
             className={`h-full transition-all rounded-full ${
-              isFilled100 ? 'bg-emerald-500' : 'bg-slate-700'
+              isFilled100
+                ? 'bg-emerald-500 bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.35)]'
+                : 'bg-slate-800/60'
             }`}
             style={{
               width: isFilled100 ? '100%' : '0%',
@@ -80,7 +84,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       {isHovered && (
         <div
           data-testid="sprint-progress-breakdown"
-          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl shadow-black/80 text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
+          className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-700/80 shadow-[0_12px_32px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.06)] text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">
             <span>Status Breakdown</span>
