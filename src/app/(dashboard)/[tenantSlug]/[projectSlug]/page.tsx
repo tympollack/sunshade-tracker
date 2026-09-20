@@ -3567,16 +3567,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                         </span>
                       </div>
 
-                      <div className="flex items-center space-x-4">
-                        {sprintDef?.goal && (
-                          <span
-                            className="text-xs text-slate-400 italic max-w-xs truncate hidden md:inline-block"
-                            title={sprintDef.goal}
-                          >
-                            Goal: {sprintDef.goal}
-                          </span>
-                        )}
-
+                      <div className="flex items-center">
                         {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
                         {(() => {
                           const segs = projectSettings.statuses
@@ -3594,6 +3585,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               progressPct={progressPct}
                               segments={segs}
                               isCompletedSprint={isCompletedSprint}
+                              goal={sprintDef?.goal || undefined}
                             />
                           );
                         })()}
