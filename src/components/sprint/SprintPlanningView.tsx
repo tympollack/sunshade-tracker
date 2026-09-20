@@ -38,6 +38,7 @@ export const SprintPlanningView: React.FC<SprintPlanningViewProps> = ({
   className = '',
   renderSprintContent,
 }) => {
+  const [activeSprintPopover, setActiveSprintPopover] = React.useState<string | null>(null);
   const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
 
   const effectiveSprints =
@@ -80,9 +81,9 @@ export const SprintPlanningView: React.FC<SprintPlanningViewProps> = ({
             <div
               key={sprintName}
               data-testid={`sprint-swimlane-${sprintName}`}
-              className={`rounded-xl border border-slate-800 bg-slate-900/20 shadow-sm relative hover:z-30 ${
-                isCollapsed ? 'rounded-xl' : ''
-              }`}
+              className={`rounded-xl border border-slate-800 bg-slate-900/20 shadow-sm relative hover:z-20 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+                activeSprintPopover === sprintName ? '!z-30' : 'z-10'
+              } ${isCollapsed ? 'rounded-xl' : ''}`}
             >
               <SprintHeader
                 sprintName={sprintName}
@@ -95,6 +96,9 @@ export const SprintPlanningView: React.FC<SprintPlanningViewProps> = ({
                 isAllSelected={isAllSelected}
                 isSomeSelected={isSomeSelected}
                 isReadOnly={isReadOnly}
+                onProgressPopoverOpenChange={(open) => {
+                  setActiveSprintPopover(open ? sprintName : null);
+                }}
               />
 
               {!isCollapsed && renderSprintContent && (
