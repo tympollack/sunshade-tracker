@@ -55,10 +55,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const enrichedProjects = projectList.map((p: any) => ({
+    const sortProjects = (list: any[]) =>
+      list.slice().sort((a, b) => {
+        const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
+        const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+
+    const enrichedProjects = sortProjects(projectList.map((p: any) => ({
       ...p,
       item_count: itemCounts[p.id] || 0,
-    }));
+    })));
 
     return NextResponse.json({
       tenant: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
@@ -66,9 +74,17 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const sortProjects = (list: any[]) =>
+    list.slice().sort((a, b) => {
+      const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
+      const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+
   return NextResponse.json({
     tenant: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-    projects: projects || [],
+    projects: sortProjects(projects || []),
   });
 }
 

@@ -15,6 +15,23 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { DualPointBadge } from '@/components/DualPointBadge';
+import { SpYieldBadge } from '@/components/board/SpYieldBadge';
+
+function formatCardTimestamp(dateString?: string): string | null {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return null;
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
 
 export interface KanbanCardProps {
   item: WorkItem & { child_count?: number; points_rollup?: number };
@@ -63,6 +80,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   onDragOver,
   onDrop,
 }) => {
+  const [isDescExpanded, setIsDescExpanded] = React.useState(false);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
 
   const effectiveChildCount =
@@ -167,6 +185,21 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             className="shrink-0"
           />
 
+          {(item.metadata?.yield_amount !== undefined || item.metadata?.sp_yield !== undefined) && (
+            <SpYieldBadge
+              storyPoints={storyPoints}
+              yieldAmount={
+                item.metadata?.yield_amount !== undefined
+                  ? Number(item.metadata?.yield_amount)
+                  : item.metadata?.sp_yield !== undefined
+                  ? Number(item.metadata?.sp_yield)
+                  : undefined
+              }
+              feeAmount={item.metadata?.fee_amount !== undefined ? Number(item.metadata?.fee_amount) : 0}
+              className="shrink-0"
+            />
+          )}
+
           {isAllProjects && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[90px] shrink-0"
@@ -218,14 +251,43 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         </div>
       </div>
 
-      {/* Card Title */}
-      <h4 className="text-sm font-medium text-slate-100 leading-snug min-w-0">
-        {item.title}
-      </h4>
+      {/* Card Title & Description Toggle */}
+      <div className="flex items-start justify-between gap-1.5 min-w-0">
+        <h4 className="text-sm font-medium text-slate-100 leading-snug min-w-0 flex-1 break-words">
+          {item.title}
+        </h4>
+        {item.description && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsDescExpanded((prev) => !prev);
+            }}
+            aria-expanded={isDescExpanded}
+            aria-label={isDescExpanded ? 'Collapse description' : 'Expand description'}
+            data-testid={`card-expand-desc-btn-${item.id}`}
+            title={item.description}
+            className="p-1 -mr-1 -mt-0.5 text-slate-500 hover:text-slate-300 rounded transition-colors shrink-0 cursor-pointer hover:bg-slate-900 touch-manipulation"
+          >
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                isDescExpanded ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+        )}
+      </div>
 
       {/* Card Description */}
       {item.description && (
-        <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+        <p
+          title={item.description}
+          data-testid={`card-description-${item.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className={`text-xs text-slate-400 leading-relaxed transition-all break-words ${
+            isDescExpanded ? 'line-clamp-none' : 'line-clamp-2'
+          }`}
+        >
           {item.description}
         </p>
       )}
@@ -279,13 +341,22 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         );
       })()}
 
-      {/* Card Bottom: Assignee & Quick Status Select */}
-      <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400">
-        <div className="flex items-center space-x-1.5 min-w-0">
+      {/* Card Bottom: Assignee, Timestamp & Quick Status Select */}
+      <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs text-slate-400 gap-2">
+        <div className="flex items-center space-x-1.5 min-w-0 flex-1">
           <User className="w-3 h-3 text-slate-500 shrink-0" />
-          <span className="text-[11px] font-mono truncate text-slate-400 max-w-[120px]">
+          <span className="text-[11px] font-mono truncate text-slate-400 max-w-[100px]">
             {item.assignee || 'unassigned'}
           </span>
+          {item.created_at && (
+            <span
+              data-testid={`card-timestamp-${item.id}`}
+              title={`Created ${new Date(item.created_at).toLocaleString()}`}
+              className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0"
+            >
+              · {formatCardTimestamp(item.created_at)}
+            </span>
+          )}
         </div>
         {statuses.length > 0 && onUpdateStatus && (
           <select

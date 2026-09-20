@@ -51,7 +51,9 @@ export function CopyableRefId({
       title={copied ? 'Copied!' : title}
       data-testid={`copyable-ref-id-${id}`}
       className={`inline-flex items-center space-x-0.5 font-mono cursor-pointer select-none transition-colors rounded px-1 py-0.5 -mx-1 group hover:bg-slate-800/80 ${
-        copied ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-emerald-400'
+        copied
+          ? 'text-emerald-400 font-semibold'
+          : `${className.includes('text-') ? '' : 'text-slate-400'} ${className.includes('hover:text-') ? '' : 'hover:text-emerald-400'}`
       } ${className}`}
     >
       {copied ? (
@@ -64,7 +66,7 @@ export function CopyableRefId({
           {showHash && (
             <Hash className="w-2.5 h-2.5 text-slate-500 group-hover:text-emerald-400 shrink-0" />
           )}
-          <span className={`font-mono shrink-0 ${className}`}>{renderedText}</span>
+          <span className={`font-mono shrink-0 whitespace-nowrap ${className}`}>{renderedText}</span>
           <Copy className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5 text-slate-400 group-hover:text-emerald-400 shrink-0" />
         </>
       )}

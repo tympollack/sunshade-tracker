@@ -32,6 +32,15 @@ export interface SunShadeLogoProps {
    * On mobile (<640px), hide typography lockup and render only emblem icon
    */
   hideTextOnMobile?: boolean;
+  /**
+   * Hide typography lockup below lg (<1024px) to preserve header space
+   */
+  hideTextBelowLg?: boolean;
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide typography lockup on scroll
+   * to condense breadcrumbs to icons/emblems while keeping desktop typography visible.
+   */
+  hideTextOnScroll?: boolean;
 }
 
 const SIZE_MAP = {
@@ -162,20 +171,22 @@ export function SunShadeLogo({
   href,
   className = '',
   hideTextOnMobile = false,
+  hideTextBelowLg = false,
+  hideTextOnScroll = false,
 }: SunShadeLogoProps) {
   const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size].icon;
-  const textClass = typeof size === 'number' ? 'text-lg' : SIZE_MAP[size].text;
-  const taglineClass = typeof size === 'number' ? 'text-[10px]' : SIZE_MAP[size].tagline;
+  const textClass = typeof size === 'string' ? SIZE_MAP[size].text : 'text-sm';
+  const taglineClass = typeof size === 'string' ? SIZE_MAP[size].tagline : 'text-[9px]';
 
   const content = (
     <div
       data-testid="sunshade-logo"
       className={`inline-flex items-center gap-2.5 select-none shrink-0 min-w-0 ${
         variant === 'stacked' ? 'flex-col text-center' : 'flex-row'
-      } ${className}`}
+      } transition-transform duration-200 group-hover:scale-[1.01] ${className}`}
     >
-      {/* Emblem Icon with subtle ambient backdrop */}
-      <div className="relative flex items-center justify-center shrink-0">
+      {/* Radiant Canopy Emblem */}
+      <div className="relative shrink-0 flex items-center justify-center">
         <div
           className="absolute -inset-1 rounded-full bg-amber-500/10 blur-sm pointer-events-none"
           aria-hidden="true"
@@ -188,7 +199,13 @@ export function SunShadeLogo({
         <div
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
-            hideTextOnMobile ? 'hidden sm:flex' : ''
+            hideTextBelowLg
+              ? 'hidden lg:flex'
+              : hideTextOnScroll
+              ? 'hidden lg:flex'
+              : hideTextOnMobile
+              ? 'hidden sm:flex'
+              : ''
           }`}
         >
           <div className="flex items-center gap-2">

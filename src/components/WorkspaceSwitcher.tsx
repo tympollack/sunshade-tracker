@@ -14,9 +14,14 @@ interface Workspace {
   projects: { id: string; slug: string; name: string }[];
 }
 
-interface WorkspaceSwitcherProps {
+export interface WorkspaceSwitcherProps {
   currentTenantSlug: string;
   workspaces: Workspace[];
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide text label on scroll
+   * to condense breadcrumb to initials badge while keeping desktop label visible.
+   */
+  isScrolled?: boolean;
 }
 
 const ROLE_ICON: Record<string, React.ReactNode> = {
@@ -37,7 +42,7 @@ const TIER_BADGE: Record<string, string> = {
   free: 'bg-slate-800 text-slate-500 border-slate-700',
 };
 
-export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = false }: WorkspaceSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
@@ -117,23 +122,25 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
     .toUpperCase();
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 shrink">
       <button
         ref={triggerRef}
         onClick={toggleOpen}
-        className={`flex items-center space-x-2 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+        className={`flex items-center space-x-1.5 sm:space-x-2 px-2 sm:px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 max-w-full ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
             : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
         }`}
       >
-        <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold flex-shrink-0">
+        <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold shrink-0">
           {initials}
         </div>
-        <span className="max-w-[75px] sm:max-w-[110px] truncate shrink min-w-0">{current?.name ?? '—'}</span>
+        <span className="max-w-[55px] sm:max-w-[80px] lg:max-w-[100px] xl:max-w-[135px] truncate shrink min-w-0 transition-all duration-200">
+          {current?.name ?? '—'}
+        </span>
         {current && (
           <span
-            className={`hidden sm:inline-flex text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+            className={`hidden xl:inline-flex text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${
               TIER_BADGE[current.tier] ?? TIER_BADGE.free
             }`}
           >
@@ -141,7 +148,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces }: WorkspaceSw
           </span>
         )}
         <ChevronDown
-          className={`w-3 h-3 text-slate-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}
+          className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
         />
       </button>
 

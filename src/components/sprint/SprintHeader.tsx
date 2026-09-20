@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ChevronDown, ChevronRight, Clock, Layers, Network } from 'lucide-react';
-import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { WorkItem, SprintDefinition, StatusDefinition } from '@/types/tracker';
+import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import {
   calculateSprintLeafPoints,
   calculateSprintMacroPoints,
@@ -15,6 +16,7 @@ export interface SprintHeaderProps {
   items: WorkItem[];
   pointMode?: 'macro' | 'granular';
   sprintDef?: SprintDefinition;
+  statuses?: StatusDefinition[];
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   isAllSelected?: boolean;
@@ -26,6 +28,13 @@ export interface SprintHeaderProps {
 
 const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
 
+const DEFAULT_STATUSES: StatusDefinition[] = [
+  { id: 'todo', label: 'To Do', color: '#94a3b8', order: 1 },
+  { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+  { id: 'in_review', label: 'In Review', color: '#fbbf24', order: 3 },
+  { id: 'done', label: 'Done', color: '#34d399', order: 4 },
+];
+
 /**
  * Sprint swimlane header component displaying sprint metadata, progress bar,
  * and point capacity calculated according to active pointMode (FEAT-TRK-LEAF-NODE-SUM-CALC).
@@ -35,6 +44,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   items,
   pointMode = 'granular',
   sprintDef,
+  statuses,
   isCollapsed = false,
   onToggleCollapse,
   isAllSelected = false,
@@ -45,6 +55,47 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
 }) => {
   const leafPoints = calculateSprintLeafPoints(items);
   const macroPoints = calculateSprintMacroPoints(items);
+
+  // Dynamic status schema resolution
+  const effectiveStatuses = useMemo(() => {
+    const list = statuses && statuses.length > 0 ? [...statuses] : [...DEFAULT_STATUSES];
+    const knownIds = new Set(list.map((s) => s.id.toLowerCase()));
+    for (const it of items) {
+      const st = (it.status || '').toLowerCase().trim();
+      if (st && !knownIds.has(st)) {
+        list.push({
+          id: st,
+          label: st.charAt(0).toUpperCase() + st.slice(1).replace(/_/g, ' '),
+          color: '#64748b',
+          order: list.length + 1,
+        });
+        knownIds.add(st);
+      }
+    }
+    return list;
+  }, [statuses, items]);
+
+  const totalItemsCount = items.length;
+
+  // Segment breakdown per status
+  const statusBreakdown = useMemo(() => {
+    if (totalItemsCount === 0) return [];
+    return effectiveStatuses
+      .map((st) => {
+        const count = items.filter(
+          (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
+        ).length;
+        const pct = totalItemsCount > 0 ? Math.round((count / totalItemsCount) * 100) : 0;
+        return {
+          id: st.id,
+          label: st.label,
+          color: st.color,
+          count,
+          pct,
+        };
+      })
+      .filter((seg) => seg.count > 0);
+  }, [effectiveStatuses, items, totalItemsCount]);
 
   const completedItems = items.filter((it) => {
     const st = (it.status || '').toLowerCase().trim();
@@ -71,7 +122,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   return (
     <div
       data-testid={`sprint-header-${sprintName}`}
-      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none ${className}`}
+      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none relative z-30 ${className}`}
     >
       <div className="flex items-center space-x-3 min-w-0">
         {onToggleCollapse && (
@@ -143,28 +194,14 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
         </span>
       </div>
 
-      <div className="flex items-center space-x-4 shrink-0">
-        {sprintDef?.goal && (
-          <span
-            className="text-xs text-slate-400 italic max-w-xs truncate hidden md:inline-block"
-            title={sprintDef.goal}
-            data-testid="header-goal"
-          >
-            Goal: {sprintDef.goal}
-          </span>
-        )}
-
-        <div className="flex items-center space-x-2 min-w-[140px]">
-          <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-emerald-500 transition-all rounded-full"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-          <span className="text-xs font-mono text-slate-400 w-9 text-right" data-testid="header-progress">
-            {progressPct}%
-          </span>
-        </div>
+      <div className="flex items-center shrink-0">
+        {/* Multi-Status Stacked Progress Bar & Hover/Tap Breakdown (FEAT-TRK-PROGRESS-BAR-STATUS-COLORS) */}
+        <SprintProgressBar
+          progressPct={progressPct}
+          segments={statusBreakdown}
+          isCompletedSprint={isCompletedSprint}
+          goal={sprintDef?.goal || undefined}
+        />
       </div>
     </div>
   );

@@ -109,14 +109,14 @@ describe('buildTree recursive tree builder', () => {
     const epic = tree[0];
     // Epic has 4 descendants: story-1, task-1, task-2, story-2
     expect(epic.descendantCount).toBe(4);
-    // Epic points rollup = 5 + (8 + 3 + 2) + 1 = 19
-    expect(epic.rollupPoints).toBe(19);
+    // Epic points rollup strictly sums leaves: (task-1 [3] + task-2 [2]) + story-2 [1] = 6 (excludes Epic 5 and Story1 8 intrinsic estimates)
+    expect(epic.rollupPoints).toBe(6);
 
     const [story1, story2] = epic.children!;
     // Story 1 has 2 descendants: task-1, task-2
     expect(story1.descendantCount).toBe(2);
-    // Story 1 points rollup = 8 + 3 + 2 = 13
-    expect(story1.rollupPoints).toBe(13);
+    // Story 1 points rollup strictly sums leaf children: task-1 (3) + task-2 (2) = 5
+    expect(story1.rollupPoints).toBe(5);
 
     // Leaf nodes
     expect(story2.descendantCount).toBe(0);

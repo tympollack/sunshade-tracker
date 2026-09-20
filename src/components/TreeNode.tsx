@@ -108,6 +108,7 @@ export function TreeNode({
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [isCreatingChild, setIsCreatingChild] = useState(false);
   const [childTitle, setChildTitle] = useState('');
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
@@ -359,10 +360,10 @@ export function TreeNode({
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 min-w-0 w-full">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 min-w-0 w-full">
             {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
             <div
-              className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden"
+              className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
               data-testid={`tree-node-left-zone-${item.id}`}
             >
               {!nodeIsImmutable && (
@@ -413,17 +414,42 @@ export function TreeNode({
               {/* Title & Ref ID */}
               <span
                 onClick={() => onEditItem?.(item)}
-                title={sanitizedTitle}
+                title={item.description ? `${sanitizedTitle} — ${item.description}` : sanitizedTitle}
                 className="font-medium text-slate-100 hover:text-white transition-colors cursor-pointer truncate min-w-0 flex-shrink flex-1"
               >
                 {sanitizedTitle}
               </span>
 
+              {item.description && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDescExpanded((prev) => !prev);
+                  }}
+                  aria-expanded={isDescExpanded}
+                  aria-label={
+                    isDescExpanded
+                      ? `Collapse description for ${sanitizedTitle}`
+                      : `Expand description for ${sanitizedTitle}`
+                  }
+                  data-testid={`tree-expand-desc-btn-${item.id}`}
+                  title={item.description}
+                  className="p-1 -my-1 text-slate-500 hover:text-slate-300 rounded transition-colors shrink-0 cursor-pointer hover:bg-slate-800 touch-manipulation"
+                >
+                  <ChevronDown
+                    className={`w-3 h-3 transition-transform duration-200 ${
+                      isDescExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              )}
+
               {item.external_ref_id && (
                 <CopyableRefId
                   id={item.external_ref_id}
                   brackets
-                  className="text-xs shrink-0 whitespace-nowrap font-medium"
+                  className="text-slate-500 hover:text-slate-300 text-xs font-mono shrink-0 whitespace-nowrap"
                 />
               )}
 
@@ -439,35 +465,37 @@ export function TreeNode({
                 </span>
               )}
 
-              {/* Recursive Rollup Badges */}
+              {/* Recursive Rollup Badges - discreet counter (FEAT-TRK-HIERARCHY-ROW-DECLUTTER) */}
               {item.descendantCount !== undefined && item.descendantCount > 0 && (
                 <span
                   data-testid="tree-node-subtasks-badge"
-                  className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0 whitespace-nowrap"
+                  className="text-slate-400 text-xs font-mono shrink-0 whitespace-nowrap"
                   title={
                     isFilteredBySprint
                       ? `${item.descendantCount} descendant item(s) (sprint filtered)`
                       : `${item.descendantCount} descendant item(s)`
                   }
                 >
-                  {item.descendantCount} {item.descendantCount === 1 ? 'subtask' : 'subtasks'}
+                  ({item.descendantCount})
                 </span>
               )}
             </div>
 
-            {/* Right section: Rollup Points, Assignee, Status, Actions */}
+            {/* Right section: Rollup Points, Assignee (desktop), Status, Actions */}
             <div
-              className="flex items-center gap-3 shrink-0 ml-auto"
+              className="flex items-center gap-3 shrink-0 ml-auto w-full md:w-auto justify-between md:justify-end pt-1.5 md:pt-0 border-t border-slate-800/40 md:border-t-0"
               data-testid={`tree-node-right-zone-${item.id}`}
             >
               {/* Rollup / Points Track */}
-              <div className="w-28 shrink-0 flex items-center justify-end text-right" data-testid="col-rollup-points">
+              <div className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right" data-testid="col-rollup-points">
                 {(() => {
                   const pointsRollup = (item as any).points_rollup;
                   const childCount =
                     (item as any).child_count !== undefined
                       ? (item as any).child_count
-                      : (item.children?.length ?? 0);
+                      : (item.children && item.children.length > 0)
+                      ? item.children.length
+                      : (item.descendantCount ?? 0);
                   const rawIntrinsic =
                     item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
                   const intrinsicPoints =
@@ -516,8 +544,8 @@ export function TreeNode({
                 })()}
               </div>
 
-              {/* Assignee Selector Track */}
-              <div className="w-32 shrink-0 flex items-center truncate" data-testid="col-assignee">
+              {/* Assignee Selector Track - Hidden on mobile viewports (< md), visible on desktop */}
+              <div className="w-32 shrink-0 hidden md:flex items-center truncate" data-testid="col-assignee">
                 {members && members.length > 0 ? (
                   <div className="relative inline-flex items-center w-full">
                     <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
@@ -549,7 +577,7 @@ export function TreeNode({
               </div>
 
               {/* Status Selector Track */}
-              <div className="w-36 shrink-0 flex items-center gap-1.5" data-testid="col-status">
+              <div className="w-36 shrink-0 flex items-center gap-1.5 flex-1 md:flex-initial max-w-[170px] md:max-w-none" data-testid="col-status">
                 {effectiveStatuses && effectiveStatuses.length > 0 ? (
                   <select
                     value={item.status}
@@ -616,7 +644,7 @@ export function TreeNode({
               </div>
 
               {/* Actions Track (Add Child, Edit) */}
-              <div className="w-14 shrink-0 flex items-center justify-end gap-0.5" data-testid="col-actions">
+              <div className="w-14 shrink-0 flex items-center justify-end gap-0.5 ml-auto md:ml-0" data-testid="col-actions">
                 {/* Quick Add Child Button */}
                 {!nodeIsImmutable && onCreateChild && validChildTypes.length > 0 && (
                   <button
@@ -625,7 +653,7 @@ export function TreeNode({
                       setIsCreatingChild(!isCreatingChild);
                       setChildError(null);
                     }}
-                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-70 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                     title="Add child task"
                     data-testid={`add-child-btn-${item.id}`}
                   >
@@ -638,7 +666,7 @@ export function TreeNode({
                   <button
                     type="button"
                     onClick={() => onEditItem(item)}
-                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-70 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                     title="Edit work item"
                     data-testid={`edit-item-btn-${item.id}`}
                   >
@@ -648,6 +676,18 @@ export function TreeNode({
               </div>
             </div>
           </div>
+
+          {/* Inline Description Accordion (FEAT-TRK-MOBILE-TOUCH-EXPAND-DESC) */}
+          {item.description && isDescExpanded && (
+            <div
+              data-testid={`tree-node-description-${item.id}`}
+              title={item.description}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 pt-2 border-t border-slate-800/80 text-xs text-slate-400 leading-relaxed break-words"
+            >
+              {item.description}
+            </div>
+          )}
         </div>
       </div>
 

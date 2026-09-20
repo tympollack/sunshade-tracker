@@ -11,12 +11,17 @@ interface Project {
   name: string;
 }
 
-interface ProjectSwitcherProps {
+export interface ProjectSwitcherProps {
   tenantSlug: string;
   currentProjectSlug: string;
   projects: Project[];
   onArchiveCurrentProject?: () => void;
   isReadOnly?: boolean;
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide text label on scroll
+   * to condense breadcrumb to icon while keeping desktop label visible.
+   */
+  isScrolled?: boolean;
 }
 
 export function ProjectSwitcher({
@@ -25,6 +30,7 @@ export function ProjectSwitcher({
   projects,
   onArchiveCurrentProject,
   isReadOnly = false,
+  isScrolled = false,
 }: ProjectSwitcherProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -97,24 +103,26 @@ export function ProjectSwitcher({
   };
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 shrink">
       <button
         ref={triggerRef}
         onClick={toggleOpen}
         data-testid="project-switcher-trigger"
-        className={`flex items-center space-x-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+        className={`flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 max-w-full ${
           open
             ? 'bg-slate-800 border-slate-700 text-white'
             : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
         }`}
       >
         {isAll ? (
-          <Layers className="w-3 h-3 text-emerald-400" />
+          <Layers className="w-3 h-3 text-emerald-400 shrink-0" />
         ) : (
-          <Folder className="w-3 h-3 text-emerald-400" />
+          <Folder className="w-3 h-3 text-emerald-400 shrink-0" />
         )}
-        <span className="max-w-[65px] sm:max-w-[100px] truncate shrink min-w-0">{currentProject?.name || currentProjectSlug}</span>
-        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="max-w-[50px] sm:max-w-[75px] lg:max-w-[95px] xl:max-w-[130px] truncate shrink min-w-0 transition-all duration-200">
+          {currentProject?.name || currentProjectSlug}
+        </span>
+        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && mounted && createPortal(
