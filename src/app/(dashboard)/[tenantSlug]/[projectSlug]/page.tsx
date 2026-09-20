@@ -323,6 +323,17 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     });
   };
 
+  // Scroll detection to condense breadcrumbs on narrow mobile/tablet viewports (BUG-TRK-NAV-BREADCRUMB-OVERFLOW)
+  const [isScrolled, setIsScrolled] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // Point Mode State (FEAT-TRK-MACRO-VS-LEAF-VIEW-TOGGLE)
   const [pointMode, setPointMode] = useState<'granular' | 'macro'>(() => {
     if (typeof window !== 'undefined') {
@@ -2416,12 +2427,13 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       {/* ── Top App Header ──────────────────────────────────────────────── */}
       <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextOnScroll={isScrolled} />
           <span className="text-slate-700 shrink-0">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
             currentTenantSlug={tenantSlug}
             workspaces={allWorkspaces}
+            isScrolled={isScrolled}
           />
           <span className="text-slate-700 shrink-0">/</span>
           {/* Project Switcher */}
@@ -2431,6 +2443,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             projects={allProjects}
             onArchiveCurrentProject={() => setIsArchiveModalOpen(true)}
             isReadOnly={isReadOnly}
+            isScrolled={isScrolled}
           />
         </div>
 

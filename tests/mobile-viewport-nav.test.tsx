@@ -178,11 +178,40 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     expect(dropdown).toHaveClass('max-w-[calc(100vw-24px)]');
   });
 
-  it('preserves breadcrumb label visibility even when isScrolled is passed', () => {
+  it('preserves breadcrumb label visibility on desktop (lg:inline / lg:flex) while compacting below lg on scroll', () => {
     const projects = [{ id: 'p1', slug: 'cozy', name: 'Cozy Smart Home' }];
     const workspaces = [{ id: 'ws1', slug: 'pym', name: 'PYM Energy', tier: 'pro', role: 'owner', projects: [] }];
 
-    const { unmount } = render(
+    // 1. When isScrolled is false (at top of page), labels are visible with responsive truncation (no hidden class)
+    const { unmount: unmount1 } = render(
+      <ProjectSwitcher
+        tenantSlug="pym"
+        currentProjectSlug="cozy"
+        projects={projects}
+        isScrolled={false}
+      />
+    );
+    const projSpanTop = screen.getByText('Cozy Smart Home');
+    expect(projSpanTop).not.toHaveClass('hidden');
+    expect(projSpanTop).toHaveClass('truncate');
+    unmount1();
+
+    const { unmount: unmount2 } = render(
+      <WorkspaceSwitcher
+        currentTenantSlug="pym"
+        workspaces={workspaces}
+        isScrolled={false}
+      />
+    );
+    const wsSpanTop = screen.getByText('PYM Energy');
+    expect(wsSpanTop).not.toHaveClass('hidden');
+    expect(wsSpanTop).toHaveClass('truncate');
+    unmount2();
+
+    // 2. When isScrolled is true (scrolled down):
+    // - On mobile/tablet (<lg): 'hidden' reclaims space so header controls do not overflow
+    // - On desktop (>=lg): 'lg:inline' keeps labels visible, avoiding collapse on wide screens
+    const { unmount: unmount3 } = render(
       <ProjectSwitcher
         tenantSlug="pym"
         currentProjectSlug="cozy"
@@ -190,23 +219,37 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
         isScrolled={true}
       />
     );
-    const projSpan = screen.getByText('Cozy Smart Home');
-    expect(projSpan).not.toHaveClass('hidden');
-    expect(projSpan).not.toHaveClass('md:hidden');
-    expect(projSpan).toHaveClass('truncate');
-    unmount();
+    const projSpanScrolled = screen.getByText('Cozy Smart Home');
+    expect(projSpanScrolled).toHaveClass('hidden');
+    expect(projSpanScrolled).toHaveClass('lg:inline');
+    expect(projSpanScrolled).not.toHaveClass('md:hidden');
+    expect(projSpanScrolled).not.toHaveClass('lg:hidden');
+    expect(projSpanScrolled).toHaveClass('truncate');
+    unmount3();
 
-    render(
+    const { unmount: unmount4 } = render(
       <WorkspaceSwitcher
         currentTenantSlug="pym"
         workspaces={workspaces}
         isScrolled={true}
       />
     );
-    const wsSpan = screen.getByText('PYM Energy');
-    expect(wsSpan).not.toHaveClass('hidden');
-    expect(wsSpan).not.toHaveClass('md:hidden');
-    expect(wsSpan).toHaveClass('truncate');
+    const wsSpanScrolled = screen.getByText('PYM Energy');
+    expect(wsSpanScrolled).toHaveClass('hidden');
+    expect(wsSpanScrolled).toHaveClass('lg:inline');
+    expect(wsSpanScrolled).not.toHaveClass('md:hidden');
+    expect(wsSpanScrolled).not.toHaveClass('lg:hidden');
+    expect(wsSpanScrolled).toHaveClass('truncate');
+    unmount4();
+
+    // 3. SunShadeLogo: preserves typography lockup on desktop and compacts below lg when hideTextOnScroll is true
+    const { rerender } = render(<SunShadeLogo variant="horizontal" size="xs" hideTextOnMobile={true} hideTextOnScroll={false} />);
+    const logoTextTop = screen.getByTestId('sunshade-logo-text');
+    expect(logoTextTop).toHaveClass('hidden sm:flex');
+
+    rerender(<SunShadeLogo variant="horizontal" size="xs" hideTextOnMobile={true} hideTextOnScroll={true} />);
+    const logoTextScrolled = screen.getByTestId('sunshade-logo-text');
+    expect(logoTextScrolled).toHaveClass('hidden lg:flex');
   });
 });
 

@@ -17,6 +17,10 @@ interface Workspace {
 export interface WorkspaceSwitcherProps {
   currentTenantSlug: string;
   workspaces: Workspace[];
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide text label on scroll
+   * to condense breadcrumb to initials badge while keeping desktop label visible.
+   */
   isScrolled?: boolean;
 }
 
@@ -132,7 +136,11 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = 
           {initials}
         </div>
         <span
-          className="max-w-[70px] sm:max-w-[90px] xl:max-w-[120px] truncate shrink min-w-0 transition-all duration-200"
+          className={`${
+            isScrolled
+              ? 'hidden lg:inline max-w-[70px] sm:max-w-[90px] xl:max-w-[120px]'
+              : 'max-w-[70px] sm:max-w-[90px] xl:max-w-[120px]'
+          } truncate shrink min-w-0 transition-all duration-200`}
         >
           {current?.name ?? '—'}
         </span>

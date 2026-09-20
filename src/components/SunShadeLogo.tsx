@@ -33,7 +33,8 @@ export interface SunShadeLogoProps {
    */
   hideTextOnMobile?: boolean;
   /**
-   * Hide typography lockup on scroll to condense breadcrumbs to icons/symbols
+   * On mobile/tablet viewports (<1024px / lg), hide typography lockup on scroll
+   * to condense breadcrumbs to icons/emblems while keeping desktop typography visible.
    */
   hideTextOnScroll?: boolean;
 }
@@ -193,7 +194,11 @@ export function SunShadeLogo({
         <div
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
-            hideTextOnMobile ? 'hidden sm:flex' : ''
+            hideTextOnScroll
+              ? 'hidden lg:flex'
+              : hideTextOnMobile
+              ? 'hidden sm:flex'
+              : ''
           }`}
         >
           <div className="flex items-center gap-2">

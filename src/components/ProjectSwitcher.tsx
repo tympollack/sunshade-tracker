@@ -17,6 +17,10 @@ export interface ProjectSwitcherProps {
   projects: Project[];
   onArchiveCurrentProject?: () => void;
   isReadOnly?: boolean;
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide text label on scroll
+   * to condense breadcrumb to icon while keeping desktop label visible.
+   */
   isScrolled?: boolean;
 }
 
@@ -116,7 +120,11 @@ export function ProjectSwitcher({
           <Folder className="w-3 h-3 text-emerald-400" />
         )}
         <span
-          className="max-w-[65px] sm:max-w-[85px] xl:max-w-[110px] truncate shrink min-w-0 transition-all duration-200"
+          className={`${
+            isScrolled
+              ? 'hidden lg:inline max-w-[65px] sm:max-w-[85px] xl:max-w-[110px]'
+              : 'max-w-[65px] sm:max-w-[85px] xl:max-w-[110px]'
+          } truncate shrink min-w-0 transition-all duration-200`}
         >
           {currentProject?.name || currentProjectSlug}
         </span>
