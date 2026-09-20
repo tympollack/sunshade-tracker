@@ -248,7 +248,7 @@ describe('BUG-TRK-TOPNAV-BREATHING-ROOM: Vertical Spacing & Centering', () => {
     // Top view switcher tabs container with vertical centering and horizontal spacing separation
     expect(pageContent).toContain('data-testid="top-view-tabs"');
     expect(pageContent).toContain('my-auto self-center');
-    expect(pageContent).toContain('hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:ml-4 lg:ml-6');
+    expect(pageContent).toContain('hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:mx-2 lg:mx-3');
 
     // Asserts no extraneous vertical line divider is present
     expect(pageContent).not.toContain('data-testid="nav-breadcrumb-page-divider"');

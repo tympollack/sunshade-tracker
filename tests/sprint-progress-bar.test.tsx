@@ -1,8 +1,9 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SprintHeader } from '@/components/sprint/SprintHeader';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
+import { SprintPlanningView } from '@/components/sprint/SprintPlanningView';
 import { WorkItem, StatusDefinition } from '@/types/tracker';
 
 const customStatuses: StatusDefinition[] = [
@@ -171,5 +172,117 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     // Header updates to 60%
     expect(screen.getByTestId('header-progress')).toHaveTextContent('60%');
     expect(filledBar.className).toContain('ease-in-out');
+  });
+
+  it('notifies onOpenChange, dismisses on outside click, and ignores clicks inside popover', () => {
+    const onOpenChange = vi.fn();
+    render(
+      <div>
+        <div data-testid="outside-element">Outside</div>
+        <SprintProgressBar
+          progressPct={50}
+          segments={[{ id: 'done', label: 'Done', color: '#22c55e', count: 1, pct: 100 }]}
+          onOpenChange={onOpenChange}
+        />
+      </div>
+    );
+
+    const container = screen.getByTestId('sprint-progress-container');
+
+    // Click to open
+    fireEvent.click(container);
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    const breakdown = screen.getByTestId('sprint-progress-breakdown');
+    expect(breakdown).toBeInTheDocument();
+
+    // Click inside the popover does NOT close it
+    fireEvent.click(breakdown);
+    expect(screen.getByTestId('sprint-progress-breakdown')).toBeInTheDocument();
+
+    // Click outside dismisses popover
+    fireEvent.mouseDown(screen.getByTestId('outside-element'));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByTestId('sprint-progress-breakdown')).not.toBeInTheDocument();
+  });
+});
+
+describe('BUG-TRK-SPRINT-POPOVER-STACKING: Elevation over subsequent sprint headers and cards', () => {
+  it('elevates SprintHeader stacking context to !z-30 when popover opens', () => {
+    const onProgressPopoverOpenChange = vi.fn();
+    render(
+      <SprintHeader
+        sprintName="Sprint 1"
+        items={mockItems}
+        statuses={customStatuses}
+        onProgressPopoverOpenChange={onProgressPopoverOpenChange}
+      />
+    );
+
+    const header = screen.getByTestId('sprint-header-Sprint 1');
+    expect(header).toHaveClass('z-10');
+    expect(header).toHaveClass('has-[[data-testid=sprint-progress-breakdown]]:!z-30');
+
+    // Open progress popover
+    const container = screen.getByTestId('sprint-progress-container');
+    fireEvent.click(container);
+
+    // Now header is dynamically elevated to !z-30
+    expect(header).toHaveClass('!z-30');
+    expect(onProgressPopoverOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it('elevates Sprint 1 swimlane to !z-30 over Sprint 2 in SprintPlanningView when progress popover is open', () => {
+    const sprint1Item: WorkItem = {
+      ...mockItems[0],
+      id: 's1-1',
+      metadata: { sprint: 'Sprint 1' },
+    };
+    const sprint2Item: WorkItem = {
+      ...mockItems[1],
+      id: 's2-1',
+      metadata: { sprint: 'Sprint 2' },
+    };
+
+    render(
+      <SprintPlanningView
+        items={[sprint1Item, sprint2Item]}
+        pointMode="granular"
+        onPointModeChange={() => {}}
+        availableSprints={['Sprint 1', 'Sprint 2']}
+        projectSettings={{
+          schema_version: '1.0.0',
+          custom_fields: [],
+          hierarchy: [],
+          statuses: customStatuses,
+          sprint_settings: {
+            sprints: [
+              { id: 'Sprint 1', name: 'Sprint 1', status: 'active' },
+              { id: 'Sprint 2', name: 'Sprint 2', status: 'planned' },
+            ],
+          },
+        }}
+      />
+    );
+
+    const swimlane1 = screen.getByTestId('sprint-swimlane-Sprint 1');
+    const swimlane2 = screen.getByTestId('sprint-swimlane-Sprint 2');
+
+    // Initially both swimlanes sit at z-10
+    expect(swimlane1).toHaveClass('z-10');
+    expect(swimlane2).toHaveClass('z-10');
+
+    // Open progress popover on Sprint 1
+    const sprint1ProgressContainer = swimlane1.querySelector('[data-testid="sprint-progress-container"]');
+    expect(sprint1ProgressContainer).not.toBeNull();
+    fireEvent.click(sprint1ProgressContainer!);
+
+    // Sprint 1 is elevated to !z-30 while Sprint 2 stays at z-10
+    expect(swimlane1).toHaveClass('!z-30');
+    expect(swimlane2).toHaveClass('z-10');
+
+    // Clicking outside dismisses popover and restores Sprint 1 to z-10
+    fireEvent.mouseDown(document.body);
+    expect(swimlane1).toHaveClass('z-10');
+    expect(swimlane2).toHaveClass('z-10');
   });
 });

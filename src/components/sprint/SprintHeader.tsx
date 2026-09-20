@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Clock, Layers, Network } from 'lucide-react';
 import { WorkItem, SprintDefinition, StatusDefinition } from '@/types/tracker';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
@@ -24,6 +24,7 @@ export interface SprintHeaderProps {
   onToggleSelectAll?: () => void;
   isReadOnly?: boolean;
   className?: string;
+  onProgressPopoverOpenChange?: (open: boolean) => void;
 }
 
 const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
@@ -52,7 +53,15 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   onToggleSelectAll,
   isReadOnly = false,
   className = '',
+  onProgressPopoverOpenChange,
 }) => {
+  const [isProgressPopoverOpen, setIsProgressPopoverOpen] = useState(false);
+
+  const handleProgressOpenChange = (open: boolean) => {
+    setIsProgressPopoverOpen(open);
+    onProgressPopoverOpenChange?.(open);
+  };
+
   const leafPoints = calculateSprintLeafPoints(items);
   const macroPoints = calculateSprintMacroPoints(items);
 
@@ -122,7 +131,9 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   return (
     <div
       data-testid={`sprint-header-${sprintName}`}
-      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none relative z-30 ${className}`}
+      className={`px-4 py-3 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-slate-950/40 rounded-t-xl select-none relative has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+        isProgressPopoverOpen ? '!z-30' : 'z-10'
+      } ${className}`}
     >
       <div className="flex items-center space-x-3 min-w-0">
         {onToggleCollapse && (
@@ -201,6 +212,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
           segments={statusBreakdown}
           isCompletedSprint={isCompletedSprint}
           goal={sprintDef?.goal || undefined}
+          onOpenChange={handleProgressOpenChange}
         />
       </div>
     </div>

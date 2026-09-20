@@ -17,6 +17,7 @@ export interface SprintProgressBarProps {
   goal?: string;
   label?: string;
   className?: string;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const COMPLETED_STATUS_IDS = new Set([
@@ -37,8 +38,32 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   goal,
   label,
   className = '',
+  onOpenChange,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const updateHoverState = (next: boolean | ((prev: boolean) => boolean)) => {
+    const val = typeof next === 'function' ? next(isHovered) : next;
+    setIsHovered(val);
+    onOpenChange?.(val);
+  };
+
+  useEffect(() => {
+    if (!isHovered) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        updateHoverState(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [isHovered]);
+
   const isFilled100 = isCompletedSprint || progressPct === 100;
   const displayGoal = goal
     ? goal.startsWith('Goal:')
@@ -232,12 +257,13 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
 
   return (
     <div
+      ref={containerRef}
       className={`relative flex w-full sm:w-auto min-w-[200px] sm:min-w-[260px] flex-col gap-2 rounded-xl border border-white/[0.08] bg-slate-950/40 p-3.5 backdrop-blur-md cursor-pointer select-none ${
-        isHovered ? 'z-50' : 'z-10'
+        isHovered ? '!z-50' : 'z-10'
       } ${className}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onClick={() => setIsHovered((prev) => !prev)}
+      onMouseEnter={() => updateHoverState(true)}
+      onMouseLeave={() => updateHoverState(false)}
+      onClick={() => updateHoverState((prev) => !prev)}
       data-testid="sprint-progress-container"
     >
       <div className="flex items-center justify-between text-xs">
@@ -297,6 +323,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       {isHovered && (
         <div
           data-testid="sprint-progress-breakdown"
+          onClick={(e) => e.stopPropagation()}
           className="absolute right-0 top-full mt-2 z-50 p-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md border border-white/10 shadow-[0_12px_32px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.06)] text-xs whitespace-nowrap min-w-[200px] pointer-events-auto before:absolute before:-top-2 before:left-0 before:right-0 before:h-2 before:content-[''] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-1.5 mb-1.5 border-b border-slate-800 flex items-center justify-between gap-4">

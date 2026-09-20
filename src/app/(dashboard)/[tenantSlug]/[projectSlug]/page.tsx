@@ -136,6 +136,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   const [sprintSelectedStatuses, setSprintSelectedStatuses] = useState<string[] | null>(null);
   const [sprintSelectedLevels, setSprintSelectedLevels] = useState<string[] | null>(null);
   const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
+  const [activeSprintPopover, setActiveSprintPopover] = useState<string | null>(null);
 
   const treeSortComparator = useMemo(() => {
     return (a: WorkItem, b: WorkItem): number => {
@@ -3497,16 +3498,16 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 return (
                   <div
                     key={sprintName}
-                    className={`rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative hover:z-30 ${
-                      isCollapsed ? 'rounded-xl' : ''
-                    }`}
+                    className={`rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative hover:z-20 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+                      activeSprintPopover === sprintName ? '!z-30' : 'z-10'
+                    } ${isCollapsed ? 'rounded-xl' : ''}`}
                     data-testid={`sprint-swimlane-${sprintName}`}
                   >
                     {/* Sprint Header */}
                     <div
-                      className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 relative z-30 ${
-                        isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'
-                      }`}
+                      className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 relative has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+                        activeSprintPopover === sprintName ? '!z-30' : 'z-10'
+                      } ${isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'}`}
                     >
                       <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                         {/* Collapse Chevron Button */}
@@ -3614,6 +3615,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               segments={segs}
                               isCompletedSprint={isCompletedSprint}
                               goal={sprintDef?.goal || undefined}
+                              onOpenChange={(isOpen) =>
+                                setActiveSprintPopover(isOpen ? sprintName : null)
+                              }
                             />
                           );
                         })()}
