@@ -33,6 +33,10 @@ export interface SunShadeLogoProps {
    */
   hideTextOnMobile?: boolean;
   /**
+   * Hide typography lockup below lg (<1024px) to preserve header space
+   */
+  hideTextBelowLg?: boolean;
+  /**
    * On mobile/tablet viewports (<1024px / lg), hide typography lockup on scroll
    * to condense breadcrumbs to icons/emblems while keeping desktop typography visible.
    */
@@ -167,6 +171,7 @@ export function SunShadeLogo({
   href,
   className = '',
   hideTextOnMobile = false,
+  hideTextBelowLg = false,
   hideTextOnScroll = false,
 }: SunShadeLogoProps) {
   const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size].icon;
@@ -194,7 +199,9 @@ export function SunShadeLogo({
         <div
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
-            hideTextOnScroll
+            hideTextBelowLg
+              ? 'hidden lg:flex'
+              : hideTextOnScroll
               ? 'hidden lg:flex'
               : hideTextOnMobile
               ? 'hidden sm:flex'
