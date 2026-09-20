@@ -251,7 +251,11 @@ export default function WorkspaceSettingsPage(props: PageProps) {
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await apiFetch('/api/v1/tenants/me');
+      const [res, projectsRes] = await Promise.all([
+        apiFetch('/api/v1/tenants/me'),
+        apiFetch('/api/v1/projects'),
+      ]);
+
       if (res.ok) {
         const data = await res.json();
         const workspaces = data.workspaces || [];
@@ -271,7 +275,20 @@ export default function WorkspaceSettingsPage(props: PageProps) {
           setProjectList([]);
         } else {
           setTenantInfo(current);
-          const initialProjects = (current.projects || []).slice().sort((a: any, b: any) => {
+
+          let candidateProjects: any[] = [];
+          if (projectsRes && projectsRes.ok) {
+            const pData = await projectsRes.json().catch(() => ({}));
+            if (Array.isArray(pData.projects) && pData.projects.length > 0) {
+              candidateProjects = pData.projects;
+            }
+          }
+
+          if (candidateProjects.length === 0 && Array.isArray(current.projects)) {
+            candidateProjects = current.projects;
+          }
+
+          const initialProjects = candidateProjects.slice().sort((a: any, b: any) => {
             const aOrder = a.order_index ?? a.settings?.order_index ?? 999999;
             const bOrder = b.order_index ?? b.settings?.order_index ?? 999999;
             if (aOrder !== bOrder) return aOrder - bOrder;

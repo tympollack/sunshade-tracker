@@ -33,7 +33,12 @@ export interface SunShadeLogoProps {
    */
   hideTextOnMobile?: boolean;
   /**
-   * Hide typography lockup on scroll to condense breadcrumbs to icons/symbols
+   * Hide typography lockup below lg (<1024px) to preserve header space
+   */
+  hideTextBelowLg?: boolean;
+  /**
+   * On mobile/tablet viewports (<1024px / lg), hide typography lockup on scroll
+   * to condense breadcrumbs to icons/emblems while keeping desktop typography visible.
    */
   hideTextOnScroll?: boolean;
 }
@@ -166,6 +171,7 @@ export function SunShadeLogo({
   href,
   className = '',
   hideTextOnMobile = false,
+  hideTextBelowLg = false,
   hideTextOnScroll = false,
 }: SunShadeLogoProps) {
   const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size].icon;
@@ -193,8 +199,14 @@ export function SunShadeLogo({
         <div
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
-            hideTextOnMobile ? 'hidden sm:flex' : ''
-          } ${hideTextOnScroll ? 'sm:hidden' : ''}`}
+            hideTextBelowLg
+              ? 'hidden lg:flex'
+              : hideTextOnScroll
+              ? 'hidden lg:flex'
+              : hideTextOnMobile
+              ? 'hidden sm:flex'
+              : ''
+          }`}
         >
           <div className="flex items-center gap-2">
             <span className={`font-extrabold tracking-tight text-white ${textClass}`}>

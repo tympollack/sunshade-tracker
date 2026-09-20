@@ -323,17 +323,6 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     });
   };
 
-  // Scroll detection to condense breadcrumbs (BUG-TRK-NAV-BREADCRUMB-OVERFLOW)
-  const [isScrolled, setIsScrolled] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 20);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
   // Point Mode State (FEAT-TRK-MACRO-VS-LEAF-VIEW-TOGGLE)
   const [pointMode, setPointMode] = useState<'granular' | 'macro'>(() => {
     if (typeof window !== 'undefined') {
@@ -2426,16 +2415,15 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
       {/* ── Top App Header ──────────────────────────────────────────────── */}
       <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink">
-          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextOnScroll={isScrolled} />
-          <span className="text-slate-700 shrink-0">/</span>
+        <div className="flex items-center space-x-1 sm:space-x-1.5 md:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink overflow-hidden">
+          <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextBelowLg />
+          <span className="text-slate-700 shrink-0 text-xs select-none">/</span>
           {/* Workspace Switcher */}
           <WorkspaceSwitcher
             currentTenantSlug={tenantSlug}
             workspaces={allWorkspaces}
-            isScrolled={isScrolled}
           />
-          <span className="text-slate-700 shrink-0">/</span>
+          <span className="text-slate-700 shrink-0 text-xs select-none">/</span>
           {/* Project Switcher */}
           <ProjectSwitcher
             tenantSlug={tenantSlug}
@@ -2443,12 +2431,11 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             projects={allProjects}
             onArchiveCurrentProject={() => setIsArchiveModalOpen(true)}
             isReadOnly={isReadOnly}
-            isScrolled={isScrolled}
           />
         </div>
 
         {/* View tabs */}
-        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:ml-4 lg:ml-6" data-testid="top-view-tabs">
+        <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:mx-2 lg:mx-3" data-testid="top-view-tabs">
           {(['board', 'tree', 'sprint'] as const).map((tab) => {
             const icons = {
               board: <Kanban className="w-3.5 h-3.5" />,
@@ -2489,8 +2476,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             data-testid="header-search-btn"
           >
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="hidden md:inline whitespace-nowrap">Search...</span>
-            <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-800 rounded border border-slate-700">
+            <span className="hidden lg:inline whitespace-nowrap">Search...</span>
+            <kbd className="hidden 2xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-800 rounded border border-slate-700">
               /
             </kbd>
           </button>
@@ -2506,7 +2493,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
             >
               <Plus className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden sm:inline whitespace-nowrap">Add Item</span>
-              <kbd className="hidden lg:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
+              <kbd className="hidden xl:inline-block ml-1 px-1.5 py-0.5 text-[10px] font-mono font-medium text-emerald-200 bg-emerald-700/60 rounded border border-emerald-500/40">
                 N
               </kbd>
             </button>
@@ -2522,7 +2509,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               data-testid="header-deviations-btn"
             >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="hidden sm:inline whitespace-nowrap">{deviations.length} Deviation{deviations.length !== 1 ? 's' : ''}</span>
+              <span className="hidden md:inline whitespace-nowrap">{deviations.length} Deviation{deviations.length !== 1 ? 's' : ''}</span>
             </button>
           )}
 

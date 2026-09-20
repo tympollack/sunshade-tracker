@@ -137,8 +137,8 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     render(<WorkspaceSwitcher currentTenantSlug="pym-energy" workspaces={workspaces} />);
 
     const nameSpan = screen.getByText('PYM Energy Solutions Incorporated');
-    expect(nameSpan).toHaveClass('max-w-[70px]');
-    expect(nameSpan).toHaveClass('sm:max-w-[90px]');
+    expect(nameSpan).toHaveClass('max-w-[55px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[80px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -151,7 +151,7 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     expect(dropdown).toHaveClass('max-w-[calc(100vw-24px)]');
   });
 
-  it('ProjectSwitcher applies max-w-[65px] sm:max-w-[100px], truncate, shrink, min-w-0, and mobile max-w on popover', () => {
+  it('ProjectSwitcher applies responsive max-w truncation, shrink, min-w-0, and mobile max-w on popover', () => {
     const projects = [
       { id: 'p1', slug: 'cozy-project-name', name: 'Cozy Smart Home System Operations' },
     ];
@@ -165,8 +165,8 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     );
 
     const nameSpan = screen.getByText('Cozy Smart Home System Operations');
-    expect(nameSpan).toHaveClass('max-w-[65px]');
-    expect(nameSpan).toHaveClass('sm:max-w-[85px]');
+    expect(nameSpan).toHaveClass('max-w-[50px]');
+    expect(nameSpan).toHaveClass('sm:max-w-[75px]');
     expect(nameSpan).toHaveClass('truncate');
     expect(nameSpan).toHaveClass('shrink');
     expect(nameSpan).toHaveClass('min-w-0');
@@ -176,6 +176,46 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
 
     const dropdown = screen.getByTestId('project-switcher-dropdown');
     expect(dropdown).toHaveClass('max-w-[calc(100vw-24px)]');
+  });
+
+  it('preserves breadcrumb label visibility permanently without scroll-dependent disappearance', () => {
+    const projects = [{ id: 'p1', slug: 'cozy', name: 'Cozy Smart Home' }];
+    const workspaces = [{ id: 'ws1', slug: 'pym', name: 'PYM Energy', tier: 'pro', role: 'owner', projects: [] }];
+
+    // 1. Breadcrumb labels remain visible (no hidden class) and use min-w-0 truncate for responsive bounding
+    const { unmount: unmount1 } = render(
+      <ProjectSwitcher
+        tenantSlug="pym"
+        currentProjectSlug="cozy"
+        projects={projects}
+      />
+    );
+    const projSpan = screen.getByText('Cozy Smart Home');
+    expect(projSpan).not.toHaveClass('hidden');
+    expect(projSpan).toHaveClass('truncate');
+    expect(projSpan).toHaveClass('min-w-0');
+    unmount1();
+
+    const { unmount: unmount2 } = render(
+      <WorkspaceSwitcher
+        currentTenantSlug="pym"
+        workspaces={workspaces}
+      />
+    );
+    const wsSpan = screen.getByText('PYM Energy');
+    expect(wsSpan).not.toHaveClass('hidden');
+    expect(wsSpan).toHaveClass('truncate');
+    expect(wsSpan).toHaveClass('min-w-0');
+    unmount2();
+
+    // 2. SunShadeLogo: supports hideTextBelowLg to compact on mobile/tablet while displaying full brand on desktop
+    const { rerender } = render(<SunShadeLogo variant="horizontal" size="xs" hideTextBelowLg={false} />);
+    const logoTextNormal = screen.getByTestId('sunshade-logo-text');
+    expect(logoTextNormal).not.toHaveClass('hidden lg:flex');
+
+    rerender(<SunShadeLogo variant="horizontal" size="xs" hideTextBelowLg={true} />);
+    const logoTextCompact = screen.getByTestId('sunshade-logo-text');
+    expect(logoTextCompact).toHaveClass('hidden lg:flex');
   });
 });
 

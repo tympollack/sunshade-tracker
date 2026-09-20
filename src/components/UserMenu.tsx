@@ -95,13 +95,13 @@ export function UserMenu({ tenantName, tenantSlug, userEmail, apiKeyPreview }: U
         data-testid="user-menu-trigger"
         className="flex items-center space-x-2 px-2 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"
       >
-        <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xs font-bold">
+        <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-xs font-bold shrink-0">
           {initials}
         </div>
-        <span className="text-xs font-medium text-slate-200 hidden sm:block max-w-[120px] truncate">
+        <span className="text-xs font-medium text-slate-200 hidden lg:block max-w-[120px] truncate">
           {tenantName}
         </span>
-        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && mounted && createPortal(
