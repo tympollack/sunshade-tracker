@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 
 export interface ProgressStatusSegment {
   id: string;
@@ -68,13 +68,117 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
     return [...completed, ...nonCompleted];
   }, [segments]);
 
+  // Target segment boundaries across 100%
+  const targetBoundaries = useMemo(() => {
+    if (orderedSegments.length === 0) return [];
+    const totalPct = orderedSegments.reduce((sum, s) => sum + s.pct, 0);
+    let cumulative = 0;
+    return orderedSegments.map((seg, i) => {
+      if (i === orderedSegments.length - 1) {
+        cumulative = 100;
+      } else {
+        cumulative += totalPct > 0 ? (seg.pct / totalPct) * 100 : seg.pct;
+      }
+      return {
+        id: seg.id,
+        color: seg.color,
+        endPct: Math.round(cumulative * 10) / 10,
+      };
+    });
+  }, [orderedSegments]);
+
+  // Animated boundaries state for smooth ease-in-out transitions when % changes
+  const [animatedBoundaries, setAnimatedBoundaries] = useState(targetBoundaries);
+  const currentBoundariesRef = useRef(targetBoundaries);
+  const animFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const prev = currentBoundariesRef.current;
+    const next = targetBoundaries;
+
+    // Detect if boundary percentages or structure changed
+    const hasChanged =
+      prev.length !== next.length ||
+      prev.some(
+        (p, i) => p.id !== next[i]?.id || Math.abs(p.endPct - next[i]?.endPct) > 0.05
+      );
+
+    if (!hasChanged) return;
+
+    // If reduced-motion preferred, update immediately without animation
+    if (
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    ) {
+      currentBoundariesRef.current = next;
+      setAnimatedBoundaries(next);
+      return;
+    }
+
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+
+    const startTime = performance.now();
+    const duration = 500; // 500ms ease-in-out
+
+    // Determine starting positions for each segment in `next`
+    const startPositions = next.map((nSeg, idx) => {
+      const match = prev.find((p) => p.id === nSeg.id);
+      if (match) return match.endPct;
+      return idx > 0 ? (next[idx - 1]?.endPct ?? 0) : 0;
+    });
+    const targetPositions = next.map((nSeg) => nSeg.endPct);
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+
+      // easeInOutCubic: smooth acceleration and deceleration
+      const ease =
+        progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      const interpolated = next.map((nSeg, idx) => {
+        const start = startPositions[idx];
+        const target = targetPositions[idx];
+        const current = start + (target - start) * ease;
+        return {
+          id: nSeg.id,
+          color: nSeg.color,
+          endPct: Math.round(current * 10) / 10,
+        };
+      });
+
+      currentBoundariesRef.current = interpolated;
+      setAnimatedBoundaries(interpolated);
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        currentBoundariesRef.current = next;
+        setAnimatedBoundaries(next);
+        animFrameRef.current = null;
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, [targetBoundaries]);
+
   // Compute smooth diagonal (120deg, /) linear gradient with diagonal-width crossovers
   const gradientStyle = useMemo(() => {
     if (
       isFilled100 &&
-      (orderedSegments.length === 0 ||
-        (orderedSegments.length === 1 &&
-          COMPLETED_STATUS_IDS.has(orderedSegments[0].id.toLowerCase())))
+      (animatedBoundaries.length === 0 ||
+        (animatedBoundaries.length === 1 &&
+          COMPLETED_STATUS_IDS.has(animatedBoundaries[0].id.toLowerCase())))
     ) {
       // 100% complete sprint: luminous emerald-teal liquid fill
       return {
@@ -83,47 +187,29 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       };
     }
 
-    if (orderedSegments.length === 0) {
+    if (animatedBoundaries.length === 0) {
       return {
         background: 'linear-gradient(120deg, #10b981 0%, #14b8a6 50%, #34d399 100%)',
         boxShadow: '0 0 10px rgba(16, 185, 129, 0.4)',
       };
     }
 
-    if (orderedSegments.length === 1) {
-      const col = orderedSegments[0].color;
+    if (animatedBoundaries.length === 1) {
+      const col = animatedBoundaries[0].color;
       return {
         background: `linear-gradient(120deg, ${col} 0%, ${col} 100%)`,
         boxShadow: `0 0 10px ${col}40`,
       };
     }
 
-    // Calculate cumulative percentages across the 100% bar
-    const totalPct = orderedSegments.reduce((sum, s) => sum + s.pct, 0);
-    let cumulative = 0;
-    const boundaries: { color: string; endPct: number }[] = [];
-
-    for (let i = 0; i < orderedSegments.length; i++) {
-      const seg = orderedSegments[i];
-      if (i === orderedSegments.length - 1) {
-        cumulative = 100;
-      } else {
-        cumulative += totalPct > 0 ? (seg.pct / totalPct) * 100 : seg.pct;
-      }
-      boundaries.push({
-        color: seg.color,
-        endPct: Math.round(cumulative * 10) / 10,
-      });
-    }
-
     // Build stops with a sleek diagonal crossover (no wider than the diagonal slant ~2.4%)
     const stops: string[] = [];
-    stops.push(`${boundaries[0].color} 0%`);
+    stops.push(`${animatedBoundaries[0].color} 0%`);
 
-    for (let i = 0; i < boundaries.length - 1; i++) {
-      const currColor = boundaries[i].color;
-      const nextColor = boundaries[i + 1].color;
-      const bPct = boundaries[i].endPct;
+    for (let i = 0; i < animatedBoundaries.length - 1; i++) {
+      const currColor = animatedBoundaries[i].color;
+      const nextColor = animatedBoundaries[i + 1].color;
+      const bPct = animatedBoundaries[i].endPct;
 
       // Crossover band: 1.2% before boundary to 1.2% after boundary (no wider than diagonal slant)
       const stopBefore = Math.max(0, Math.round((bPct - 1.2) * 10) / 10);
@@ -133,13 +219,13 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       stops.push(`${nextColor} ${stopAfter}%`);
     }
 
-    stops.push(`${boundaries[boundaries.length - 1].color} 100%`);
+    stops.push(`${animatedBoundaries[animatedBoundaries.length - 1].color} 100%`);
 
     return {
       background: `linear-gradient(120deg, ${stops.join(', ')})`,
       boxShadow: '0 0 10px rgba(34, 197, 94, 0.3)',
     };
-  }, [isFilled100, orderedSegments]);
+  }, [isFilled100, animatedBoundaries]);
 
   const isFullWidth = orderedSegments.length > 0 || isFilled100;
   const fillWidth = isFullWidth ? '100%' : `${progressPct}%`;
@@ -178,7 +264,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
         {/* Glowing Fill Bar with diagonal (/) gradient across status percentages */}
         <div
           data-testid="sprint-progress-empty-or-completed"
-          className="relative h-full rounded-full bg-emerald-500 transition-all duration-500"
+          className="relative h-full rounded-full bg-emerald-500 transition-all duration-500 ease-in-out"
           style={{
             width: fillWidth,
             backgroundColor: '#22c55e',

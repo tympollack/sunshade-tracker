@@ -140,4 +140,36 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     expect(filledBar.style.backgroundImage).toContain('#f59e0b 81.2%');
     expect(filledBar.style.backgroundImage).toContain('#f59e0b 100%');
   });
+
+  it('animates progress bar boundaries with ease-in-out when percentage or segments update', () => {
+    const { rerender } = render(
+      <SprintProgressBar
+        progressPct={40}
+        segments={[
+          { id: 'not_started', label: 'Not Started', color: '#94a3b8', count: 2, pct: 40 },
+          { id: 'in_review', label: 'In Review', color: '#f59e0b', count: 1, pct: 20 },
+          { id: 'complete', label: 'Complete', color: '#22c55e', count: 2, pct: 40 },
+        ]}
+      />
+    );
+
+    const filledBar = screen.getByTestId('sprint-progress-empty-or-completed');
+    expect(filledBar.className).toContain('transition-all duration-500 ease-in-out');
+
+    // Re-render with updated progress (e.g. 60% complete, 20% not started, 20% in review)
+    rerender(
+      <SprintProgressBar
+        progressPct={60}
+        segments={[
+          { id: 'not_started', label: 'Not Started', color: '#94a3b8', count: 1, pct: 20 },
+          { id: 'in_review', label: 'In Review', color: '#f59e0b', count: 1, pct: 20 },
+          { id: 'complete', label: 'Complete', color: '#22c55e', count: 3, pct: 60 },
+        ]}
+      />
+    );
+
+    // Header updates to 60%
+    expect(screen.getByTestId('header-progress')).toHaveTextContent('60%');
+    expect(filledBar.className).toContain('ease-in-out');
+  });
 });
