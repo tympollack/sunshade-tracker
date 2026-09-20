@@ -132,9 +132,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = 
           {initials}
         </div>
         <span
-          className={`${
-            isScrolled ? 'hidden md:hidden' : 'max-w-[70px] sm:max-w-[90px] xl:max-w-[120px]'
-          } truncate shrink min-w-0 transition-all duration-200`}
+          className="max-w-[70px] sm:max-w-[90px] xl:max-w-[120px] truncate shrink min-w-0 transition-all duration-200"
         >
           {current?.name ?? '—'}
         </span>

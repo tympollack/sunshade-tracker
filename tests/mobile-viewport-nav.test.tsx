@@ -177,6 +177,37 @@ describe('BUG-TRK-MOBILE-BREADCRUMB-CLIPPING - Responsive Header, Logo Collapse 
     const dropdown = screen.getByTestId('project-switcher-dropdown');
     expect(dropdown).toHaveClass('max-w-[calc(100vw-24px)]');
   });
+
+  it('preserves breadcrumb label visibility even when isScrolled is passed', () => {
+    const projects = [{ id: 'p1', slug: 'cozy', name: 'Cozy Smart Home' }];
+    const workspaces = [{ id: 'ws1', slug: 'pym', name: 'PYM Energy', tier: 'pro', role: 'owner', projects: [] }];
+
+    const { unmount } = render(
+      <ProjectSwitcher
+        tenantSlug="pym"
+        currentProjectSlug="cozy"
+        projects={projects}
+        isScrolled={true}
+      />
+    );
+    const projSpan = screen.getByText('Cozy Smart Home');
+    expect(projSpan).not.toHaveClass('hidden');
+    expect(projSpan).not.toHaveClass('md:hidden');
+    expect(projSpan).toHaveClass('truncate');
+    unmount();
+
+    render(
+      <WorkspaceSwitcher
+        currentTenantSlug="pym"
+        workspaces={workspaces}
+        isScrolled={true}
+      />
+    );
+    const wsSpan = screen.getByText('PYM Energy');
+    expect(wsSpan).not.toHaveClass('hidden');
+    expect(wsSpan).not.toHaveClass('md:hidden');
+    expect(wsSpan).toHaveClass('truncate');
+  });
 });
 
 describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Filter Targets', () => {

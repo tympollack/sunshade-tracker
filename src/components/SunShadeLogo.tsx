@@ -194,7 +194,7 @@ export function SunShadeLogo({
           data-testid="sunshade-logo-text"
           className={`flex flex-col ${variant === 'stacked' ? 'items-center' : 'items-start'} ${
             hideTextOnMobile ? 'hidden sm:flex' : ''
-          } ${hideTextOnScroll ? 'sm:hidden' : ''}`}
+          }`}
         >
           <div className="flex items-center gap-2">
             <span className={`font-extrabold tracking-tight text-white ${textClass}`}>

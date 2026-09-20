@@ -116,9 +116,7 @@ export function ProjectSwitcher({
           <Folder className="w-3 h-3 text-emerald-400" />
         )}
         <span
-          className={`${
-            isScrolled ? 'hidden md:hidden' : 'max-w-[65px] sm:max-w-[85px] xl:max-w-[110px]'
-          } truncate shrink min-w-0 transition-all duration-200`}
+          className="max-w-[65px] sm:max-w-[85px] xl:max-w-[110px] truncate shrink min-w-0 transition-all duration-200"
         >
           {currentProject?.name || currentProjectSlug}
         </span>
