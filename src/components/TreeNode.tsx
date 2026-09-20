@@ -360,10 +360,10 @@ export function TreeNode({
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between gap-3 min-w-0 w-full">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 min-w-0 w-full">
             {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
             <div
-              className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden"
+              className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
               data-testid={`tree-node-left-zone-${item.id}`}
             >
               {!nodeIsImmutable && (
@@ -481,13 +481,13 @@ export function TreeNode({
               )}
             </div>
 
-            {/* Right section: Rollup Points, Assignee, Status, Actions */}
+            {/* Right section: Rollup Points, Assignee (desktop), Status, Actions */}
             <div
-              className="flex items-center gap-3 shrink-0 ml-auto"
+              className="flex items-center gap-3 shrink-0 ml-auto w-full md:w-auto justify-between md:justify-end pt-1.5 md:pt-0 border-t border-slate-800/40 md:border-t-0"
               data-testid={`tree-node-right-zone-${item.id}`}
             >
               {/* Rollup / Points Track */}
-              <div className="w-28 shrink-0 flex items-center justify-end text-right" data-testid="col-rollup-points">
+              <div className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right" data-testid="col-rollup-points">
                 {(() => {
                   const pointsRollup = (item as any).points_rollup;
                   const childCount =
@@ -544,8 +544,8 @@ export function TreeNode({
                 })()}
               </div>
 
-              {/* Assignee Selector Track */}
-              <div className="w-32 shrink-0 flex items-center truncate" data-testid="col-assignee">
+              {/* Assignee Selector Track - Hidden on mobile viewports (< md), visible on desktop */}
+              <div className="w-32 shrink-0 hidden md:flex items-center truncate" data-testid="col-assignee">
                 {members && members.length > 0 ? (
                   <div className="relative inline-flex items-center w-full">
                     <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
@@ -577,7 +577,7 @@ export function TreeNode({
               </div>
 
               {/* Status Selector Track */}
-              <div className="w-36 shrink-0 flex items-center gap-1.5" data-testid="col-status">
+              <div className="w-36 shrink-0 flex items-center gap-1.5 flex-1 md:flex-initial max-w-[170px] md:max-w-none" data-testid="col-status">
                 {effectiveStatuses && effectiveStatuses.length > 0 ? (
                   <select
                     value={item.status}
@@ -644,7 +644,7 @@ export function TreeNode({
               </div>
 
               {/* Actions Track (Add Child, Edit) */}
-              <div className="w-14 shrink-0 flex items-center justify-end gap-0.5" data-testid="col-actions">
+              <div className="w-14 shrink-0 flex items-center justify-end gap-0.5 ml-auto md:ml-0" data-testid="col-actions">
                 {/* Quick Add Child Button */}
                 {!nodeIsImmutable && onCreateChild && validChildTypes.length > 0 && (
                   <button
@@ -653,7 +653,7 @@ export function TreeNode({
                       setIsCreatingChild(!isCreatingChild);
                       setChildError(null);
                     }}
-                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-70 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                     title="Add child task"
                     data-testid={`add-child-btn-${item.id}`}
                   >
@@ -666,7 +666,7 @@ export function TreeNode({
                   <button
                     type="button"
                     onClick={() => onEditItem(item)}
-                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                    className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all opacity-70 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 cursor-pointer"
                     title="Edit work item"
                     data-testid={`edit-item-btn-${item.id}`}
                   >

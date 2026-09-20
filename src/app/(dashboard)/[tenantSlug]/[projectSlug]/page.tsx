@@ -129,6 +129,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
   // Tree View Filtering & Sorting States (PRJ-02, TRK-07)
   const [treeSelectedStatuses, setTreeSelectedStatuses] = useState<string[] | null>(null);
   const [treeSelectedLevels, setTreeSelectedLevels] = useState<string[] | null>(null);
+  const [treeSelectedAssignees, setTreeSelectedAssignees] = useState<string[] | null>(null);
   const [treeSortBy, setTreeSortBy] = useState<string>('order_index');
 
   // Sprint Planning View Filtering & Sorting States (PRJ-02, TRK-07)
@@ -568,7 +569,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     return projectSettings.hierarchy.map((h) => h.type);
   }, [sprintSelectedLevels, projectSettings.hierarchy]);
 
-  // Tree items filtered by selectedSprint, status, and level (PRJ-02, TRK-07)
+  // Tree items filtered by selectedSprint, status, level, and assignee (PRJ-02, TRK-07)
   const treeFilteredItems = useMemo(() => {
     let res = items;
     if (selectedSprint !== 'all') {
@@ -584,8 +585,14 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     if (treeSelectedLevels !== null) {
       res = res.filter((it) => effectiveTreeLevels.includes(it.item_type));
     }
+    if (treeSelectedAssignees !== null) {
+      res = res.filter((it) => {
+        if (!it.assignee) return treeSelectedAssignees.includes('__unassigned__');
+        return treeSelectedAssignees.includes(it.assignee);
+      });
+    }
     return res;
-  }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels]);
+  }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels, treeSelectedAssignees]);
 
   const treeItems = useMemo(
     () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
@@ -2188,6 +2195,30 @@ export default function ProjectTrackerDashboard(props: PageProps) {
     }));
   }, [projectSettings.hierarchy, items]);
 
+  const assigneeFilterOptions: FilterOption[] = useMemo(() => {
+    const unassignedCount = items.filter((it) => !it.assignee).length;
+    const knownAssignees = Array.from(new Set(items.map((it) => it.assignee).filter(Boolean) as string[]));
+    workspaceMembers.forEach((m) => {
+      if (m.full_name && !knownAssignees.includes(m.full_name)) {
+        knownAssignees.push(m.full_name);
+      }
+    });
+
+    return [
+      { id: '__unassigned__', label: 'Unassigned', count: unassignedCount },
+      ...knownAssignees.sort().map((name) => ({
+        id: name,
+        label: name,
+        count: items.filter((it) => it.assignee === name).length,
+      })),
+    ];
+  }, [workspaceMembers, items]);
+
+  const effectiveTreeAssignees = useMemo(() => {
+    if (treeSelectedAssignees !== null) return treeSelectedAssignees;
+    return assigneeFilterOptions.map((o) => o.id);
+  }, [treeSelectedAssignees, assigneeFilterOptions]);
+
   const knownStatusIds = useMemo(
     () => new Set(projectSettings.statuses.map((s) => s.id)),
     [projectSettings.statuses]
@@ -2590,7 +2621,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
       )}
 
       {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+      <main className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
         {/* TAB 1: KANBAN BOARD */}
         {activeTab === 'board' && (
           <div className="space-y-4">
@@ -3018,7 +3049,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
 
         {/* TAB 2: HIERARCHY TREE */}
         {activeTab === 'tree' && (
-          <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full overflow-x-hidden">
+          <div className="p-3 sm:p-4 md:p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="min-w-[240px] flex-1">
                 <h3 className="text-lg font-semibold text-white">Hierarchical Tree Structure</h3>
@@ -3026,7 +3057,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   Recursive tree representation showing parent-child links resolved from dynamic schema rules.
                 </p>
               </div>
-              <div className="flex items-center flex-wrap gap-3 shrink-0">
+              <div className="flex items-center flex-wrap gap-2 sm:gap-3 min-w-0">
                 <div className="flex items-center space-x-1.5 border-r border-slate-800 pr-3">
                   <button
                     type="button"
@@ -3074,6 +3105,12 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   selectedIds={effectiveTreeLevels}
                   onChange={setTreeSelectedLevels}
                 />
+                <FilterMultiSelect
+                  label="Assignee"
+                  options={assigneeFilterOptions}
+                  selectedIds={effectiveTreeAssignees}
+                  onChange={setTreeSelectedAssignees}
+                />
                 <div className="flex items-center space-x-1.5">
                   <span className="text-xs text-slate-400">Sort:</span>
                   <select
@@ -3093,6 +3130,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 {(selectedSprint !== 'all' ||
                   (treeSelectedStatuses !== null && effectiveTreeStatuses.length < projectSettings.statuses.length) ||
                   (treeSelectedLevels !== null && effectiveTreeLevels.length < projectSettings.hierarchy.length) ||
+                  treeSelectedAssignees !== null ||
                   treeSortBy !== 'order_index') && (
                   <button
                     type="button"
@@ -3100,6 +3138,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                       setSelectedSprint('all');
                       setTreeSelectedStatuses(null);
                       setTreeSelectedLevels(null);
+                      setTreeSelectedAssignees(null);
                       setTreeSortBy('order_index');
                     }}
                     className="text-xs text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
@@ -3114,7 +3153,8 @@ export default function ProjectTrackerDashboard(props: PageProps) {
               </div>
             </div>
 
-            <div className="space-y-3 pt-4 max-w-full overflow-x-hidden">
+            <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x" data-testid="tree-scroll-container">
+              <div className="space-y-3 min-w-[600px] md:min-w-0 w-full">
               {/* Root Drop Zone for unnesting */}
               {!isReadOnly && (
                 <div
@@ -3193,6 +3233,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                   />
                 ))
               )}
+              </div>
             </div>
           </div>
         )}
