@@ -13,6 +13,13 @@ export async function POST(req: NextRequest) {
   if (auth.errorResponse) return auth.errorResponse;
   const authCtx = auth.context;
 
+  if (authCtx.role !== 'owner' && authCtx.role !== 'admin') {
+    return NextResponse.json(
+      { error: 'Only workspace owners and admins can reorder projects' },
+      { status: 403 }
+    );
+  }
+
   try {
     const body = await req.json();
     const rawItems: any = Array.isArray(body)
@@ -26,53 +33,95 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const updates: Array<{ project_id: string; order_index: number }> = [];
+    const validItems = rawItems
+      .map((item: any) => ({
+        projectId: item.project_id || item.id,
+        orderIndex: Number(item.order_index),
+      }))
+      .filter((i: any) => i.projectId && !isNaN(i.orderIndex));
 
-    for (const item of rawItems) {
-      const projectId = item.project_id || item.id;
-      const orderIndex = Number(item.order_index);
+    if (validItems.length === 0) {
+      return NextResponse.json(
+        { error: 'Payload must contain a non-empty array of items with project_id and order_index' },
+        { status: 400 }
+      );
+    }
 
-      if (!projectId || isNaN(orderIndex)) continue;
+    const projectIds = validItems.map((i) => i.projectId);
 
-      // Verify and fetch project settings
-      const { data: currentProj, error: fetchErr } = await supabaseAdmin
-        .from('projects')
-        .select('id, settings')
-        .eq('id', projectId)
-        .eq('tenant_id', authCtx.tenant.id)
-        .single();
+    // Batch query all target projects in a single query (FEAT-TRK-BATCH-REORDER)
+    const { data: currentProjects, error: fetchErr } = await supabaseAdmin
+      .from('projects')
+      .select('id, settings')
+      .in('id', projectIds)
+      .eq('tenant_id', authCtx.tenant.id);
 
-      if (fetchErr || !currentProj) continue;
+    if (fetchErr) {
+      return NextResponse.json(
+        { error: `Failed to load projects: ${fetchErr.message}` },
+        { status: 500 }
+      );
+    }
 
-      const newSettings = {
-        ...(currentProj.settings || {}),
-        order_index: orderIndex,
-      };
+    const projectMap = new Map((currentProjects || []).map((p: any) => [p.id, p]));
 
-      // Update order_index column and settings JSON
-      const { error: updateErr } = await supabaseAdmin
-        .from('projects')
-        .update({
+    // Parallelize updates with Promise.all
+    const now = new Date().toISOString();
+    const updateResults = await Promise.all(
+      validItems.map(async ({ projectId, orderIndex }) => {
+        const currentProj = projectMap.get(projectId);
+        if (!currentProj) return null;
+
+        const newSettings = {
+          ...(currentProj.settings || {}),
           order_index: orderIndex,
-          settings: newSettings,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', projectId)
-        .eq('tenant_id', authCtx.tenant.id);
+        };
 
-      if (updateErr) {
-        // Fallback if order_index column does not exist on schema
-        await supabaseAdmin
+        let success = false;
+
+        // Try updating order_index column and settings JSON
+        const { error: updateErr } = await supabaseAdmin
           .from('projects')
           .update({
+            order_index: orderIndex,
             settings: newSettings,
-            updated_at: new Date().toISOString(),
+            updated_at: now,
           })
           .eq('id', projectId)
           .eq('tenant_id', authCtx.tenant.id);
-      }
 
-      updates.push({ project_id: projectId, order_index: orderIndex });
+        if (!updateErr) {
+          success = true;
+        } else {
+          // Fallback if order_index column does not exist on schema
+          const { error: fallbackErr } = await supabaseAdmin
+            .from('projects')
+            .update({
+              settings: newSettings,
+              updated_at: now,
+            })
+            .eq('id', projectId)
+            .eq('tenant_id', authCtx.tenant.id);
+
+          if (!fallbackErr) {
+            success = true;
+          }
+        }
+
+        if (success) {
+          return { project_id: projectId, order_index: orderIndex };
+        }
+        return null;
+      })
+    );
+
+    const updates = updateResults.filter(Boolean) as Array<{ project_id: string; order_index: number }>;
+
+    if (updates.length === 0 && validItems.length > 0) {
+      return NextResponse.json(
+        { error: 'Failed to update any project ordering' },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({

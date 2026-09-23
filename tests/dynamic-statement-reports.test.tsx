@@ -4,6 +4,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StatementGenerator } from '@/components/statements/StatementGenerator';
 import { EfficiencyMetricsPayload } from '@/lib/services/valueLedgerService';
 
+vi.mock('@/lib/auth-guard', () => ({
+  authenticate: vi.fn(),
+}));
+
 const mockPayload: EfficiencyMetricsPayload = {
   tenant: {
     slug: 'acme-corp',
@@ -137,5 +141,51 @@ describe('FEAT-TRK-DYNAMIC-STATEMENT-REPORTS: Dynamic Date Range Statement Gener
     expect(screen.getByTestId('kpi-realized-value')).toHaveTextContent('$1,750.00');
     expect(screen.getByTestId('kpi-completed-items')).toHaveTextContent('24');
     expect(screen.getByTestId('kpi-active-projects')).toHaveTextContent('4');
+  });
+});
+
+describe('GET /api/v1/statements date validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects invalid date format with 400', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { GET } = await import('@/app/api/v1/statements/route');
+    const { NextRequest } = await import('next/server');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 't-1', slug: 'acme-corp', name: 'Acme Corp' },
+        user: { id: 'u-1' },
+        role: 'owner',
+      },
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/statements?tenant_slug=acme-corp&start_date=not-a-date&end_date=2026-09-30');
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid date');
+  });
+
+  it('rejects end_date before start_date with 400', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { GET } = await import('@/app/api/v1/statements/route');
+    const { NextRequest } = await import('next/server');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 't-1', slug: 'acme-corp', name: 'Acme Corp' },
+        user: { id: 'u-1' },
+        role: 'owner',
+      },
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/statements?tenant_slug=acme-corp&start_date=2026-10-01&end_date=2026-09-01');
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid date range');
   });
 });

@@ -50,6 +50,7 @@ export interface ComputeMetricsOptions {
   velocityFactor?: string;
   startDate?: string;
   endDate?: string;
+  periodMultiplier?: number;
 }
 
 const DEFAULT_HOURLY_RATE = 125;
@@ -87,9 +88,28 @@ export function computeEfficiencyMetrics(
       ? '0%'
       : DEFAULT_VELOCITY_FACTOR;
 
+  // Calculate period duration in months for scaling monthly-based yields (FEAT-TRK-DURATION-SCALING)
+  let durationMonths = opts.periodMultiplier ?? 1;
+  if (!opts.periodMultiplier && opts.startDate && opts.endDate) {
+    const sMs = new Date(opts.startDate).getTime();
+    const eMs = new Date(opts.endDate).getTime();
+    if (!isNaN(sMs) && !isNaN(eMs) && eMs >= sMs) {
+      const days = (eMs - sMs) / (1000 * 60 * 60 * 24);
+      if (days >= 350 && days <= 370) {
+        durationMonths = 12;
+      } else if (days >= 85 && days <= 95) {
+        durationMonths = 3;
+      } else if (days >= 27 && days <= 32) {
+        durationMonths = 1;
+      } else {
+        durationMonths = Number(Math.max(1 / 30, days / 30.4375).toFixed(2));
+      }
+    }
+  }
+
   // ─── Itemized Yield Breakdown ──────────────────────────────────────────────
-  // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week)
-  const hierarchyHours = Number((activeProjectsCount * 2.0).toFixed(2));
+  // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week), scaled by period duration
+  const hierarchyHours = Number((activeProjectsCount * 2.0 * durationMonths).toFixed(2));
   const hierarchyValue = Number((hierarchyHours * rate).toFixed(2));
 
   // 2. Backlog Triage & State Sync: 0.05 hrs (3 min) per completed item
@@ -100,7 +120,7 @@ export function computeEfficiencyMetrics(
   const autonomousHours = Number((completedCount * 0.2).toFixed(2));
   const autonomousValue = Number((autonomousHours * rate).toFixed(2));
 
-  // Total Hours = (Completed Items * 0.25 hrs) + (Active Projects * 2.0 hrs)
+  // Total Hours = (Completed Items * 0.25 hrs) + (Active Projects * 2.0 hrs * durationMonths)
   const totalHours = Number((hierarchyHours + triageHours + autonomousHours).toFixed(2));
   const grossValue = Number((totalHours * rate).toFixed(2));
   const subscriptionFee = 0.0;
@@ -112,7 +132,9 @@ export function computeEfficiencyMetrics(
       frictionPoint: 'Hierarchical Status Rollup',
       description:
         '15–30 min per project/week saved via automated hierarchy queries & real-time progress rollups.',
-      metric: `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} tracked`,
+      metric: `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} tracked${
+        durationMonths !== 1 ? ` (${durationMonths} mos)` : ''
+      }`,
       hoursReclaimed: hierarchyHours,
       ratePerHour: rate,
       realizedValue: hierarchyValue,

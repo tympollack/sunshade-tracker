@@ -7,7 +7,8 @@ import {
 export interface GetEfficiencyOptions {
   startDate?: string;
   endDate?: string;
-  period?: 'monthly' | 'all-time';
+  period?: 'monthly' | 'all-time' | 'month' | 'quarter' | 'year' | 'custom';
+  periodMultiplier?: number;
 }
 
 const DEFAULT_COMPLETION_STATUSES = new Set(['complete', 'completed', 'done', 'closed', 'resolved']);
@@ -195,11 +196,32 @@ export async function getTenantEfficiencyMetrics(
 
   const totalItemsCount = itemList.length;
 
-  // Active projects: only projects that have active work items
+  // Active projects: only projects that have activity within [startMs, endMs] (or all-time)
   const activeProjectIdsWithItems = new Set(
-    itemList.map((i: any) => i.project_id).filter(Boolean)
+    itemList
+      .filter((item: any) => {
+        if (isAllTime) return true;
+        const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+        const updatedMs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+        const completedMs = getCompletionTimestamp(item) || 0;
+        return (
+          (createdMs >= startMs && createdMs <= endMs) ||
+          (updatedMs >= startMs && updatedMs <= endMs) ||
+          (completedMs >= startMs && completedMs <= endMs)
+        );
+      })
+      .map((i: any) => i.project_id)
+      .filter(Boolean)
   );
   const activeProjectsCount = activeProjectIdsWithItems.size;
+
+  // Determine multiplier for period if specified or custom
+  let periodMultiplier = options?.periodMultiplier;
+  if (!periodMultiplier) {
+    if (options?.period === 'quarter') periodMultiplier = 3;
+    else if (options?.period === 'year') periodMultiplier = 12;
+    else if (options?.period === 'monthly' || options?.period === 'month') periodMultiplier = 1;
+  }
 
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,
@@ -210,5 +232,6 @@ export async function getTenantEfficiencyMetrics(
     totalItemsCount,
     startDate,
     endDate,
+    periodMultiplier,
   });
 }

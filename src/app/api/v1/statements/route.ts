@@ -53,11 +53,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Date range validation: end_date >= start_date
+    // Date range validation: valid ISO dates and end_date >= start_date (BUG-TRK-DATE-VALIDATION)
     if (startDate && endDate) {
       const startMs = new Date(startDate).getTime();
       const endMs = new Date(endDate).getTime();
-      if (!isNaN(startMs) && !isNaN(endMs) && endMs < startMs) {
+      if (isNaN(startMs) || isNaN(endMs)) {
+        return NextResponse.json(
+          { error: 'Invalid date: start_date and end_date must be valid ISO dates.' },
+          { status: 400 }
+        );
+      }
+      if (endMs < startMs) {
         return NextResponse.json(
           { error: 'Invalid date range: end_date must be greater than or equal to start_date.' },
           { status: 400 }
@@ -65,10 +71,23 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const period =
+      periodParam === 'all-time'
+        ? 'all-time'
+        : periodParam === 'year'
+        ? 'year'
+        : periodParam === 'quarter'
+        ? 'quarter'
+        : periodParam === 'month'
+        ? 'monthly'
+        : 'custom';
+
     const payload = await getTenantEfficiencyMetrics(targetSlug, {
       startDate,
       endDate,
-      period: periodParam === 'all-time' ? 'all-time' : 'monthly',
+      period,
+      periodMultiplier:
+        periodParam === 'year' ? 12 : periodParam === 'quarter' ? 3 : periodParam === 'month' ? 1 : undefined,
     });
 
     // Custom period label decoration

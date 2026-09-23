@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState, useCallback } from 'react';
+import { use, useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -31,6 +31,7 @@ import {
   GripVertical,
   ArrowUp,
   ArrowDown,
+  Calendar,
 } from 'lucide-react';
 import {
   DndContext,
@@ -222,6 +223,8 @@ export default function WorkspaceSettingsPage(props: PageProps) {
   const [projectList, setProjectList] = useState<any[]>([]);
   const [isReordering, setIsReordering] = useState(false);
   const [reorderSuccess, setReorderSuccess] = useState(false);
+  const reorderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingReorderRef = useRef<any[] | null>(null);
 
   // Notification Preferences state
   const [notificationPrefs, setNotificationPrefs] = useState({
@@ -320,27 +323,41 @@ export default function WorkspaceSettingsPage(props: PageProps) {
     })
   );
 
-  const persistReorder = async (updatedProjects: any[]) => {
-    setIsReordering(true);
-    const payload = updatedProjects.map((p, idx) => ({
-      project_id: p.id,
-      order_index: (idx + 1) * 1000,
-    }));
-
-    try {
-      const res = await apiFetch('/api/v1/projects/reorder', {
-        method: 'POST',
-        body: JSON.stringify({ items: payload }),
-      });
-      if (res.ok) {
-        setReorderSuccess(true);
-        setTimeout(() => setReorderSuccess(false), 2500);
-      }
-    } catch (err) {
-      console.error('Failed to persist project reordering:', err);
-    } finally {
-      setIsReordering(false);
+  const persistReorder = (updatedProjects: any[]) => {
+    pendingReorderRef.current = updatedProjects;
+    if (reorderTimeoutRef.current) {
+      clearTimeout(reorderTimeoutRef.current);
     }
+
+    reorderTimeoutRef.current = setTimeout(async () => {
+      const projectsToPersist = pendingReorderRef.current;
+      if (!projectsToPersist) return;
+
+      setIsReordering(true);
+      const payload = projectsToPersist.map((p, idx) => ({
+        project_id: p.id,
+        order_index: (idx + 1) * 1000,
+      }));
+
+      try {
+        const res = await apiFetch('/api/v1/projects/reorder', {
+          method: 'POST',
+          body: JSON.stringify({ items: payload }),
+        });
+        if (res.ok) {
+          setReorderSuccess(true);
+          setTimeout(() => setReorderSuccess(false), 2500);
+        } else {
+          // Re-sync on failure to restore server authoritative order
+          loadWorkspace();
+        }
+      } catch (err) {
+        console.error('Failed to persist project reordering:', err);
+        loadWorkspace();
+      } finally {
+        setIsReordering(false);
+      }
+    }, 250);
   };
 
   const handleMoveProject = (index: number, direction: 'up' | 'down') => {
@@ -791,13 +808,22 @@ export default function WorkspaceSettingsPage(props: PageProps) {
                 Audit self-administered efficiency dividends, hours reclaimed from automated rollups and drag transitions, and export formal ledger statements.
               </p>
             </div>
-            <Link
-              href={`/${tenantSlug}/settings/efficiency`}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors self-start sm:self-center flex-shrink-0"
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>View Statement</span>
-            </Link>
+            <div className="flex items-center space-x-2 self-start sm:self-center flex-shrink-0">
+              <Link
+                href={`/${tenantSlug}/statements`}
+                className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center space-x-1.5 transition-colors"
+              >
+                <Calendar className="w-3.5 h-3.5 text-sky-400" />
+                <span>Custom Reports</span>
+              </Link>
+              <Link
+                href={`/${tenantSlug}/settings/efficiency`}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>View Statement</span>
+              </Link>
+            </div>
           </div>
         </div>
 

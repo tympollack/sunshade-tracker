@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { aggregateSprintBurndown } from '@/lib/analytics/burndown-aggregator';
 import { WorkItem } from '@/types/tracker';
 import { NextRequest } from 'next/server';
@@ -50,6 +50,17 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     expect(snapshot.leafItemCount).toBe(2);
     expect(snapshot.completedLeafCount).toBe(1);
     expect(snapshot.totalItemCount).toBe(3);
+  });
+
+  it('recognizes custom terminal completion statuses like shipped and resolved', () => {
+    const task1 = createItem('task-1', null, 3, 'shipped');
+    const task2 = createItem('task-2', null, 5, 'in_progress');
+
+    const snapshot = aggregateSprintBurndown([task1, task2], '2026-09-17');
+    expect(snapshot.totalPoints).toBe(8);
+    expect(snapshot.completedPoints).toBe(3);
+    expect(snapshot.remainingPoints).toBe(5);
+    expect(snapshot.completedLeafCount).toBe(1);
   });
 
   it('aggregates cron endpoint rollups for active sprints', async () => {

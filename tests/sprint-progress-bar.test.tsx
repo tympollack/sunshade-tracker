@@ -52,6 +52,24 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     expect(screen.queryByTestId('sprint-progress-breakdown')).not.toBeInTheDocument();
   });
 
+  it('calculates non-zero progressPct for sprints with custom terminal statuses such as shipped', () => {
+    const shippedOnlyItems: WorkItem[] = [
+      { id: '1', tenant_id: 't', project_id: 'p', title: 'Task 1', item_type: 'task', status: 'shipped', order_index: 1000, metadata: {}, created_at: '', updated_at: '' },
+      { id: '2', tenant_id: 't', project_id: 'p', title: 'Task 2', item_type: 'task', status: 'shipped', order_index: 2000, metadata: {}, created_at: '', updated_at: '' },
+    ];
+
+    render(
+      <SprintHeader
+        sprintName="Sprint 2026-Shipped"
+        items={shippedOnlyItems}
+        statuses={customStatuses}
+      />
+    );
+
+    const progressLabel = screen.getByTestId('header-progress');
+    expect(progressLabel).toHaveTextContent('100%');
+  });
+
   it('reveals detailed status breakdown on hover and tap', () => {
     render(
       <SprintProgressBar

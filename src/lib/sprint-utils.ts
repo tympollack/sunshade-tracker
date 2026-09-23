@@ -1,6 +1,47 @@
 import { SprintDefinition, WorkItem, ProjectSettings } from '@/types/tracker';
 
-const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
+export const DEFAULT_COMPLETED_STATUS_IDS = new Set([
+  'done',
+  'closed',
+  'complete',
+  'completed',
+  'shipped',
+  'approved',
+  'published',
+  'resolved',
+]);
+
+/**
+ * Derives a comprehensive Set of completed status IDs based on default terminal
+ * statuses and project schema definitions (FEAT-TRK-DYNAMIC-COMPLETION-STATUS).
+ */
+export function getCompletedStatusSet(statuses?: Array<{ id?: string; label?: string }>): Set<string> {
+  const set = new Set(DEFAULT_COMPLETED_STATUS_IDS);
+  if (Array.isArray(statuses) && statuses.length > 0) {
+    for (const s of statuses) {
+      const id = String(s.id || '').toLowerCase().trim();
+      const label = String(s.label || '').toLowerCase().trim();
+      if (DEFAULT_COMPLETED_STATUS_IDS.has(id) || DEFAULT_COMPLETED_STATUS_IDS.has(label)) {
+        set.add(id);
+      }
+    }
+    // Also include the last column on the board as a terminal completion status
+    const last = statuses[statuses.length - 1];
+    if (last?.id) {
+      set.add(String(last.id).toLowerCase().trim());
+    }
+  }
+  return set;
+}
+
+export function isItemCompleted(status?: string | null, completionSet?: Set<string>): boolean {
+  if (!status) return false;
+  const normalized = String(status).toLowerCase().trim();
+  const set = completionSet || DEFAULT_COMPLETED_STATUS_IDS;
+  return set.has(normalized);
+}
+
+const COMPLETED_STATUSES = DEFAULT_COMPLETED_STATUS_IDS;
 
 /**
  * Canonical sprint status weights (FEAT-TRK-SPRINT-STATUS-SEQUENCE-UNPLANNED):

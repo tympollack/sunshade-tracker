@@ -58,12 +58,13 @@ describe('FEAT-TRK-PROJECT-MODAL-REORDER: Projects Reordering API & Logic', () =
 
     // Mock supabaseAdmin queries
     const mockSelect = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({
-            data: { id: 'proj-1', settings: {} },
-            error: null,
-          }),
+      in: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({
+          data: [
+            { id: 'proj-1', settings: {} },
+            { id: 'proj-2', settings: {} },
+          ],
+          error: null,
         }),
       }),
     });
@@ -102,6 +103,94 @@ describe('FEAT-TRK-PROJECT-MODAL-REORDER: Projects Reordering API & Logic', () =
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.updated_count).toBe(2);
+  });
+
+  it('rejects viewer and member roles with 403 forbidden', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 'tenant-123', slug: 'sunshade', name: 'SunShade' },
+        user: { id: 'viewer-1' },
+        role: 'viewer',
+      },
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/reorder', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{ project_id: 'proj-1', order_index: 1000 }],
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain('Only workspace owners and admins');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 'tenant-123', slug: 'sunshade', name: 'SunShade' },
+        user: { id: 'member-1' },
+        role: 'member',
+      },
+    });
+
+    const res2 = await POST(req);
+    expect(res2.status).toBe(403);
+  });
+
+  it('returns 500 when all project updates fail', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { supabaseAdmin } = await import('@/lib/db');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 'tenant-123', slug: 'sunshade', name: 'SunShade' },
+        user: { id: 'user-1' },
+        role: 'owner',
+      },
+    });
+
+    const mockSelect = vi.fn().mockReturnValue({
+      in: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({
+          data: [{ id: 'proj-1', settings: {} }],
+          error: null,
+        }),
+      }),
+    });
+
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({
+          data: null,
+          error: { message: 'Database write failed' },
+        }),
+      }),
+    });
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: mockSelect,
+          update: mockUpdate,
+        };
+      }
+      return {};
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/reorder', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [{ project_id: 'proj-1', order_index: 1000 }],
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('Failed to update');
   });
 
   it('GET /api/v1/tenants/me falls back gracefully to fetch projects when order_index column does not exist', async () => {
