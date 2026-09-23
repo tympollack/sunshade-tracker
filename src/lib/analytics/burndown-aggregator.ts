@@ -1,7 +1,10 @@
 import { WorkItem } from '@/types/tracker';
-import { calculateSprintLeafPoints, getSprintLeafItems } from '@/lib/sprint-utils';
-
-const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
+import {
+  calculateSprintLeafPoints,
+  getSprintLeafItems,
+  getCompletedStatusSet,
+  isItemCompleted,
+} from '@/lib/sprint-utils';
 
 export interface SprintBurndownSnapshot {
   date: string;
@@ -19,14 +22,15 @@ export interface SprintBurndownSnapshot {
  */
 export function aggregateSprintBurndown(
   items: WorkItem[],
-  date: string = new Date().toISOString().split('T')[0]
+  date: string = new Date().toISOString().split('T')[0],
+  statuses?: Array<{ id?: string; label?: string }>
 ): SprintBurndownSnapshot {
   const leafItems = getSprintLeafItems(items);
   const totalPoints = calculateSprintLeafPoints(items);
+  const completionSet = getCompletedStatusSet(statuses);
 
   const completedLeafItems = leafItems.filter((it) => {
-    const status = (it.status || '').toLowerCase().trim();
-    return COMPLETED_STATUSES.has(status);
+    return isItemCompleted(it.status, completionSet);
   });
 
   const completedPoints = completedLeafItems.reduce((acc, it) => {

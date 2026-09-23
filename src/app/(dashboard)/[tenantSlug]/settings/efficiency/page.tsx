@@ -17,6 +17,7 @@ import {
   Loader2,
   Check,
   AlertCircle,
+  Calendar,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -269,6 +270,14 @@ function EfficiencyStatementContent({ tenantSlug }: { tenantSlug: string }) {
               <FileCode className="w-3.5 h-3.5 text-indigo-400" />
               <span>Export JSON</span>
             </button>
+            <Link
+              href={`/${tenantSlug}/statements`}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs font-medium flex items-center space-x-1.5 transition-colors"
+              title="Open Dynamic Statement Generator"
+            >
+              <Calendar className="w-3.5 h-3.5 text-sky-400" />
+              <span>Custom Range</span>
+            </Link>
             <button
               onClick={fetchStatement}
               disabled={loading}

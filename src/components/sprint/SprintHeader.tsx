@@ -9,6 +9,8 @@ import {
   calculateSprintMacroPoints,
   getSprintStatusBadge,
   formatSprintDateRange,
+  getCompletedStatusSet,
+  isItemCompleted,
 } from '@/lib/sprint-utils';
 
 export interface SprintHeaderProps {
@@ -26,8 +28,6 @@ export interface SprintHeaderProps {
   className?: string;
   onProgressPopoverOpenChange?: (open: boolean) => void;
 }
-
-const COMPLETED_STATUSES = new Set(['done', 'closed', 'complete', 'completed']);
 
 const DEFAULT_STATUSES: StatusDefinition[] = [
   { id: 'todo', label: 'To Do', color: '#94a3b8', order: 1 },
@@ -106,10 +106,12 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
       .filter((seg) => seg.count > 0);
   }, [effectiveStatuses, items, totalItemsCount]);
 
-  const completedItems = items.filter((it) => {
-    const st = (it.status || '').toLowerCase().trim();
-    return COMPLETED_STATUSES.has(st);
-  });
+  const completionSet = useMemo(
+    () => getCompletedStatusSet(effectiveStatuses),
+    [effectiveStatuses]
+  );
+
+  const completedItems = items.filter((it) => isItemCompleted(it.status, completionSet));
 
   const isCompletedSprint = sprintDef?.status === 'completed';
   const progressPct =
@@ -213,6 +215,7 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
           isCompletedSprint={isCompletedSprint}
           goal={sprintDef?.goal || undefined}
           onOpenChange={handleProgressOpenChange}
+          completedStatusIds={completionSet}
         />
       </div>
     </div>

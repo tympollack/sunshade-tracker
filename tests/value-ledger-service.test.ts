@@ -165,4 +165,56 @@ describe('Value Realization Ledger Service', () => {
     expect(parsed.tenant.slug).toBe('test-json');
     expect(parsed.kpis.totalHoursReclaimed).toBe(2.5);
   });
+
+  it('scales hierarchical status rollup yield by duration in months for multi-month periods', () => {
+    // 1 active project, 0 completed items
+    // monthly: 1 project * 2.0 * 1 = 2.0 hrs ($250.00)
+    // quarter (3 months): 1 project * 2.0 * 3 = 6.0 hrs ($750.00)
+    // annual (12 months): 1 project * 2.0 * 12 = 24.0 hrs ($3,000.00)
+    const quarterRes = computeEfficiencyMetrics({
+      tenantSlug: 'quarter-client',
+      completedItemsCount: 0,
+      activeProjectsCount: 1,
+      totalItemsCount: 10,
+      periodMultiplier: 3,
+    });
+    expect(quarterRes.kpis.totalHoursReclaimed).toBe(6.0);
+    expect(quarterRes.kpis.grossRealizedValue).toBe(750.0);
+    expect(quarterRes.itemizedYields[0].hoursReclaimed).toBe(6.0);
+    expect(quarterRes.itemizedYields[0].realizedValue).toBe(750.0);
+
+    const annualRes = computeEfficiencyMetrics({
+      tenantSlug: 'annual-client',
+      completedItemsCount: 0,
+      activeProjectsCount: 1,
+      totalItemsCount: 10,
+      periodMultiplier: 12,
+    });
+    expect(annualRes.kpis.totalHoursReclaimed).toBe(24.0);
+    expect(annualRes.kpis.grossRealizedValue).toBe(3000.0);
+    expect(annualRes.itemizedYields[0].hoursReclaimed).toBe(24.0);
+    expect(annualRes.itemizedYields[0].realizedValue).toBe(3000.0);
+  });
+
+  it('scales hierarchical status rollup accurately based on active projectMonths rather than blind full-period scaling', () => {
+    // 2 active projects in an annual statement (12 months), but project 1 only had 1 active month,
+    // and project 2 only had 2 active months -> projectMonths = 3
+    const res = computeEfficiencyMetrics({
+      tenantSlug: 'brief-activity-client',
+      completedItemsCount: 0,
+      activeProjectsCount: 2,
+      totalItemsCount: 5,
+      periodMultiplier: 12,
+      projectMonths: 3,
+    });
+
+    // 3 project-months * 2.0 hrs = 6.0 hrs ($750.00)
+    // (Instead of 2 projects * 12 mos * 2.0 hrs = 48.0 hrs)
+    expect(res.kpis.activeProjectsCount).toBe(2);
+    expect(res.kpis.totalHoursReclaimed).toBe(6.0);
+    expect(res.kpis.grossRealizedValue).toBe(750.0);
+    expect(res.itemizedYields[0].hoursReclaimed).toBe(6.0);
+    expect(res.itemizedYields[0].realizedValue).toBe(750.0);
+    expect(res.itemizedYields[0].metric).toBe('2 active projects (3 proj-mo)');
+  });
 });

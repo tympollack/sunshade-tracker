@@ -85,6 +85,8 @@ import {
   isItemImmutableDueToCompletedSprint,
   calculateSprintLeafPoints,
   calculateSprintMacroPoints,
+  getCompletedStatusSet,
+  isItemCompleted,
 } from '@/lib/sprint-utils';
 
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
@@ -3421,8 +3423,9 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                 const macroPoints = calculateSprintMacroPoints(sprintItems);
                 const effectivePoints = pointMode === 'macro' ? macroPoints : leafPoints;
                 const totalPoints = effectivePoints;
+                const completionSet = getCompletedStatusSet(projectSettings?.statuses);
                 const completedItems = sprintItems.filter((it) =>
-                  ['done', 'closed', 'complete', 'completed'].includes(it.status)
+                  isItemCompleted(it.status, completionSet)
                 );
                 const sprintDef = projectSettings.sprint_settings?.sprints?.find(
                   (s: any) => s.name === sprintName || s.id === sprintName
@@ -3618,6 +3621,7 @@ export default function ProjectTrackerDashboard(props: PageProps) {
                               onOpenChange={(isOpen) =>
                                 setActiveSprintPopover(isOpen ? sprintName : null)
                               }
+                              completedStatusIds={completionSet}
                             />
                           );
                         })()}

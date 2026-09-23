@@ -62,7 +62,7 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
 
   const lastLatestAtRef = useRef<string | null>(null);
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch('/api/v1/notifications', {
         headers: {
@@ -74,12 +74,17 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
         const list = data.notifications || [];
         setNotifications(list);
         setUnreadCount(data.unread_count || 0);
-        if (list.length > 0 && list[0].created_at) {
+        if (data.latest_at) {
+          lastLatestAtRef.current = data.latest_at;
+        } else if (list.length > 0 && list[0].created_at) {
           lastLatestAtRef.current = list[0].created_at;
         }
+        return true;
       }
+      return false;
     } catch {
       // Graceful ignore
+      return false;
     }
   }, [tenantSlug]);
 
@@ -97,12 +102,15 @@ export function NotificationBell({ tenantSlug, onOpenItem }: NotificationBellPro
       if (res.ok) {
         const data = await res.json();
         setUnreadCount(data.unread_count || 0);
-        if (data.latest_at) {
-          lastLatestAtRef.current = data.latest_at;
-        }
         if (data.has_new) {
           // Revalidate full notifications list only when new items are detected
-          fetchNotifications();
+          // Only advance checkpoint if full notifications list fetch succeeds (BUG-TRK-POLL-CHECKPOINT-RETRY)
+          const success = await fetchNotifications();
+          if (success && data.latest_at) {
+            lastLatestAtRef.current = data.latest_at;
+          }
+        } else if (data.latest_at) {
+          lastLatestAtRef.current = data.latest_at;
         }
       }
     } catch {

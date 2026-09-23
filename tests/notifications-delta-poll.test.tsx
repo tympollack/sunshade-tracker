@@ -94,4 +94,60 @@ describe('FEAT-TRK-NOTIFICATIONS-DELTA-POLL: Delta Polling & 2-Minute Interval',
     );
     expect(fullCalls.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('does not advance checkpoint when notifications list fetch fails on has_new', async () => {
+    let unreadCountResponse = { unread_count: 3, has_new: true, latest_at: '2026-09-19T10:02:00.000Z' };
+    let failNotifications = false;
+
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v1/notifications/unread-count')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => unreadCountResponse,
+        });
+      }
+      if (url.includes('/api/v1/notifications')) {
+        if (failNotifications) {
+          return Promise.resolve({ ok: false, status: 500 });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            notifications: [],
+            unread_count: 1,
+            latest_at: '2026-09-19T10:00:00.000Z',
+          }),
+        });
+      }
+      return Promise.reject(new Error(`Unhandled URL: ${url}`));
+    });
+
+    global.fetch = mockFetch;
+
+    render(<NotificationBell tenantSlug="demo-tenant" />);
+
+    // Wait for initial fetch to resolve
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Subsequent full notifications fetch (triggered by has_new) will fail
+    failNotifications = true;
+
+    // Advance 2 minutes to trigger poll
+    await act(async () => {
+      vi.advanceTimersByTime(120000);
+    });
+
+    // Advance another 2 minutes: checkpoint must not have advanced to 10:02:00
+    await act(async () => {
+      vi.advanceTimersByTime(120000);
+    });
+
+    const unreadCalls = mockFetch.mock.calls.filter(([url]) =>
+      url.includes('/api/v1/notifications/unread-count?since=')
+    );
+    expect(unreadCalls.length).toBe(2);
+    expect(decodeURIComponent(unreadCalls[1][0])).not.toContain('2026-09-19T10:02:00.000Z');
+  });
 });

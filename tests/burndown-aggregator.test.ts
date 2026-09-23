@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { aggregateSprintBurndown } from '@/lib/analytics/burndown-aggregator';
 import { WorkItem } from '@/types/tracker';
 import { NextRequest } from 'next/server';
@@ -52,7 +52,36 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     expect(snapshot.totalItemCount).toBe(3);
   });
 
-  it('aggregates cron endpoint rollups for active sprints', async () => {
+  it('recognizes custom terminal completion statuses like shipped and resolved', () => {
+    const task1 = createItem('task-1', null, 3, 'shipped');
+    const task2 = createItem('task-2', null, 5, 'in_progress');
+
+    const snapshot = aggregateSprintBurndown([task1, task2], '2026-09-17');
+    expect(snapshot.totalPoints).toBe(8);
+    expect(snapshot.completedPoints).toBe(3);
+    expect(snapshot.remainingPoints).toBe(5);
+    expect(snapshot.completedLeafCount).toBe(1);
+  });
+
+  it('recognizes custom schema terminal completion status absent from DEFAULT_COMPLETED_STATUS_IDS', () => {
+    // 'released' is not in DEFAULT_COMPLETED_STATUS_IDS
+    const task1 = createItem('task-1', null, 4, 'released');
+    const task2 = createItem('task-2', null, 6, 'in_progress');
+
+    const customStatuses = [
+      { id: 'todo', label: 'To Do' },
+      { id: 'in_progress', label: 'In Progress' },
+      { id: 'released', label: 'Released', is_completed: true },
+    ];
+
+    const snapshot = aggregateSprintBurndown([task1, task2], '2026-09-17', customStatuses);
+    expect(snapshot.totalPoints).toBe(10);
+    expect(snapshot.completedPoints).toBe(4);
+    expect(snapshot.remainingPoints).toBe(6);
+    expect(snapshot.completedLeafCount).toBe(1);
+  });
+
+  it('aggregates cron endpoint rollups for active sprints using custom project schema completion statuses', async () => {
     const { supabaseAdmin } = await import('@/lib/db');
     const { POST } = await import('@/app/api/cron/burndown-rollup/route');
 
@@ -62,6 +91,10 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
         slug: 'sunshade-tracker',
         name: 'Tracker',
         settings: {
+          statuses: [
+            { id: 'todo', label: 'To Do' },
+            { id: 'released', label: 'Released', is_completed: true },
+          ],
           sprint_settings: {
             sprints: [
               { name: 'Sprint 2026-Q3', status: 'active', is_current: true },
@@ -73,7 +106,7 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
 
     const mockItems = [
       createItem('epic-1', null, 13),
-      createItem('leaf-1', 'epic-1', 5, 'done'),
+      createItem('leaf-1', 'epic-1', 5, 'released'), // custom schema completion status absent from defaults
       createItem('leaf-2', 'epic-1', 8, 'todo'),
     ];
 
@@ -112,7 +145,7 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     expect(data.rollupsCount).toBe(1);
     expect(data.rollups[0].sprintName).toBe('Sprint 2026-Q3');
     expect(data.rollups[0].metrics.totalPoints).toBe(13); // 5 + 8 leaf points
-    expect(data.rollups[0].metrics.completedPoints).toBe(5); // leaf-1 done
+    expect(data.rollups[0].metrics.completedPoints).toBe(5); // leaf-1 released
     expect(data.rollups[0].metrics.remainingPoints).toBe(8); // leaf-2 todo
   });
 });
