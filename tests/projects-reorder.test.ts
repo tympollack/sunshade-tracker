@@ -190,7 +190,69 @@ describe('FEAT-TRK-PROJECT-MODAL-REORDER: Projects Reordering API & Logic', () =
     const res = await POST(req);
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toContain('Failed to update');
+    expect(body.error).toContain('Failed to persist complete project order');
+  });
+
+  it('returns 500 when partial reorder occurs (e.g. 1 of 2 project updates fails)', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { supabaseAdmin } = await import('@/lib/db');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 'tenant-123', slug: 'sunshade', name: 'SunShade' },
+        user: { id: 'user-1' },
+        role: 'owner',
+      },
+    });
+
+    const mockSelect = vi.fn().mockReturnValue({
+      in: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({
+          data: [
+            { id: 'proj-1', settings: {} },
+            { id: 'proj-2', settings: {} },
+          ],
+          error: null,
+        }),
+      }),
+    });
+
+    // proj-1 succeeds, proj-2 fails
+    const mockUpdate = vi.fn().mockImplementation((data: any) => ({
+      eq: vi.fn().mockImplementation((field: string, val: string) => ({
+        eq: vi.fn().mockImplementation(() => {
+          if (val === 'proj-2') {
+            return Promise.resolve({ data: null, error: { message: 'Write lock timeout' } });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
+      })),
+    }));
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: mockSelect,
+          update: mockUpdate,
+        };
+      }
+      return {};
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/projects/reorder', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [
+          { project_id: 'proj-1', order_index: 1000 },
+          { project_id: 'proj-2', order_index: 2000 },
+        ],
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('1 of 2 projects updated successfully');
   });
 
   it('GET /api/v1/tenants/me falls back gracefully to fetch projects when order_index column does not exist', async () => {

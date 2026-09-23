@@ -15,20 +15,15 @@ export const DEFAULT_COMPLETED_STATUS_IDS = new Set([
  * Derives a comprehensive Set of completed status IDs based on default terminal
  * statuses and project schema definitions (FEAT-TRK-DYNAMIC-COMPLETION-STATUS).
  */
-export function getCompletedStatusSet(statuses?: Array<{ id?: string; label?: string }>): Set<string> {
+export function getCompletedStatusSet(statuses?: Array<{ id?: string; label?: string; is_completed?: boolean }>): Set<string> {
   const set = new Set(DEFAULT_COMPLETED_STATUS_IDS);
   if (Array.isArray(statuses) && statuses.length > 0) {
     for (const s of statuses) {
       const id = String(s.id || '').toLowerCase().trim();
       const label = String(s.label || '').toLowerCase().trim();
-      if (DEFAULT_COMPLETED_STATUS_IDS.has(id) || DEFAULT_COMPLETED_STATUS_IDS.has(label)) {
+      if (s.is_completed || DEFAULT_COMPLETED_STATUS_IDS.has(id) || DEFAULT_COMPLETED_STATUS_IDS.has(label)) {
         set.add(id);
       }
-    }
-    // Also include the last column on the board as a terminal completion status
-    const last = statuses[statuses.length - 1];
-    if (last?.id) {
-      set.add(String(last.id).toLowerCase().trim());
     }
   }
   return set;

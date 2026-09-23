@@ -117,9 +117,13 @@ export async function POST(req: NextRequest) {
 
     const updates = updateResults.filter(Boolean) as Array<{ project_id: string; order_index: number }>;
 
-    if (updates.length === 0 && validItems.length > 0) {
+    if (updates.length < validItems.length) {
       return NextResponse.json(
-        { error: 'Failed to update any project ordering' },
+        {
+          error: `Failed to persist complete project order: ${updates.length} of ${validItems.length} projects updated successfully`,
+          updated_count: updates.length,
+          items: updates,
+        },
         { status: 500 }
       );
     }

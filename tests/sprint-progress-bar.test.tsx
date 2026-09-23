@@ -70,6 +70,31 @@ describe('FEAT-TRK-PROGRESS-BAR-STATUS-COLORS: Dynamic multi-status progress bar
     expect(progressLabel).toHaveTextContent('100%');
   });
 
+  it('does not treat blocked as completed even if it is the last status in the schema', () => {
+    const statusesWithBlockedLast: StatusDefinition[] = [
+      { id: 'todo', label: 'To Do', color: '#94a3b8', order: 1 },
+      { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+      { id: 'complete', label: 'Complete', color: '#22c55e', order: 3 },
+      { id: 'blocked', label: 'Blocked', color: '#ef4444', order: 4 },
+    ];
+
+    const items: WorkItem[] = [
+      { id: '1', tenant_id: 't', project_id: 'p', title: 'Task 1', item_type: 'task', status: 'blocked', order_index: 1000, metadata: {}, created_at: '', updated_at: '' },
+      { id: '2', tenant_id: 't', project_id: 'p', title: 'Task 2', item_type: 'task', status: 'todo', order_index: 2000, metadata: {}, created_at: '', updated_at: '' },
+    ];
+
+    render(
+      <SprintHeader
+        sprintName="Sprint 2026-Blocked"
+        items={items}
+        statuses={statusesWithBlockedLast}
+      />
+    );
+
+    const progressLabel = screen.getByTestId('header-progress');
+    expect(progressLabel).toHaveTextContent('0%');
+  });
+
   it('reveals detailed status breakdown on hover and tap', () => {
     render(
       <SprintProgressBar

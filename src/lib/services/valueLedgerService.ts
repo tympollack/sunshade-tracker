@@ -51,6 +51,7 @@ export interface ComputeMetricsOptions {
   startDate?: string;
   endDate?: string;
   periodMultiplier?: number;
+  projectMonths?: number;
 }
 
 const DEFAULT_HOURLY_RATE = 125;
@@ -108,8 +109,16 @@ export function computeEfficiencyMetrics(
   }
 
   // ─── Itemized Yield Breakdown ──────────────────────────────────────────────
-  // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week), scaled by period duration
-  const hierarchyHours = Number((activeProjectsCount * 2.0 * durationMonths).toFixed(2));
+  // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week)
+  // If explicit projectMonths is provided, scale based on distinct active project-months to avoid over-crediting
+  // projects with only brief activity in multi-month periods (BUG-TRK-PROJECT-MONTH-SCALING).
+  // Otherwise, fallback to activeProjectsCount * durationMonths.
+  const effectiveProjectMonths =
+    opts.projectMonths !== undefined
+      ? opts.projectMonths
+      : activeProjectsCount * durationMonths;
+
+  const hierarchyHours = Number((effectiveProjectMonths * 2.0).toFixed(2));
   const hierarchyValue = Number((hierarchyHours * rate).toFixed(2));
 
   // 2. Backlog Triage & State Sync: 0.05 hrs (3 min) per completed item
@@ -120,7 +129,7 @@ export function computeEfficiencyMetrics(
   const autonomousHours = Number((completedCount * 0.2).toFixed(2));
   const autonomousValue = Number((autonomousHours * rate).toFixed(2));
 
-  // Total Hours = (Completed Items * 0.25 hrs) + (Active Projects * 2.0 hrs * durationMonths)
+  // Total Hours = (Completed Items * 0.25 hrs) + (Effective Project Months * 2.0 hrs)
   const totalHours = Number((hierarchyHours + triageHours + autonomousHours).toFixed(2));
   const grossValue = Number((totalHours * rate).toFixed(2));
   const subscriptionFee = 0.0;
@@ -132,9 +141,12 @@ export function computeEfficiencyMetrics(
       frictionPoint: 'Hierarchical Status Rollup',
       description:
         '15–30 min per project/week saved via automated hierarchy queries & real-time progress rollups.',
-      metric: `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} tracked${
-        durationMonths !== 1 ? ` (${durationMonths} mos)` : ''
-      }`,
+      metric:
+        opts.projectMonths !== undefined && (durationMonths !== 1 || effectiveProjectMonths !== activeProjectsCount)
+          ? `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} (${effectiveProjectMonths} proj-mo)`
+          : `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} tracked${
+              durationMonths !== 1 ? ` (${durationMonths} mos)` : ''
+            }`,
       hoursReclaimed: hierarchyHours,
       ratePerHour: rate,
       realizedValue: hierarchyValue,

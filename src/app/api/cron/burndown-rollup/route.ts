@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
       for (const sprint of activeSprints) {
         const sprintItems = items.filter((it) => it.metadata?.sprint === sprint.name);
-        const metrics = aggregateSprintBurndown(sprintItems, todayStr);
+        const metrics = aggregateSprintBurndown(sprintItems, todayStr, proj.settings?.statuses);
 
         rollups.push({
           projectId: proj.id,

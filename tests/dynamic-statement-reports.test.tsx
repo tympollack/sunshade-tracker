@@ -188,4 +188,49 @@ describe('GET /api/v1/statements date validation', () => {
     const body = await res.json();
     expect(body.error).toContain('Invalid date range');
   });
+
+  it('rejects calendar overflow dates such as February 31 with 400', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { GET } = await import('@/app/api/v1/statements/route');
+    const { NextRequest } = await import('next/server');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 't-1', slug: 'acme-corp', name: 'Acme Corp' },
+        user: { id: 'u-1' },
+        role: 'owner',
+      },
+    });
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/v1/statements?tenant_slug=acme-corp&start_date=2026-02-31&end_date=2026-03-31'
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid date');
+    expect(body.error).toContain('start_date');
+  });
+
+  it('rejects locale formatted date strings with 400', async () => {
+    const { authenticate } = await import('@/lib/auth-guard');
+    const { GET } = await import('@/app/api/v1/statements/route');
+    const { NextRequest } = await import('next/server');
+
+    (authenticate as any).mockResolvedValue({
+      context: {
+        tenant: { id: 't-1', slug: 'acme-corp', name: 'Acme Corp' },
+        user: { id: 'u-1' },
+        role: 'owner',
+      },
+    });
+
+    const req = new NextRequest(
+      'http://localhost:3000/api/v1/statements?tenant_slug=acme-corp&start_date=10/01/2026&end_date=10/31/2026'
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid date');
+  });
 });
