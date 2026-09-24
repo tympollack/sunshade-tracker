@@ -23,11 +23,15 @@ describe('BUG-TRK-BOARD-UI-POLISH-SUITE: Kanban UI Polish, SpYieldBadge & Timest
     const boardBtn = screen.getByTestId('mobile-nav-board');
     expect(boardBtn).toHaveTextContent('Kanban');
 
-    // Also check page.tsx labels definition
-    const pageContent = fs.readFileSync(
+    // Also check labels definition
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
     expect(pageContent).toContain("board: 'Kanban'");
   });
 

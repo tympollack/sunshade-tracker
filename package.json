@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "lint:filesize": "node scripts/lint-filesize.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "generate:assets": "node scripts/generate-assets.mjs"
