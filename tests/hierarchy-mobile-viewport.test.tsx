@@ -137,10 +137,15 @@ describe('BUG-TRK-HIERARCHY-MOBILE-VIEWPORT - Two-line layout, hidden assignee o
   });
 
   it('page.tsx: mounts tree items inside horizontal scroll container with custom scrollbar and touch-pan-x', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/views/TreeViewContainer.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Dedicated scroll container
     expect(pageContent).toContain('data-testid="tree-scroll-container"');

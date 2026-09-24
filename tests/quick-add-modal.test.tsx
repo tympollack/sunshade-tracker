@@ -317,8 +317,18 @@ describe('QuickAddModal Component (TASK-TRK-QUICK-ADD-DIALOG)', () => {
 });
 
 describe('Dashboard Page Integration (TASK-TRK-HEADER-ADD-BUTTON & TASK-TRK-REMOVE-INLINE-ROW)', () => {
-  const pagePath = path.resolve('src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx');
-  const pageContent = fs.readFileSync(pagePath, 'utf8');
+  const pageFiles = [
+    'src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx',
+    'src/components/views/ProjectWorkspaceView.tsx',
+    'src/components/board/ProjectHeader.tsx',
+    'src/components/board/ProjectModals.tsx',
+    'src/components/views/BoardViewContainer.tsx',
+  ];
+  const pageContent = pageFiles
+    .map((f) => path.resolve(f))
+    .filter(fs.existsSync)
+    .map((p) => fs.readFileSync(p, 'utf8'))
+    .join('\n');
 
   it('renders "+ Add Item" trigger button in top navbar with keyboard shortcut badge (TASK-TRK-HEADER-ADD-BUTTON)', () => {
     expect(pageContent).toContain('data-testid="header-add-item-btn"');

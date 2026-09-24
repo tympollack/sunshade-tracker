@@ -5,7 +5,18 @@ import { describe, it, expect } from 'vitest';
 describe('BUG-TRK-BOARD-SCROLL, TASK-TRK-BOARD-RESPONSIVE-LAYOUT, and TASK-TRK-BOARD-MOBILE-SCROLLBARS', () => {
   const pagePath = path.resolve('src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx');
   const cssPath = path.resolve('src/app/globals.css');
-  const pageContent = fs.readFileSync(pagePath, 'utf8');
+  const pageFiles = [
+    'src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx',
+    'src/components/views/ProjectWorkspaceView.tsx',
+    'src/components/board/ProjectHeader.tsx',
+    'src/components/board/ProjectModals.tsx',
+    'src/components/views/BoardViewContainer.tsx',
+  ];
+  const pageContent = pageFiles
+    .map((f) => path.resolve(f))
+    .filter(fs.existsSync)
+    .map((p) => fs.readFileSync(p, 'utf8'))
+    .join('\n');
   const cssContent = fs.readFileSync(cssPath, 'utf8');
 
   describe('BUG-TRK-BOARD-SCROLL: Viewport-Adaptive Height and Wheel Translation', () => {
