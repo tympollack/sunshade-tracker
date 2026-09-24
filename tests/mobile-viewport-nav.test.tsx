@@ -338,10 +338,13 @@ describe('BUG-TRK-MOBILE-HEADER-BRAND-COLLAPSE - Reclaim Horizontal Space via Br
     expect(settingsPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
 
     // Check efficiency page
-    const efficiencyPage = fs.readFileSync(
+    const efficiencyPage = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/settings/efficiency/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/efficiency/EfficiencyStatementView.tsx'),
+    ]
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
     expect(efficiencyPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
   });
 });

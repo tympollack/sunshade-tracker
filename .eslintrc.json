@@ -39,12 +39,8 @@
         "src/lib/schema-deviation.ts",
         "src/lib/notifications.ts",
         "src/components/SchemaReconciliationModal.tsx",
-        "src/components/TreeNode.tsx",
         "src/components/views/ProjectWorkspaceView.tsx",
         "src/app/(dashboard)/[tenantSlug]/settings/page.tsx",
-        "src/app/(dashboard)/[tenantSlug]/settings/efficiency/page.tsx",
-        "src/app/(onboarding)/onboarding/page.tsx",
-        "src/app/docs/page.tsx",
         "src/app/api/v1/items/route.ts"
       ],
       "rules": {
