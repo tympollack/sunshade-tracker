@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { WorkItem, ProjectSettings, SprintDefinition } from '@/types/tracker';
-import { WorkItemModal } from '@/components/WorkItemModal';
+import { WorkItem, ProjectSettings, SprintDefinition, HierarchyLevel, StatusDefinition } from '@/types/tracker';
+import { WorkItemModal, ProjectInfo } from '@/components/WorkItemModal';
 import { QuickAddModal, QuickAddPayload } from '@/components/QuickAddModal';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { CascadeCompletionModal } from '@/components/CascadeCompletionModal';
@@ -18,7 +18,7 @@ export interface ProjectModalsProps {
   tenantSlug: string;
   projectSlug: string;
   items: WorkItem[];
-  allProjects: { id: string; slug: string; name: string }[];
+  allProjects: ProjectInfo[];
   projectSettings: ProjectSettings;
   modalProjectSettings: ProjectSettings;
   currentUser: { email?: string; full_name?: string } | null;
@@ -84,6 +84,12 @@ export interface ProjectModalsProps {
   // Global Search
   isSearchOpen: boolean;
   setIsSearchOpen: (open: boolean) => void;
+  // Quick Add helpers
+  myDisplayName?: string;
+  getHierarchyForProject?: (projectSlug: string) => HierarchyLevel[];
+  getStatusesForProject?: (projectSlug: string) => StatusDefinition[];
+  // Archive in-flight state
+  isArchiving?: boolean;
 }
 
 export function ProjectModals(props: ProjectModalsProps) {
@@ -150,6 +156,10 @@ export function ProjectModals(props: ProjectModalsProps) {
     handleSaveSprints,
     isSearchOpen,
     setIsSearchOpen,
+    myDisplayName,
+    getHierarchyForProject,
+    getStatusesForProject,
+    isArchiving = false,
   } = props;
 
   return (
@@ -179,10 +189,14 @@ export function ProjectModals(props: ProjectModalsProps) {
           onClose={() => setIsQuickAddOpen(false)}
           onSubmit={handleCreateItem}
           currentProjectSlug={projectSlug}
+          isAllProjects={isAllProjects}
+          allProjects={allProjects}
           hierarchy={projectSettings.hierarchy || []}
           statuses={projectSettings.statuses || []}
           workspaceMembers={workspaceMembers}
-          allProjects={allProjects}
+          myDisplayName={myDisplayName}
+          getHierarchyForProject={getHierarchyForProject}
+          getStatusesForProject={getStatusesForProject}
         />
       )}
 
@@ -229,9 +243,13 @@ export function ProjectModals(props: ProjectModalsProps) {
         }}
         onConfirm={handleExecuteCascadePrompt}
         onDecline={() => {
-          setShowCascadePromptModal(false);
-          setCascadePromptTarget(null);
-          setCascadePromptChildren([]);
+          if (handleExecuteKeepParentOnlyPrompt) {
+            handleExecuteKeepParentOnlyPrompt();
+          } else {
+            setShowCascadePromptModal(false);
+            setCascadePromptTarget(null);
+            setCascadePromptChildren([]);
+          }
         }}
       />
 
@@ -242,6 +260,7 @@ export function ProjectModals(props: ProjectModalsProps) {
         projectSlug={projectSlug}
         onClose={() => setIsArchiveModalOpen(false)}
         onConfirm={handleArchiveProject}
+        isArchiving={isArchiving}
       />
 
       {/* Schema Reconciliation Modal */}

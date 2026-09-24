@@ -204,42 +204,105 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   });
 
   const [hideCompletedSprints, setHideCompletedSprints] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('hideCompleted');
+      if (urlParam === 'true' || urlParam === '1') return true;
+      if (urlParam === 'false' || urlParam === '0') return false;
+      try {
+        const stored = localStorage.getItem(`tracker_hide_completed_sprints_${projectSlug}`);
+        if (stored !== null) return stored === 'true';
+      } catch {}
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParam = new URLSearchParams(window.location.search).get('hideCompleted');
+    if (urlParam === 'true' || urlParam === '1') {
+      setHideCompletedSprints(true);
+      return;
+    }
+    if (urlParam === 'false' || urlParam === '0') {
+      setHideCompletedSprints(false);
+      return;
+    }
     try {
       const stored = localStorage.getItem(`tracker_hide_completed_sprints_${projectSlug}`);
-      return stored === 'true';
+      setHideCompletedSprints(stored === 'true');
     } catch {
-      return false;
+      setHideCompletedSprints(false);
     }
-  });
+  }, [projectSlug]);
 
   const handleToggleHideCompletedSprints = () => {
     setHideCompletedSprints((prev) => {
       const next = !prev;
-      try {
-        localStorage.setItem(`tracker_hide_completed_sprints_${projectSlug}`, String(next));
-      } catch {}
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`tracker_hide_completed_sprints_${projectSlug}`, String(next));
+        } catch {}
+        const url = new URL(window.location.href);
+        if (next) {
+          url.searchParams.set('hideCompleted', 'true');
+        } else {
+          url.searchParams.delete('hideCompleted');
+        }
+        const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+        window.history.replaceState(window.history.state, '', nextUrl);
+      }
       return next;
     });
   };
 
   // Point Mode: 'macro' vs 'granular'
-  const [pointMode, setPointMode] = useState<'macro' | 'granular'>('macro');
+  const [pointMode, setPointMode] = useState<'granular' | 'macro'>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParam = new URLSearchParams(window.location.search).get('pointMode');
+      if (urlParam === 'macro' || urlParam === 'granular') return urlParam;
+      try {
+        const stored =
+          localStorage.getItem('tracker_point_mode') ||
+          localStorage.getItem(`tracker_point_mode_${projectSlug}`);
+        if (stored === 'macro' || stored === 'granular') return stored;
+      } catch {}
+    }
+    return 'granular';
+  });
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const urlParam = new URLSearchParams(window.location.search).get('pointMode');
+    if (urlParam === 'macro' || urlParam === 'granular') {
+      setPointMode(urlParam);
+      return;
+    }
     try {
-      const stored = localStorage.getItem('tracker_point_mode');
+      const stored =
+        localStorage.getItem(`tracker_point_mode_${projectSlug}`) ||
+        localStorage.getItem('tracker_point_mode');
       if (stored === 'macro' || stored === 'granular') {
         setPointMode(stored);
       }
     } catch {}
-  }, []);
+  }, [projectSlug]);
 
-  const handlePointModeChange = (mode: 'macro' | 'granular') => {
-    setPointMode(mode);
-    try {
-      localStorage.setItem('tracker_point_mode', mode);
-    } catch {}
+  const handlePointModeChange = (newMode: 'macro' | 'granular') => {
+    setPointMode(newMode);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('tracker_point_mode', newMode);
+        localStorage.setItem(`tracker_point_mode_${projectSlug}`, newMode);
+      } catch {}
+      const url = new URL(window.location.href);
+      if (newMode === 'macro') {
+        url.searchParams.set('pointMode', 'macro');
+      } else {
+        url.searchParams.delete('pointMode');
+      }
+      const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
   };
 
   // Clear selection on tab change or project switch
@@ -329,15 +392,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; full_name?: string } | null>(null);
   const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
 
+  const myDisplayName = useMemo(() => {
+    if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
+    if (currentUser?.email) return `Me (${currentUser.email.split('@')[0]})`;
+    return 'Me';
+  }, [currentUser]);
+
   // Project Archive state
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
 
   // Read-only guest mode
   const isReadOnly = !loading && (currentUser === null || tenantInfo?.role === 'viewer');
 
   const handleArchiveCurrentProject = async () => {
     const proj = allProjects.find((p) => p.slug === projectSlug);
-    if (!proj || isAllProjects) return;
+    if (!proj || isAllProjects || isArchiving) return;
+    setIsArchiving(true);
     try {
       const res = await apiFetch('/api/v1/projects', {
         method: 'DELETE',
@@ -352,6 +423,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     } catch (err: any) {
       alert(err.message || 'Error communicating with server.');
+    } finally {
+      setIsArchiving(false);
     }
   };
 
@@ -2222,13 +2295,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     );
 
     try {
-      await apiFetch('/api/v1/items/bulk', {
+      const res = await apiFetch('/api/v1/items/bulk', {
         method: 'PATCH',
         body: JSON.stringify({
           ids: childIds,
           updates: { status: targetStatus },
         }),
       });
+      if (!res.ok) {
+        throw new Error('Bulk cascade update rejected');
+      }
       setBulkToast(`Completed parent and cascaded to ${childIds.length} subtask${childIds.length === 1 ? '' : 's'}.`);
       setTimeout(() => setBulkToast(null), 3000);
     } catch {
@@ -2258,13 +2334,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       );
 
       try {
-        await apiFetch('/api/v1/items/bulk', {
+        const res = await apiFetch('/api/v1/items/bulk', {
           method: 'PATCH',
           body: JSON.stringify({
             ids: childIds,
             updates: { status: targetStatus },
           }),
         });
+        if (!res.ok) {
+          throw new Error('Bulk cascade prompt update rejected');
+        }
       } catch {
         fetchData();
       }
@@ -2738,11 +2817,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setIsArchiveModalOpen={setIsArchiveModalOpen}
         currentProject={allProjects.find((p) => p.slug === projectSlug)}
         handleArchiveProject={handleArchiveCurrentProject}
+        isArchiving={isArchiving}
         isReconciliationModalOpen={isReconciliationModalOpen}
         setIsReconciliationModalOpen={setIsReconciliationModalOpen}
         deviations={deviations}
         focusedDeviationId={focusedDeviationId}
         setFocusedDeviationId={setFocusedDeviationId}
+        isAllProjects={isAllProjects}
+        selectedSchemaProjectSlug={selectedSchemaProjectSlug}
+        myDisplayName={myDisplayName}
+        getHierarchyForProject={(slug) => {
+          const p = allProjects.find((x) => x.slug === slug);
+          return p?.settings?.hierarchy || projectSettings.hierarchy;
+        }}
+        getStatusesForProject={(slug) => {
+          const p = allProjects.find((x) => x.slug === slug);
+          return p?.settings?.statuses || projectSettings.statuses;
+        }}
         handleApplyReconciliation={handleApplyReconciliation}
         handleBatchReconcile={handleBatchReconcile}
         isManageSprintsOpen={isManageSprintsOpen}
