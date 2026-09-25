@@ -182,6 +182,26 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
             ))}
           </div>
         </div>
+
+        <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
+              GitHub Repository
+            </h4>
+            <span className="text-[10px] text-slate-500 font-mono">github_repo</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            {activeSchemaSettings.github_repo ? (
+              <span className="px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-800/60 text-xs font-mono text-emerald-300">
+                {activeSchemaSettings.github_repo}
+              </span>
+            ) : (
+              <span className="text-xs text-slate-500 italic">
+                None configured (defaults to sunshade-tracker; set &quot;github_repo&quot;: &quot;owner/repo&quot; below)
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2">

@@ -253,9 +253,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
       {/* Card Title & Description Toggle */}
       <div className="flex items-start justify-between gap-1.5 min-w-0">
-        <h4 className="text-sm font-medium text-slate-100 leading-snug min-w-0 flex-1 break-words">
+        <a
+          href={`?item=${encodeURIComponent(item.external_ref_id || item.id)}`}
+          data-testid={`kanban-card-link-${item.id}`}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+            e.preventDefault();
+            onEditItem?.(item);
+          }}
+          className="text-sm font-medium text-slate-100 leading-snug min-w-0 flex-1 break-words line-clamp-2 hover:text-emerald-400 transition-colors cursor-pointer"
+        >
           {item.title}
-        </h4>
+        </a>
         {item.description && (
           <button
             type="button"
@@ -294,7 +303,9 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
       {/* Metadata tags */}
       {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
-        const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata);
+        const parentProject = allProjects?.find((p) => p.id === item.project_id || p.slug === item.project_id);
+        const parentGithubRepo = parentProject?.settings?.github_repo || parentProject?.settings?.github_repository;
+        const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata, parentGithubRepo);
         const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => {
           if (isGitHubField(k)) return false;
           // Filter out points/sprint already rendered in headers/badges to keep card clean

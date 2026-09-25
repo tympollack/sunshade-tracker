@@ -155,16 +155,20 @@ export function GitHubBadge({
   // Derive target URL and repo context
   let targetUrl = '';
   let displayLabel = '';
-  let owner = propOwner || 'tympollack';
-  let repo = propRepo || 'sunshade-tracker';
+  let owner = propOwner || '';
+  let repo = propRepo || '';
 
-  if (propRepo && propRepo.includes('/')) {
-    const parts = propRepo.split('/');
+  if (repo && repo.includes('/')) {
+    const parts = repo.split('/');
     if (parts.length === 2 && parts[0] && parts[1]) {
       if (!propOwner) owner = parts[0];
       repo = parts[1];
     }
   }
+
+  // Fallback defaults if still unspecified
+  if (!owner) owner = 'tympollack';
+  if (!repo) repo = 'sunshade-tracker';
 
   let prNumber: string | undefined;
   let commitHash: string | undefined;

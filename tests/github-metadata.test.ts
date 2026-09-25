@@ -43,17 +43,43 @@ describe('extractGitHubMetadata utility', () => {
     expect(extractGitHubMetadata(null)).toEqual({
       prUrl: undefined,
       commitHash: undefined,
+      repo: undefined,
+      owner: undefined,
       isGitHubField: isGitHubMetadataKey,
     });
     expect(extractGitHubMetadata(undefined)).toEqual({
       prUrl: undefined,
       commitHash: undefined,
+      repo: undefined,
+      owner: undefined,
       isGitHubField: isGitHubMetadataKey,
     });
     expect(extractGitHubMetadata({})).toEqual({
       prUrl: undefined,
       commitHash: undefined,
+      repo: undefined,
+      owner: undefined,
       isGitHubField: isGitHubMetadataKey,
     });
+  });
+
+  it('TRK-14: falls back to parent project github_repo when item metadata does not specify repo', () => {
+    const result = extractGitHubMetadata(
+      { commit_hash: 'a1b2c3d' },
+      'tympollack/cozy'
+    );
+    expect(result.commitHash).toBe('a1b2c3d');
+    expect(result.owner).toBe('tympollack');
+    expect(result.repo).toBe('cozy');
+  });
+
+  it('TRK-14: item metadata repo overrides parent project github_repo fallback', () => {
+    const result = extractGitHubMetadata(
+      { commit_hash: 'a1b2c3d', repo: 'digitalcanopy/custom-service' },
+      'tympollack/cozy'
+    );
+    expect(result.commitHash).toBe('a1b2c3d');
+    expect(result.owner).toBe('digitalcanopy');
+    expect(result.repo).toBe('custom-service');
   });
 });

@@ -177,6 +177,7 @@ export function ProjectModals(props: ProjectModalsProps) {
         workspaceMembers={workspaceMembers}
         tenantSlug={tenantSlug}
         isReadOnly={isReadOnly}
+        isAllProjects={isAllProjects}
         projects={allProjects}
         onSelectItem={(it) => setEditingItem(it)}
         onCreateChildItem={handleModalCreateChildItem}

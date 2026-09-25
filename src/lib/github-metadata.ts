@@ -36,9 +36,26 @@ export function isGitHubMetadataKey(key: string): boolean {
   return GITHUB_KEYS.has(key.toLowerCase());
 }
 
-export function extractGitHubMetadata(metadata?: Record<string, any> | null): GitHubMetadataResult {
+export function extractGitHubMetadata(
+  metadata?: Record<string, any> | null,
+  fallbackRepo?: string | null
+): GitHubMetadataResult {
   if (!metadata || typeof metadata !== 'object') {
-    return { isGitHubField: isGitHubMetadataKey };
+    let repo: string | undefined;
+    let owner: string | undefined;
+    if (fallbackRepo && typeof fallbackRepo === 'string') {
+      const trimmed = fallbackRepo.trim();
+      if (trimmed.includes('/')) {
+        const parts = trimmed.split('/');
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          owner = parts[0];
+          repo = parts[1];
+        }
+      } else if (trimmed) {
+        repo = trimmed;
+      }
+    }
+    return { repo, owner, isGitHubField: isGitHubMetadataKey };
   }
 
   let prUrl: string | undefined;
@@ -66,7 +83,18 @@ export function extractGitHubMetadata(metadata?: Record<string, any> | null): Gi
     }
   }
 
-  if (repo && repo.includes('/')) {
+  if (!repo && fallbackRepo && typeof fallbackRepo === 'string') {
+    const trimmed = fallbackRepo.trim();
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/');
+      if (parts.length === 2 && parts[0] && parts[1]) {
+        if (!owner) owner = parts[0];
+        repo = parts[1];
+      }
+    } else if (trimmed) {
+      repo = trimmed;
+    }
+  } else if (repo && repo.includes('/')) {
     const parts = repo.split('/');
     if (parts.length === 2 && parts[0] && parts[1]) {
       if (!owner) owner = parts[0];

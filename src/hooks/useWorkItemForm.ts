@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { WorkItem, ProjectSettings, HierarchyLevel } from '@/types/tracker';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
+import { normalizeAssignee } from '@/lib/assignee-utils';
 
 export interface UseWorkItemFormProps {
   item: WorkItem | null;
@@ -14,6 +15,7 @@ export interface UseWorkItemFormProps {
   workspaceMembers?: { full_name: string; email?: string }[];
   tenantSlug?: string;
   isReadOnly?: boolean;
+  isAllProjects?: boolean;
   projects?: Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>;
   onSave: (id: string, updates: Partial<WorkItem>) => Promise<void> | void;
   onClose: () => void;
@@ -28,6 +30,7 @@ export function useWorkItemForm({
   workspaceMembers = [],
   tenantSlug,
   isReadOnly = false,
+  isAllProjects = false,
   projects = [],
   onSave,
   onClose,
@@ -54,7 +57,7 @@ export function useWorkItemForm({
   // Dynamic project settings resolution
   const effectiveProjectSettings = useMemo(() => {
     if (!selectedProjectId) return projectSettings;
-    const matched = projects.find((p) => p.id === selectedProjectId);
+    const matched = projects.find((p) => p.id === selectedProjectId || p.slug === selectedProjectId);
     if (matched?.settings && matched.settings.hierarchy?.length && matched.settings.statuses?.length) {
       return matched.settings;
     }
@@ -171,20 +174,15 @@ export function useWorkItemForm({
       allowedParentTypes.includes(other.item_type)
   );
 
-  const myDisplayName = currentUser?.full_name
-    ? `Me (${currentUser.full_name})`
-    : currentUser?.email
-    ? `Me (${currentUser.email.split('@')[0]})`
-    : 'Me';
+  const canonicalUserHandle = currentUser?.full_name || (currentUser?.email ? currentUser.email.split('@')[0] : '');
+  const myDisplayName = canonicalUserHandle ? `${canonicalUserHandle} (You)` : 'You';
 
   const memberNames = Array.from(
     new Set([
-      ...workspaceMembers.map((m) => m.full_name).filter(Boolean),
-      ...allItems
-        .map((i) => i.assignee)
-        .filter((a): a is string => typeof a === 'string' && a.length > 0 && !a.startsWith('Me (')),
+      ...workspaceMembers.map((m) => normalizeAssignee(m.full_name)).filter(Boolean),
+      ...allItems.map((i) => normalizeAssignee(i.assignee)).filter(Boolean),
     ])
-  );
+  ).filter((name): name is string => Boolean(name && name !== canonicalUserHandle));
 
   const levelColor = getHierarchyLevelColor(itemType, effectiveProjectSettings.hierarchy);
 
@@ -194,6 +192,14 @@ export function useWorkItemForm({
       return;
     }
     if (!title.trim() || !item) return;
+
+    if (isAllProjects && projects.length > 0) {
+      if (!selectedProjectId || !projects.some((p) => p.id === selectedProjectId || p.slug === selectedProjectId)) {
+        setSaveError('Please select a target project.');
+        return;
+      }
+    }
+
     const hasErrors = Object.values(metaErrors).some(Boolean);
     if (hasErrors) {
       setSaveError('Please correct invalid metadata values before saving.');
@@ -208,12 +214,15 @@ export function useWorkItemForm({
         status,
         item_type: itemType,
         parent_id: parentId || null,
-        assignee: assignee || null,
+        assignee: normalizeAssignee(assignee),
         external_ref_id: externalRef.trim() || null,
         metadata,
       };
-      if (selectedProjectId && selectedProjectId !== item.project_id) {
-        updates.project_id = selectedProjectId;
+      if (selectedProjectId) {
+        const matchedProj = projects.find((p) => p.id === selectedProjectId || p.slug === selectedProjectId);
+        if (matchedProj) {
+          updates.project_id = matchedProj.id;
+        }
       }
       await onSave(item.id, updates);
       onClose();
@@ -374,6 +383,7 @@ export function useWorkItemForm({
     eligibleParents,
     isLoadingParents,
     myDisplayName,
+    canonicalUserHandle,
     memberNames,
     levelColor,
     isLocked,

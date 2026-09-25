@@ -25,6 +25,8 @@ export interface WorkItemModalHeaderProps {
   childCount: number;
   auditLogsCount: number;
   tenantSlug?: string;
+  projectSettings?: any;
+  githubRepo?: string;
   onClose: () => void;
   onRequestDelete: () => void;
   onRefreshAuditLogs?: (itemId: string) => void;
@@ -40,6 +42,8 @@ export function WorkItemModalHeader({
   childCount,
   auditLogsCount,
   tenantSlug,
+  projectSettings,
+  githubRepo,
   onClose,
   onRequestDelete,
   onRefreshAuditLogs,
@@ -49,8 +53,9 @@ export function WorkItemModalHeader({
   const copyIdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const copyGetUrlTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const effectiveGithubRepo = githubRepo || projectSettings?.github_repo || projectSettings?.github_repository;
   const { prUrl: modalPrUrl, commitHash: modalCommitHash, repo: modalRepo, owner: modalOwner } =
-    extractGitHubMetadata(item.metadata);
+    extractGitHubMetadata(item.metadata, effectiveGithubRepo);
 
   const isAssociatedTab = activeTab === 'associated' || activeTab === 'children';
 
@@ -96,7 +101,7 @@ export function WorkItemModalHeader({
               title="Click to copy UUID"
             />
           )}
-          {modalPrUrl && <GitHubBadge type="pr" value={modalPrUrl} />}
+          {modalPrUrl && <GitHubBadge type="pr" value={modalPrUrl} repo={modalRepo} owner={modalOwner} />}
           {modalCommitHash && (
             <GitHubBadge
               type="commit"
