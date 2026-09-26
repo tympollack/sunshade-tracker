@@ -12,6 +12,7 @@ import { SchemaReconciliationModal } from '@/components/SchemaReconciliationModa
 import { ManageSprintsModal } from '@/components/ManageSprintsModal';
 import { GlobalSearchModal } from '@/components/GlobalSearchModal';
 import { SchemaDeviation } from '@/lib/schema-deviation';
+import { useModalScrollLock } from '@/hooks/useModalScrollLock';
 
 export interface ProjectModalsProps {
   isReadOnly: boolean;
@@ -161,6 +162,20 @@ export function ProjectModals(props: ProjectModalsProps) {
     getStatusesForProject,
     isArchiving = false,
   } = props;
+
+  const isAnyModalOpen = Boolean(
+    editingItem ||
+    isQuickAddOpen ||
+    deleteConfirmItem ||
+    showCascadeCompletionModal ||
+    showCascadePromptModal ||
+    isArchiveModalOpen ||
+    isReconciliationModalOpen ||
+    isManageSprintsOpen ||
+    isSearchOpen
+  );
+
+  useModalScrollLock(isAnyModalOpen);
 
   return (
     <>

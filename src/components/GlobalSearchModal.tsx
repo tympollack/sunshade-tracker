@@ -110,6 +110,7 @@ export function GlobalSearchModal({
       onKeyDown={handleKeyDown}
     >
       <div
+        data-modal-content="true"
         data-testid="global-search-modal"
         className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}

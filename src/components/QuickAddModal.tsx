@@ -310,7 +310,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       aria-labelledby="quick-add-modal-title"
       data-testid="quick-add-modal"
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col">
+      <div
+        data-modal-content="true"
+        className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/50">
           <div className="flex items-center space-x-2">

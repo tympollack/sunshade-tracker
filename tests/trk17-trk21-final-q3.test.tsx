@@ -8,7 +8,13 @@ import { BoardViewContainer } from '@/components/views/BoardViewContainer';
 import { normalizeAssignee, formatAssigneeDisplay } from '@/lib/assignee-utils';
 import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation, subscribeToItemSync } from '@/lib/sync-channel';
+import { useModalScrollLock, _resetModalScrollLockForTesting } from '@/hooks/useModalScrollLock';
+import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
 
 describe('TRK-17: Target project selection & validation in All Projects view', () => {
   const settingsA: ProjectSettings = {
@@ -147,8 +153,19 @@ describe('TRK-18: Body scroll locking and backdrop wheel isolation', () => {
     updated_at: new Date().toISOString(),
   };
 
-  it('locks body scroll when modal opens and restores on unmount', () => {
+  beforeEach(() => {
+    _resetModalScrollLockForTesting();
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+  });
+
+  afterEach(() => {
+    _resetModalScrollLockForTesting();
+  });
+
+  it('locks both body and html scroll when modal opens and restores on unmount', () => {
     document.body.style.overflow = 'auto';
+    document.documentElement.style.overflow = 'auto';
 
     const { unmount } = render(
       <WorkItemModal
@@ -163,9 +180,11 @@ describe('TRK-18: Body scroll locking and backdrop wheel isolation', () => {
     );
 
     expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
 
     unmount();
     expect(document.body.style.overflow).toBe('auto');
+    expect(document.documentElement.style.overflow).toBe('auto');
   });
 
   it('isolates mouse wheel events on backdrop overlay', () => {
@@ -190,6 +209,68 @@ describe('TRK-18: Body scroll locking and backdrop wheel isolation', () => {
 
     expect(preventDefaultSpy).toHaveBeenCalled();
     expect(stopPropagationSpy).toHaveBeenCalled();
+  });
+
+  it('useModalScrollLock manages ref counting across stacked modals', () => {
+    const { unmount: unmount1 } = renderHook(() => useModalScrollLock(true));
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.documentElement.style.overflow).toBe('hidden');
+
+    const { unmount: unmount2 } = renderHook(() => useModalScrollLock(true));
+    expect(document.body.style.overflow).toBe('hidden');
+
+    // Unmount modal 1: modal 2 is still open, so overflow remains hidden
+    unmount1();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    // Unmount modal 2: all modals closed, overflow restored
+    unmount2();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('cancels wheel and touchmove events when cursor is outside modal content card', () => {
+    const TestModalComponent = () => {
+      useModalScrollLock(true);
+      return (
+        <div>
+          <div data-testid="test-backdrop" className="fixed inset-0">
+            <div data-modal-content="true" data-testid="test-modal-card">
+              <p>Inside modal content</p>
+            </div>
+          </div>
+          <div data-testid="test-body-content">Outside page content</div>
+        </div>
+      );
+    };
+
+    render(<TestModalComponent />);
+
+    // 1. Wheel on outside page content
+    const outsideEl = screen.getByTestId('test-body-content');
+    const wheelOutside = new WheelEvent('wheel', { bubbles: true, cancelable: true });
+    const preventOutsideSpy = vi.spyOn(wheelOutside, 'preventDefault');
+    outsideEl.dispatchEvent(wheelOutside);
+    expect(preventOutsideSpy).toHaveBeenCalled();
+
+    // 2. Wheel on modal backdrop (outside the card)
+    const backdropEl = screen.getByTestId('test-backdrop');
+    const wheelBackdrop = new WheelEvent('wheel', { bubbles: true, cancelable: true });
+    const preventBackdropSpy = vi.spyOn(wheelBackdrop, 'preventDefault');
+    backdropEl.dispatchEvent(wheelBackdrop);
+    expect(preventBackdropSpy).toHaveBeenCalled();
+
+    // 3. TouchMove on backdrop (outside the card)
+    const touchBackdrop = new TouchEvent('touchmove', { bubbles: true, cancelable: true });
+    const preventTouchSpy = vi.spyOn(touchBackdrop, 'preventDefault');
+    backdropEl.dispatchEvent(touchBackdrop);
+    expect(preventTouchSpy).toHaveBeenCalled();
+
+    // 4. Wheel inside modal content card must NOT be prevented
+    const cardEl = screen.getByTestId('test-modal-card');
+    const wheelInside = new WheelEvent('wheel', { bubbles: true, cancelable: true });
+    const preventInsideSpy = vi.spyOn(wheelInside, 'preventDefault');
+    cardEl.dispatchEvent(wheelInside);
+    expect(preventInsideSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -521,5 +602,47 @@ describe('TRK-21: Multi-tab viewing, semantic link anchors, and BroadcastChannel
     await new Promise((r) => setTimeout(r, 10));
     expect(setEditingItem).toHaveBeenCalledWith(uuidItem);
     fetchSpy.mockRestore();
+  });
+
+  it('renders ProjectSwitcher with semantic Link elements that allow Ctrl+click without closing', () => {
+    const testProjects = [
+      { id: 'p1', name: 'Alpha Project', slug: 'alpha', settings: {} as any },
+      { id: 'p2', name: 'Beta Project', slug: 'beta', settings: {} as any },
+    ];
+
+    render(
+      <ProjectSwitcher
+        tenantSlug="test-org"
+        currentProjectSlug="alpha"
+        projects={testProjects}
+        isReadOnly={false}
+      />
+    );
+
+    // Open dropdown
+    const trigger = screen.getByTestId('project-switcher-trigger');
+    fireEvent.click(trigger);
+
+    // Dropdown items should be rendered
+    const alphaLink = screen.getByTestId('project-switcher-item-alpha');
+    const betaLink = screen.getByTestId('project-switcher-item-beta');
+    const allLink = screen.getByTestId('project-switcher-item-all');
+
+    expect(alphaLink.getAttribute('href')).toBe('/test-org/alpha');
+    expect(betaLink.getAttribute('href')).toBe('/test-org/beta');
+    expect(allLink.getAttribute('href')).toBe('/test-org/all');
+
+    const preventNav = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener('click', preventNav, { capture: true });
+
+    // Ctrl+click on Beta link: should NOT close dropdown
+    fireEvent.click(betaLink, { ctrlKey: true });
+    expect(screen.getByTestId('project-switcher-dropdown')).toBeDefined();
+
+    // Normal left click: closes dropdown
+    fireEvent.click(betaLink);
+    expect(screen.queryByTestId('project-switcher-dropdown')).toBeNull();
+
+    window.removeEventListener('click', preventNav, { capture: true });
   });
 });

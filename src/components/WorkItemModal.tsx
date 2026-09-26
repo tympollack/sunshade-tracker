@@ -11,6 +11,7 @@ import { WorkItemModalFooter } from '@/components/modal/WorkItemModalFooter';
 import { useWorkItemForm } from '@/hooks/useWorkItemForm';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
+import { useModalScrollLock } from '@/hooks/useModalScrollLock';
 
 export interface ProjectInfo {
   id: string;
@@ -63,24 +64,8 @@ export function WorkItemModal(props: WorkItemModalProps) {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const lastFetchedItemIdRef = useRef<string | null>(null);
 
-  // Body scroll lock with scrollbar width compensation (TRK-18)
-  useEffect(() => {
-    if (!isOpen || !item) return;
-
-    const originalOverflow = document.body.style.overflow;
-    const originalPaddingRight = document.body.style.paddingRight;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-
-    if (scrollbarWidth > 0) {
-      document.body.style.paddingRight = `${scrollbarWidth}px`;
-    }
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      document.body.style.paddingRight = originalPaddingRight;
-    };
-  }, [isOpen, item]);
+  // Background scroll lock and outside-hover isolation (TRK-18)
+  useModalScrollLock(Boolean(isOpen && item));
 
   const form = useWorkItemForm({
     item,
@@ -171,7 +156,10 @@ export function WorkItemModal(props: WorkItemModalProps) {
       }}
       data-testid="work-item-modal-backdrop"
     >
-      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div
+        data-modal-content="true"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+      >
         <WorkItemModalHeader
           item={item}
           itemType={form.itemType}

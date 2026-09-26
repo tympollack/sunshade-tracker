@@ -55,6 +55,7 @@ export function ConfirmDeleteModal({
       onClick={() => !isDeleting && onClose()}
     >
       <div
+        data-modal-content="true"
         className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
