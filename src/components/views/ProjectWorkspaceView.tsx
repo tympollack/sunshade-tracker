@@ -26,7 +26,8 @@ import {
   isItemImmutableDueToCompletedSprint,
 } from '@/lib/sprint-utils';
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
-import { bulkReassignProjects, reassignWorkItemProject } from '@/app/actions/trackerActions';
+import { bulkReassignProjects } from '@/app/actions/trackerActions';
+import { saveModalItem } from '@/lib/save-modal-item';
 import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation } from '@/lib/sync-channel';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -1375,61 +1376,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   };
 
   const handleSaveModalItem = async (itemId: string, updates: Partial<WorkItem>) => {
-    const existingItem = items.find((it) => it.id === itemId) || editingItem;
-    const currentProj = allProjects.find((p) => p.slug === projectSlug);
-    const isMovingProject = Boolean(
-      updates.project_id &&
-      (existingItem
-        ? existingItem.project_id !== updates.project_id
-        : currentProj && updates.project_id !== currentProj.id)
-    );
-
-    if (isMovingProject && updates.project_id) {
-      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug, {
-        status: updates.status,
-        item_type: updates.item_type,
-      });
-      if (!moveResult.success) throw new Error(moveResult.error || 'Failed to reassign work item project');
-
-      const otherUpdates = { ...updates };
-      delete otherUpdates.project_id;
-      if (otherUpdates.status === updates.status) delete otherUpdates.status;
-      if (otherUpdates.item_type === updates.item_type) delete otherUpdates.item_type;
-      if (Object.keys(otherUpdates).length > 0) {
-        const res = await apiFetch('/api/v1/items', { method: 'PATCH', body: JSON.stringify({ id: itemId, ...otherUpdates }) });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Failed to save changes (${res.status})`);
-        }
-      }
-
-      const destProject = allProjects.find((p) => p.id === updates.project_id);
-      const childCount = Math.max(0, (moveResult.updatedCount ?? 1) - 1);
-      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${destProject?.name || 'new project'}`);
-      setTimeout(() => setBulkToast(null), 4000);
-      fetchData();
-      broadcastItemMutation({ type: 'ITEMS_REFRESH', tenantSlug, projectId: updates.project_id, sourceProjectId: existingItem?.project_id });
-      return;
-    }
-
-    const res = await apiFetch('/api/v1/items', {
-      method: 'PATCH',
-      body: JSON.stringify({ id: itemId, ...updates }),
+    return saveModalItem({
+      itemId,
+      updates,
+      items,
+      editingItem,
+      allProjects,
+      projectSlug,
+      tenantSlug,
+      currentProjectId,
+      setItems,
+      setEditingItem,
+      setBulkToast,
+      fetchData,
+      apiFetch,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Failed to save changes (${res.status})`);
-    }
-    const data = await res.json();
-    setItems((prev) =>
-      prev
-        .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
-        .sort((a, b) => a.order_index - b.order_index)
-    );
-    broadcastItemMutation({ type: 'ITEM_UPDATED', itemId, updates: { ...updates, ...(data.item || {}) }, tenantSlug, projectId: currentProjectId || updates.project_id || existingItem?.project_id });
-    if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
-      fetchData();
-    }
   };
 
   const handleDeleteItem = async (itemId: string): Promise<boolean> => {

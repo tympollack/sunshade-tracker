@@ -32,8 +32,22 @@ export function useTabSync({
   loading = false,
 }: UseTabSyncProps) {
   const handledDeepLinkRef = useRef<string | null>(null);
-  const hasHydratedRef = useRef(false);
-  const userHasOpenedModalRef = useRef(false);
+  const hasModalCommittedOpenRef = useRef(false);
+
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  const editingItemRef = useRef(editingItem);
+  editingItemRef.current = editingItem;
+
+  const setItemsRef = useRef(setItems);
+  setItemsRef.current = setItems;
+
+  const setEditingItemRef = useRef(setEditingItem);
+  setEditingItemRef.current = setEditingItem;
+
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
 
   // 1. Initial hydration from query param (?item=...)
   useEffect(() => {
@@ -43,7 +57,6 @@ export function useTabSync({
     }
 
     if (!targetId) {
-      hasHydratedRef.current = true;
       return;
     }
 
@@ -53,8 +66,6 @@ export function useTabSync({
       );
       if (matched) {
         handledDeepLinkRef.current = targetId;
-        hasHydratedRef.current = true;
-        userHasOpenedModalRef.current = true;
         setEditingItem(matched);
       } else if (!loading) {
         // Attempt fetch by UUID (ids) or external_ref_id (refs) with fallback
@@ -73,18 +84,22 @@ export function useTabSync({
         fetchByParam(primaryParam).then((item) => {
           if (item) {
             handledDeepLinkRef.current = targetId;
-            hasHydratedRef.current = true;
-            userHasOpenedModalRef.current = true;
             setEditingItem(item);
           } else {
             fetchByParam(fallbackParam).then((fallbackItem) => {
               if (fallbackItem) {
                 handledDeepLinkRef.current = targetId;
-                hasHydratedRef.current = true;
-                userHasOpenedModalRef.current = true;
                 setEditingItem(fallbackItem);
               } else {
-                hasHydratedRef.current = true;
+                handledDeepLinkRef.current = targetId;
+                // Nonexistent item: explicitly clean up URL if still pointing to targetId
+                if (typeof window !== 'undefined') {
+                  const url = new URL(window.location.href);
+                  if (url.searchParams.get('item') === targetId) {
+                    url.searchParams.delete('item');
+                    window.history.replaceState(null, '', url.toString());
+                  }
+                }
               }
             });
           }
@@ -100,26 +115,23 @@ export function useTabSync({
     const currentParam = url.searchParams.get('item');
 
     if (editingItem) {
-      userHasOpenedModalRef.current = true;
-      hasHydratedRef.current = true;
+      hasModalCommittedOpenRef.current = true;
       const itemRef = editingItem.external_ref_id || editingItem.id;
       if (currentParam !== itemRef) {
         url.searchParams.set('item', itemRef);
         window.history.replaceState(null, '', url.toString());
       }
     } else {
-      if (currentParam) {
-        // Only remove 'item' param if user explicitly opened & closed the modal
-        // or hydration finished and verified no item exists.
-        // Never strip the param while deep link hydration is still pending!
-        const canCleanUrl = userHasOpenedModalRef.current || (hasHydratedRef.current && !loading);
-        if (canCleanUrl) {
+      // Only remove ?item on genuine transition after modal has committed open
+      if (hasModalCommittedOpenRef.current) {
+        hasModalCommittedOpenRef.current = false;
+        if (currentParam) {
           url.searchParams.delete('item');
           window.history.replaceState(null, '', url.toString());
         }
       }
     }
-  }, [editingItem, loading]);
+  }, [editingItem]);
 
   // 3. Browser Back/Forward navigation (popstate)
   useEffect(() => {
@@ -130,7 +142,7 @@ export function useTabSync({
       if (!currentParam) {
         setEditingItem(null);
       } else {
-        const matched = items.find(
+        const matched = itemsRef.current.find(
           (it) => it.id === currentParam || it.external_ref_id === currentParam
         );
         if (matched) {
@@ -154,7 +166,7 @@ export function useTabSync({
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [items, setEditingItem, tenantSlug]);
+  }, [setEditingItem, tenantSlug]);
 
   // 4. Cross-tab synchronization via BroadcastChannel (with tenant & project filtering)
   useEffect(() => {
@@ -164,7 +176,14 @@ export function useTabSync({
         return;
       }
 
+      const currentItems = itemsRef.current;
+      const currentEditing = editingItemRef.current;
+
       if (msg.type === 'ITEM_UPDATED') {
+        const isItemRelevantLocally =
+          currentItems.some((it) => it.id === msg.itemId) ||
+          currentEditing?.id === msg.itemId;
+
         if (!isAllProjects && currentProjectId && msg.projectId) {
           const isCurrent = msg.projectId === currentProjectId;
           const isSource = msg.sourceProjectId === currentProjectId;
@@ -172,30 +191,34 @@ export function useTabSync({
 
           // If item was moved into this project from another project, fetch fresh items
           if (isCurrent && msg.sourceProjectId && msg.sourceProjectId !== currentProjectId) {
-            fetchData();
+            fetchDataRef.current();
             return;
           }
 
-          // If update is for another project and we don't have this item locally, ignore
-          if (!isRelevant && !items.some((it) => it.id === msg.itemId)) {
+          // If update is for another project and we don't have this item locally or open, ignore
+          if (!isRelevant && !isItemRelevantLocally) {
             return;
           }
         }
 
-        setItems((prev) =>
+        setItemsRef.current((prev) =>
           prev.map((it) => (it.id === msg.itemId ? { ...it, ...msg.updates } : it))
         );
-        setEditingItem((prev) =>
+        setEditingItemRef.current((prev) =>
           prev && prev.id === msg.itemId ? { ...prev, ...msg.updates } : prev
         );
       } else if (msg.type === 'ITEM_DELETED') {
+        const isItemRelevantLocally =
+          currentItems.some((it) => it.id === msg.itemId) ||
+          currentEditing?.id === msg.itemId;
+
         if (!isAllProjects && currentProjectId && msg.projectId && msg.projectId !== currentProjectId) {
-          if (!items.some((it) => it.id === msg.itemId)) {
+          if (!isItemRelevantLocally) {
             return;
           }
         }
-        setItems((prev) => prev.filter((it) => it.id !== msg.itemId));
-        setEditingItem((prev) => (prev && prev.id === msg.itemId ? null : prev));
+        setItemsRef.current((prev) => prev.filter((it) => it.id !== msg.itemId));
+        setEditingItemRef.current((prev) => (prev && prev.id === msg.itemId ? null : prev));
       } else if (msg.type === 'ITEM_CREATED') {
         // Only refresh if all-projects mode or item belongs to this project
         if (!isAllProjects && currentProjectId) {
@@ -204,7 +227,7 @@ export function useTabSync({
             return;
           }
         }
-        fetchData();
+        fetchDataRef.current();
       } else if (msg.type === 'ITEMS_REFRESH') {
         if (!isAllProjects && currentProjectId) {
           const isTarget = msg.projectId && msg.projectId === currentProjectId;
@@ -217,10 +240,10 @@ export function useTabSync({
             }
           }
         }
-        fetchData();
+        fetchDataRef.current();
       }
     });
 
     return unsubscribe;
-  }, [fetchData, setItems, setEditingItem, tenantSlug, projectSlug, currentProjectId, isAllProjects, items]);
+  }, [tenantSlug, projectSlug, currentProjectId, isAllProjects]);
 }
