@@ -93,10 +93,10 @@ export default function OnboardingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          org_name: orgName,
-          slug: workspaceSlug,
-          project_name: projectName,
-          project_slug: projectSlug,
+          org_name: orgName.trim(),
+          slug: workspaceSlug.toLowerCase().replace(/[^a-z0-9-]/g, ''),
+          project_name: projectName.trim(),
+          project_slug: projectSlug.toLowerCase().replace(/[^a-z0-9-]/g, ''),
           template_id: selectedTemplate,
         }),
       });
@@ -176,7 +176,7 @@ export default function OnboardingPage() {
             onOrgNameChange={handleOrgNameChange}
             onWorkspaceSlugChange={(val) => {
               setSlugManuallyEdited(true);
-              setWorkspaceSlug(val);
+              setWorkspaceSlug(val.toLowerCase().replace(/[^a-z0-9-]/g, ''));
             }}
             error={error}
             onNext={() => {
@@ -199,7 +199,7 @@ export default function OnboardingPage() {
             onProjectNameChange={handleProjectNameChange}
             onProjectSlugChange={(val) => {
               setProjectSlugManual(true);
-              setProjectSlug(val);
+              setProjectSlug(val.toLowerCase().replace(/[^a-z0-9-]/g, ''));
             }}
             onTemplateChange={setSelectedTemplate}
             onBack={() => { setError(''); setStep(1); }}

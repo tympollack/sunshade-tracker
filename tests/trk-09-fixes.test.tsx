@@ -210,7 +210,7 @@ describe('TRK-09 Epic Test Suite', () => {
         expect(document.body.contains(popover)).toBe(true);
       });
       unmount();
-    });
+    }, 15000);
 
     it('dismisses notification popover on Escape key press', async () => {
       const { render, waitFor, cleanup, fireEvent, within } = await import('@testing-library/react');

@@ -55,7 +55,7 @@ export function OnboardingStep1({
             <input
               type="text"
               value={workspaceSlug}
-              onChange={(e) => onWorkspaceSlugChange(e.target.value)}
+              onChange={(e) => onWorkspaceSlugChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
               placeholder="acme-corp"
               className="flex-1 px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-emerald-400 text-sm font-mono focus:outline-none focus:border-emerald-500 transition-colors"
             />

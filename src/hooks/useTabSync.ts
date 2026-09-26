@@ -11,6 +11,9 @@ export interface UseTabSyncProps {
   setEditingItem: React.Dispatch<React.SetStateAction<WorkItem | null>>;
   fetchData: () => Promise<void> | void;
   tenantSlug?: string;
+  projectSlug?: string;
+  currentProjectId?: string;
+  isAllProjects?: boolean;
   initialSearchParamItem?: string | null;
   loading?: boolean;
 }
@@ -22,10 +25,29 @@ export function useTabSync({
   setEditingItem,
   fetchData,
   tenantSlug,
+  projectSlug,
+  currentProjectId,
+  isAllProjects = false,
   initialSearchParamItem,
   loading = false,
 }: UseTabSyncProps) {
   const handledDeepLinkRef = useRef<string | null>(null);
+  const hasModalCommittedOpenRef = useRef(false);
+
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  const editingItemRef = useRef(editingItem);
+  editingItemRef.current = editingItem;
+
+  const setItemsRef = useRef(setItems);
+  setItemsRef.current = setItems;
+
+  const setEditingItemRef = useRef(setEditingItem);
+  setEditingItemRef.current = setEditingItem;
+
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
 
   // 1. Initial hydration from query param (?item=...)
   useEffect(() => {
@@ -34,7 +56,11 @@ export function useTabSync({
       targetId = new URLSearchParams(window.location.search).get('item');
     }
 
-    if (targetId && handledDeepLinkRef.current !== targetId) {
+    if (!targetId) {
+      return;
+    }
+
+    if (handledDeepLinkRef.current !== targetId) {
       const matched = items.find(
         (it) => it.id === targetId || it.external_ref_id === targetId
       );
@@ -64,6 +90,16 @@ export function useTabSync({
               if (fallbackItem) {
                 handledDeepLinkRef.current = targetId;
                 setEditingItem(fallbackItem);
+              } else {
+                handledDeepLinkRef.current = targetId;
+                // Nonexistent item: explicitly clean up URL if still pointing to targetId
+                if (typeof window !== 'undefined') {
+                  const url = new URL(window.location.href);
+                  if (url.searchParams.get('item') === targetId) {
+                    url.searchParams.delete('item');
+                    window.history.replaceState(null, '', url.toString());
+                  }
+                }
               }
             });
           }
@@ -79,15 +115,20 @@ export function useTabSync({
     const currentParam = url.searchParams.get('item');
 
     if (editingItem) {
+      hasModalCommittedOpenRef.current = true;
       const itemRef = editingItem.external_ref_id || editingItem.id;
       if (currentParam !== itemRef) {
         url.searchParams.set('item', itemRef);
         window.history.replaceState(null, '', url.toString());
       }
     } else {
-      if (currentParam) {
-        url.searchParams.delete('item');
-        window.history.replaceState(null, '', url.toString());
+      // Only remove ?item on genuine transition after modal has committed open
+      if (hasModalCommittedOpenRef.current) {
+        hasModalCommittedOpenRef.current = false;
+        if (currentParam) {
+          url.searchParams.delete('item');
+          window.history.replaceState(null, '', url.toString());
+        }
       }
     }
   }, [editingItem]);
@@ -101,7 +142,7 @@ export function useTabSync({
       if (!currentParam) {
         setEditingItem(null);
       } else {
-        const matched = items.find(
+        const matched = itemsRef.current.find(
           (it) => it.id === currentParam || it.external_ref_id === currentParam
         );
         if (matched) {
@@ -125,26 +166,84 @@ export function useTabSync({
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [items, setEditingItem, tenantSlug]);
+  }, [setEditingItem, tenantSlug]);
 
-  // 4. Cross-tab synchronization via BroadcastChannel
+  // 4. Cross-tab synchronization via BroadcastChannel (with tenant & project filtering)
   useEffect(() => {
     const unsubscribe = subscribeToItemSync((msg) => {
+      // Tenant filter: Ignore broadcasts from other workspaces
+      if (msg.tenantSlug && tenantSlug && msg.tenantSlug !== tenantSlug) {
+        return;
+      }
+
+      const currentItems = itemsRef.current;
+      const currentEditing = editingItemRef.current;
+
       if (msg.type === 'ITEM_UPDATED') {
-        setItems((prev) =>
+        const isItemRelevantLocally =
+          currentItems.some((it) => it.id === msg.itemId) ||
+          currentEditing?.id === msg.itemId;
+
+        if (!isAllProjects && currentProjectId && msg.projectId) {
+          const isCurrent = msg.projectId === currentProjectId;
+          const isSource = msg.sourceProjectId === currentProjectId;
+          const isRelevant = isCurrent || isSource;
+
+          // If item was moved into this project from another project, fetch fresh items
+          if (isCurrent && msg.sourceProjectId && msg.sourceProjectId !== currentProjectId) {
+            fetchDataRef.current();
+            return;
+          }
+
+          // If update is for another project and we don't have this item locally or open, ignore
+          if (!isRelevant && !isItemRelevantLocally) {
+            return;
+          }
+        }
+
+        setItemsRef.current((prev) =>
           prev.map((it) => (it.id === msg.itemId ? { ...it, ...msg.updates } : it))
         );
-        setEditingItem((prev) =>
+        setEditingItemRef.current((prev) =>
           prev && prev.id === msg.itemId ? { ...prev, ...msg.updates } : prev
         );
       } else if (msg.type === 'ITEM_DELETED') {
-        setItems((prev) => prev.filter((it) => it.id !== msg.itemId));
-        setEditingItem((prev) => (prev && prev.id === msg.itemId ? null : prev));
-      } else if (msg.type === 'ITEM_CREATED' || msg.type === 'ITEMS_REFRESH') {
-        fetchData();
+        const isItemRelevantLocally =
+          currentItems.some((it) => it.id === msg.itemId) ||
+          currentEditing?.id === msg.itemId;
+
+        if (!isAllProjects && currentProjectId && msg.projectId && msg.projectId !== currentProjectId) {
+          if (!isItemRelevantLocally) {
+            return;
+          }
+        }
+        setItemsRef.current((prev) => prev.filter((it) => it.id !== msg.itemId));
+        setEditingItemRef.current((prev) => (prev && prev.id === msg.itemId ? null : prev));
+      } else if (msg.type === 'ITEM_CREATED') {
+        // Only refresh if all-projects mode or item belongs to this project
+        if (!isAllProjects && currentProjectId) {
+          const itemProjId = msg.projectId || msg.item?.project_id;
+          if (itemProjId && itemProjId !== currentProjectId) {
+            return;
+          }
+        }
+        fetchDataRef.current();
+      } else if (msg.type === 'ITEMS_REFRESH') {
+        if (!isAllProjects && currentProjectId) {
+          const isTarget = msg.projectId && msg.projectId === currentProjectId;
+          const isSource = msg.sourceProjectId && msg.sourceProjectId === currentProjectId;
+          const isSlug = msg.projectSlug && msg.projectSlug === projectSlug;
+
+          if (msg.projectId || msg.sourceProjectId || msg.projectSlug) {
+            if (!isTarget && !isSource && !isSlug) {
+              return;
+            }
+          }
+        }
+        fetchDataRef.current();
       }
     });
 
     return unsubscribe;
-  }, [fetchData, setItems, setEditingItem]);
+  }, [tenantSlug, projectSlug, currentProjectId, isAllProjects]);
 }
