@@ -461,4 +461,65 @@ describe('TRK-21: Multi-tab viewing, semantic link anchors, and BroadcastChannel
 
     expect(setItems).toHaveBeenCalled();
   });
+
+  it('PR-62 / TRK-21: useTabSync queries bulk endpoint with refs for external references when absent from local items', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ count: 1, items: [sampleItem] }),
+    } as any);
+
+    const setEditingItem = vi.fn();
+    renderHook(() =>
+      useTabSync({
+        items: [], // Item absent from local state
+        setItems: vi.fn(),
+        editingItem: null,
+        setEditingItem,
+        fetchData: vi.fn(),
+        tenantSlug: 'test-tenant',
+        initialSearchParamItem: 'TRK-21-DEMO',
+      })
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/v1/items/bulk?refs=TRK-21-DEMO',
+      expect.objectContaining({
+        headers: { 'x-tenant-slug': 'test-tenant' },
+      })
+    );
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(setEditingItem).toHaveBeenCalledWith(sampleItem);
+    fetchSpy.mockRestore();
+  });
+
+  it('PR-62 / TRK-21: useTabSync queries bulk endpoint with ids for UUID links when absent from local items', async () => {
+    const sampleUuid = 'c23ad280-01c8-492f-b4d7-c23ad280e6ab';
+    const uuidItem = { ...sampleItem, id: sampleUuid };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ count: 1, items: [uuidItem] }),
+    } as any);
+
+    const setEditingItem = vi.fn();
+    renderHook(() =>
+      useTabSync({
+        items: [],
+        setItems: vi.fn(),
+        editingItem: null,
+        setEditingItem,
+        fetchData: vi.fn(),
+        initialSearchParamItem: sampleUuid,
+      })
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/api/v1/items/bulk?ids=${sampleUuid}`,
+      expect.any(Object)
+    );
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(setEditingItem).toHaveBeenCalledWith(uuidItem);
+    fetchSpy.mockRestore();
+  });
 });

@@ -1381,18 +1381,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     );
 
     if (isMovingProject && updates.project_id) {
-      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug);
-      if (!moveResult.success) {
-        throw new Error(moveResult.error || 'Failed to reassign work item project');
-      }
+      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug, {
+        status: updates.status,
+        item_type: updates.item_type,
+      });
+      if (!moveResult.success) throw new Error(moveResult.error || 'Failed to reassign work item project');
 
       const otherUpdates = { ...updates };
       delete otherUpdates.project_id;
+      if (otherUpdates.status === updates.status) delete otherUpdates.status;
+      if (otherUpdates.item_type === updates.item_type) delete otherUpdates.item_type;
       if (Object.keys(otherUpdates).length > 0) {
-        const res = await apiFetch('/api/v1/items', {
-          method: 'PATCH',
-          body: JSON.stringify({ id: itemId, ...otherUpdates }),
-        });
+        const res = await apiFetch('/api/v1/items', { method: 'PATCH', body: JSON.stringify({ id: itemId, ...otherUpdates }) });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || `Failed to save changes (${res.status})`);
@@ -1401,10 +1401,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       const destProject = allProjects.find((p) => p.id === updates.project_id);
       const childCount = Math.max(0, (moveResult.updatedCount ?? 1) - 1);
-      const projName = destProject?.name || 'new project';
-      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${projName}`);
+      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${destProject?.name || 'new project'}`);
       setTimeout(() => setBulkToast(null), 4000);
       fetchData();
+      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
       return;
     }
 
@@ -1436,7 +1436,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       return false;
     }
     setItems((prev) => prev.filter((it) => it.id !== itemId));
-    broadcastItemMutation({ type: 'ITEM_DELETED', itemId });
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'DELETE',
@@ -1444,11 +1443,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         fetchData();
+        broadcastItemMutation({ type: 'ITEMS_REFRESH' });
         return false;
       }
+      broadcastItemMutation({ type: 'ITEM_DELETED', itemId });
       return true;
     } catch {
       fetchData();
+      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
       return false;
     }
   };

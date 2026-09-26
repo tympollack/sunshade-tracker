@@ -88,7 +88,7 @@ export function extractGitHubMetadata(
     if (trimmed.includes('/')) {
       const parts = trimmed.split('/');
       if (parts.length === 2 && parts[0] && parts[1]) {
-        if (!owner) owner = parts[0];
+        owner = parts[0];
         repo = parts[1];
       }
     } else if (trimmed) {

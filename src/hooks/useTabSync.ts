@@ -42,18 +42,32 @@ export function useTabSync({
         handledDeepLinkRef.current = targetId;
         setEditingItem(matched);
       } else if (!loading) {
-        // Attempt fetch by id or external_ref_id
-        fetch(`/api/v1/items/bulk?ids=${encodeURIComponent(targetId)}`, {
-          headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
-        })
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            if (data?.items && data.items.length > 0) {
-              handledDeepLinkRef.current = targetId;
-              setEditingItem(data.items[0]);
-            }
+        // Attempt fetch by UUID (ids) or external_ref_id (refs) with fallback
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+        const primaryParam = isUuid ? 'ids' : 'refs';
+        const fallbackParam = isUuid ? 'refs' : 'ids';
+
+        const fetchByParam = (paramName: 'ids' | 'refs') =>
+          fetch(`/api/v1/items/bulk?${paramName}=${encodeURIComponent(targetId)}`, {
+            headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
           })
-          .catch(() => {});
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => (data?.items && data.items.length > 0 ? data.items[0] : null))
+            .catch(() => null);
+
+        fetchByParam(primaryParam).then((item) => {
+          if (item) {
+            handledDeepLinkRef.current = targetId;
+            setEditingItem(item);
+          } else {
+            fetchByParam(fallbackParam).then((fallbackItem) => {
+              if (fallbackItem) {
+                handledDeepLinkRef.current = targetId;
+                setEditingItem(fallbackItem);
+              }
+            });
+          }
+        });
       }
     }
   }, [initialSearchParamItem, items, loading, tenantSlug, setEditingItem]);
@@ -92,13 +106,26 @@ export function useTabSync({
         );
         if (matched) {
           setEditingItem(matched);
+        } else {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentParam);
+          const pName = isUuid ? 'ids' : 'refs';
+          fetch(`/api/v1/items/bulk?${pName}=${encodeURIComponent(currentParam)}`, {
+            headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+          })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (data?.items && data.items.length > 0) {
+                setEditingItem(data.items[0]);
+              }
+            })
+            .catch(() => {});
         }
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [items, setEditingItem]);
+  }, [items, setEditingItem, tenantSlug]);
 
   // 4. Cross-tab synchronization via BroadcastChannel
   useEffect(() => {

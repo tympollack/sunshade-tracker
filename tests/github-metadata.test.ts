@@ -82,4 +82,14 @@ describe('extractGitHubMetadata utility', () => {
     expect(result.owner).toBe('digitalcanopy');
     expect(result.repo).toBe('custom-service');
   });
+
+  it('TRK-14 / Review PR-62: project fallback owner/repo takes precedence over standalone metadata owner when metadata lacks repo', () => {
+    const result = extractGitHubMetadata(
+      { commit_hash: 'abcdef0', owner: 'alice' },
+      'bob/service'
+    );
+    expect(result.commitHash).toBe('abcdef0');
+    expect(result.owner).toBe('bob');
+    expect(result.repo).toBe('service');
+  });
 });
