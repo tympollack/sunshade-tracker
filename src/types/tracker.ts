@@ -35,6 +35,8 @@ export interface ProjectSettings {
   statuses: StatusDefinition[];
   custom_fields: string[];
   sprint_settings?: SprintSettings;
+  github_repo?: string;
+  repository_url?: string;
   [key: string]: any;
 }
 

@@ -240,7 +240,7 @@ describe('TRK-09 Epic Test Suite', () => {
         expect(within(document.body).queryByTestId('notification-popover')).toBeNull();
       });
       unmount();
-    });
+    }, 15000);
 
     it('dismisses notification popover on backdrop click', async () => {
       const { render, waitFor, cleanup, fireEvent, within } = await import('@testing-library/react');

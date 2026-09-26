@@ -673,6 +673,96 @@ describe('Q3 Tracker Items Verification Suite', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Item type 'epic' is not supported in destination project 'Simple Task Project'");
     });
+
+    it('PR-62: allows cross-schema reassignment when overrides provide valid destination status and item_type', async () => {
+      let targetUpdatedFields: any = null;
+      const fromMock = vi.mocked(supabaseAdmin.from);
+      fromMock.mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'target-item-id',
+                    tenant_id: 'tenant-test-123',
+                    project_id: 'old-project-id',
+                    item_type: 'epic',
+                    status: 'planned',
+                  },
+                  error: null,
+                }),
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              })),
+            })),
+            update: vi.fn((fields: any) => ({
+              eq: vi.fn(() => {
+                targetUpdatedFields = fields;
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          } as any;
+        }
+        if (table === 'tenant_members') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { role: 'admin' },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'new-project-id',
+                      slug: 'new-proj',
+                      name: 'Simple Task Project',
+                      settings: {
+                        hierarchy: [{ type: 'task', label: 'Task', level: 1 }],
+                        statuses: [{ id: 'in_progress', label: 'In Progress' }],
+                      },
+                    },
+                    error: null,
+                  }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'audit_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+            update: vi.fn(() => ({
+              in: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const result = await reassignWorkItemProject('target-item-id', 'new-project-id', undefined, {
+        item_type: 'task',
+        status: 'in_progress',
+      });
+
+      expect(result.success).toBe(true);
+      expect(targetUpdatedFields).not.toBeNull();
+      expect(targetUpdatedFields.item_type).toBe('task');
+      expect(targetUpdatedFields.status).toBe('in_progress');
+      expect(targetUpdatedFields.project_id).toBe('new-project-id');
+    });
   });
 
   // TRK-08: Ingest Override Validation edge cases

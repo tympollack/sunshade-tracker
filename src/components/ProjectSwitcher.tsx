@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ChevronDown, Plus, Folder, Settings, Layers, Archive } from 'lucide-react';
 
 interface Project {
@@ -144,10 +145,13 @@ export function ProjectSwitcher({
 
           <div className="p-1.5 space-y-0.5">
             {/* All Projects Overview option */}
-            <button
-              onClick={() => {
-                setOpen(false);
-                router.push(`/${tenantSlug}/all`);
+            <Link
+              href={`/${tenantSlug}/all`}
+              data-testid="project-switcher-item-all"
+              onClick={(e) => {
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
+                  setOpen(false);
+                }
               }}
               className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs text-left transition-colors ${
                 isAll
@@ -160,13 +164,16 @@ export function ProjectSwitcher({
               {isAll && (
                 <span className="ml-auto text-[10px] text-emerald-500 font-semibold">Active</span>
               )}
-            </button>
+            </Link>
             {projects.map((project) => (
-              <button
+              <Link
                 key={project.id}
-                onClick={() => {
-                  setOpen(false);
-                  router.push(`/${tenantSlug}/${project.slug}`);
+                href={`/${tenantSlug}/${project.slug}`}
+                data-testid={`project-switcher-item-${project.slug}`}
+                onClick={(e) => {
+                  if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
+                    setOpen(false);
+                  }
                 }}
                 className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs text-left transition-colors ${
                   project.slug === currentProjectSlug
@@ -179,23 +186,25 @@ export function ProjectSwitcher({
                 {project.slug === currentProjectSlug && (
                   <span className="ml-auto text-[10px] text-emerald-500 font-semibold">Active</span>
                 )}
-              </button>
+              </Link>
             ))}
           </div>
 
           <div className="px-1.5 pb-1.5 border-t border-slate-800 mt-1 pt-1 space-y-0.5">
             {!isAll && (
               <>
-                <button
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/${tenantSlug}/${currentProjectSlug}?tab=schema`);
+                <Link
+                  href={`/${tenantSlug}/${currentProjectSlug}?tab=schema`}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
+                      setOpen(false);
+                    }
                   }}
                   className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
                 >
                   <Settings className="w-3.5 h-3.5 text-slate-500" />
                   <span>Project Schema Settings</span>
-                </button>
+                </Link>
                 {!isReadOnly && onArchiveCurrentProject && (
                   <button
                     onClick={() => {
@@ -210,16 +219,18 @@ export function ProjectSwitcher({
                 )}
               </>
             )}
-            <button
-              onClick={() => {
-                setOpen(false);
-                router.push(`/${tenantSlug}/settings`);
+            <Link
+              href={`/${tenantSlug}/settings`}
+              onClick={(e) => {
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
+                  setOpen(false);
+                }
               }}
               className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Workspace Settings…</span>
-            </button>
+            </Link>
           </div>
         </div>,
         document.body

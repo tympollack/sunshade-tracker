@@ -328,4 +328,161 @@ describe('Headless Ingest API Endpoint (POST /api/v1/items/ingest)', () => {
     expect(callArgs.item.status).toBe('in_progress');
     expect(callArgs.item.assignee).toBe('dev_user_new');
   });
+
+  it('TRK-15: rejects override_sprint with 422 if sprint is completed or locked', async () => {
+    const mockTenant = { id: 'tenant-123', slug: 'sunshade' };
+    const mockProject = {
+      id: 'proj-123',
+      tenant_id: mockTenant.id,
+      slug: 'portfolio',
+      settings: {
+        schema_version: '1.0',
+        hierarchy: [{ type: 'task', label: 'Task', level: 1, allowed_parents: [] }],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 }],
+        sprint_settings: {
+          sprints: [
+            { id: 'sprint-closed', name: 'Sprint 2026-Q1', status: 'completed' },
+            { id: 'sprint-active', name: 'Sprint 2026-Q2', status: 'active' },
+          ],
+        },
+      },
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'portfolio',
+        override_sprint: 'Sprint 2026-Q1',
+        items: [{ title: 'Item with closed sprint override' }],
+      }),
+    });
+
+    const res = await ingestHandler(req);
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.error).toContain('Completed or locked sprints cannot be selected');
+  });
+
+  it('TRK-15: falls back to unplanned when incoming item metadata references a completed or locked sprint', async () => {
+    const mockTenant = { id: 'tenant-123', slug: 'sunshade' };
+    const mockProject = {
+      id: 'proj-123',
+      tenant_id: mockTenant.id,
+      slug: 'portfolio',
+      settings: {
+        schema_version: '1.0',
+        hierarchy: [{ type: 'task', label: 'Task', level: 1, allowed_parents: [] }],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 }],
+        sprint_settings: {
+          sprints: [
+            { id: 'sprint-closed', name: 'Sprint 2026-Q1', status: 'completed' },
+            { id: 'sprint-active', name: 'Sprint 2026-Q2', status: 'active' },
+          ],
+        },
+      },
+    };
+
+    let upsertedPayload: any = null;
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+          upsert: vi.fn((payload: any) => {
+            upsertedPayload = payload;
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: { id: 'created-id', ...payload }, error: null }),
+              })),
+            };
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'portfolio',
+        items: [
+          {
+            external_ref_id: 'TASK-CLOSED-SPRINT',
+            title: 'Incoming task referencing closed sprint',
+            metadata: { sprint: 'Sprint 2026-Q1', priority: 'High' },
+          },
+        ],
+      }),
+    });
+
+    const res = await ingestHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(upsertedPayload.metadata.sprint).toBeUndefined();
+    expect(upsertedPayload.metadata.priority).toBe('High');
+  });
 });

@@ -30,7 +30,8 @@ export interface SprintItemRowProps {
   deviations?: SchemaDeviation[];
   onOpenReconciliation?: (dev: SchemaDeviation) => void;
   isAllProjects?: boolean;
-  allProjects?: { id: string; name: string }[];
+  allProjects?: Array<{ id: string; name: string; slug?: string; settings?: any }>;
+  projectSettings?: any;
   onUpdateStatus?: (itemId: string, status: string) => void;
   onUpdateSprint?: (itemId: string, sprint: string) => void;
   availableSprints?: string[];
@@ -55,6 +56,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   onOpenReconciliation,
   isAllProjects = false,
   allProjects = [],
+  projectSettings,
   onUpdateStatus,
   onUpdateSprint,
   availableSprints = [],
@@ -68,7 +70,9 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
   const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
   const itemDevs = deviations.filter((d) => d.itemId === item.id);
-  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata);
+  const parentProject = (allProjects as any[])?.find((p) => p.id === item.project_id || p.slug === item.project_id);
+  const parentGithubRepo = parentProject?.settings?.github_repo || parentProject?.settings?.github_repository || projectSettings?.github_repo;
+  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata, parentGithubRepo);
 
   return (
     <div
@@ -168,7 +172,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         )}
 
         {/* GitHub Badges */}
-        {prUrl && <GitHubBadge type="pr" compact value={prUrl} />}
+        {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} />}
         {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} />}
 
         {/* Title */}

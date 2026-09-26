@@ -12,6 +12,7 @@ import {
 import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { isGitHubMetadataKey } from '@/lib/github-metadata';
+import { normalizeAssignee } from '@/lib/assignee-utils';
 
 export interface ItemDetailsTabProps {
   item: WorkItem;
@@ -37,7 +38,9 @@ export interface ItemDetailsTabProps {
   eligibleParents: WorkItem[];
   isLoadingParents: boolean;
   myDisplayName: string;
+  canonicalUserHandle?: string;
   memberNames: string[];
+  isAllProjects?: boolean;
   metadata: Record<string, any>;
   metaDrafts: Record<string, string>;
   metaErrors: Record<string, string | null>;
@@ -83,7 +86,9 @@ export function ItemDetailsTab({
   eligibleParents,
   isLoadingParents,
   myDisplayName,
+  canonicalUserHandle,
   memberNames,
+  isAllProjects = false,
   metadata,
   metaDrafts,
   metaErrors,
@@ -203,21 +208,53 @@ export function ItemDetailsTab({
           </label>
           <div className="relative">
             <select
-              value={assignee}
-              onChange={(e) => onAssigneeChange(e.target.value)}
+              value={normalizeAssignee(assignee) || ''}
+              onChange={(e) => onAssigneeChange(normalizeAssignee(e.target.value) || '')}
+              data-testid="item-assignee-select"
               className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
             >
               <option value="">Unassigned</option>
-              <option value={myDisplayName}>{myDisplayName}</option>
+              {canonicalUserHandle && (
+                <option value={canonicalUserHandle}>
+                  {myDisplayName || `${canonicalUserHandle} (You)`}
+                </option>
+              )}
               {memberNames
-                .filter((name) => name !== myDisplayName)
-                .map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+                .filter((name) => normalizeAssignee(name) !== canonicalUserHandle)
+                .map((name) => {
+                  const canonical = normalizeAssignee(name) || name;
+                  return (
+                    <option key={canonical} value={canonical}>
+                      {canonical}
+                    </option>
+                  );
+                })}
             </select>
           </div>
+        </div>
+
+        {/* Sprint */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+            Sprint
+          </label>
+          <select
+            value={metadata.sprint || ''}
+            onChange={(e) => onUpdateMetaField('sprint', e.target.value)}
+            data-testid="item-sprint-select"
+            className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-mono"
+          >
+            <option value="">No Sprint (Backlog / Unplanned)</option>
+            {(effectiveProjectSettings.sprint_settings?.sprints || []).map((s) => (
+              <option key={s.id || s.name} value={s.name}>
+                {s.name} ({s.status})
+              </option>
+            ))}
+            {metadata.sprint &&
+              !(effectiveProjectSettings.sprint_settings?.sprints || []).some((s) => s.name === metadata.sprint) && (
+                <option value={metadata.sprint}>{metadata.sprint} (Custom / Inactive)</option>
+              )}
+          </select>
         </div>
 
         {/* External Ref ID */}
@@ -251,6 +288,11 @@ export function ItemDetailsTab({
               data-testid="item-project-select"
               className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
+              {isAllProjects && !selectedProjectId && (
+                <option value="" disabled>
+                  -- Select Target Project --
+                </option>
+              )}
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({p.slug})

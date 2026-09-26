@@ -15,6 +15,7 @@ export interface SparkViewContainerProps {
   allProjects: { id: string; slug: string; name: string }[];
   projectSlug: string;
   availableSprints: string[];
+  projectSettings?: any;
   workspaceMembers: { full_name: string; email?: string }[];
   items: WorkItem[];
   sparkPayload: string;
@@ -38,6 +39,7 @@ export function SparkViewContainer(props: SparkViewContainerProps) {
     allProjects,
     projectSlug,
     availableSprints,
+    projectSettings,
     workspaceMembers,
     items,
     sparkPayload,
@@ -48,6 +50,26 @@ export function SparkViewContainer(props: SparkViewContainerProps) {
     ingestedAffectedItemCount,
     onOpenReconciliation,
   } = props;
+
+  // TRK-15: Exclude completed, closed, or locked sprints from override dropdown
+  const selectableSprints = React.useMemo(() => {
+    return availableSprints.filter((sprintName) => {
+      const allSprints = [
+        ...(Array.isArray(projectSettings?.sprint_settings?.sprints) ? projectSettings.sprint_settings.sprints : []),
+        ...(Array.isArray(projectSettings?.sprint_settings?.managed_sprints) ? projectSettings.sprint_settings.managed_sprints : []),
+      ];
+      const match = allSprints.find(
+        (s: any) =>
+          s.name?.toLowerCase() === sprintName.toLowerCase() ||
+          s.id === sprintName
+      );
+      if (match) {
+        const st = (match.status || '').toLowerCase();
+        return st !== 'completed' && st !== 'closed' && st !== 'locked';
+      }
+      return true;
+    });
+  }, [availableSprints, projectSettings?.sprint_settings?.sprints, projectSettings?.sprint_settings?.managed_sprints]);
 
   return (
     <div className="grid md:grid-cols-2 gap-6">
@@ -120,7 +142,7 @@ export function SparkViewContainer(props: SparkViewContainerProps) {
               >
                 <option value="">Keep Payload Sprint</option>
                 <option value="__none__">Backlog (Unassigned)</option>
-                {availableSprints.map((s) => (
+                {selectableSprints.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>
@@ -214,3 +236,5 @@ export function SparkViewContainer(props: SparkViewContainerProps) {
     </div>
   );
 }
+
+export const IngestionDialog = SparkViewContainer;

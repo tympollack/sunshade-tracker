@@ -18,6 +18,7 @@ import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/t
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
+import { ProjectToolbar } from '@/components/board/ProjectToolbar';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
 export interface BoardViewContainerProps {
@@ -89,7 +90,7 @@ export interface BoardViewContainerProps {
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
   const {
-    hiddenBoardItems,
+    hiddenBoardItems = [],
     dismissedBoardDeviationBanner,
     setDismissedBoardDeviationBanner,
     onOpenReconciliation,
@@ -112,17 +113,17 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     handlePointModeChange,
     boardHeightMode,
     setBoardHeightMode,
-    collapsedColumnsUp,
+    collapsedColumnsUp = new Set(),
     toggleCollapseUp,
-    collapsedColumnsSideways,
+    collapsedColumnsSideways = new Set(),
     toggleCollapseSideways,
     collapseAllColumns,
     expandAllColumns,
     boardScrollRef,
     handleBoardWheel,
-    displayedStatuses,
-    columnCounts,
-    columnsItemsMap,
+    displayedStatuses = [],
+    columnCounts = {},
+    columnsItemsMap = {},
     quickAddColId,
     setQuickAddColId,
     quickAddTitle,
@@ -146,7 +147,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     handleDragOverCard,
     handleDrop,
     handleDropOnColEnd,
-    unmappedItems,
+    unmappedItems = [],
     draggedItem,
   } = props;
 
@@ -205,103 +206,25 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
         </div>
       )}
 
-      {/* Board Controls Toolbar */}
-      <div
-        data-testid="board-filter-toolbar"
-        className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full py-1 -mx-4 px-4 touch-pan-x sm:mx-0 sm:px-1 sm:flex-wrap sm:justify-between"
-      >
-        <div className="flex items-center gap-2 shrink-0">
-          <FilterMultiSelect
-            label="Status"
-            options={statusFilterOptions}
-            selectedIds={effectiveSelectedStatuses}
-            onChange={setSelectedStatuses}
-          />
-          <FilterMultiSelect
-            label="Level"
-            options={levelFilterOptions}
-            selectedIds={effectiveSelectedLevels}
-            onChange={setSelectedLevels}
-          />
-          <div className="flex items-center space-x-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs shrink-0 whitespace-nowrap min-h-[36px]">
-            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-[11px] font-medium text-slate-400 shrink-0">Sprint:</span>
-            <select
-              value={selectedSprint}
-              onChange={(e) => setSelectedSprint(e.target.value)}
-              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer shrink-0"
-            >
-              <option value="all" className="bg-slate-900 text-slate-200">All Sprints</option>
-              <option value="__none__" className="bg-slate-900 text-slate-200">Backlog (No Sprint)</option>
-              {availableSprints.map((s) => {
-                const count = items.filter((it) => it.metadata?.sprint === s).length;
-                const pts = items.filter((it) => it.metadata?.sprint === s).reduce((acc, it) => {
-                  const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-                  return acc + (isNaN(p) ? 0 : p);
-                }, 0);
-                return (
-                  <option key={s} value={s} className="bg-slate-900 text-slate-200">
-                    {s} ({count} {count === 1 ? 'item' : 'items'}{pts > 0 ? ` · ${pts} pts` : ''})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-          <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
-          {(effectiveSelectedStatuses.length < projectSettings.statuses.length ||
-            effectiveSelectedLevels.length < projectSettings.hierarchy.length ||
-            selectedSprint !== 'all') && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedStatuses(null);
-                setSelectedLevels(null);
-                setSelectedSprint('all');
-              }}
-              className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-1 rounded hover:bg-slate-800 transition-colors shrink-0 whitespace-nowrap min-h-[36px] flex items-center"
-            >
-              Reset Filters
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center space-x-3 shrink-0">
-          {/* Board Height Presets */}
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">
-            <span className="text-[10px] uppercase font-semibold text-slate-500 px-2">Height:</span>
-            {(['compact', 'standard', 'full'] as const).map((h) => (
-              <button
-                key={h}
-                onClick={() => setBoardHeightMode(h)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${
-                  boardHeightMode === h
-                    ? 'bg-slate-800 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {h}
-              </button>
-            ))}
-          </div>
-
-          {/* Quick Collapse / Expand Columns */}
-          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">
-            <button
-              onClick={collapseAllColumns}
-              className="px-2 py-1 text-[11px] text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-              title="Collapse all columns sideways"
-            >
-              Collapse
-            </button>
-            <button
-              onClick={expandAllColumns}
-              className="px-2 py-1 text-[11px] text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-              title="Expand all columns"
-            >
-              Expand
-            </button>
-          </div>
-        </div>
+      {/* Board Controls Toolbar (TRK-16, TRK-20) */}
+      <div data-testid="board-filter-toolbar" className="overflow-x-auto no-scrollbar w-full py-1 -mx-4 px-4 touch-pan-x sm:mx-0 sm:px-0">
+        <ProjectToolbar
+          statusFilterOptions={statusFilterOptions}
+          effectiveSelectedStatuses={effectiveSelectedStatuses}
+          setSelectedStatuses={setSelectedStatuses}
+          levelFilterOptions={levelFilterOptions}
+          effectiveSelectedLevels={effectiveSelectedLevels}
+          setSelectedLevels={setSelectedLevels}
+          selectedSprint={selectedSprint}
+          setSelectedSprint={setSelectedSprint}
+          availableSprints={availableSprints}
+          items={items}
+          projectSettings={projectSettings}
+          pointMode={pointMode}
+          handlePointModeChange={handlePointModeChange}
+          collapseAllColumns={collapseAllColumns}
+          expandAllColumns={expandAllColumns}
+        />
       </div>
 
       {/* Board Columns Canvas */}

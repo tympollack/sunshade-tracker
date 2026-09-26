@@ -27,6 +27,9 @@ import {
 } from '@/lib/sprint-utils';
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 import { bulkReassignProjects, reassignWorkItemProject } from '@/app/actions/trackerActions';
+import { useTabSync } from '@/hooks/useTabSync';
+import { broadcastItemMutation } from '@/lib/sync-channel';
+import { normalizeAssignee } from '@/lib/assignee-utils';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -393,9 +396,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [workspaceMembers, setWorkspaceMembers] = useState<{ user_id: string; full_name: string; email?: string }[]>([]);
 
   const myDisplayName = useMemo(() => {
-    if (currentUser?.full_name) return `Me (${currentUser.full_name})`;
-    if (currentUser?.email) return `Me (${currentUser.email.split('@')[0]})`;
-    return 'Me';
+    const handle = currentUser?.full_name || (currentUser?.email ? currentUser.email.split('@')[0] : '');
+    const canonical = normalizeAssignee(handle);
+    return canonical ? `${canonical} (You)` : 'You';
   }, [currentUser]);
 
   // Project Archive state
@@ -506,8 +509,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
     if (treeSelectedAssignees !== null) {
       res = res.filter((it) => {
-        if (!it.assignee) return treeSelectedAssignees.includes('__unassigned__');
-        return treeSelectedAssignees.includes(it.assignee);
+        const norm = normalizeAssignee(it.assignee);
+        if (!norm) return treeSelectedAssignees.includes('__unassigned__');
+        return treeSelectedAssignees.includes(norm);
       });
     }
     return res;
@@ -651,32 +655,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   // Edit Modal
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
-
-  const deepLinkedItemId = typeof searchParams?.item === 'string' ? searchParams.item : null;
-  const deepLinkHandledRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (deepLinkedItemId && deepLinkHandledRef.current !== deepLinkedItemId) {
-      const matched = items.find(
-        (it) => it.id === deepLinkedItemId || it.external_ref_id === deepLinkedItemId
-      );
-      if (matched) {
-        deepLinkHandledRef.current = deepLinkedItemId;
-        setEditingItem(matched);
-      } else if (items.length > 0) {
-        fetch(`/api/v1/items/bulk?ids=${encodeURIComponent(deepLinkedItemId)}`, {
-          headers: { 'x-tenant-slug': tenantSlug },
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.items && data.items.length > 0) {
-              deepLinkHandledRef.current = deepLinkedItemId;
-              setEditingItem(data.items[0]);
-            }
-          })
-          .catch(() => {});
-      }
-    }
-  }, [deepLinkedItemId, items, tenantSlug]);
 
   const modalProjectSettings = useMemo(() => {
     if (!editingItem) return projectSettings;
@@ -838,6 +816,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setIsRefreshing(false);
     }
   }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
+
+  useTabSync({
+    items,
+    setItems,
+    editingItem,
+    setEditingItem,
+    fetchData,
+    tenantSlug,
+    initialSearchParamItem: typeof searchParams?.item === 'string' ? searchParams.item : null,
+    loading,
+  });
 
   const handleSaveSchema = async (newSettings: ProjectSettings, targetSlugParam?: string) => {
     if (isReadOnly) {
@@ -1392,18 +1381,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     );
 
     if (isMovingProject && updates.project_id) {
-      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug);
-      if (!moveResult.success) {
-        throw new Error(moveResult.error || 'Failed to reassign work item project');
-      }
+      const moveResult = await reassignWorkItemProject(itemId, updates.project_id, tenantSlug, {
+        status: updates.status,
+        item_type: updates.item_type,
+      });
+      if (!moveResult.success) throw new Error(moveResult.error || 'Failed to reassign work item project');
 
       const otherUpdates = { ...updates };
       delete otherUpdates.project_id;
+      if (otherUpdates.status === updates.status) delete otherUpdates.status;
+      if (otherUpdates.item_type === updates.item_type) delete otherUpdates.item_type;
       if (Object.keys(otherUpdates).length > 0) {
-        const res = await apiFetch('/api/v1/items', {
-          method: 'PATCH',
-          body: JSON.stringify({ id: itemId, ...otherUpdates }),
-        });
+        const res = await apiFetch('/api/v1/items', { method: 'PATCH', body: JSON.stringify({ id: itemId, ...otherUpdates }) });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || `Failed to save changes (${res.status})`);
@@ -1412,10 +1401,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       const destProject = allProjects.find((p) => p.id === updates.project_id);
       const childCount = Math.max(0, (moveResult.updatedCount ?? 1) - 1);
-      const projName = destProject?.name || 'new project';
-      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${projName}`);
+      setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${destProject?.name || 'new project'}`);
       setTimeout(() => setBulkToast(null), 4000);
       fetchData();
+      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
       return;
     }
 
@@ -1433,6 +1422,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
+    broadcastItemMutation({ type: 'ITEM_UPDATED', itemId, updates: { ...updates, ...(data.item || {}) } });
     if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
       fetchData();
     }
@@ -1453,11 +1443,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         fetchData();
+        broadcastItemMutation({ type: 'ITEMS_REFRESH' });
         return false;
       }
+      broadcastItemMutation({ type: 'ITEM_DELETED', itemId });
       return true;
     } catch {
       fetchData();
+      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
       return false;
     }
   };
@@ -2046,19 +2039,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const assigneeFilterOptions = useMemo(() => {
     const unassignedCount = items.filter((it) => !it.assignee).length;
-    const knownAssignees = Array.from(new Set(items.map((it) => it.assignee).filter(Boolean) as string[]));
-    workspaceMembers.forEach((m) => {
-      if (m.full_name && !knownAssignees.includes(m.full_name)) {
-        knownAssignees.push(m.full_name);
-      }
-    });
+    const canonicalAssignees = Array.from(
+      new Set(
+        [
+          ...items.map((it) => normalizeAssignee(it.assignee)),
+          ...workspaceMembers.map((m) => normalizeAssignee(m.full_name)),
+        ].filter(Boolean) as string[]
+      )
+    );
 
     return [
       { id: '__unassigned__', label: 'Unassigned', count: unassignedCount },
-      ...knownAssignees.sort().map((name) => ({
+      ...canonicalAssignees.sort().map((name) => ({
         id: name,
         label: name,
-        count: items.filter((it) => it.assignee === name).length,
+        count: items.filter((it) => normalizeAssignee(it.assignee) === name).length,
       })),
     ];
   }, [workspaceMembers, items]);
@@ -2102,6 +2097,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const data = await res.json();
         if (data.item) {
           setItems((prev) => [...prev, data.item]);
+          broadcastItemMutation({ type: 'ITEM_CREATED', item: data.item });
           return data.item;
         }
       } else {
@@ -2727,6 +2723,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             allProjects={allProjects}
             projectSlug={projectSlug}
             availableSprints={availableSprints}
+            projectSettings={projectSettings}
             workspaceMembers={workspaceMembers}
             items={items}
             sparkPayload={sparkPayload}

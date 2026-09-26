@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ChevronDown, Building2, Plus, Crown, Shield, User as UserIcon, Check } from 'lucide-react';
 
 export interface Workspace {
@@ -175,10 +176,18 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = 
           <div className="p-1.5 space-y-1 max-h-80 overflow-y-auto">
             {workspaces.map((workspace) => {
               const isActive = workspace.slug === currentTenantSlug;
+              const targetUrl = workspace.projects?.[0]
+                ? `/${workspace.slug}/${workspace.projects[0].slug}`
+                : `/${workspace.slug}`;
               return (
-                <button
+                <Link
                   key={workspace.id}
-                  onClick={() => handleSwitch(workspace)}
+                  href={targetUrl}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
+                      setOpen(false);
+                    }
+                  }}
                   className={`w-full flex items-start space-x-3 px-3.5 py-2.5 rounded-lg text-left transition-colors ${
                     isActive
                       ? 'bg-emerald-500/10 border border-emerald-500/25 text-white'
@@ -226,7 +235,7 @@ export function WorkspaceSwitcher({ currentTenantSlug, workspaces, isScrolled = 
                       )}
                     </div>
                   </div>
-                </button>
+                </Link>
               );
             })}
           </div>

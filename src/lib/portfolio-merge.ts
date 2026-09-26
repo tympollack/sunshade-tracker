@@ -127,6 +127,8 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     });
   });
 
+  const firstGithubRepo = projects.find((p) => p.settings?.github_repo)?.settings?.github_repo;
+
   return {
     schema_version: '1.0',
     statuses: finalStatuses,
@@ -136,6 +138,7 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
       default_sprint: 'all',
       sprints: mergedSprints,
     },
+    ...(firstGithubRepo ? { github_repo: firstGithubRepo } : {}),
   };
 }
 

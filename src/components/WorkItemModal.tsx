@@ -11,6 +11,7 @@ import { WorkItemModalFooter } from '@/components/modal/WorkItemModalFooter';
 import { useWorkItemForm } from '@/hooks/useWorkItemForm';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
+import { useModalScrollLock } from '@/hooks/useModalScrollLock';
 
 export interface ProjectInfo {
   id: string;
@@ -31,6 +32,7 @@ export interface WorkItemModalProps {
   workspaceMembers?: { full_name: string; email?: string }[];
   tenantSlug?: string;
   isReadOnly?: boolean;
+  isAllProjects?: boolean;
   projects?: ProjectInfo[];
   onSelectItem?: (item: WorkItem) => void;
   onCreateChildItem?: (payload: QuickAddPayload) => Promise<WorkItem | void>;
@@ -48,6 +50,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
     workspaceMembers = [],
     tenantSlug,
     isReadOnly = false,
+    isAllProjects = false,
     projects = [],
     onSelectItem,
     onCreateChildItem,
@@ -61,6 +64,9 @@ export function WorkItemModal(props: WorkItemModalProps) {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const lastFetchedItemIdRef = useRef<string | null>(null);
 
+  // Background scroll lock and outside-hover isolation (TRK-18)
+  useModalScrollLock(Boolean(isOpen && item));
+
   const form = useWorkItemForm({
     item,
     isOpen,
@@ -70,6 +76,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
     workspaceMembers,
     tenantSlug,
     isReadOnly,
+    isAllProjects,
     projects,
     onSave: props.onSave,
     onClose,
@@ -124,7 +131,8 @@ export function WorkItemModal(props: WorkItemModalProps) {
 
   const childItems = allItems.filter((it) => it.parent_id === item.id);
   const isAssociatedTab = activeTab === 'associated' || activeTab === 'children';
-  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(form.metadata);
+  const projectGithubRepo = form.effectiveProjectSettings?.github_repo || form.effectiveProjectSettings?.github_repository;
+  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(form.metadata, projectGithubRepo);
 
   const handleDelete = async () => {
     try {
@@ -138,8 +146,20 @@ export function WorkItemModal(props: WorkItemModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      data-testid="work-item-modal-backdrop"
+    >
+      <div
+        data-modal-content="true"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+      >
         <WorkItemModalHeader
           item={item}
           itemType={form.itemType}
@@ -150,6 +170,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
           childCount={childItems.length}
           auditLogsCount={auditLogs.length}
           tenantSlug={tenantSlug}
+          projectSettings={form.effectiveProjectSettings}
           onClose={onClose}
           onRequestDelete={() => setShowConfirmDelete(true)}
           onRefreshAuditLogs={fetchAuditLogs}
@@ -201,7 +222,9 @@ export function WorkItemModal(props: WorkItemModalProps) {
               eligibleParents={form.eligibleParents}
               isLoadingParents={form.isLoadingParents}
               myDisplayName={form.myDisplayName}
+              canonicalUserHandle={form.canonicalUserHandle}
               memberNames={form.memberNames}
+              isAllProjects={isAllProjects}
               metadata={form.metadata}
               metaDrafts={form.metaDrafts}
               metaErrors={form.metaErrors}
