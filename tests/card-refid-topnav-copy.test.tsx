@@ -240,10 +240,16 @@ describe('TRK-05: WorkItemModal One-Click Copy', () => {
 
 describe('BUG-TRK-TOPNAV-BREATHING-ROOM: Vertical Spacing & Centering', () => {
   it('verifies page.tsx top view tabs container has my-auto and self-center for balanced breathing room', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+      path.resolve(__dirname, '../src/components/board/KanbanCard.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Top view switcher tabs container with vertical centering and horizontal spacing separation
     expect(pageContent).toContain('data-testid="top-view-tabs"');
@@ -257,10 +263,16 @@ describe('BUG-TRK-TOPNAV-BREATHING-ROOM: Vertical Spacing & Centering', () => {
 
 describe('BUG-TRK-CARD-REFID-PILL-OVERLAP: Inline Flex Layout on Kanban Cards', () => {
   it('verifies page.tsx Kanban card header renders type selector and CopyableRefId as side-by-side flex siblings', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+      path.resolve(__dirname, '../src/components/board/KanbanCard.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Header flex container
     expect(pageContent).toContain('flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2');

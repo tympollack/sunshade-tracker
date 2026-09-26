@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, User, UserX, ChevronDown, Loader2 } from 'lucide-react';
 import { HierarchyLevel, StatusDefinition } from '@/types/tracker';
+import { normalizeAssignee, formatAssigneeDisplay } from '@/lib/assignee-utils';
 
 export interface ProjectOption {
   id: string;
@@ -65,11 +66,18 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   getHierarchyForProject,
   getStatusesForProject,
 }) => {
-  const [selectedProjectSlug, setSelectedProjectSlug] = useState<string>(currentProjectSlug);
+  const canonicalUserHandle = useMemo(() => normalizeAssignee(myDisplayName) || '', [myDisplayName]);
+  const [selectedProjectSlug, setSelectedProjectSlug] = useState<string>(
+    isAllProjects
+      ? allProjects.some((p) => p.slug === currentProjectSlug && currentProjectSlug !== 'all')
+        ? currentProjectSlug
+        : ''
+      : currentProjectSlug
+  );
   const [title, setTitle] = useState('');
   const [itemType, setItemType] = useState('task');
   const [status, setStatus] = useState('not_started');
-  const [assignee, setAssignee] = useState(myDisplayName);
+  const [assignee, setAssignee] = useState(canonicalUserHandle);
   const [externalRef, setExternalRef] = useState('');
   const [createAnother, setCreateAnother] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -114,7 +122,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   useEffect(() => {
     if (isOpen && !prevIsOpenRef.current) {
       const initialProject = isAllProjects
-        ? currentProjectSlug || allProjects[0]?.slug || 'sunshade-tracker'
+        ? allProjects.some((p) => p.slug === currentProjectSlug && currentProjectSlug !== 'all')
+          ? currentProjectSlug
+          : ''
         : currentProjectSlug;
       setSelectedProjectSlug(initialProject);
       setTitle('');
@@ -136,7 +146,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         setStatus('not_started');
       }
 
-      setAssignee(myDisplayName);
+      setAssignee(canonicalUserHandle);
 
       // Auto-focus title input
       const timer = setTimeout(() => {
@@ -145,7 +155,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       return () => clearTimeout(timer);
     }
     prevIsOpenRef.current = isOpen;
-  }, [isOpen, currentProjectSlug, isAllProjects, allProjects, currentHierarchy, currentStatuses, myDisplayName]);
+  }, [isOpen, currentProjectSlug, isAllProjects, allProjects, currentHierarchy, currentStatuses, canonicalUserHandle]);
 
   // Ensure itemType and status stay valid if hierarchy/statuses change (e.g. project change)
   useEffect(() => {
@@ -240,11 +250,16 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
   const handleSubmit = async (keepOpen = false) => {
     if (!title.trim() || isSubmitting) return;
 
+    if (isAllProjects && (!selectedProjectSlug || !allProjects.some((p) => p.slug === selectedProjectSlug))) {
+      setErrorMessage('Please select a target project.');
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage(null);
 
     const targetProjectSlug = isAllProjects
-      ? selectedProjectSlug || allProjects[0]?.slug || 'sunshade-tracker'
+      ? selectedProjectSlug
       : currentProjectSlug;
 
     try {
@@ -253,7 +268,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
         title: title.trim(),
         item_type: itemType,
         status,
-        assignee: assignee || null,
+        assignee: normalizeAssignee(assignee),
         external_ref_id: externalRef.trim() || null,
       });
 
@@ -295,7 +310,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
       aria-labelledby="quick-add-modal-title"
       data-testid="quick-add-modal"
     >
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col">
+      <div
+        data-modal-content="true"
+        className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/50">
           <div className="flex items-center space-x-2">
@@ -351,6 +369,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500 font-sans cursor-pointer font-medium"
                 data-testid="quick-add-project-select"
               >
+                {!selectedProjectSlug && (
+                  <option value="" disabled>
+                    -- Select Target Project --
+                  </option>
+                )}
                 {allProjects.map((p) => (
                   <option key={p.id} value={p.slug}>
                     {p.name} ({p.slug})
@@ -439,7 +462,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                 >
                   <div className="flex items-center space-x-2 truncate">
                     <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate">{assignee || 'Unassigned'}</span>
+                    <span className="truncate">{formatAssigneeDisplay(assignee, canonicalUserHandle)}</span>
                   </div>
                   <ChevronDown
                     className={`w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform ${
@@ -489,11 +512,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setAssignee(myDisplayName);
+                        setAssignee(canonicalUserHandle);
                         setAssigneeDropdownOpen(false);
                       }}
                       className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                        assignee === myDisplayName
+                        assignee === canonicalUserHandle
                           ? 'bg-emerald-500/15 text-emerald-300 font-medium'
                           : 'text-slate-300 hover:bg-slate-800'
                       }`}
@@ -501,36 +524,45 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
                       <div className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[9px] font-bold">
                         Me
                       </div>
-                      <span className="truncate">{myDisplayName}</span>
+                      <span className="truncate">{canonicalUserHandle ? `${canonicalUserHandle} (You)` : 'You'}</span>
                     </button>
 
-                    {workspaceMembers.filter((m) => m.full_name && m.full_name !== myDisplayName).length > 0 && (
+                    {workspaceMembers.filter((m) => {
+                      const c = normalizeAssignee(m.full_name);
+                      return c && c !== canonicalUserHandle;
+                    }).length > 0 && (
                       <div className="border-t border-slate-800 my-1 pt-1">
                         <div className="px-2 py-0.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
                           Workspace Members
                         </div>
                         {workspaceMembers
-                          .filter((m) => m.full_name && m.full_name !== myDisplayName)
-                          .map((m) => (
-                            <button
-                              key={m.user_id}
-                              type="button"
-                              onClick={() => {
-                                setAssignee(m.full_name);
-                                setAssigneeDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                                assignee === m.full_name
-                                  ? 'bg-emerald-500/15 text-emerald-300 font-medium'
-                                  : 'text-slate-300 hover:bg-slate-800'
-                              }`}
-                            >
-                              <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-bold">
-                                {m.full_name[0]?.toUpperCase() || 'M'}
-                              </div>
-                              <span className="truncate">{m.full_name}</span>
-                            </button>
-                          ))}
+                          .filter((m) => {
+                            const c = normalizeAssignee(m.full_name);
+                            return c && c !== canonicalUserHandle;
+                          })
+                          .map((m) => {
+                            const c = normalizeAssignee(m.full_name) || m.full_name;
+                            return (
+                              <button
+                                key={m.user_id}
+                                type="button"
+                                onClick={() => {
+                                  setAssignee(c);
+                                  setAssigneeDropdownOpen(false);
+                                }}
+                                className={`w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                                  assignee === c
+                                    ? 'bg-emerald-500/15 text-emerald-300 font-medium'
+                                    : 'text-slate-300 hover:bg-slate-800'
+                                }`}
+                              >
+                                <div className="w-4 h-4 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[9px] font-bold">
+                                  {c[0]?.toUpperCase() || 'M'}
+                                </div>
+                                <span className="truncate">{c}</span>
+                              </button>
+                            );
+                          })}
                       </div>
                     )}
                   </div>,

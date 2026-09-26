@@ -7,7 +7,8 @@ import {
 export interface GetEfficiencyOptions {
   startDate?: string;
   endDate?: string;
-  period?: 'monthly' | 'all-time';
+  period?: 'monthly' | 'all-time' | 'month' | 'quarter' | 'year' | 'custom';
+  periodMultiplier?: number;
 }
 
 const DEFAULT_COMPLETION_STATUSES = new Set(['complete', 'completed', 'done', 'closed', 'resolved']);
@@ -195,11 +196,48 @@ export async function getTenantEfficiencyMetrics(
 
   const totalItemsCount = itemList.length;
 
-  // Active projects: only projects that have active work items
-  const activeProjectIdsWithItems = new Set(
-    itemList.map((i: any) => i.project_id).filter(Boolean)
-  );
-  const activeProjectsCount = activeProjectIdsWithItems.size;
+  // Active projects and active project-months tracking (BUG-TRK-PROJECT-MONTH-SCALING)
+  // Track distinct calendar months (YYYY-MM) in which each project had activity within the window.
+  // This prevents brief activity (e.g. 1 task created in Jan) from receiving a full 12 months of savings in annual reports.
+  const projectActiveMonthsMap = new Map<string, Set<string>>();
+
+  for (const item of itemList) {
+    const projId = item.project_id;
+    if (!projId) continue;
+
+    const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+    const updatedMs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+    const completedMs = getCompletionTimestamp(item) || 0;
+
+    const timestamps = [createdMs, updatedMs, completedMs].filter(
+      (ts) => ts > 0 && (isAllTime || (ts >= startMs && ts <= endMs))
+    );
+
+    if (timestamps.length > 0) {
+      if (!projectActiveMonthsMap.has(projId)) {
+        projectActiveMonthsMap.set(projId, new Set<string>());
+      }
+      const monthsSet = projectActiveMonthsMap.get(projId)!;
+      for (const ts of timestamps) {
+        const ym = new Date(ts).toISOString().slice(0, 7);
+        monthsSet.add(ym);
+      }
+    }
+  }
+
+  const activeProjectsCount = projectActiveMonthsMap.size;
+  let totalProjectMonths = 0;
+  for (const monthsSet of projectActiveMonthsMap.values()) {
+    totalProjectMonths += monthsSet.size;
+  }
+
+  // Determine multiplier for period if specified or custom
+  let periodMultiplier = options?.periodMultiplier;
+  if (!periodMultiplier) {
+    if (options?.period === 'quarter') periodMultiplier = 3;
+    else if (options?.period === 'year') periodMultiplier = 12;
+    else if (options?.period === 'monthly' || options?.period === 'month') periodMultiplier = 1;
+  }
 
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,
@@ -210,5 +248,7 @@ export async function getTenantEfficiencyMetrics(
     totalItemsCount,
     startDate,
     endDate,
+    periodMultiplier,
+    projectMonths: totalProjectMonths,
   });
 }

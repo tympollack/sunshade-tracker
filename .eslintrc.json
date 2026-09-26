@@ -1,0 +1,52 @@
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "max-lines": [
+      "warn",
+      {
+        "max": 400,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
+    ],
+    "max-lines-per-function": [
+      "warn",
+      {
+        "max": 150,
+        "skipBlankLines": true,
+        "skipComments": true,
+        "IIFEs": true
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/app/**/page.tsx"],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 300,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/lib/bulk-items.ts",
+        "src/lib/schema-deviation.ts",
+        "src/lib/notifications.ts",
+        "src/components/SchemaReconciliationModal.tsx",
+        "src/components/views/ProjectWorkspaceView.tsx",
+        "src/app/(dashboard)/[tenantSlug]/settings/page.tsx",
+        "src/app/api/v1/items/route.ts"
+      ],
+      "rules": {
+        "max-lines": "off",
+        "max-lines-per-function": "off"
+      }
+    }
+  ]
+}

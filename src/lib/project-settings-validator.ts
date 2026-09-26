@@ -28,6 +28,16 @@ export function validateProjectSettings(settings: any): ValidationResult {
     };
   }
 
+  // Validate github_repo if present
+  if ('github_repo' in settings && settings.github_repo !== null && settings.github_repo !== undefined) {
+    if (typeof settings.github_repo !== 'string') {
+      errors.push({
+        path: 'github_repo',
+        message: 'github_repo must be a string (e.g. "owner/repo")',
+      });
+    }
+  }
+
   // 1. Validate automations if present
   if ('automations' in settings && settings.automations !== null && settings.automations !== undefined) {
     if (!Array.isArray(settings.automations)) {

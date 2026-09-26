@@ -24,7 +24,10 @@ export function ConfirmArchiveProjectModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
-      <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-6 space-y-5">
+      <div
+        data-modal-content="true"
+        className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-6 space-y-5"
+      >
         <div className="flex items-start justify-between">
           <div className="flex items-center space-x-3">
             <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">

@@ -248,10 +248,16 @@ describe('BUG-TRK-MOBILE-FILTERBAR-SCROLL - Touch Pan Scrolling & Accessible Fil
   });
 
   it('verifies page.tsx Board Controls Toolbar provides horizontal touch scroll with touch-pan-x and main-mobile-clearance', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+      path.resolve(__dirname, '../src/components/views/BoardViewContainer.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Toolbar must have touch-pan-x, overflow-x-auto, no-scrollbar, -mx-4 px-4
     expect(pageContent).toContain('data-testid="board-filter-toolbar"');
@@ -315,10 +321,13 @@ describe('BUG-TRK-MOBILE-HEADER-BRAND-COLLAPSE - Reclaim Horizontal Space via Br
 
   it('verifies dashboard headers pass hideTextOnMobile and shrink-0 to SunShadeLogo', () => {
     // Check main dashboard page
-    const dashboardPage = fs.readFileSync(
+    const dashboardPage = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+    ]
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
     expect(dashboardPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile');
 
     // Check settings page
@@ -329,10 +338,13 @@ describe('BUG-TRK-MOBILE-HEADER-BRAND-COLLAPSE - Reclaim Horizontal Space via Br
     expect(settingsPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
 
     // Check efficiency page
-    const efficiencyPage = fs.readFileSync(
+    const efficiencyPage = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/settings/efficiency/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/efficiency/EfficiencyStatementView.tsx'),
+    ]
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
     expect(efficiencyPage).toContain('<SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile />');
   });
 });

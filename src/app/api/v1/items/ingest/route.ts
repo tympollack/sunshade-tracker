@@ -106,23 +106,49 @@ export async function POST(req: NextRequest) {
 
     const settings = project.settings || {};
 
-    // Validate override_sprint against managed_sprints if configured
-    if (
-      override_sprint &&
-      override_sprint !== '__none__' &&
-      Array.isArray(settings?.sprint_settings?.managed_sprints) &&
-      settings.sprint_settings.managed_sprints.length > 0
-    ) {
-      const match = settings.sprint_settings.managed_sprints.some(
+    // Helper to check if a sprint is closed/completed/locked
+    const isSprintClosed = (sprintVal?: string | null): boolean => {
+      if (!sprintVal || sprintVal === '__none__' || sprintVal === 'unplanned') return false;
+      const allSprints = [
+        ...(Array.isArray(settings?.sprint_settings?.sprints) ? settings.sprint_settings.sprints : []),
+        ...(Array.isArray(settings?.sprint_settings?.managed_sprints) ? settings.sprint_settings.managed_sprints : []),
+      ];
+      const match = allSprints.find(
         (s: any) =>
-          s.name?.toLowerCase() === override_sprint.trim().toLowerCase() ||
-          s.id === override_sprint.trim()
+          s.name?.toLowerCase() === sprintVal.trim().toLowerCase() ||
+          s.id === sprintVal.trim()
       );
-      if (!match) {
+      if (match) {
+        const st = (match.status || '').toLowerCase();
+        return st === 'completed' || st === 'closed' || st === 'locked';
+      }
+      return false;
+    };
+
+    // Validate override_sprint against closed/completed/locked status and managed_sprints if configured
+    if (override_sprint && override_sprint !== '__none__') {
+      if (isSprintClosed(override_sprint)) {
         return NextResponse.json(
-          { error: `Invalid "override_sprint" '${override_sprint}'. Must match an existing sprint in this project.` },
+          { error: `Invalid "override_sprint" '${override_sprint}'. Completed or locked sprints cannot be selected during ingestion.` },
           { status: 422 }
         );
+      }
+
+      if (
+        Array.isArray(settings?.sprint_settings?.managed_sprints) &&
+        settings.sprint_settings.managed_sprints.length > 0
+      ) {
+        const match = settings.sprint_settings.managed_sprints.some(
+          (s: any) =>
+            s.name?.toLowerCase() === override_sprint.trim().toLowerCase() ||
+            s.id === override_sprint.trim()
+        );
+        if (!match) {
+          return NextResponse.json(
+            { error: `Invalid "override_sprint" '${override_sprint}'. Must match an existing sprint in this project.` },
+            { status: 422 }
+          );
+        }
       }
     }
 
@@ -261,6 +287,11 @@ export async function POST(req: NextRequest) {
         } else if (override_sprint) {
           effectiveMetadata.sprint = override_sprint;
         }
+      }
+
+      // If incoming item references a completed, closed, or locked sprint, fall back to unplanned
+      if (effectiveMetadata.sprint && isSprintClosed(effectiveMetadata.sprint)) {
+        delete effectiveMetadata.sprint;
       }
 
       let effectiveAssignee = item.assignee || null;

@@ -73,7 +73,8 @@ export async function getTenantEfficiencyMetricsAction(
 export async function reassignWorkItemProject(
   itemId: string,
   newProjectId: string,
-  tenantSlug?: string
+  tenantSlug?: string,
+  overrides?: { status?: string; item_type?: string }
 ): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
   try {
     if (!itemId || !newProjectId) {
@@ -155,23 +156,26 @@ export async function reassignWorkItemProject(
       return { success: false, error: 'Destination project not found in this workspace' };
     }
 
-    // Validate target item type and status against destination project schema
+    // Validate target item type and status against destination project schema (accounting for overrides)
+    const effectiveType = overrides?.item_type || targetItem.item_type;
+    const effectiveStatus = overrides?.status || targetItem.status;
+
     if (destProject.settings?.hierarchy?.length) {
       const allowedTypes = destProject.settings.hierarchy.map((h: any) => h.type);
-      if (!allowedTypes.includes(targetItem.item_type)) {
+      if (!allowedTypes.includes(effectiveType)) {
         return {
           success: false,
-          error: `Item type '${targetItem.item_type}' is not supported in destination project '${destProject.name}'. Allowed types: [${allowedTypes.join(', ')}]`,
+          error: `Item type '${effectiveType}' is not supported in destination project '${destProject.name}'. Allowed types: [${allowedTypes.join(', ')}]`,
         };
       }
     }
 
     if (destProject.settings?.statuses?.length) {
       const allowedStatuses = destProject.settings.statuses.map((s: any) => s.id);
-      if (!allowedStatuses.includes(targetItem.status)) {
+      if (!allowedStatuses.includes(effectiveStatus)) {
         return {
           success: false,
-          error: `Status '${targetItem.status}' is not supported in destination project '${destProject.name}'. Allowed statuses: [${allowedStatuses.join(', ')}]`,
+          error: `Status '${effectiveStatus}' is not supported in destination project '${destProject.name}'. Allowed statuses: [${allowedStatuses.join(', ')}]`,
         };
       }
     }
@@ -207,6 +211,12 @@ export async function reassignWorkItemProject(
       project_id: newProjectId,
       updated_at: nowIso,
     };
+    if (overrides?.status) {
+      targetUpdateFields.status = overrides.status;
+    }
+    if (overrides?.item_type) {
+      targetUpdateFields.item_type = overrides.item_type;
+    }
     if (shouldDisconnectParent) {
       targetUpdateFields.parent_id = null;
     }
@@ -237,6 +247,8 @@ export async function reassignWorkItemProject(
           .update({
             project_id: targetItem.project_id,
             parent_id: targetItem.parent_id,
+            status: targetItem.status,
+            item_type: targetItem.item_type,
             updated_at: new Date().toISOString(),
           })
           .eq('id', itemId);
@@ -266,6 +278,12 @@ export async function reassignWorkItemProject(
     const changedFields: Record<string, any> = {
       project_id: { before: targetItem.project_id, after: newProjectId },
     };
+    if (overrides?.status && overrides.status !== targetItem.status) {
+      changedFields.status = { before: targetItem.status, after: overrides.status };
+    }
+    if (overrides?.item_type && overrides.item_type !== targetItem.item_type) {
+      changedFields.item_type = { before: targetItem.item_type, after: overrides.item_type };
+    }
     if (shouldDisconnectParent) {
       changedFields.parent_id = {
         before: oldParentId,

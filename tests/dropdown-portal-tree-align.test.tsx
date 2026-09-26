@@ -264,10 +264,15 @@ describe('BUG-TRK-TREE-TITLE-TRUNCATE-ALIGN - Strict Two-Zone Layout & Column Ta
 
 describe('BUG-TRK-NAV-ACTIONS-OVERFLOW - Header Tab Consolidation & Safe Right Actions Space', () => {
   it('verifies page.tsx restricts primary tabs to board, tree, sprint and encapsulates secondary tools in Tools dropdown', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Primary tabs must only be board, tree, sprint
     expect(pageContent).toContain("(['board', 'tree', 'sprint'] as const).map((tab)");
@@ -276,10 +281,15 @@ describe('BUG-TRK-NAV-ACTIONS-OVERFLOW - Header Tab Consolidation & Safe Right A
   });
 
   it('verifies right header actions wrapper has ml-auto shrink-0 and Add Item button has whitespace-nowrap shrink-0', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+      path.resolve(__dirname, '../src/components/views/ProjectWorkspaceView.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
 
     // Right actions wrapper
     expect(pageContent).toContain('className="flex items-center gap-2 shrink-0 ml-auto"');

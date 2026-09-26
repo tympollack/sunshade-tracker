@@ -183,10 +183,14 @@ describe('BUG-TRK-DND-LAYOUT-STABILITY - Zero-Height Absolute Insertion Rails & 
 
 describe('BUG-TRK-TOPNAV-HEIGHT-LOCK - Rigid 56px Header & View Tabs Scrollbar Protection', () => {
   it('enforces 56px locked height, flex-nowrap, and overflow-hidden on dashboard header', () => {
-    const pageContent = fs.readFileSync(
+    const pageFiles = [
       path.resolve(__dirname, '../src/app/(dashboard)/[tenantSlug]/[projectSlug]/page.tsx'),
-      'utf-8'
-    );
+      path.resolve(__dirname, '../src/components/board/ProjectHeader.tsx'),
+    ];
+    const pageContent = pageFiles
+      .filter(fs.existsSync)
+      .map((p) => fs.readFileSync(p, 'utf-8'))
+      .join('\n');
     // Header must lock height to 56px / h-14 with min/max bounds and overflow-hidden
     expect(pageContent).toContain('h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden');
     // Tab bar must have horizontal scroll wrapper with no-scrollbar

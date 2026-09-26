@@ -2,6 +2,8 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 
+import { DEFAULT_COMPLETED_STATUS_IDS } from '@/lib/sprint-utils';
+
 export interface ProgressStatusSegment {
   id: string;
   label: string;
@@ -18,18 +20,8 @@ export interface SprintProgressBarProps {
   label?: string;
   className?: string;
   onOpenChange?: (open: boolean) => void;
+  completedStatusIds?: Set<string>;
 }
-
-const COMPLETED_STATUS_IDS = new Set([
-  'done',
-  'closed',
-  'complete',
-  'completed',
-  'shipped',
-  'approved',
-  'published',
-  'resolved',
-]);
 
 export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   progressPct,
@@ -39,6 +31,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
   label,
   className = '',
   onOpenChange,
+  completedStatusIds,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -71,6 +64,8 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       : `Goal: ${goal}`
     : label || 'Goal: Progress';
 
+  const completionSet = completedStatusIds || DEFAULT_COMPLETED_STATUS_IDS;
+
   // Order segments: completed on the left, then remaining statuses by highest to lowest %
   const orderedSegments = useMemo(() => {
     const active = segments.filter((s) => s.count > 0 || s.pct > 0);
@@ -78,10 +73,10 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
 
     // Separate completed from non-completed statuses
     const completed = active.filter((s) =>
-      COMPLETED_STATUS_IDS.has(s.id.toLowerCase())
+      completionSet.has(s.id.toLowerCase().trim())
     );
     const nonCompleted = active.filter(
-      (s) => !COMPLETED_STATUS_IDS.has(s.id.toLowerCase())
+      (s) => !completionSet.has(s.id.toLowerCase().trim())
     );
 
     // Completed on the left (sorted by % descending if multiple completed)
@@ -91,7 +86,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
     nonCompleted.sort((a, b) => b.pct - a.pct);
 
     return [...completed, ...nonCompleted];
-  }, [segments]);
+  }, [segments, completionSet]);
 
   // Target segment boundaries across 100%
   const targetBoundaries = useMemo(() => {
@@ -203,7 +198,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       isFilled100 &&
       (animatedBoundaries.length === 0 ||
         (animatedBoundaries.length === 1 &&
-          COMPLETED_STATUS_IDS.has(animatedBoundaries[0].id.toLowerCase())))
+          completionSet.has(animatedBoundaries[0].id.toLowerCase().trim())))
     ) {
       // 100% complete sprint: luminous emerald-teal liquid fill
       return {
@@ -250,7 +245,7 @@ export const SprintProgressBar: React.FC<SprintProgressBarProps> = ({
       background: `linear-gradient(120deg, ${stops.join(', ')})`,
       boxShadow: '0 0 10px rgba(34, 197, 94, 0.3)',
     };
-  }, [isFilled100, animatedBoundaries]);
+  }, [isFilled100, animatedBoundaries, completionSet]);
 
   const isFullWidth = orderedSegments.length > 0 || isFilled100;
   const fillWidth = isFullWidth ? '100%' : `${progressPct}%`;

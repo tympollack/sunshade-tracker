@@ -368,4 +368,76 @@ describe('Value Ledger Server Aggregator & API Route', () => {
     expect(boundedResult.dateRange.startDate).toBe('2026-02-01T00:00:00.000Z');
     expect(boundedResult.dateRange.endDate).toBe('2026-03-31T23:59:59.999Z');
   });
+
+  it('scales annual efficiency metrics strictly by distinct project-months to avoid over-crediting brief activity', async () => {
+    // Proj-001 active in Jan and Feb (2 project-months)
+    // Proj-002 active in Mar only (1 project-month)
+    // Total project-months = 3 (6.0 hrs), NOT 2 projects * 12 mos = 24 project-months (48.0 hrs)
+    const itemProj1Jan = {
+      id: 'item-p1-jan',
+      project_id: 'proj-001',
+      status: 'in_dev',
+      created_at: '2026-01-10T10:00:00.000Z',
+      updated_at: '2026-01-10T10:00:00.000Z',
+    };
+    const itemProj1Feb = {
+      id: 'item-p1-feb',
+      project_id: 'proj-001',
+      status: 'in_dev',
+      created_at: '2026-02-14T10:00:00.000Z',
+      updated_at: '2026-02-14T10:00:00.000Z',
+    };
+    const itemProj2Mar = {
+      id: 'item-p2-mar',
+      project_id: 'proj-002',
+      status: 'in_dev',
+      created_at: '2026-03-05T10:00:00.000Z',
+      updated_at: '2026-03-05T10:00:00.000Z',
+    };
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => ({
+                maybeSingle: async () => ({ data: mockTenant, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'projects') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [mockProject1, mockProject2], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'work_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => Promise.resolve({ data: [itemProj1Jan, itemProj1Feb, itemProj2Mar], error: null }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({ in: () => ({ order: () => Promise.resolve({ data: [], error: null }) }) }) }) };
+    });
+
+    const annualResult = await getTenantEfficiencyMetrics('pym-energy', {
+      period: 'year',
+      startDate: '2026-01-01T00:00:00.000Z',
+      endDate: '2026-12-31T23:59:59.999Z',
+    });
+
+    expect(annualResult.kpis.activeProjectsCount).toBe(2);
+    // 3 distinct project-months * 2.0 hrs = 6.0 hrs ($750.00)
+    expect(annualResult.itemizedYields[0].hoursReclaimed).toBe(6.0);
+    expect(annualResult.itemizedYields[0].realizedValue).toBe(750.0);
+    expect(annualResult.itemizedYields[0].metric).toBe('2 active projects (3 proj-mo)');
+  });
 });

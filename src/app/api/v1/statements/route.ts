@@ -4,6 +4,63 @@ import { getTenantEfficiencyMetrics } from '@/lib/services/valueLedgerServer';
 import { formatEfficiencyStatementCSV } from '@/lib/services/valueLedgerService';
 
 /**
+ * Validates that a string is a well-formed ISO 8601 date string and corresponds to a real calendar date.
+ * Rejects locale strings, non-ISO formats, and calendar overflows (e.g. 2026-02-31).
+ */
+function isValidIsoDate(str: string): boolean {
+  if (typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  const isoRegex =
+    /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+  const match = trimmed.match(isoRegex);
+  if (!match) return false;
+
+  const parts = trimmed.split(/[T ]/);
+  const datePart = parts[0];
+  const [yearStr, monthStr, dayStr] = datePart.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [
+    31,
+    isLeapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  if (day < 1 || day > daysInMonth[month - 1]) {
+    return false;
+  }
+
+  if (match[3] !== undefined && match[4] !== undefined) {
+    const hour = parseInt(match[3], 10);
+    const minute = parseInt(match[4], 10);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return false;
+    }
+    if (match[5] !== undefined) {
+      const second = parseInt(match[5], 10);
+      if (second < 0 || second > 59) {
+        return false;
+      }
+    }
+  }
+
+  const d = new Date(trimmed);
+  return !isNaN(d.getTime());
+}
+
+/**
  * GET /api/v1/statements
  *
  * Dynamic Statement and Value Realization aggregation endpoint (FEAT-TRK-DYNAMIC-STATEMENT-REPORTS).
@@ -33,8 +90,25 @@ export async function GET(req: NextRequest) {
     }
 
     const periodParam = (searchParams.get('period') || 'month').toLowerCase();
-    let startDate = searchParams.get('start_date') || undefined;
-    let endDate = searchParams.get('end_date') || undefined;
+    const startDateParam = searchParams.get('start_date');
+    const endDateParam = searchParams.get('end_date');
+
+    // Strict ISO date format and calendar validity checks (BUG-TRK-DATE-VALIDATION)
+    if (startDateParam && !isValidIsoDate(startDateParam)) {
+      return NextResponse.json(
+        { error: 'Invalid date: start_date must be a valid ISO date.' },
+        { status: 400 }
+      );
+    }
+    if (endDateParam && !isValidIsoDate(endDateParam)) {
+      return NextResponse.json(
+        { error: 'Invalid date: end_date must be a valid ISO date.' },
+        { status: 400 }
+      );
+    }
+
+    let startDate = startDateParam || undefined;
+    let endDate = endDateParam || undefined;
 
     const now = new Date();
 
@@ -53,11 +127,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Date range validation: end_date >= start_date
+    // Date range validation: end_date >= start_date (BUG-TRK-DATE-VALIDATION)
     if (startDate && endDate) {
       const startMs = new Date(startDate).getTime();
       const endMs = new Date(endDate).getTime();
-      if (!isNaN(startMs) && !isNaN(endMs) && endMs < startMs) {
+      if (endMs < startMs) {
         return NextResponse.json(
           { error: 'Invalid date range: end_date must be greater than or equal to start_date.' },
           { status: 400 }
@@ -65,10 +139,23 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const period =
+      periodParam === 'all-time'
+        ? 'all-time'
+        : periodParam === 'year'
+        ? 'year'
+        : periodParam === 'quarter'
+        ? 'quarter'
+        : periodParam === 'month'
+        ? 'monthly'
+        : 'custom';
+
     const payload = await getTenantEfficiencyMetrics(targetSlug, {
       startDate,
       endDate,
-      period: periodParam === 'all-time' ? 'all-time' : 'monthly',
+      period,
+      periodMultiplier:
+        periodParam === 'year' ? 12 : periodParam === 'quarter' ? 3 : periodParam === 'month' ? 1 : undefined,
     });
 
     // Custom period label decoration
