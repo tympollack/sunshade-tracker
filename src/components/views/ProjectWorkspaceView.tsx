@@ -342,6 +342,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     [allProjects, projectSlug]
   );
   const isAllProjects = isOverviewSlug && !hasMatchingProject;
+  const currentProjectId = useMemo(
+    () => allProjects.find((p) => p.slug === projectSlug)?.id,
+    [allProjects, projectSlug]
+  );
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -818,12 +822,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
   useTabSync({
-    items,
-    setItems,
-    editingItem,
-    setEditingItem,
-    fetchData,
-    tenantSlug,
+    items, setItems, editingItem, setEditingItem, fetchData,
+    tenantSlug, projectSlug, currentProjectId, isAllProjects,
     initialSearchParamItem: typeof searchParams?.item === 'string' ? searchParams.item : null,
     loading,
   });
@@ -1375,9 +1375,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   };
 
   const handleSaveModalItem = async (itemId: string, updates: Partial<WorkItem>) => {
+    const existingItem = items.find((it) => it.id === itemId) || editingItem;
     const currentProj = allProjects.find((p) => p.slug === projectSlug);
     const isMovingProject = Boolean(
-      updates.project_id && (!currentProj || updates.project_id !== currentProj.id)
+      updates.project_id &&
+      (existingItem
+        ? existingItem.project_id !== updates.project_id
+        : currentProj && updates.project_id !== currentProj.id)
     );
 
     if (isMovingProject && updates.project_id) {
@@ -1404,7 +1408,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${destProject?.name || 'new project'}`);
       setTimeout(() => setBulkToast(null), 4000);
       fetchData();
-      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
+      broadcastItemMutation({ type: 'ITEMS_REFRESH', tenantSlug, projectId: updates.project_id, sourceProjectId: existingItem?.project_id });
       return;
     }
 
@@ -1422,7 +1426,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .map((it) => (it.id === itemId ? { ...it, ...updates, ...(data.item || {}) } : it))
         .sort((a, b) => a.order_index - b.order_index)
     );
-    broadcastItemMutation({ type: 'ITEM_UPDATED', itemId, updates: { ...updates, ...(data.item || {}) } });
+    broadcastItemMutation({ type: 'ITEM_UPDATED', itemId, updates: { ...updates, ...(data.item || {}) }, tenantSlug, projectId: currentProjectId || updates.project_id || existingItem?.project_id });
     if (updates.project_id || (updates.metadata && 'sprint' in updates.metadata)) {
       fetchData();
     }
@@ -1443,14 +1447,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         fetchData();
-        broadcastItemMutation({ type: 'ITEMS_REFRESH' });
+        broadcastItemMutation({ type: 'ITEMS_REFRESH', tenantSlug, projectId: currentProjectId, projectSlug });
         return false;
       }
-      broadcastItemMutation({ type: 'ITEM_DELETED', itemId });
+      broadcastItemMutation({ type: 'ITEM_DELETED', itemId, tenantSlug, projectId: currentProjectId });
       return true;
     } catch {
       fetchData();
-      broadcastItemMutation({ type: 'ITEMS_REFRESH' });
+      broadcastItemMutation({ type: 'ITEMS_REFRESH', tenantSlug, projectId: currentProjectId, projectSlug });
       return false;
     }
   };
@@ -2097,7 +2101,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const data = await res.json();
         if (data.item) {
           setItems((prev) => [...prev, data.item]);
-          broadcastItemMutation({ type: 'ITEM_CREATED', item: data.item });
+          broadcastItemMutation({ type: 'ITEM_CREATED', item: data.item, tenantSlug, projectId: data.item?.project_id || currentProjectId });
           return data.item;
         }
       } else {

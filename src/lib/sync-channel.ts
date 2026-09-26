@@ -8,10 +8,33 @@ import { WorkItem } from '@/types/tracker';
 export const TRACKER_BROADCAST_CHANNEL_NAME = 'sunshade_tracker_items';
 
 export type SyncMessage =
-  | { type: 'ITEM_UPDATED'; itemId: string; updates: Partial<WorkItem> }
-  | { type: 'ITEM_CREATED'; item: WorkItem }
-  | { type: 'ITEM_DELETED'; itemId: string }
-  | { type: 'ITEMS_REFRESH'; tenantSlug?: string; projectSlug?: string };
+  | {
+      type: 'ITEM_UPDATED';
+      itemId: string;
+      updates: Partial<WorkItem>;
+      tenantSlug?: string;
+      projectId?: string;
+      sourceProjectId?: string;
+    }
+  | {
+      type: 'ITEM_CREATED';
+      item: WorkItem;
+      tenantSlug?: string;
+      projectId?: string;
+    }
+  | {
+      type: 'ITEM_DELETED';
+      itemId: string;
+      tenantSlug?: string;
+      projectId?: string;
+    }
+  | {
+      type: 'ITEMS_REFRESH';
+      tenantSlug?: string;
+      projectSlug?: string;
+      projectId?: string;
+      sourceProjectId?: string;
+    };
 
 let channelInstance: BroadcastChannel | null = null;
 

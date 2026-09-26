@@ -254,7 +254,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       {/* Card Title & Description Toggle */}
       <div className="flex items-start justify-between gap-1.5 min-w-0">
         <a
-          href={`?item=${encodeURIComponent(item.external_ref_id || item.id)}`}
+          href={typeof window !== 'undefined' ? (() => { try { const sp = new URLSearchParams(window.location.search); sp.set('item', item.external_ref_id || item.id); return `?${sp.toString()}`; } catch { return `?item=${encodeURIComponent(item.external_ref_id || item.id)}`; } })() : `?item=${encodeURIComponent(item.external_ref_id || item.id)}`}
           data-testid={`kanban-card-link-${item.id}`}
           onClick={(e) => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;

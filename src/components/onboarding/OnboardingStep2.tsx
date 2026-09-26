@@ -103,11 +103,12 @@ export function OnboardingStep2({
             <input
               type="text"
               value={projectSlug}
-              onChange={(e) => onProjectSlugChange(e.target.value)}
+              onChange={(e) => onProjectSlugChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
               placeholder="q4-roadmap"
               className="flex-1 px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-emerald-400 text-sm font-mono focus:outline-none focus:border-emerald-500 transition-colors"
             />
           </div>
+          <p className="text-xs text-slate-500">Lowercase letters, numbers, and hyphens only</p>
         </div>
       </div>
 
