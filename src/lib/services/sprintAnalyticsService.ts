@@ -12,6 +12,8 @@
  * - Cycle Time & WIP Age across closed and in-progress items.
  */
 
+import { MetricRules } from '@/types/tracker';
+
 export interface HistoricalSprint {
   id: string;
   name: string;
@@ -33,6 +35,99 @@ export interface WorkItemLifecycleData {
   [key: string]: any;
 }
 
+/**
+ * Canonical task specification defaults for sprint governance & metric rules.
+ */
+export const DEFAULT_METRIC_RULES: Required<MetricRules> = {
+  velocity_window: 3,
+  velocity_trend_threshold: 0.10,
+  reliability_healthy_threshold: 85,
+  reliability_warning_threshold: 70,
+  late_runway_threshold: 0.60,
+  late_runway_max_points: 2,
+  feature_story_types: ['story', 'feature'],
+  allowed_late_types: ['chore', 'task', 'debt', 'documentation', 'doc', 'test', 'bug'],
+  enforce_zero_sum: true,
+  unstarted_statuses: ['not_started', 'todo', 'unplanned', 'backlog', 'open', 'planned', 'pitch_backlog'],
+  emergency_priorities: ['P0', 'CRITICAL', 'EMERGENCY'],
+  lock_estimates_in_active_sprint: true,
+  scope_creep_warning_threshold: 15,
+  scope_creep_danger_threshold: 30,
+};
+
+/**
+ * Resolves effective metric rules by merging provided or stored JSON settings
+ * with canonical task specification defaults.
+ */
+export function resolveMetricRules(settingsOrObject?: any): Required<MetricRules> {
+  if (!settingsOrObject || typeof settingsOrObject !== 'object') {
+    return { ...DEFAULT_METRIC_RULES };
+  }
+
+  // Look for metric_rules or sprint_metrics in various supported JSON locations:
+  const rawRules: any =
+    settingsOrObject.sprint_metrics ||
+    settingsOrObject.metric_rules ||
+    settingsOrObject.sprint_settings?.metric_rules ||
+    settingsOrObject.sprint_settings?.metrics ||
+    settingsOrObject.metadata?.metric_rules ||
+    settingsOrObject.metadata?.sprint_metrics ||
+    settingsOrObject;
+
+  const resolved: Required<MetricRules> = { ...DEFAULT_METRIC_RULES };
+
+  if (typeof rawRules === 'object' && rawRules !== null) {
+    if (typeof rawRules.velocity_window === 'number' && rawRules.velocity_window > 0) {
+      resolved.velocity_window = Math.max(1, Math.round(rawRules.velocity_window));
+    }
+    if (typeof rawRules.velocity_trend_threshold === 'number' && rawRules.velocity_trend_threshold >= 0) {
+      resolved.velocity_trend_threshold = rawRules.velocity_trend_threshold;
+    }
+    if (typeof rawRules.reliability_healthy_threshold === 'number') {
+      resolved.reliability_healthy_threshold = rawRules.reliability_healthy_threshold;
+    }
+    if (typeof rawRules.reliability_warning_threshold === 'number') {
+      resolved.reliability_warning_threshold = rawRules.reliability_warning_threshold;
+    }
+    if (
+      typeof rawRules.late_runway_threshold === 'number' &&
+      rawRules.late_runway_threshold >= 0 &&
+      rawRules.late_runway_threshold <= 1
+    ) {
+      resolved.late_runway_threshold = rawRules.late_runway_threshold;
+    }
+    if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
+      resolved.late_runway_max_points = rawRules.late_runway_max_points;
+    }
+    if (Array.isArray(rawRules.feature_story_types) && rawRules.feature_story_types.length > 0) {
+      resolved.feature_story_types = rawRules.feature_story_types.map((s: any) => String(s).toLowerCase().trim());
+    }
+    if (Array.isArray(rawRules.allowed_late_types) && rawRules.allowed_late_types.length > 0) {
+      resolved.allowed_late_types = rawRules.allowed_late_types.map((s: any) => String(s).toLowerCase().trim());
+    }
+    if (typeof rawRules.enforce_zero_sum === 'boolean') {
+      resolved.enforce_zero_sum = rawRules.enforce_zero_sum;
+    }
+    if (Array.isArray(rawRules.unstarted_statuses) && rawRules.unstarted_statuses.length > 0) {
+      resolved.unstarted_statuses = rawRules.unstarted_statuses.map((s: any) => String(s).toLowerCase().trim());
+    }
+    if (Array.isArray(rawRules.emergency_priorities) && rawRules.emergency_priorities.length > 0) {
+      resolved.emergency_priorities = rawRules.emergency_priorities.map((s: any) => String(s).toUpperCase().trim());
+    }
+    if (typeof rawRules.lock_estimates_in_active_sprint === 'boolean') {
+      resolved.lock_estimates_in_active_sprint = rawRules.lock_estimates_in_active_sprint;
+    }
+    if (typeof rawRules.scope_creep_warning_threshold === 'number') {
+      resolved.scope_creep_warning_threshold = rawRules.scope_creep_warning_threshold;
+    }
+    if (typeof rawRules.scope_creep_danger_threshold === 'number') {
+      resolved.scope_creep_danger_threshold = rawRules.scope_creep_danger_threshold;
+    }
+  }
+
+  return resolved;
+}
+
 export interface SprintAnalyticsInput {
   sprint: {
     id: string;
@@ -48,6 +143,7 @@ export interface SprintAnalyticsInput {
   };
   historicalSprints?: HistoricalSprint[];
   items?: WorkItemLifecycleData[];
+  rules?: MetricRules;
   now?: Date | string | number;
 }
 
@@ -57,6 +153,8 @@ export interface SprintHealthReport {
   status: string;
   isActive: boolean;
   rollingVelocity3Sprint: number;
+  rollingVelocity: number;
+  velocityWindow: number;
   historicalSprintsEvaluated: number;
   committedPoints: number;
   currentSprintPoints: number;
@@ -71,8 +169,11 @@ export interface SprintHealthReport {
   wipAgeDays: number;
   runwayElapsedRatio: number;
   runwayLocked: boolean;
+  runwayCutoffRatio: number;
+  runwayMaxPoints: number;
   capacityRemaining: number;
   velocityTrend: 'increasing' | 'stable' | 'decreasing';
+  rules: Required<MetricRules>;
 }
 
 /**
@@ -101,17 +202,21 @@ export const IN_PROGRESS_STATUSES = new Set([
 ]);
 
 /**
- * Pure calculation: Rolling 3-Sprint Velocity.
- * Takes the up to 3 most recently closed sprints and averages their completed points.
- * Gracefully handles 0, 1, or 2 historical sprints.
+ * Pure calculation: Rolling Velocity.
+ * Takes the up to `windowSize` (default: 3) most recently closed sprints and averages their completed points.
+ * Gracefully handles fewer historical sprints than windowSize.
  */
-export function calculateRollingVelocity(historicalSprints?: HistoricalSprint[]): number {
+export function calculateRollingVelocity(
+  historicalSprints?: HistoricalSprint[],
+  windowSize: number = 3
+): number {
   if (!historicalSprints || historicalSprints.length === 0) {
     return 0;
   }
 
-  // Sprints are expected to be ordered by ends_at DESC; take up to 3
-  const candidatePeriods = historicalSprints.slice(0, 3);
+  const effectiveWindow = Math.max(1, windowSize || 3);
+  // Sprints are expected to be ordered by ends_at DESC; take up to effectiveWindow
+  const candidatePeriods = historicalSprints.slice(0, effectiveWindow);
   const total = candidatePeriods.reduce((acc, s) => {
     const pts = Number(s.completed_points);
     return acc + (isNaN(pts) || pts < 0 ? 0 : pts);
@@ -164,14 +269,21 @@ export function calculateCommitmentReliability(
 }
 
 /**
- * Categorizes Commitment Reliability % into SunShade standard health badges:
+ * Categorizes Commitment Reliability % into health status badges based on configurable rules:
+ * Default paradigm:
  * >= 85%: Green (Healthy)
  * 70% - 84.9%: Amber (Caution)
  * < 70%: Red (At Risk)
  */
-export function getReliabilityStatus(reliabilityPercent: number): 'green' | 'amber' | 'red' {
-  if (reliabilityPercent >= 85) return 'green';
-  if (reliabilityPercent >= 70) return 'amber';
+export function getReliabilityStatus(
+  reliabilityPercent: number,
+  thresholds?: { healthy?: number; warning?: number }
+): 'green' | 'amber' | 'red' {
+  const healthy = thresholds?.healthy ?? 85;
+  const warning = thresholds?.warning ?? 70;
+
+  if (reliabilityPercent >= healthy) return 'green';
+  if (reliabilityPercent >= warning) return 'amber';
   return 'red';
 }
 
@@ -261,7 +373,8 @@ function getItemPoints(item: WorkItemLifecycleData): number {
  * Aggregates all pure sprint metrics and produces the comprehensive SprintHealthReport.
  */
 export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealthReport {
-  const { sprint, historicalSprints = [], items = [], now } = input;
+  const { sprint, historicalSprints = [], items = [], rules: rawRules, now } = input;
+  const rules = resolveMetricRules(rawRules || sprint.metadata?.metric_rules || sprint.metadata?.sprint_metrics);
 
   const isActive = Boolean(
     sprint.is_active ||
@@ -304,16 +417,18 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     pointsAddedMidSprint = totalCurrentPoints - committed;
   }
 
-  // 1. Rolling 3-sprint velocity
-  const rollingVelocity = calculateRollingVelocity(historicalSprints);
+  // 1. Rolling velocity across configured window (default: 3)
+  const velocityWindow = rules.velocity_window;
+  const rollingVelocity = calculateRollingVelocity(historicalSprints, velocityWindow);
 
-  // 2. Velocity trend: compare current sprint points to rolling velocity
+  // 2. Velocity trend: compare current sprint points to rolling velocity using configured variance threshold
   let velocityTrend: 'increasing' | 'stable' | 'decreasing' = 'stable';
   if (rollingVelocity > 0) {
     const diff = totalCurrentPoints - rollingVelocity;
-    if (diff > rollingVelocity * 0.1) {
+    const trendThreshold = rules.velocity_trend_threshold;
+    if (diff > rollingVelocity * trendThreshold) {
       velocityTrend = 'increasing';
-    } else if (diff < -rollingVelocity * 0.1) {
+    } else if (diff < -rollingVelocity * trendThreshold) {
       velocityTrend = 'decreasing';
     }
   }
@@ -321,15 +436,18 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
   // 3. Scope creep %
   const scopeCreepPercent = calculateScopeCreep(pointsAddedMidSprint, committed);
 
-  // 4. Say/Do Commitment reliability %
+  // 4. Say/Do Commitment reliability % with configured health thresholds
   const commitmentReliabilityPercent = calculateCommitmentReliability(completedPoints, committed);
-  const reliabilityStatus = getReliabilityStatus(commitmentReliabilityPercent);
+  const reliabilityStatus = getReliabilityStatus(commitmentReliabilityPercent, {
+    healthy: rules.reliability_healthy_threshold,
+    warning: rules.reliability_warning_threshold,
+  });
 
   // 5. Cycle time & WIP age
   const cycleTimeDays = calculateCycleTime(items);
   const wipAgeDays = calculateWIPAge(items, now);
 
-  // 6. Runway elapsed ratio & late runway lock
+  // 6. Runway elapsed ratio & late runway lock based on configured threshold
   const startedAt = sprint.started_at || sprint.start_date;
   const endsAt = sprint.ends_at || sprint.end_date;
   let runwayElapsedRatio = 0.0;
@@ -345,7 +463,7 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     }
   }
 
-  const runwayLocked = isActive && runwayElapsedRatio > 0.60;
+  const runwayLocked = isActive && runwayElapsedRatio > rules.late_runway_threshold;
   const capacityRemaining = Math.max(0, committed - totalCurrentPoints);
 
   return {
@@ -354,7 +472,9 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     status: sprint.status,
     isActive,
     rollingVelocity3Sprint: rollingVelocity,
-    historicalSprintsEvaluated: Math.min(3, historicalSprints.length),
+    rollingVelocity,
+    velocityWindow,
+    historicalSprintsEvaluated: Math.min(velocityWindow, historicalSprints.length),
     committedPoints: committed,
     currentSprintPoints: totalCurrentPoints,
     completedPoints,
@@ -368,7 +488,10 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     wipAgeDays,
     runwayElapsedRatio,
     runwayLocked,
+    runwayCutoffRatio: rules.late_runway_threshold,
+    runwayMaxPoints: rules.late_runway_max_points,
     capacityRemaining,
     velocityTrend,
+    rules,
   };
 }

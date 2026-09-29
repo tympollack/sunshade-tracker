@@ -4,8 +4,9 @@ import {
   SprintHealthReport,
   HistoricalSprint,
   COMPLETED_STATUSES,
+  resolveMetricRules,
 } from './sprintAnalyticsService';
-import { SprintDefinition, WorkItem } from '@/types/tracker';
+import { SprintDefinition, WorkItem, MetricRules } from '@/types/tracker';
 import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
 
 /**
@@ -100,7 +101,14 @@ export async function getSprintHealthReport(
     };
   }
 
-  // 3. Query closed historical sprints ordered by ends_at DESC LIMIT 3
+  // Resolve project settings to extract configurable metric rules
+  const targetProject = targetProjectId
+    ? projectList.find((p: any) => p.id === targetProjectId)
+    : projectList[0];
+  const metricRules = resolveMetricRules(targetProject?.settings || targetSprint?.metadata);
+  const velocityWindow = metricRules.velocity_window || 3;
+
+  // 3. Query closed historical sprints ordered by ends_at DESC LIMIT velocityWindow
   const historicalSprints: HistoricalSprint[] = [];
 
   // Attempt tracker.sprints table query
@@ -113,7 +121,7 @@ export async function getSprintHealthReport(
       .neq('id', targetSprint.id)
       .neq('name', targetSprint.name)
       .order('ends_at', { ascending: false })
-      .limit(3);
+      .limit(velocityWindow);
 
     if (targetProjectId) {
       closedQuery = closedQuery.eq('project_id', targetProjectId);
@@ -135,8 +143,8 @@ export async function getSprintHealthReport(
     // Sprints table query fallback
   }
 
-  // Supplement from project settings if fewer than 3 found
-  if (historicalSprints.length < 3) {
+  // Supplement from project settings if fewer than velocityWindow found
+  if (historicalSprints.length < velocityWindow) {
     const candidateSettingsSprints: SprintDefinition[] = [];
     const relevantProjects = targetProjectId
       ? projectList.filter((p: any) => p.id === targetProjectId)
@@ -164,7 +172,7 @@ export async function getSprintHealthReport(
     });
 
     for (const s of candidateSettingsSprints) {
-      if (historicalSprints.length >= 3) break;
+      if (historicalSprints.length >= velocityWindow) break;
       historicalSprints.push({
         id: s.id,
         name: s.name,
@@ -222,6 +230,7 @@ export async function getSprintHealthReport(
     sprint: targetSprint,
     historicalSprints,
     items: targetSprintItems,
+    rules: metricRules,
     now,
   });
 }

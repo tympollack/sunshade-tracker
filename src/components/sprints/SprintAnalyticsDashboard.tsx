@@ -71,6 +71,7 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
   const [isGuardrailModalOpen, setIsGuardrailModalOpen] = useState(false);
   const [guardrailItems, setGuardrailItems] = useState<WorkItem[]>([]);
   const [previewToast, setPreviewToast] = useState<string | null>(null);
+  const [showRulesJson, setShowRulesJson] = useState(false);
 
   // 1. Fetch workspaces and sprint list
   useEffect(() => {
@@ -273,7 +274,7 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
             <div>
               <div className="flex items-center justify-between text-slate-400 mb-2">
                 <span className="text-xs font-semibold uppercase tracking-wider font-mono">
-                  Rolling Velocity
+                  Rolling Velocity ({report?.velocityWindow ?? 3}-Sprint Avg)
                 </span>
                 <Gauge className="w-4 h-4 text-emerald-400" />
               </div>
@@ -341,21 +342,21 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
                   data-testid="health-badge-green"
                   className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
                 >
-                  ● Healthy (&gt;=85%)
+                  ● Healthy (&gt;={report?.rules?.reliability_healthy_threshold ?? 85}%)
                 </span>
               ) : report?.reliabilityStatus === 'amber' ? (
                 <span
                   data-testid="health-badge-amber"
                   className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40"
                 >
-                  ● Moderate (70-84%)
+                  ● Moderate ({report?.rules?.reliability_warning_threshold ?? 70}-{(report?.rules?.reliability_healthy_threshold ?? 85) - 1}%)
                 </span>
               ) : (
                 <span
                   data-testid="health-badge-red"
                   className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-red-500/20 text-red-300 border border-red-500/40"
                 >
-                  ● At Risk (&lt;70%)
+                  ● At Risk (&lt;{report?.rules?.reliability_warning_threshold ?? 70}%)
                 </span>
               )}
             </div>
@@ -448,7 +449,7 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
                     data-testid="runway-locked-badge"
                     className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/30 flex items-center gap-1"
                   >
-                    <Lock className="w-3 h-3" /> Intake Locked (&lt;= 2 pts)
+                    <Lock className="w-3 h-3" /> Intake Locked (&lt;= {report?.runwayMaxPoints ?? 2} pts)
                   </span>
                 ) : (
                   <span
@@ -461,8 +462,8 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
               </div>
               <p className="text-xs text-slate-400 mt-1">
                 {report?.runwayLocked
-                  ? 'Runway elapsed ratio > 60%. Feature stories over 2 story points are locked from mid-sprint intake.'
-                  : 'Runway elapsed ratio <= 60%. Unallocated capacity permits standard feature story intake.'}
+                  ? `Runway elapsed ratio > ${Math.round((report?.runwayCutoffRatio ?? 0.60) * 100)}%. Feature stories over ${report?.runwayMaxPoints ?? 2} story points are locked from mid-sprint intake.`
+                  : `Runway elapsed ratio <= ${Math.round((report?.runwayCutoffRatio ?? 0.60) * 100)}%. Unallocated capacity permits standard feature story intake.`}
               </p>
             </div>
 
@@ -474,15 +475,15 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
             </div>
           </div>
 
-          {/* Visual Progress Bar with 60% Marker */}
+          {/* Visual Progress Bar with Dynamic Cutoff Marker */}
           <div className="relative pt-6 pb-2">
-            {/* 60% Marker Line */}
+            {/* Cutoff Marker Line */}
             <div
               className="absolute top-0 bottom-2 w-0.5 bg-amber-500/80 z-20 flex flex-col items-center"
-              style={{ left: '60%' }}
+              style={{ left: `${Math.round((report?.runwayCutoffRatio ?? 0.60) * 100)}%` }}
             >
               <span className="text-[9px] font-mono font-bold text-amber-400 bg-slate-950 px-1 rounded border border-amber-500/30 whitespace-nowrap -mt-5">
-                60% Lock Line
+                {Math.round((report?.runwayCutoffRatio ?? 0.60) * 100)}% Lock Line
               </span>
             </div>
 
@@ -502,10 +503,86 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
             {/* Sub-labels */}
             <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-2">
               <span>0% (Sprint Start)</span>
-              <span className="text-amber-400/80">60% Guardrail Boundary</span>
+              <span className="text-amber-400/80">
+                {Math.round((report?.runwayCutoffRatio ?? 0.60) * 100)}% Guardrail Boundary
+              </span>
               <span>100% (Sprint End)</span>
             </div>
           </div>
+        </div>
+
+        {/* Sprint Metric Rules & Governance (Configurable JSON Settings) */}
+        <div
+          data-testid="card-metric-rules"
+          className="p-5 sm:p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-sm space-y-4"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-semibold uppercase tracking-wider font-mono text-slate-300">
+                  Sprint Governance &amp; Metric Rules
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                  Configurable JSON
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Calculates metrics using configurable rules stored as JSON under <code className="text-emerald-300 font-mono">tracker.projects.settings-&gt;sprint_metrics</code>.
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowRulesJson(!showRulesJson)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-300 transition-colors flex items-center space-x-1.5"
+                data-testid="toggle-rules-json-button"
+              >
+                <span>{showRulesJson ? 'Hide Rules JSON' : 'Inspect Rules JSON'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRulesJson ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Badges of Active Rules */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1 text-[11px] font-mono">
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Velocity Window</span>
+              <span className="text-white font-bold">{report?.rules?.velocity_window ?? 3} Sprints</span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Runway Cutoff</span>
+              <span className="text-amber-400 font-bold">{Math.round((report?.rules?.late_runway_threshold ?? 0.60) * 100)}%</span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Late Intake Cap</span>
+              <span className="text-amber-300 font-bold">&lt;= {report?.rules?.late_runway_max_points ?? 2} pts</span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Healthy Say/Do</span>
+              <span className="text-emerald-400 font-bold">&gt;= {report?.rules?.reliability_healthy_threshold ?? 85}%</span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Zero-Sum Swaps</span>
+              <span className="text-emerald-400 font-bold">{report?.rules?.enforce_zero_sum !== false ? 'Enforced' : 'Disabled'}</span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
+              <span className="text-slate-500 block text-[10px]">Estimate Lock</span>
+              <span className="text-sky-400 font-bold">{report?.rules?.lock_estimates_in_active_sprint !== false ? 'Locked' : 'Unlocked'}</span>
+            </div>
+          </div>
+
+          {showRulesJson && (
+            <div data-testid="metric-rules-json-block" className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 space-y-2">
+              <div className="flex items-center justify-between text-slate-500 pb-1 border-b border-slate-900">
+                <span>Active Rule Invariants (JSON):</span>
+                <span className="text-[10px] text-emerald-400">Configurable in Project Settings Schema Editor</span>
+              </div>
+              <pre className="overflow-x-auto text-[11px] leading-relaxed text-emerald-300">
+                {JSON.stringify(report?.rules ?? {}, null, 2)}
+              </pre>
+            </div>
+          )}
         </div>
 
         {/* Zero-Sum Guardrail Barrier Interactive Demo */}

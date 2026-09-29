@@ -374,7 +374,12 @@ export function ItemDetailsTab({
                 .filter((f) => !(f in metadata))
                 .map((f) => {
                   const isEstimateField = f === 'story_points' || f === 'points';
-                  const isLocked = isEstimateField && isItemInActiveSprint;
+                  const shouldLock =
+                    effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+                    effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+                    effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+                    true;
+                  const isLocked = shouldLock && isEstimateField && isItemInActiveSprint;
                   return (
                     <button
                       key={f}
@@ -413,8 +418,14 @@ export function ItemDetailsTab({
                 activeSprintDef?.is_current
               );
 
+              const shouldLockEstimates =
+                effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+                effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+                effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+                true;
+
               return Object.entries(metadata).map(([k, v]) => {
-                const isEstimateLocked = isItemInActiveSprint && (k === 'story_points' || k === 'points');
+                const isEstimateLocked = shouldLockEstimates && isItemInActiveSprint && (k === 'story_points' || k === 'points');
                 const draftVal =
                   metaDrafts[k] ??
                   (typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? ''));

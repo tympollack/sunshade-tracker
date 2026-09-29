@@ -129,10 +129,33 @@ export async function validateSprintIntake(
         it.metadata?.sprint === sprintIdOrName)
   );
 
+  // 4. Resolve project settings to pass configured metric rules
+  let projectSettings: any = null;
+  if (sprintData?.project_id) {
+    try {
+      const { data: proj } = await service
+        .from('projects')
+        .select('settings')
+        .eq('id', sprintData.project_id)
+        .maybeSingle();
+      projectSettings = proj?.settings;
+    } catch {
+      // Non-critical fallback
+    }
+  }
+
+  const effectiveRules =
+    options?.rules ||
+    projectSettings?.sprint_metrics ||
+    projectSettings?.metric_rules ||
+    projectSettings?.sprint_settings?.metric_rules ||
+    projectSettings?.sprint_settings?.metrics;
+
   return validateSprintIntakePure({
     sprint: sprintData,
     currentSprintItems,
     incomingItem,
     options,
+    rules: effectiveRules,
   });
 }

@@ -714,4 +714,156 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
       expect(res.remaining_capacity).toBe(5);
     });
   });
+
+  describe('Configurable Guardrail Rules & Invariant Paradigms', () => {
+    const activeSprint = {
+      id: 'sprint-active-custom',
+      name: 'Sprint Custom Rules',
+      status: 'active',
+      is_active: true,
+      started_at: '2026-10-01T00:00:00Z',
+      ends_at: '2026-10-11T00:00:00Z', // 10 days
+      committed_points: 20,
+    };
+
+    it('honors custom late runway threshold and point limits', () => {
+      // 70% elapsed: past default 60% threshold
+      const now = '2026-10-08T00:00:00Z';
+      const storyItem = {
+        id: 'story-3pt',
+        item_type: 'story',
+        metadata: { story_points: 3 },
+      };
+
+      // With default rules (cutoff 60%, max 2 pts), 3 points is rejected
+      expect(() =>
+        validateSprintIntakePure({
+          sprint: activeSprint,
+          currentSprintItems: [],
+          incomingItem: storyItem,
+          options: { now },
+        })
+      ).toThrow(SprintGuardrailError);
+
+      // With custom rules (cutoff 80%, max 2 pts), 70% elapsed is permitted
+      const res1 = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: [],
+        incomingItem: storyItem,
+        options: { now },
+        rules: {
+          late_runway_threshold: 0.80,
+          late_runway_max_points: 2,
+        },
+      });
+      expect(res1.valid).toBe(true);
+
+      // With custom rules (cutoff 60%, max 5 pts), 3 points is permitted
+      const res2 = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: [],
+        incomingItem: storyItem,
+        options: { now },
+        rules: {
+          late_runway_threshold: 0.60,
+          late_runway_max_points: 5,
+        },
+      });
+      expect(res2.valid).toBe(true);
+    });
+
+    it('honors custom emergency priorities for guardrail bypass', () => {
+      const now = '2026-10-09T00:00:00Z'; // 80% elapsed
+      const urgentItem = {
+        id: 'urgent-item',
+        item_type: 'story',
+        priority: 'URGENT',
+        metadata: { story_points: 8 },
+      };
+
+      // By default, only P0 / CRITICAL / EMERGENCY are emergency priorities
+      expect(() =>
+        validateSprintIntakePure({
+          sprint: activeSprint,
+          currentSprintItems: [],
+          incomingItem: urgentItem,
+          options: { now },
+        })
+      ).toThrow(SprintGuardrailError);
+
+      // With custom emergency_priorities including URGENT, it passes
+      const res = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: [],
+        incomingItem: urgentItem,
+        options: { now },
+        rules: {
+          emergency_priorities: ['URGENT', 'CRITICAL'],
+        },
+      });
+      expect(res.valid).toBe(true);
+    });
+
+    it('permits estimate edits when lock_estimates_in_active_sprint is configured false', () => {
+      const currentItem = {
+        id: 'item-edit',
+        metadata: { story_points: 3 },
+      };
+
+      // By default: throws ESTIMATE_LOCKED
+      expect(() =>
+        validateEstimateImmutability(currentItem, { story_points: 5 }, activeSprint)
+      ).toThrow(SprintGuardrailError);
+
+      // When configured false: does not throw
+      expect(() =>
+        validateEstimateImmutability(currentItem, { story_points: 5 }, activeSprint, {
+          lock_estimates_in_active_sprint: false,
+        })
+      ).not.toThrow();
+    });
+
+    it('bypasses zero-sum requirement when enforce_zero_sum is configured false', () => {
+      // 20 committed, already 18 active points. Incoming 8 points would overflow by 6 pts.
+      const currentItems = [
+        {
+          id: 'existing-1',
+          tenant_id: 't-1',
+          project_id: 'p-1',
+          order_index: 1,
+          metadata: { story_points: 18 },
+          title: 'Existing',
+          status: 'in_progress',
+          item_type: 'story',
+          created_at: '',
+          updated_at: '',
+        },
+      ];
+      const incomingItem = {
+        id: 'incoming',
+        item_type: 'chore',
+        metadata: { story_points: 8 },
+      };
+
+      // Default: rejects with SCOPE_OVERFLOW
+      expect(() =>
+        validateSprintIntakePure({
+          sprint: activeSprint,
+          currentSprintItems: currentItems,
+          incomingItem,
+        })
+      ).toThrow(SprintGuardrailError);
+
+      // When enforce_zero_sum: false, allows intake without ejection
+      const res = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: currentItems,
+        incomingItem,
+        rules: {
+          enforce_zero_sum: false,
+        },
+      });
+      expect(res.valid).toBe(true);
+    });
+  });
 });

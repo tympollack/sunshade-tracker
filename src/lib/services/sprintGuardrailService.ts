@@ -1,5 +1,6 @@
-import { WorkItem, ProjectSettings, SprintDefinition } from '@/types/tracker';
+import { WorkItem, ProjectSettings, SprintDefinition, MetricRules } from '@/types/tracker';
 import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
+import { resolveMetricRules, DEFAULT_METRIC_RULES } from './sprintAnalyticsService';
 
 export interface SprintScopeData {
   id: string;
@@ -20,6 +21,7 @@ export interface IntakeValidationOptions {
   ejectedItems?: WorkItem[];
   overrideP0?: boolean;
   isEmergency?: boolean;
+  rules?: MetricRules;
   now?: Date | string | number;
 }
 
@@ -72,9 +74,19 @@ export const UNSTARTED_STATUSES = new Set([
 /**
  * Check if a status represents an unstarted work item eligible for ejection.
  */
-export function isUnstartedStatus(status?: string | null): boolean {
+export function isUnstartedStatus(
+  status?: string | null,
+  customStatuses?: string[] | Set<string>
+): boolean {
   if (!status) return true;
-  return UNSTARTED_STATUSES.has(status.toLowerCase().trim());
+  const normalized = status.toLowerCase().trim();
+  if (customStatuses) {
+    if (customStatuses instanceof Set) {
+      return customStatuses.has(normalized);
+    }
+    return customStatuses.some((s) => s.toLowerCase().trim() === normalized);
+  }
+  return UNSTARTED_STATUSES.has(normalized);
 }
 
 /**
@@ -123,9 +135,15 @@ export function extractStoryPoints(item?: Partial<WorkItem> | any): number {
 /**
  * Checks if work item is a feature / story type subject to late runway sizing.
  */
-export function isFeatureStory(item?: Partial<WorkItem> | any): boolean {
+export function isFeatureStory(
+  item?: Partial<WorkItem> | any,
+  customFeatureTypes?: string[]
+): boolean {
   if (!item) return false;
   const type = String(item.item_type || item.type || item.metadata?.item_type || '').toLowerCase().trim();
+  if (customFeatureTypes && customFeatureTypes.length > 0) {
+    return customFeatureTypes.some((t) => t.toLowerCase().trim() === type);
+  }
   return type === 'story' || type === 'feature';
 }
 
@@ -137,15 +155,23 @@ export function validateSprintIntakePure(params: {
   currentSprintItems: WorkItem[];
   incomingItem: Partial<WorkItem> | any;
   options?: IntakeValidationOptions;
+  rules?: MetricRules;
 }): IntakeValidationResult {
   const { sprint, currentSprintItems, incomingItem, options } = params;
+  const rules = resolveMetricRules(
+    params.rules ||
+      options?.rules ||
+      sprint?.metadata?.metric_rules ||
+      sprint?.metadata?.sprint_metrics ||
+      sprint?.metadata
+  );
 
-  // 1. Check P0 Emergency Override flag
+  // 1. Check Emergency Override flag (using configured emergency priorities)
   const itemPriority = String(
     incomingItem.metadata?.priority || incomingItem.priority || ''
   ).toUpperCase().trim();
-  const isP0Item = itemPriority === 'P0' || itemPriority === 'CRITICAL' || itemPriority === 'EMERGENCY';
-  const isEmergency = isP0Item && Boolean(options?.overrideP0 || options?.isEmergency || itemPriority === 'P0');
+  const isP0Item = rules.emergency_priorities.some((p: string) => p.toUpperCase().trim() === itemPriority);
+  const isEmergency = isP0Item;
 
   if (isEmergency) {
     return {
@@ -175,18 +201,20 @@ export function validateSprintIntakePure(params: {
   if (startedAt && endsAt) {
     elapsedRatio = calculateElapsedRatio(startedAt, endsAt, options?.now);
 
-    // If elapsed_ratio > 0.60 (last 40% of sprint runway), enforce strict sizing:
-    // Block any new feature story intake where story_points > 2. Only allow non-feature chores, test debt, or documentation tasks.
-    if (elapsedRatio > 0.60) {
+    // If elapsed_ratio > rules.late_runway_threshold (default 0.60), enforce strict sizing:
+    if (elapsedRatio > rules.late_runway_threshold) {
       const incomingPoints = extractStoryPoints(incomingItem);
-      if (isFeatureStory(incomingItem) && incomingPoints > 2) {
+      if (isFeatureStory(incomingItem, rules.feature_story_types) && incomingPoints > rules.late_runway_max_points) {
+        const thresholdPercent = Math.round(rules.late_runway_threshold * 100);
+        const remainingPercent = 100 - thresholdPercent;
         throw new SprintGuardrailError({
           code: 'LATE_RUNWAY_EXCEEDED',
           status: 409,
-          message: `Late-sprint runway threshold exceeded (${(elapsedRatio * 100).toFixed(1)}% elapsed > 60%). New feature stories are capped at 2 story points during the final 40% of the sprint. Only non-feature chores, test debt, or documentation tasks may exceed 2 points.`,
+          message: `Late-sprint runway threshold exceeded (${(elapsedRatio * 100).toFixed(1)}% elapsed > ${thresholdPercent}%). New feature stories are capped at ${rules.late_runway_max_points} story points during the final ${remainingPercent}% of the sprint. Only non-feature chores, test debt, or documentation tasks may exceed ${rules.late_runway_max_points} points.`,
           details: {
             elapsed_ratio: elapsedRatio,
-            threshold: 0.60,
+            threshold: rules.late_runway_threshold,
+            max_points: rules.late_runway_max_points,
             incoming_points: incomingPoints,
             item_type: incomingItem.item_type || incomingItem.type || 'story',
           },
@@ -196,10 +224,10 @@ export function validateSprintIntakePure(params: {
   }
 
   // 3. Guardrail 1: Strict Zero-Sum Swap API
-  // Invariant: Total Active Points <= Sprint Commitment
+  // Invariant: Total Active Points <= Sprint Commitment (if rules.enforce_zero_sum is true)
   const committedPoints = sprint.committed_points ?? sprint.metadata?.committed_points;
 
-  if (committedPoints !== undefined && committedPoints !== null) {
+  if (rules.enforce_zero_sum && committedPoints !== undefined && committedPoints !== null) {
     // Current points in sprint (filtering out incomingItem if it was already in currentSprintItems)
     const existingSprintItems = (currentSprintItems || []).filter((it) => {
       if (incomingItem.id && it.id === incomingItem.id) return false;
@@ -251,7 +279,7 @@ export function validateSprintIntakePure(params: {
           });
         }
 
-        if (!isUnstartedStatus(ejected.status)) {
+        if (!isUnstartedStatus(ejected.status, rules.unstarted_statuses)) {
           throw new SprintGuardrailError({
             code: 'INVALID_EJECTION',
             status: 400,
@@ -264,7 +292,6 @@ export function validateSprintIntakePure(params: {
         }
         totalEjectedPoints += extractStoryPoints(ejected);
       }
-
 
       if (totalEjectedPoints < requiredEjectionPoints) {
         throw new SprintGuardrailError({
@@ -316,12 +343,21 @@ export function validateSprintIntakePure(params: {
 /**
  * Guardrail 3 (Immutable Estimates):
  * Validates that story_points are not changed while an item is in an active sprint.
+ * Respects configured `lock_estimates_in_active_sprint` rule (default: true).
  */
 export function validateEstimateImmutability(
   currentItem: Partial<WorkItem>,
   incomingMetadata: Record<string, any>,
-  sprint?: Partial<SprintScopeData> | null
+  sprint?: Partial<SprintScopeData> | null,
+  rulesParam?: MetricRules
 ): void {
+  const rules = resolveMetricRules(
+    rulesParam || sprint?.metadata?.metric_rules || sprint?.metadata?.sprint_metrics || sprint?.metadata
+  );
+
+  // If estimate locking is disabled via configured settings, permit update
+  if (!rules.lock_estimates_in_active_sprint) return;
+
   const oldPoints = currentItem.metadata?.story_points ?? currentItem.metadata?.points;
   const newPoints = incomingMetadata?.story_points ?? incomingMetadata?.points;
 

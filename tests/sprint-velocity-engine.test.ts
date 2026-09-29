@@ -8,9 +8,12 @@ import {
   calculateWIPAge,
   computeSprintAnalytics,
   getReliabilityStatus,
+  resolveMetricRules,
+  DEFAULT_METRIC_RULES,
 } from '@/lib/services/sprintAnalyticsService';
 import { getSprintHealthReport } from '@/lib/services/sprintAnalyticsServer';
 import { GET as getSprintAnalyticsRoute } from '@/app/api/v1/sprints/analytics/route';
+import { validateProjectSettings } from '@/lib/project-settings-validator';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 
@@ -439,6 +442,155 @@ describe('TASK-TRK-VELOCITY-ENGINE: Rolling Velocity & Enterprise KPI Engine', (
       const json = await res.json();
       expect(json.sprintId).toBe('sprint-q4');
       expect(json.committedPoints).toBe(30);
+    });
+  });
+
+  describe('Configurable Metric Rules & Governance Paradigm', () => {
+    it('resolveMetricRules returns default paradigm when settings are empty or omitted', () => {
+      const resolved = resolveMetricRules(null);
+      expect(resolved.velocity_window).toBe(3);
+      expect(resolved.reliability_healthy_threshold).toBe(85);
+      expect(resolved.reliability_warning_threshold).toBe(70);
+      expect(resolved.late_runway_threshold).toBe(0.60);
+      expect(resolved.late_runway_max_points).toBe(2);
+      expect(resolved.enforce_zero_sum).toBe(true);
+      expect(resolved.lock_estimates_in_active_sprint).toBe(true);
+      expect(resolved.emergency_priorities).toContain('P0');
+    });
+
+    it('resolveMetricRules extracts and applies overrides from project sprint_metrics JSON', () => {
+      const customSettings = {
+        sprint_metrics: {
+          velocity_window: 5,
+          reliability_healthy_threshold: 90,
+          reliability_warning_threshold: 80,
+          late_runway_threshold: 0.75,
+          late_runway_max_points: 3,
+          emergency_priorities: ['P0', 'HOTFIX'],
+          enforce_zero_sum: false,
+          lock_estimates_in_active_sprint: false,
+        },
+      };
+
+      const resolved = resolveMetricRules(customSettings);
+      expect(resolved.velocity_window).toBe(5);
+      expect(resolved.reliability_healthy_threshold).toBe(90);
+      expect(resolved.reliability_warning_threshold).toBe(80);
+      expect(resolved.late_runway_threshold).toBe(0.75);
+      expect(resolved.late_runway_max_points).toBe(3);
+      expect(resolved.emergency_priorities).toEqual(['P0', 'HOTFIX']);
+      expect(resolved.enforce_zero_sum).toBe(false);
+      expect(resolved.lock_estimates_in_active_sprint).toBe(false);
+    });
+
+    it('calculateRollingVelocity evaluates custom window size', () => {
+      const history = [
+        { id: 's-5', name: 'Sprint 5', completed_points: 50 },
+        { id: 's-4', name: 'Sprint 4', completed_points: 40 },
+        { id: 's-3', name: 'Sprint 3', completed_points: 30 },
+        { id: 's-2', name: 'Sprint 2', completed_points: 20 },
+        { id: 's-1', name: 'Sprint 1', completed_points: 10 },
+      ];
+
+      // Default window 3: (50 + 40 + 30) / 3 = 40.0
+      expect(calculateRollingVelocity(history, 3)).toBe(40.0);
+      expect(calculateRollingVelocity(history)).toBe(40.0);
+
+      // Custom window 5: (50 + 40 + 30 + 20 + 10) / 5 = 30.0
+      expect(calculateRollingVelocity(history, 5)).toBe(30.0);
+
+      // Custom window 2: (50 + 40) / 2 = 45.0
+      expect(calculateRollingVelocity(history, 2)).toBe(45.0);
+    });
+
+    it('getReliabilityStatus evaluates custom healthy/warning thresholds', () => {
+      // Default: healthy >= 85, warning >= 70
+      expect(getReliabilityStatus(82)).toBe('amber');
+
+      // Custom: healthy >= 80, warning >= 60
+      expect(getReliabilityStatus(82, { healthy: 80, warning: 60 })).toBe('green');
+
+      // Custom stricter: healthy >= 95, warning >= 85
+      expect(getReliabilityStatus(82, { healthy: 95, warning: 85 })).toBe('red');
+    });
+
+    it('computeSprintAnalytics applies configured metric rules to reports', () => {
+      const sprint = {
+        id: 'sprint-custom',
+        name: 'Sprint Custom',
+        status: 'active',
+        is_active: true,
+        started_at: '2026-10-01T00:00:00Z',
+        ends_at: '2026-10-11T00:00:00Z',
+        committed_points: 40,
+      };
+
+      const historicalSprints = [
+        { id: 's-4', name: 'S4', completed_points: 50 },
+        { id: 's-3', name: 'S3', completed_points: 40 },
+        { id: 's-2', name: 'S2', completed_points: 30 },
+        { id: 's-1', name: 'S1', completed_points: 20 },
+      ];
+
+      const report = computeSprintAnalytics({
+        sprint,
+        historicalSprints,
+        items: [],
+        rules: {
+          velocity_window: 4,
+          reliability_healthy_threshold: 90,
+          reliability_warning_threshold: 75,
+          late_runway_threshold: 0.80,
+          late_runway_max_points: 1,
+        },
+      });
+
+      expect(report.velocityWindow).toBe(4);
+      // (50 + 40 + 30 + 20) / 4 = 35.0
+      expect(report.rollingVelocity).toBe(35.0);
+      expect(report.runwayCutoffRatio).toBe(0.80);
+      expect(report.runwayMaxPoints).toBe(1);
+      expect(report.rules.velocity_window).toBe(4);
+      expect(report.rules.late_runway_threshold).toBe(0.80);
+    });
+
+    it('validateProjectSettings validates sprint_metrics JSON configuration', () => {
+      // Valid settings
+      const valid = validateProjectSettings({
+        hierarchy: [],
+        statuses: [],
+        sprint_metrics: {
+          velocity_window: 5,
+          late_runway_threshold: 0.70,
+          late_runway_max_points: 3,
+          reliability_healthy_threshold: 90,
+          reliability_warning_threshold: 75,
+        },
+      });
+      expect(valid.valid).toBe(true);
+      expect(valid.errors).toHaveLength(0);
+
+      // Invalid velocity_window (must be >= 1)
+      const invalidWindow = validateProjectSettings({
+        hierarchy: [],
+        statuses: [],
+        sprint_metrics: {
+          velocity_window: 0,
+        },
+      });
+      expect(invalidWindow.valid).toBe(false);
+      expect(invalidWindow.errors[0].path).toBe('sprint_metrics.velocity_window');
+
+      // Invalid late_runway_threshold (must be between 0 and 1)
+      const invalidThreshold = validateProjectSettings({
+        hierarchy: [],
+        statuses: [],
+        sprint_metrics: {
+          late_runway_threshold: 1.5,
+        },
+      });
+      expect(invalidThreshold.valid).toBe(false);
+      expect(invalidThreshold.errors[0].path).toBe('sprint_metrics.late_runway_threshold');
     });
   });
 });
