@@ -1,10 +1,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import SprintAnalyticsPage, {
+import SprintAnalyticsPage from '@/app/(dashboard)/[tenantSlug]/sprints/analytics/page';
+import {
   SprintAnalyticsContent,
   SprintAnalyticsSkeleton,
-} from '@/app/(dashboard)/[tenantSlug]/sprints/analytics/page';
+} from '@/components/sprints/SprintAnalyticsDashboard';
 import { ItemDetailsTab } from '@/components/modal/tabs/ItemDetailsTab';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 

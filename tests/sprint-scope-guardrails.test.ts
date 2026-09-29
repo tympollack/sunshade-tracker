@@ -7,8 +7,8 @@ import {
   calculateElapsedRatio,
   isSprintActive,
   SprintGuardrailError,
-  validateSprintIntake,
 } from '@/lib/services/sprintGuardrailService';
+import { validateSprintIntake } from '@/lib/services/sprintGuardrailServer';
 import { supabaseAdmin } from '@/lib/db';
 import { WorkItem } from '@/types/tracker';
 

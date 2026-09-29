@@ -567,7 +567,7 @@ export async function validateSprintIntakeAction(
     }
 
     const { validateSprintIntake, SprintGuardrailError } = await import(
-      '@/lib/services/sprintGuardrailService'
+      '@/lib/services/sprintGuardrailServer'
     );
 
     try {
@@ -647,7 +647,7 @@ export async function atomicSprintSwapAction(params: {
 
     // 4. Validate through sprintGuardrailService
     const { validateSprintIntake, SprintGuardrailError } = await import(
-      '@/lib/services/sprintGuardrailService'
+      '@/lib/services/sprintGuardrailServer'
     );
 
     try {
