@@ -546,4 +546,159 @@ export async function bulkReassignProjects(
   }
 }
 
+/**
+ * Server action to validate incoming work item against active sprint scope guardrails.
+ */
+export async function validateSprintIntakeAction(
+  tenantSlug: string,
+  sprintId: string,
+  incomingItem: any,
+  options?: import('@/lib/services/sprintGuardrailService').IntakeValidationOptions
+): Promise<{
+  success: boolean;
+  result?: import('@/lib/services/sprintGuardrailService').IntakeValidationResult;
+  error?: string;
+  code?: string;
+  required_ejection_points?: number;
+}> {
+  try {
+    if (!tenantSlug || !sprintId || !incomingItem) {
+      return { success: false, error: 'tenantSlug, sprintId, and incomingItem are required' };
+    }
+
+    const { validateSprintIntake, SprintGuardrailError } = await import(
+      '@/lib/services/sprintGuardrailService'
+    );
+
+    try {
+      const result = await validateSprintIntake(tenantSlug, sprintId, incomingItem, options);
+      return { success: true, result };
+    } catch (err: any) {
+      if (err instanceof SprintGuardrailError) {
+        return {
+          success: false,
+          error: err.message,
+          code: err.code,
+          required_ejection_points: err.required_ejection_points,
+        };
+      }
+      return { success: false, error: err.message || 'Intake validation failed' };
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Server action failed' };
+  }
+}
+
+/**
+ * Server action to execute an atomic sprint swap:
+ * Assigns incomingItem to sprint while ejecting specified unstarted items back to backlog.
+ */
+export async function atomicSprintSwapAction(params: {
+  tenantSlug: string;
+  sprintName: string;
+  incomingItemId: string;
+  ejectedItemIds: string[];
+  options?: import('@/lib/services/sprintGuardrailService').IntakeValidationOptions;
+}): Promise<{ success: boolean; error?: string; code?: string; required_ejection_points?: number }> {
+  try {
+    const { tenantSlug, sprintName, incomingItemId, ejectedItemIds, options } = params;
+
+    if (!tenantSlug || !sprintName || !incomingItemId) {
+      return { success: false, error: 'tenantSlug, sprintName, and incomingItemId are required' };
+    }
+
+    // 1. Authenticate caller
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // 2. Fetch incoming item
+    const { data: incomingItem, error: incErr } = await service
+      .from('work_items')
+      .select('*')
+      .eq('id', incomingItemId)
+      .single();
+
+    if (incErr || !incomingItem) {
+      return { success: false, error: 'Incoming work item not found' };
+    }
+
+    // 3. Fetch ejected items if any
+    let ejectedItems: any[] = [];
+    if (ejectedItemIds && ejectedItemIds.length > 0) {
+      const { data: ejects, error: ejectErr } = await service
+        .from('work_items')
+        .select('*')
+        .in('id', ejectedItemIds);
+
+      if (ejectErr || !ejects || ejects.length !== ejectedItemIds.length) {
+        return { success: false, error: 'One or more items specified for ejection were not found' };
+      }
+      ejectedItems = ejects;
+    }
+
+    // 4. Validate through sprintGuardrailService
+    const { validateSprintIntake, SprintGuardrailError } = await import(
+      '@/lib/services/sprintGuardrailService'
+    );
+
+    try {
+      await validateSprintIntake(tenantSlug, sprintName, incomingItem, {
+        ...options,
+        ejectedItems,
+        ejectedItemIds,
+      });
+    } catch (err: any) {
+      if (err instanceof SprintGuardrailError) {
+        return {
+          success: false,
+          error: err.message,
+          code: err.code,
+          required_ejection_points: err.required_ejection_points,
+        };
+      }
+      return { success: false, error: err.message || 'Sprint intake rejected' };
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 5. Atomic database updates: assign incoming item to sprint
+    const incomingMeta = { ...(incomingItem.metadata || {}), sprint: sprintName };
+    const { error: assignErr } = await service
+      .from('work_items')
+      .update({ metadata: incomingMeta, updated_at: nowIso })
+      .eq('id', incomingItemId);
+
+    if (assignErr) {
+      return { success: false, error: `Failed to assign item to sprint: ${assignErr.message}` };
+    }
+
+    // Eject selected items back to backlog
+    if (ejectedItemIds && ejectedItemIds.length > 0) {
+      for (const ej of ejectedItems) {
+        const nextMeta = { ...(ej.metadata || {}) };
+        delete nextMeta.sprint;
+        delete nextMeta.sprint_id;
+        await service
+          .from('work_items')
+          .update({ metadata: nextMeta, updated_at: nowIso })
+          .eq('id', ej.id);
+      }
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Atomic swap failed' };
+  }
+}
+
+
 
