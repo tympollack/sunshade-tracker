@@ -6,6 +6,7 @@ import {
   COMPLETED_STATUSES,
 } from './sprintAnalyticsService';
 import { SprintDefinition, WorkItem } from '@/types/tracker';
+import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
 
 /**
  * Server-only service querying Supabase to build enterprise sprint velocity and KPI telemetry.
@@ -65,7 +66,7 @@ export async function getSprintHealthReport(
   }
 
   const { data: projects } = await projQuery;
-  const projectList = projects || [];
+  const projectList: any[] = projects || [];
 
   if (!targetSprint) {
     for (const p of projectList) {
@@ -138,7 +139,7 @@ export async function getSprintHealthReport(
   if (historicalSprints.length < 3) {
     const candidateSettingsSprints: SprintDefinition[] = [];
     const relevantProjects = targetProjectId
-      ? projectList.filter((p) => p.id === targetProjectId)
+      ? projectList.filter((p: any) => p.id === targetProjectId)
       : projectList;
 
     for (const p of relevantProjects) {
