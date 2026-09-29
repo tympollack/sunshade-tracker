@@ -19,6 +19,7 @@ import { ProjectModals } from '@/components/board/ProjectModals';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
+import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation';
 import {
@@ -1035,6 +1036,38 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     initiateStatusChange(itemId, newStatus);
   };
 
+  const [guardrailBarrierData, setGuardrailBarrierData] = useState<{
+    incomingItem: WorkItem;
+    sprintName: string;
+    requiredEjectionPoints: number;
+    availableUnstartedItems: WorkItem[];
+  } | null>(null);
+
+  const handleConfirmGuardrailSwap = async (ejectedItemIds: string[]) => {
+    if (!guardrailBarrierData) return;
+    const { incomingItem, sprintName } = guardrailBarrierData;
+    setGuardrailBarrierData(null);
+
+    try {
+      const { atomicSprintSwapAction } = await import('@/app/actions/trackerActions');
+      const res = await atomicSprintSwapAction({
+        tenantSlug,
+        sprintName,
+        incomingItemId: incomingItem.id,
+        ejectedItemIds,
+      });
+      if (res.success) {
+        fetchData();
+        broadcastItemMutation({ type: 'ITEMS_REFRESH' });
+      } else {
+        setBulkToast(res.error || 'Failed to execute swap');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+    } catch {
+      fetchData();
+    }
+  };
+
   const handleUpdateItemSprint = async (itemId: string, newSprint: string | null) => {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
@@ -1043,6 +1076,42 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setBulkToast('Completed items in closed sprints are immutable.');
       setTimeout(() => setBulkToast(null), 3000);
       return;
+    }
+
+    // Intercept with SprintGuardrailModal if active sprint capacity is exceeded
+    if (newSprint && newSprint !== '__none__') {
+      const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
+      const targetSprintDef = sprintDefs.find(
+        (s: any) => s.name === newSprint || s.id === newSprint
+      );
+      const isSprintActive = Boolean(
+        targetSprintDef?.is_active ||
+        targetSprintDef?.status === 'active' ||
+        targetSprintDef?.is_current
+      );
+
+      if (isSprintActive && targetSprintDef?.committed_points) {
+        const itemPoints = Number(item.metadata?.story_points ?? item.metadata?.points ?? 0) || 0;
+        const existingSprintItems = items.filter(
+          (it) => it.id !== item.id && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
+        );
+        const currentActivePoints = existingSprintItems.reduce(
+          (acc, it) => acc + (Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0),
+          0
+        );
+        const remainingCapacity = Math.max(0, targetSprintDef.committed_points - currentActivePoints);
+
+        if (itemPoints > remainingCapacity) {
+          const requiredEjection = itemPoints - remainingCapacity;
+          setGuardrailBarrierData({
+            incomingItem: item,
+            sprintName: newSprint,
+            requiredEjectionPoints: requiredEjection,
+            availableUnstartedItems: existingSprintItems,
+          });
+          return;
+        }
+      }
     }
 
     const descendantIds = getDescendantIds(items, itemId);
@@ -2804,6 +2873,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         isSearchOpen={isSearchOpen}
         setIsSearchOpen={setIsSearchOpen}
       />
+
+      {guardrailBarrierData && (
+        <SprintGuardrailModal
+          isOpen={true}
+          onClose={() => setGuardrailBarrierData(null)}
+          onConfirmSwap={handleConfirmGuardrailSwap}
+          incomingItem={guardrailBarrierData.incomingItem}
+          sprintName={guardrailBarrierData.sprintName}
+          requiredEjectionPoints={guardrailBarrierData.requiredEjectionPoints}
+          availableUnstartedItems={guardrailBarrierData.availableUnstartedItems}
+        />
+      )}
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
       {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (

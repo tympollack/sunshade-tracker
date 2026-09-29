@@ -38,6 +38,48 @@ export function validateProjectSettings(settings: any): ValidationResult {
     }
   }
 
+  // Validate sprint_metrics if present
+  if ('sprint_metrics' in settings && settings.sprint_metrics !== null && settings.sprint_metrics !== undefined) {
+    if (typeof settings.sprint_metrics !== 'object' || Array.isArray(settings.sprint_metrics)) {
+      errors.push({
+        path: 'sprint_metrics',
+        message: 'sprint_metrics must be a JSON object containing metric governance rules',
+      });
+    } else {
+      const sm = settings.sprint_metrics;
+      if ('velocity_window' in sm && (typeof sm.velocity_window !== 'number' || sm.velocity_window < 1)) {
+        errors.push({
+          path: 'sprint_metrics.velocity_window',
+          message: 'velocity_window must be a positive integer >= 1',
+        });
+      }
+      if ('late_runway_threshold' in sm && (typeof sm.late_runway_threshold !== 'number' || sm.late_runway_threshold < 0 || sm.late_runway_threshold > 1)) {
+        errors.push({
+          path: 'sprint_metrics.late_runway_threshold',
+          message: 'late_runway_threshold must be a decimal between 0 and 1 (e.g. 0.60)',
+        });
+      }
+      if ('late_runway_max_points' in sm && (typeof sm.late_runway_max_points !== 'number' || sm.late_runway_max_points < 0)) {
+        errors.push({
+          path: 'sprint_metrics.late_runway_max_points',
+          message: 'late_runway_max_points must be a non-negative number',
+        });
+      }
+      if ('reliability_healthy_threshold' in sm && (typeof sm.reliability_healthy_threshold !== 'number' || sm.reliability_healthy_threshold < 0 || sm.reliability_healthy_threshold > 100)) {
+        errors.push({
+          path: 'sprint_metrics.reliability_healthy_threshold',
+          message: 'reliability_healthy_threshold must be a percentage between 0 and 100',
+        });
+      }
+      if ('reliability_warning_threshold' in sm && (typeof sm.reliability_warning_threshold !== 'number' || sm.reliability_warning_threshold < 0 || sm.reliability_warning_threshold > 100)) {
+        errors.push({
+          path: 'sprint_metrics.reliability_warning_threshold',
+          message: 'reliability_warning_threshold must be a percentage between 0 and 100',
+        });
+      }
+    }
+  }
+
   // 1. Validate automations if present
   if ('automations' in settings && settings.automations !== null && settings.automations !== undefined) {
     if (!Array.isArray(settings.automations)) {
