@@ -43,12 +43,19 @@ export async function validateSprintIntake(
 
   // Attempt tracker.sprints table first
   try {
-    const { data: dbSprint } = await service
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintIdOrName);
+    let sprintQuery: any = service
       .from('sprints')
       .select('*')
-      .eq('tenant_id', tenant.id)
-      .or(`name.eq.${sprintIdOrName},id.eq.${sprintIdOrName}`)
-      .maybeSingle();
+      .eq('tenant_id', tenant.id);
+
+    if (isUuid) {
+      sprintQuery = sprintQuery.eq('id', sprintIdOrName);
+    } else {
+      sprintQuery = sprintQuery.eq('name', sprintIdOrName);
+    }
+
+    const { data: dbSprint } = await sprintQuery.maybeSingle();
 
     if (dbSprint) {
       sprintData = {
@@ -78,6 +85,7 @@ export async function validateSprintIntake(
       if (matched) {
         sprintData = {
           ...matched,
+          project_id: p.id,
           is_active: matched.is_current || matched.status === 'active',
           started_at: (matched as any).started_at || matched.start_date,
           ends_at: (matched as any).ends_at || matched.end_date,
@@ -104,6 +112,10 @@ export async function validateSprintIntake(
     .select('*')
     .eq('tenant_id', tenant.id);
 
+  if (sprintData?.project_id) {
+    itemsQuery = itemsQuery.eq('project_id', sprintData.project_id);
+  }
+
   if (typeof itemsQuery.is === 'function') {
     itemsQuery = itemsQuery.is('deleted_at', null);
   }
@@ -111,9 +123,10 @@ export async function validateSprintIntake(
   const { data: allItems } = await itemsQuery;
   const currentSprintItems = (allItems || []).filter(
     (it: any) =>
-      it.metadata?.sprint === sprintData?.name ||
-      it.metadata?.sprint_id === sprintData?.id ||
-      it.metadata?.sprint === sprintIdOrName
+      (!sprintData?.project_id || !it.project_id || it.project_id === sprintData.project_id) &&
+      (it.metadata?.sprint === sprintData?.name ||
+        it.metadata?.sprint_id === sprintData?.id ||
+        it.metadata?.sprint === sprintIdOrName)
   );
 
   return validateSprintIntakePure({

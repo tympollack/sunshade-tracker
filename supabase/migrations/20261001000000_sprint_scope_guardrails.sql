@@ -55,8 +55,9 @@ DECLARE
   v_is_active BOOLEAN := false;
   v_found RECORD;
 BEGIN
-  -- Only evaluate when metadata story_points was modified
-  IF (OLD.metadata->>'story_points') IS NOT DISTINCT FROM (NEW.metadata->>'story_points') THEN
+  -- Only evaluate when metadata story_points or points was modified
+  IF (OLD.metadata->>'story_points') IS NOT DISTINCT FROM (NEW.metadata->>'story_points')
+     AND (OLD.metadata->>'points') IS NOT DISTINCT FROM (NEW.metadata->>'points') THEN
     RETURN NEW;
   END IF;
 

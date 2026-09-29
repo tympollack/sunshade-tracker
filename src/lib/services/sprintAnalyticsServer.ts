@@ -106,11 +106,17 @@ export async function getSprintHealthReport(
   try {
     let closedQuery: any = service
       .from('sprints')
-      .select('id, name, status, ends_at, end_date, committed_points, completed_points')
+      .select('id, name, status, ends_at, committed_points, project_id')
       .eq('tenant_id', tenant.id)
       .in('status', ['completed', 'closed', 'finished'])
+      .neq('id', targetSprint.id)
+      .neq('name', targetSprint.name)
       .order('ends_at', { ascending: false })
       .limit(3);
+
+    if (targetProjectId) {
+      closedQuery = closedQuery.eq('project_id', targetProjectId);
+    }
 
     const { data: dbClosed } = await closedQuery;
     if (dbClosed && dbClosed.length > 0) {
@@ -118,9 +124,9 @@ export async function getSprintHealthReport(
         historicalSprints.push({
           id: s.id,
           name: s.name,
-          completed_points: Number(s.completed_points) || 0,
+          completed_points: (s as any).completed_points ? Number((s as any).completed_points) : 0,
           committed_points: Number(s.committed_points) || 0,
-          ends_at: s.ends_at || s.end_date,
+          ends_at: s.ends_at,
         });
       }
     }
@@ -131,11 +137,17 @@ export async function getSprintHealthReport(
   // Supplement from project settings if fewer than 3 found
   if (historicalSprints.length < 3) {
     const candidateSettingsSprints: SprintDefinition[] = [];
-    for (const p of projectList) {
+    const relevantProjects = targetProjectId
+      ? projectList.filter((p) => p.id === targetProjectId)
+      : projectList;
+
+    for (const p of relevantProjects) {
       const sprints: SprintDefinition[] = p.settings?.sprint_settings?.sprints || [];
       for (const s of sprints) {
         if (
           s.status === 'completed' &&
+          s.id !== targetSprint.id &&
+          s.name !== targetSprint.name &&
           !historicalSprints.some((h) => h.id === s.id || h.name === s.name)
         ) {
           candidateSettingsSprints.push(s);
@@ -162,11 +174,15 @@ export async function getSprintHealthReport(
     }
   }
 
-  // 4. Fetch all tenant items to populate completed_points for historical sprints missing point aggregates
+  // 4. Fetch work items to populate completed_points for historical sprints missing point aggregates
   let itemsQuery: any = service
     .from('work_items')
     .select('id, project_id, status, title, item_type, metadata, created_at, updated_at')
     .eq('tenant_id', tenant.id);
+
+  if (targetProjectId) {
+    itemsQuery = itemsQuery.eq('project_id', targetProjectId);
+  }
 
   if (typeof itemsQuery.is === 'function') {
     itemsQuery = itemsQuery.is('deleted_at', null);
@@ -179,26 +195,25 @@ export async function getSprintHealthReport(
   for (const h of historicalSprints) {
     if (h.completed_points === 0) {
       const sprintItems = itemList.filter(
-        (it) => it.metadata?.sprint === h.name || it.metadata?.sprint_id === h.id
+        (it) =>
+          (!targetProjectId || !it.project_id || it.project_id === targetProjectId) &&
+          (it.metadata?.sprint === h.name || it.metadata?.sprint_id === h.id)
       );
-      const completedPts = sprintItems.reduce((acc, it) => {
+      const completedItems = sprintItems.filter((it) => {
         const st = String(it.status || '').toLowerCase().trim();
-        if (COMPLETED_STATUSES.has(st)) {
-          const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0);
-          return acc + (isNaN(p) || p < 0 ? 0 : p);
-        }
-        return acc;
-      }, 0);
-      h.completed_points = completedPts;
+        return COMPLETED_STATUSES.has(st);
+      });
+      h.completed_points = calculateSprintLeafPoints(completedItems);
     }
   }
 
   // 5. Filter items for current target sprint
   const targetSprintItems = itemList.filter(
     (it) =>
-      it.metadata?.sprint === targetSprint.name ||
-      it.metadata?.sprint_id === targetSprint.id ||
-      it.metadata?.sprint === sprintIdOrName
+      (!targetProjectId || !it.project_id || it.project_id === targetProjectId) &&
+      (it.metadata?.sprint === targetSprint.name ||
+        it.metadata?.sprint_id === targetSprint.id ||
+        it.metadata?.sprint === sprintIdOrName)
   );
 
   // 6. Run pure telemetry aggregation

@@ -141,13 +141,11 @@ export function validateSprintIntakePure(params: {
   const { sprint, currentSprintItems, incomingItem, options } = params;
 
   // 1. Check P0 Emergency Override flag
-  const isEmergency = Boolean(
-    options?.overrideP0 ||
-    options?.isEmergency ||
-    incomingItem.priority === 'P0' ||
-    incomingItem.metadata?.priority === 'P0' ||
-    incomingItem.priority === 'Critical' && incomingItem.metadata?.is_emergency
-  );
+  const itemPriority = String(
+    incomingItem.metadata?.priority || incomingItem.priority || ''
+  ).toUpperCase().trim();
+  const isP0Item = itemPriority === 'P0' || itemPriority === 'CRITICAL' || itemPriority === 'EMERGENCY';
+  const isEmergency = isP0Item && Boolean(options?.overrideP0 || options?.isEmergency || itemPriority === 'P0');
 
   if (isEmergency) {
     return {
@@ -210,7 +208,7 @@ export function validateSprintIntakePure(params: {
       }
       return true;
     });
-    const currentActivePoints = existingSprintItems.reduce((acc, it) => acc + extractStoryPoints(it), 0);
+    const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
     const incomingPoints = extractStoryPoints(incomingItem);
     const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
 
@@ -234,6 +232,25 @@ export function validateSprintIntakePure(params: {
       // Validate ejection candidates: must be in sprint and unstarted
       let totalEjectedPoints = 0;
       for (const ejected of candidateEjections) {
+        const itemSprint = ejected.metadata?.sprint || (ejected as any).sprint;
+        const itemSprintId = ejected.metadata?.sprint_id;
+        const matchesSprint =
+          (sprint.name && itemSprint === sprint.name) ||
+          (sprint.id && (itemSprintId === sprint.id || itemSprint === sprint.id)) ||
+          existingSprintItems.some((it) => it.id === ejected.id);
+
+        if (!matchesSprint) {
+          throw new SprintGuardrailError({
+            code: 'INVALID_EJECTION',
+            status: 400,
+            message: `Cannot eject item '${ejected.title || ejected.id}': item does not belong to active sprint '${sprint.name || sprint.id}'.`,
+            details: {
+              invalid_item_id: ejected.id,
+              sprint: sprint.name || sprint.id,
+            },
+          });
+        }
+
         if (!isUnstartedStatus(ejected.status)) {
           throw new SprintGuardrailError({
             code: 'INVALID_EJECTION',
@@ -247,6 +264,7 @@ export function validateSprintIntakePure(params: {
         }
         totalEjectedPoints += extractStoryPoints(ejected);
       }
+
 
       if (totalEjectedPoints < requiredEjectionPoints) {
         throw new SprintGuardrailError({
@@ -304,10 +322,10 @@ export function validateEstimateImmutability(
   incomingMetadata: Record<string, any>,
   sprint?: Partial<SprintScopeData> | null
 ): void {
-  const oldPoints = currentItem.metadata?.story_points;
-  const newPoints = incomingMetadata?.story_points;
+  const oldPoints = currentItem.metadata?.story_points ?? currentItem.metadata?.points;
+  const newPoints = incomingMetadata?.story_points ?? incomingMetadata?.points;
 
-  // If story_points did not change, always allow
+  // If estimates did not change, always allow
   if (oldPoints === undefined && newPoints === undefined) return;
   if (String(oldPoints ?? '') === String(newPoints ?? '')) return;
 
@@ -315,7 +333,7 @@ export function validateEstimateImmutability(
     throw new SprintGuardrailError({
       code: 'ESTIMATE_LOCKED',
       status: 409,
-      message: 'Estimates locked while sprint is active: cannot modify story_points on active sprint items',
+      message: 'Estimates locked while sprint is active: cannot modify story_points or points on active sprint items',
       details: {
         item_id: currentItem.id,
         before: oldPoints,

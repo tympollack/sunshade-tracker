@@ -291,6 +291,7 @@ describe('TASK-TRK-VELOCITY-ENGINE: Rolling Velocity & Enterprise KPI Engine', (
           return {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            neq: vi.fn().mockReturnThis(),
             in: vi.fn().mockReturnThis(),
             order: vi.fn().mockReturnThis(),
             limit: vi.fn().mockResolvedValue({ data: [], error: null }),

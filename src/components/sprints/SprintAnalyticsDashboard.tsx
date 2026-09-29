@@ -59,7 +59,9 @@ export function SprintAnalyticsSkeleton({ tenantSlug }: { tenantSlug?: string })
 
 export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
-  const [availableSprints, setAvailableSprints] = useState<Array<{ id: string; name: string; status: string }>>([]);
+  const [availableSprints, setAvailableSprints] = useState<
+    Array<{ id: string; name: string; status: string; project_id?: string; project_slug?: string }>
+  >([]);
   const [selectedSprint, setSelectedSprint] = useState<string>('');
   const [report, setReport] = useState<SprintHealthReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,7 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
   // Demo state for zero-sum trade-off modal
   const [isGuardrailModalOpen, setIsGuardrailModalOpen] = useState(false);
   const [guardrailItems, setGuardrailItems] = useState<WorkItem[]>([]);
+  const [previewToast, setPreviewToast] = useState<string | null>(null);
 
   // 1. Fetch workspaces and sprint list
   useEffect(() => {
@@ -86,14 +89,26 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        const sprintList: Array<{ id: string; name: string; status: string }> = [];
+        const sprintList: Array<{
+          id: string;
+          name: string;
+          status: string;
+          project_id?: string;
+          project_slug?: string;
+        }> = [];
         const seen = new Set<string>();
 
         for (const p of d?.projects || []) {
           for (const s of p.settings?.sprint_settings?.sprints || []) {
             if (!seen.has(s.name)) {
               seen.add(s.name);
-              sprintList.push({ id: s.id || s.name, name: s.name, status: s.status });
+              sprintList.push({
+                id: s.id || s.name,
+                name: s.name,
+                status: s.status,
+                project_id: p.id,
+                project_slug: p.slug,
+              });
             }
           }
         }
@@ -122,8 +137,17 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
     setError(null);
 
     try {
+      const targetSprintObj = availableSprints.find(
+        (s) => s.name === selectedSprint || s.id === selectedSprint
+      );
+      const projectParam = targetSprintObj?.project_slug
+        ? `&project_slug=${encodeURIComponent(targetSprintObj.project_slug)}`
+        : targetSprintObj?.project_id
+        ? `&project_id=${encodeURIComponent(targetSprintObj.project_id)}`
+        : '';
+
       const res = await fetch(
-        `/api/v1/sprints/analytics?sprint_id=${encodeURIComponent(selectedSprint)}&tenant_slug=${encodeURIComponent(tenantSlug)}`,
+        `/api/v1/sprints/analytics?sprint_id=${encodeURIComponent(selectedSprint)}&tenant_slug=${encodeURIComponent(tenantSlug)}${projectParam}`,
         {
           headers: { 'x-tenant-slug': tenantSlug },
         }
@@ -137,9 +161,9 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
       const data: SprintHealthReport = await res.json();
       setReport(data);
 
-      // Fetch sprint items for demo modal
+      // Fetch sprint items for demo modal with project selector
       const itemsRes = await fetch(
-        `/api/v1/items?tenant_slug=${encodeURIComponent(tenantSlug)}`,
+        `/api/v1/items?tenant_slug=${encodeURIComponent(tenantSlug)}${projectParam}`,
         { headers: { 'x-tenant-slug': tenantSlug } }
       );
       if (itemsRes.ok) {
@@ -506,17 +530,29 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
             className="px-4 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 text-xs font-semibold transition-colors shrink-0 flex items-center space-x-1.5"
           >
             <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Test Barrier Dialog</span>
+            <span>Preview Swap Barrier Dialog</span>
           </button>
         </div>
+
+        {previewToast && (
+          <div
+            data-testid="preview-simulation-toast"
+            className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{previewToast}</span>
+          </div>
+        )}
       </main>
 
       {/* Zero-Sum Guardrail Barrier Modal */}
       <SprintGuardrailModal
         isOpen={isGuardrailModalOpen}
         onClose={() => setIsGuardrailModalOpen(false)}
-        onConfirmSwap={async () => {
+        onConfirmSwap={async (ejectedIds) => {
           setIsGuardrailModalOpen(false);
+          setPreviewToast(`[Preview Mode] Ejection swap simulated successfully for ${ejectedIds.length} candidate tasks.`);
+          setTimeout(() => setPreviewToast(null), 3500);
           await fetchReport();
         }}
         incomingItem={{

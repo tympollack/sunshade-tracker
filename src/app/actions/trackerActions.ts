@@ -566,6 +566,51 @@ export async function validateSprintIntakeAction(
       return { success: false, error: 'tenantSlug, sprintId, and incomingItem are required' };
     }
 
+    // Authenticate session
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // Verify workspace access
+    const { data: tenant } = await service
+      .from('tenants')
+      .select('id')
+      .eq('slug', tenantSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!tenant) {
+      return { success: false, error: `Workspace @${tenantSlug} not found` };
+    }
+
+    const { data: member } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!member) {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('id', tenant.id)
+        .eq('owner_id', user.id)
+        .maybeSingle();
+
+      if (!owned) {
+        return { success: false, error: 'Forbidden: Access to workspace denied' };
+      }
+    }
+
     const { validateSprintIntake, SprintGuardrailError } = await import(
       '@/lib/services/sprintGuardrailServer'
     );
@@ -591,7 +636,7 @@ export async function validateSprintIntakeAction(
 
 /**
  * Server action to execute an atomic sprint swap:
- * Assigns incomingItem to sprint while ejecting specified unstarted items back to backlog.
+ * Assigns incomingItem (and any descendants) to sprint while ejecting specified unstarted items back to backlog.
  */
 export async function atomicSprintSwapAction(params: {
   tenantSlug: string;
@@ -620,27 +665,61 @@ export async function atomicSprintSwapAction(params: {
 
     const service = supabaseAdmin;
 
-    // 2. Fetch incoming item
+    // Verify workspace membership
+    const { data: tenant } = await service
+      .from('tenants')
+      .select('id')
+      .eq('slug', tenantSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!tenant) {
+      return { success: false, error: `Workspace @${tenantSlug} not found` };
+    }
+
+    const { data: member } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!member) {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('id', tenant.id)
+        .eq('owner_id', user.id)
+        .maybeSingle();
+
+      if (!owned) {
+        return { success: false, error: 'Forbidden: Access to workspace denied' };
+      }
+    }
+
+    // 2. Fetch incoming item scoped to tenant
     const { data: incomingItem, error: incErr } = await service
       .from('work_items')
       .select('*')
       .eq('id', incomingItemId)
+      .eq('tenant_id', tenant.id)
       .single();
 
     if (incErr || !incomingItem) {
-      return { success: false, error: 'Incoming work item not found' };
+      return { success: false, error: 'Incoming work item not found in this workspace' };
     }
 
-    // 3. Fetch ejected items if any
+    // 3. Fetch ejected items scoped to tenant
     let ejectedItems: any[] = [];
     if (ejectedItemIds && ejectedItemIds.length > 0) {
       const { data: ejects, error: ejectErr } = await service
         .from('work_items')
         .select('*')
-        .in('id', ejectedItemIds);
+        .in('id', ejectedItemIds)
+        .eq('tenant_id', tenant.id);
 
       if (ejectErr || !ejects || ejects.length !== ejectedItemIds.length) {
-        return { success: false, error: 'One or more items specified for ejection were not found' };
+        return { success: false, error: 'One or more items specified for ejection were not found in this workspace' };
       }
       ejectedItems = ejects;
     }
@@ -670,27 +749,94 @@ export async function atomicSprintSwapAction(params: {
 
     const nowIso = new Date().toISOString();
 
-    // 5. Atomic database updates: assign incoming item to sprint
-    const incomingMeta = { ...(incomingItem.metadata || {}), sprint: sprintName };
+    // 5. Gather incoming item and any descendants to prevent stranding child tasks
+    const { data: projectItems } = await service
+      .from('work_items')
+      .select('id, parent_id, metadata')
+      .eq('project_id', incomingItem.project_id)
+      .eq('tenant_id', tenant.id);
+
+    const getDescendants = (parentId: string): string[] => {
+      const children = (projectItems || []).filter((it: any) => it.parent_id === parentId);
+      let desc: string[] = [];
+      for (const ch of children) {
+        desc.push(ch.id);
+        desc = desc.concat(getDescendants(ch.id));
+      }
+      return desc;
+    };
+    const incomingDescendantIds = getDescendants(incomingItemId);
+
+    // 6. Atomic database updates: assign incoming item and descendants to sprint
+    const incomingMeta = {
+      ...(incomingItem.metadata || {}),
+      sprint: sprintName,
+      added_mid_sprint: true,
+    };
     const { error: assignErr } = await service
       .from('work_items')
       .update({ metadata: incomingMeta, updated_at: nowIso })
-      .eq('id', incomingItemId);
+      .eq('id', incomingItemId)
+      .eq('tenant_id', tenant.id);
 
     if (assignErr) {
       return { success: false, error: `Failed to assign item to sprint: ${assignErr.message}` };
     }
 
-    // Eject selected items back to backlog
+    for (const descId of incomingDescendantIds) {
+      const origChild = (projectItems || []).find((it: any) => it.id === descId);
+      const childMeta = { ...(origChild?.metadata || {}), sprint: sprintName, added_mid_sprint: true };
+      await service
+        .from('work_items')
+        .update({ metadata: childMeta, updated_at: nowIso })
+        .eq('id', descId)
+        .eq('tenant_id', tenant.id);
+    }
+
+    // 7. Eject selected items back to backlog with verified atomic status
+    const updatedEjectedIds: string[] = [];
     if (ejectedItemIds && ejectedItemIds.length > 0) {
       for (const ej of ejectedItems) {
         const nextMeta = { ...(ej.metadata || {}) };
         delete nextMeta.sprint;
         delete nextMeta.sprint_id;
-        await service
+        const { error: ejectUpdateErr } = await service
           .from('work_items')
           .update({ metadata: nextMeta, updated_at: nowIso })
-          .eq('id', ej.id);
+          .eq('id', ej.id)
+          .eq('tenant_id', tenant.id);
+
+        if (ejectUpdateErr) {
+          // Rollback incoming item assignment and any completed ejections
+          await service
+            .from('work_items')
+            .update({ metadata: incomingItem.metadata || {}, updated_at: nowIso })
+            .eq('id', incomingItemId)
+            .eq('tenant_id', tenant.id);
+
+          for (const descId of incomingDescendantIds) {
+            const origChild = (projectItems || []).find((it: any) => it.id === descId);
+            await service
+              .from('work_items')
+              .update({ metadata: origChild?.metadata || {}, updated_at: nowIso })
+              .eq('id', descId)
+              .eq('tenant_id', tenant.id);
+          }
+
+          for (const revertedId of updatedEjectedIds) {
+            const orig = ejectedItems.find((i) => i.id === revertedId);
+            if (orig) {
+              await service
+                .from('work_items')
+                .update({ metadata: orig.metadata || {}, updated_at: nowIso })
+                .eq('id', revertedId)
+                .eq('tenant_id', tenant.id);
+            }
+          }
+
+          return { success: false, error: `Failed to eject item ${ej.id}: ${ejectUpdateErr.message}` };
+        }
+        updatedEjectedIds.push(ej.id);
       }
     }
 

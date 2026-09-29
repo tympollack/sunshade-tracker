@@ -373,6 +373,86 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
         });
       }).toThrowError(SprintGuardrailError);
     });
+
+    it('rejects with INVALID_EJECTION when attempting to eject an item from a different sprint', () => {
+      const incomingLarge: Partial<WorkItem> = {
+        id: 'inc-large',
+        item_type: 'task',
+        title: 'Large 5-point item',
+        metadata: { story_points: 5 },
+      };
+
+      const foreignItem: WorkItem = {
+        id: 'foreign-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'not_started',
+        title: 'Backlog Item In Other Sprint',
+        order_index: 4000,
+        metadata: { story_points: 5, sprint: 'Other Sprint' },
+        created_at: '2026-10-01',
+        updated_at: '2026-10-01',
+      };
+
+      expect(() => {
+        validateSprintIntakePure({
+          sprint: activeSprint,
+          currentSprintItems: existingItems,
+          incomingItem: incomingLarge,
+          options: {
+            ejectedItems: [foreignItem],
+          },
+        });
+      }).toThrowError(/does not belong to active sprint/);
+    });
+
+    it('uses leaf items only to avoid double counting parent and child story points', () => {
+      const parentStory: WorkItem = {
+        id: 'parent-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'story',
+        status: 'in_progress',
+        title: 'Parent Story',
+        order_index: 1000,
+        metadata: { story_points: 8, sprint: 'Sprint 2026-Q4' },
+        created_at: '2026-10-01',
+        updated_at: '2026-10-01',
+      };
+      const childTask: WorkItem = {
+        id: 'child-1',
+        parent_id: 'parent-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'in_progress',
+        title: 'Child Task',
+        order_index: 1010,
+        metadata: { story_points: 8, sprint: 'Sprint 2026-Q4' },
+        created_at: '2026-10-01',
+        updated_at: '2026-10-01',
+      };
+
+      // Both have 8 points. Committed = 10.
+      // If summed naively: 16 > 10 (overflow).
+      // With leaf point calculation: only childTask counts (8 <= 10, capacity = 2).
+      const incomingTwo: Partial<WorkItem> = {
+        id: 'inc-2',
+        item_type: 'task',
+        title: '2-point leaf addition',
+        metadata: { story_points: 2 },
+      };
+
+      const res = validateSprintIntakePure({
+        sprint: { ...activeSprint, committed_points: 10 },
+        currentSprintItems: [parentStory, childTask],
+        incomingItem: incomingTwo,
+      });
+
+      expect(res.valid).toBe(true);
+      expect(res.remaining_capacity).toBe(2);
+    });
   });
 
   describe('P0 Emergency Override Flag', () => {
@@ -427,6 +507,29 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
 
       expect(res.valid).toBe(true);
     });
+
+    it('refuses overrideP0 bypass if incoming item is not actually P0/Critical priority', () => {
+      const regularItem: Partial<WorkItem> = {
+        id: 'regular-story',
+        item_type: 'story',
+        title: 'Low Priority Story with Fake Override',
+        metadata: { story_points: 5, priority: 'Low' },
+      };
+
+      const now = '2026-10-09T00:00:00Z'; // 80% elapsed
+
+      expect(() => {
+        validateSprintIntakePure({
+          sprint: activeSprint,
+          currentSprintItems: [],
+          incomingItem: regularItem,
+          options: {
+            now,
+            overrideP0: true, // Should be ignored because item is not P0
+          },
+        });
+      }).toThrowError(SprintGuardrailError);
+    });
   });
 
   describe('Guardrail 3: Immutable Estimates Validation', () => {
@@ -458,17 +561,28 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
         );
       }).toThrowError(SprintGuardrailError);
 
-      try {
+      expect(() => {
         validateEstimateImmutability(
           currentItem,
           { sprint: 'Sprint 2026-Q4', story_points: 3 },
           activeSprint
         );
-      } catch (err: any) {
-        expect(err.code).toBe('ESTIMATE_LOCKED');
-        expect(err.status).toBe(409);
-        expect(err.message).toContain('Estimates locked while sprint is active');
-      }
+      }).toThrowError(SprintGuardrailError);
+    });
+
+    it('rejects points field changes when item is assigned to an active sprint', () => {
+      const currentItem: Partial<WorkItem> = {
+        id: 'item-lock-points',
+        metadata: { sprint: 'Sprint 2026-Q4', points: 3 },
+      };
+
+      expect(() => {
+        validateEstimateImmutability(
+          currentItem,
+          { sprint: 'Sprint 2026-Q4', points: 5 },
+          activeSprint
+        );
+      }).toThrowError(SprintGuardrailError);
     });
 
     it('permits story_points changes when sprint is planned or not active', () => {
@@ -550,6 +664,7 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
       const mockItems: any[] = [
         {
           id: 'exist-a',
+          project_id: 'p-100',
           metadata: { sprint: 'Active Sprint 1', story_points: 10 },
           status: 'in_progress',
         },

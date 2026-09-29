@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldAlert,
   X,
@@ -48,6 +48,12 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
   isSubmitting = false,
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedIds(new Set());
+    }
+  }, [isOpen, incomingItem]);
 
   // Extract numeric points for incoming item
   const incomingPoints = useMemo(() => {

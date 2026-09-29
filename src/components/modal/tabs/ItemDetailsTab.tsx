@@ -356,25 +356,46 @@ export function ItemDetailsTab({
         </div>
 
         {/* Suggested Fields */}
-        {effectiveProjectSettings.custom_fields && effectiveProjectSettings.custom_fields.length > 0 && (
-          <div className="flex items-center flex-wrap gap-1.5 pt-1">
-            <span className="text-[10px] text-slate-500 font-mono">Suggested fields:</span>
-            {effectiveProjectSettings.custom_fields
-              .filter((f) => !(f in metadata))
-              .map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => onUpdateMetaField(f, '')}
-                  className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-emerald-400 transition-colors flex items-center space-x-1"
-                  title={`Add ${f} field`}
-                >
-                  <Plus className="w-2.5 h-2.5" />
-                  <span>{f}</span>
-                </button>
-              ))}
-          </div>
-        )}
+        {effectiveProjectSettings.custom_fields && effectiveProjectSettings.custom_fields.length > 0 && (() => {
+          const sprintDefs = effectiveProjectSettings?.sprint_settings?.sprints || [];
+          const activeSprintDef = sprintDefs.find(
+            (s: any) => s.name === metadata.sprint || s.id === metadata.sprint
+          );
+          const isItemInActiveSprint = Boolean(
+            activeSprintDef?.is_active ||
+            activeSprintDef?.status === 'active' ||
+            activeSprintDef?.is_current
+          );
+
+          return (
+            <div className="flex items-center flex-wrap gap-1.5 pt-1">
+              <span className="text-[10px] text-slate-500 font-mono">Suggested fields:</span>
+              {effectiveProjectSettings.custom_fields
+                .filter((f) => !(f in metadata))
+                .map((f) => {
+                  const isEstimateField = f === 'story_points' || f === 'points';
+                  const isLocked = isEstimateField && isItemInActiveSprint;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => !isLocked && onUpdateMetaField(f, '')}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors flex items-center space-x-1 ${
+                        isLocked
+                          ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                          : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-emerald-400'
+                      }`}
+                      title={isLocked ? 'Estimates locked while sprint is active' : `Add ${f} field`}
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      <span>{f}</span>
+                    </button>
+                  );
+                })}
+            </div>
+          );
+        })()}
 
         {/* Fields List */}
         <div className="space-y-2 pt-1">
