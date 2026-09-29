@@ -18,9 +18,13 @@ export interface SprintDefinition {
   name: string;
   start_date?: string | null;
   end_date?: string | null;
+  started_at?: string | null;
+  ends_at?: string | null;
   goal?: string | null;
   status: 'planned' | 'active' | 'completed' | 'unplanned';
   is_current?: boolean;
+  is_active?: boolean;
+  committed_points?: number;
 }
 
 export interface SprintSettings {
