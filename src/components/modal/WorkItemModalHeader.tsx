@@ -50,8 +50,8 @@ export function WorkItemModalHeader({
 }: WorkItemModalHeaderProps) {
   const [copiedId, setCopiedId] = useState(false);
   const [copiedGetUrl, setCopiedGetUrl] = useState(false);
-  const copyIdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const copyGetUrlTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const copyIdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyGetUrlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const effectiveGithubRepo = githubRepo || projectSettings?.github_repo || projectSettings?.github_repository;
   const { prUrl: modalPrUrl, commitHash: modalCommitHash, repo: modalRepo, owner: modalOwner } =

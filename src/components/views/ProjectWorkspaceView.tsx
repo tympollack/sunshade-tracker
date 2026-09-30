@@ -20,6 +20,7 @@ import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
+import { BulkDeleteConfirmModal } from '@/components/BulkDeleteConfirmModal';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation';
 import {
@@ -317,14 +318,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   };
 
-  // Clear selection on tab change or project switch
+  // Clear selection and pending bulk actions on tab change or project switch
   useEffect(() => {
     setSelectedItemIds(new Set());
     lastSelectedIdRef.current = null;
+    setIsBulkDeleteModalOpen(false);
+    setItemsToBulkDelete([]);
   }, [activeTab, projectSlug]);
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkToast, setBulkToast] = useState<string | null>(null);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+  const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
     schema_version: '1.0',
     hierarchy: [
@@ -1921,7 +1926,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
       (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
@@ -1934,15 +1939,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       return;
     }
 
-    if (
-      !window.confirm(
-        `Are you sure you want to permanently delete ${mutableItems.length} selected item(s)?`
-      )
-    ) {
+    setItemsToBulkDelete(mutableItems);
+    setIsBulkDeleteModalOpen(true);
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    const currentProj = allProjects.find((p) => p.slug === projectSlug);
+    const validItems = itemsToBulkDelete.filter(
+      (it) => !currentProj?.id || it.project_id === currentProj.id
+    );
+    const mutableIds = validItems.map((it) => it.id);
+    if (mutableIds.length === 0) {
+      setIsBulkDeleteModalOpen(false);
+      setItemsToBulkDelete([]);
       return;
     }
-
-    const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
 
     setItems((prev) => prev.filter((it) => !idSet.has(it.id)));
@@ -1963,6 +1974,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setBulkToast(`Deleted ${mutableIds.length} items.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
+        setIsBulkDeleteModalOpen(false);
+        setItemsToBulkDelete([]);
       }
     } catch (err: any) {
       setBulkToast(`Network error: ${err?.message || 'Failed to communicate with server'}`);
@@ -2922,6 +2935,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           availableUnstartedItems={guardrailBarrierData.availableUnstartedItems}
         />
       )}
+
+      <BulkDeleteConfirmModal
+        isOpen={isBulkDeleteModalOpen}
+        onClose={() => {
+          if (!isBulkApplying) {
+            setIsBulkDeleteModalOpen(false);
+            setItemsToBulkDelete([]);
+          }
+        }}
+        onConfirm={handleConfirmBulkDelete}
+        items={itemsToBulkDelete}
+        isDeleting={isBulkApplying}
+      />
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
       {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (

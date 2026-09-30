@@ -106,7 +106,7 @@ export function TreeNode({
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
   const [childError, setChildError] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
-  const dragLeaveTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const dragLeaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
     return () => {
