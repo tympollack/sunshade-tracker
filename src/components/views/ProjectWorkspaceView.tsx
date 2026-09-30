@@ -25,7 +25,14 @@ import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation'
 import {
   sortSprintNames,
   isItemImmutableDueToCompletedSprint,
+  calculateSprintLeafPoints,
 } from '@/lib/sprint-utils';
+import {
+  validateSprintIntakePure,
+  SprintGuardrailError,
+  isSprintActive,
+  isUnstartedStatus,
+} from '@/lib/services/sprintGuardrailService';
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 import { bulkReassignProjects } from '@/app/actions/trackerActions';
 import { saveModalItem } from '@/lib/save-modal-item';
@@ -1078,45 +1085,68 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       return;
     }
 
-    // Intercept with SprintGuardrailModal if active sprint capacity is exceeded
+    const descendantIds = getDescendantIds(items, itemId);
+    const targetIds = [itemId, ...descendantIds];
+    const targetIdSet = new Set(targetIds);
+
+    // Intercept with SprintGuardrailModal or validation if moving into an active sprint
     if (newSprint && newSprint !== '__none__') {
       const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
       const targetSprintDef = sprintDefs.find(
         (s: any) => s.name === newSprint || s.id === newSprint
       );
-      const isSprintActive = Boolean(
-        targetSprintDef?.is_active ||
-        targetSprintDef?.status === 'active' ||
-        targetSprintDef?.is_current
-      );
 
-      if (isSprintActive && targetSprintDef?.committed_points) {
-        const itemPoints = Number(item.metadata?.story_points ?? item.metadata?.points ?? 0) || 0;
+      if (targetSprintDef && isSprintActive(targetSprintDef)) {
+        const allEnteringItems = items.filter((it) => targetIdSet.has(it.id));
+        const enteringPoints = calculateSprintLeafPoints(allEnteringItems);
         const existingSprintItems = items.filter(
-          (it) => it.id !== item.id && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
+          (it) => !targetIdSet.has(it.id) && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
         );
-        const currentActivePoints = existingSprintItems.reduce(
-          (acc, it) => acc + (Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0),
-          0
-        );
-        const remainingCapacity = Math.max(0, targetSprintDef.committed_points - currentActivePoints);
 
-        if (itemPoints > remainingCapacity) {
-          const requiredEjection = itemPoints - remainingCapacity;
-          setGuardrailBarrierData({
-            incomingItem: item,
-            sprintName: newSprint,
-            requiredEjectionPoints: requiredEjection,
-            availableUnstartedItems: existingSprintItems,
+        const incomingItemForValidation = {
+          ...item,
+          metadata: {
+            ...item.metadata,
+            story_points: enteringPoints,
+          },
+        };
+
+        const metricRules = projectSettings?.sprint_settings?.metric_rules || projectSettings?.sprint_settings?.sprint_metrics;
+
+        try {
+          validateSprintIntakePure({
+            sprint: targetSprintDef,
+            currentSprintItems: existingSprintItems,
+            incomingItem: incomingItemForValidation,
+            rules: metricRules,
           });
-          return;
+        } catch (err: any) {
+          if (err instanceof SprintGuardrailError || err.code) {
+            if (err.code === 'SCOPE_OVERFLOW') {
+              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
+              const committedPoints = targetSprintDef.committed_points ?? (targetSprintDef as any).metadata?.committed_points ?? 0;
+              const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
+              const requiredEjection = err.required_ejection_points || Math.max(1, enteringPoints - remainingCapacity);
+
+              setGuardrailBarrierData({
+                incomingItem: item,
+                sprintName: newSprint,
+                requiredEjectionPoints: requiredEjection,
+                availableUnstartedItems: existingSprintItems.filter((it) =>
+                  isUnstartedStatus(it.status, metricRules?.unstarted_statuses)
+                ),
+              });
+              return;
+            } else {
+              setBulkToast(err.message || 'Item rejected by sprint guardrail policy.');
+              setTimeout(() => setBulkToast(null), 4000);
+              return;
+            }
+          }
+          throw err;
         }
       }
     }
-
-    const descendantIds = getDescendantIds(items, itemId);
-    const targetIds = [itemId, ...descendantIds];
-    const targetIdSet = new Set(targetIds);
 
     const newMetadata = { ...(item.metadata || {}) };
     if (newSprint && newSprint !== '__none__') {
@@ -1145,8 +1175,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         method: 'PATCH',
         body: JSON.stringify({ id: itemId, metadata: newMetadata }),
       });
-      if (!res.ok) fetchData();
-    } catch {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setBulkToast(errJson.error || 'Failed to update sprint');
+        setTimeout(() => setBulkToast(null), 4000);
+        fetchData();
+      }
+    } catch (err: any) {
+      setBulkToast(err?.message || 'Network error updating sprint');
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     }
   };

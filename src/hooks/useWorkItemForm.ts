@@ -233,9 +233,30 @@ export function useWorkItemForm({
     }
   };
 
+  const shouldLockEstimates =
+    projectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+    projectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+    projectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+    true;
+
+  const itemSprint = item?.metadata?.sprint || item?.metadata?.sprint_id;
+  const sprints = projectSettings?.sprint_settings?.sprints || [];
+  const activeSprintDef = sprints.find(
+    (s: any) =>
+      (s.id === itemSprint || s.name === itemSprint) &&
+      (s.status === 'active' || s.is_active || s.is_current)
+  );
+  const isItemInActiveSprint = Boolean(activeSprintDef);
+
   const handleAddMetaField = () => {
     const key = newMetaKey.trim();
     if (!key) return;
+
+    const lowerKey = key.toLowerCase();
+    if (shouldLockEstimates && isItemInActiveSprint && (lowerKey === 'story_points' || lowerKey === 'points')) {
+      setSaveError('Estimates locked: cannot add or modify story points while item is assigned to an active sprint.');
+      return;
+    }
 
     let parsedVal: any = newMetaVal.trim();
     if (parsedVal === 'true') parsedVal = true;

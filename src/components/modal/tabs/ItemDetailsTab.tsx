@@ -554,32 +554,62 @@ export function ItemDetailsTab({
         </div>
 
         {/* Add Field Inputs */}
-        {showAddMeta && (
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 animate-in fade-in">
-            <input
-              type="text"
-              placeholder="Key (e.g. priority)"
-              value={newMetaKey}
-              onChange={(e) => onNewMetaKeyChange(e.target.value)}
-              className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white font-mono focus:outline-none focus:border-emerald-500 w-36"
-            />
-            <input
-              type="text"
-              placeholder="Value (e.g. High)"
-              value={newMetaVal}
-              onChange={(e) => onNewMetaValChange(e.target.value)}
-              className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white font-mono focus:outline-none focus:border-emerald-500 flex-1"
-            />
-            <button
-              type="button"
-              onClick={onAddMetaField}
-              disabled={!newMetaKey.trim()}
-              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-            >
-              Add
-            </button>
-          </div>
-        )}
+        {showAddMeta && (() => {
+          const sprintDefs = effectiveProjectSettings?.sprint_settings?.sprints || [];
+          const activeSprintDef = sprintDefs.find(
+            (s: any) => s.name === metadata.sprint || s.id === metadata.sprint
+          );
+          const isItemInActiveSprint = Boolean(
+            activeSprintDef?.is_active ||
+            activeSprintDef?.status === 'active' ||
+            activeSprintDef?.is_current
+          );
+          const shouldLockEstimates =
+            effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+            effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+            effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+            true;
+          const lowerKey = newMetaKey.trim().toLowerCase();
+          const isNewKeyLockedEstimate =
+            shouldLockEstimates &&
+            isItemInActiveSprint &&
+            (lowerKey === 'story_points' || lowerKey === 'points');
+
+          return (
+            <div className="flex flex-col gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Key (e.g. priority)"
+                  value={newMetaKey}
+                  onChange={(e) => onNewMetaKeyChange(e.target.value)}
+                  className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white font-mono focus:outline-none focus:border-emerald-500 w-36"
+                />
+                <input
+                  type="text"
+                  placeholder="Value (e.g. High)"
+                  value={newMetaVal}
+                  onChange={(e) => onNewMetaValChange(e.target.value)}
+                  className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded-lg text-white font-mono focus:outline-none focus:border-emerald-500 flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={onAddMetaField}
+                  disabled={!newMetaKey.trim() || isNewKeyLockedEstimate}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Add
+                </button>
+              </div>
+              {isNewKeyLockedEstimate && (
+                <span className="text-[10px] text-amber-400 font-mono flex items-center space-x-1">
+                  <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                  <span>Estimates locked while sprint is active. Cannot add '{newMetaKey.trim()}'.</span>
+                </span>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </>
   );

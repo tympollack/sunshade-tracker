@@ -145,11 +145,11 @@ export async function validateSprintIntake(
   }
 
   const effectiveRules =
-    options?.rules ||
     projectSettings?.sprint_metrics ||
     projectSettings?.metric_rules ||
     projectSettings?.sprint_settings?.metric_rules ||
-    projectSettings?.sprint_settings?.metrics;
+    projectSettings?.sprint_settings?.metrics ||
+    options?.rules;
 
   return validateSprintIntakePure({
     sprint: sprintData,
