@@ -3,6 +3,8 @@
 import React from 'react';
 import {
   ChevronDown,
+  Clock,
+  AlertCircle,
   GripVertical,
   Lock,
   Pencil,
@@ -38,6 +40,7 @@ export interface KanbanCardProps {
   childCount?: number;
   rollupPoints?: number;
   pointMode?: 'macro' | 'granular';
+  medianCycleTime?: number;
   itemHierarchy: HierarchyLevel[];
   allProjects?: any[];
   isAllProjects?: boolean;
@@ -64,6 +67,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   childCount: propChildCount,
   rollupPoints: propRollupPoints,
   pointMode = 'granular',
+  medianCycleTime: propMedianCycleTime,
   itemHierarchy,
   allProjects = [],
   isAllProjects = false,
@@ -103,6 +107,21 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
   const statuses = getItemStatuses ? getItemStatuses(item) : [];
 
+  // Aging / cycle time anomaly radar logic (TASK-TRK-UI-AGING-RADAR)
+  const rawCycleTime = item.metadata?.cycle_time_days;
+  const cycleTimeDays = rawCycleTime !== undefined ? Number(rawCycleTime) : undefined;
+  const medianCycleTime =
+    propMedianCycleTime ??
+    (item.metadata?.median_cycle_time ? Number(item.metadata?.median_cycle_time) : 5);
+
+  const isSevereStalled =
+    cycleTimeDays !== undefined && !isNaN(cycleTimeDays) && cycleTimeDays > 2.5 * medianCycleTime;
+  const isAgingInProgress =
+    cycleTimeDays !== undefined &&
+    !isNaN(cycleTimeDays) &&
+    cycleTimeDays > 1.5 * medianCycleTime &&
+    item.status === 'in_progress';
+
   return (
     <div
       draggable={!isCardImmutable && !isReadOnly && Boolean(onDragStart)}
@@ -117,6 +136,10 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       } ${
         isBeingDragged
           ? 'opacity-40 border-dashed border-emerald-500'
+          : isSevereStalled
+          ? 'border-red-500/50 hover:border-red-500/70'
+          : isAgingInProgress
+          ? 'border-amber-500/40 hover:border-amber-500/60'
           : 'border-slate-800/90'
       }`}
     >
@@ -206,6 +229,29 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
               title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
             >
               {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+            </span>
+          )}
+
+          {/* Aging Work Item Anomaly Badges (TASK-TRK-UI-AGING-RADAR) */}
+          {isSevereStalled && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-950/70 text-red-300 border border-red-800/50 font-sans font-semibold shrink-0"
+              title={`Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)`}
+              data-testid={`card-stalled-badge-${item.id}`}
+            >
+              <AlertCircle className="w-2.5 h-2.5 text-red-400" />
+              <span>Stalled Review</span>
+            </span>
+          )}
+
+          {!isSevereStalled && isAgingInProgress && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/50 font-sans font-semibold shrink-0"
+              title={`Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)`}
+              data-testid={`card-aging-badge-${item.id}`}
+            >
+              <Clock className="w-2.5 h-2.5 text-amber-400" />
+              <span>{cycleTimeDays}d in progress</span>
             </span>
           )}
         </div>
