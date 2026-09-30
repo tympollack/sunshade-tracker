@@ -33,8 +33,8 @@ export function BulkDeleteConfirmModal({
       onClose={() => {
         if (!isDeleting) onClose();
       }}
-      title="Permanently Delete Work Items"
-      subtitle={`Action cannot be undone. ${items.length} ${items.length === 1 ? 'item' : 'items'} will be deleted.`}
+      title="Delete Selected Work Items"
+      subtitle={`${items.length} ${items.length === 1 ? 'item' : 'items'} will be soft-deleted.`}
       icon={
         <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
           <Trash2 className="w-4 h-4" />
@@ -65,7 +65,7 @@ export function BulkDeleteConfirmModal({
             ) : (
               <>
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Permanently Delete ({items.length})</span>
+                <span>Delete ({items.length})</span>
               </>
             )}
           </button>
@@ -78,10 +78,10 @@ export function BulkDeleteConfirmModal({
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-semibold text-rose-200">
-              Are you sure you want to permanently delete {items.length} selected {items.length === 1 ? 'item' : 'items'}?
+              Are you sure you want to delete {items.length} selected {items.length === 1 ? 'item' : 'items'}?
             </p>
             <p className="text-[11px] text-rose-300/80 leading-relaxed">
-              Any child subtasks, associations, and audit activity tied directly to these work items will also be removed immediately.
+              Selected items will be soft-deleted. Unselected subtasks and associations remain intact, and all audit activity history is preserved.
             </p>
           </div>
         </div>

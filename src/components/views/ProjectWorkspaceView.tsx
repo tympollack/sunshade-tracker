@@ -318,10 +318,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   };
 
-  // Clear selection on tab change or project switch
+  // Clear selection and pending bulk actions on tab change or project switch
   useEffect(() => {
     setSelectedItemIds(new Set());
     lastSelectedIdRef.current = null;
+    setIsBulkDeleteModalOpen(false);
+    setItemsToBulkDelete([]);
   }, [activeTab, projectSlug]);
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
@@ -1942,7 +1944,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   };
 
   const handleConfirmBulkDelete = async () => {
-    const mutableIds = itemsToBulkDelete.map((it) => it.id);
+    const currentProj = allProjects.find((p) => p.slug === projectSlug);
+    const validItems = itemsToBulkDelete.filter(
+      (it) => !currentProj?.id || it.project_id === currentProj.id
+    );
+    const mutableIds = validItems.map((it) => it.id);
+    if (mutableIds.length === 0) {
+      setIsBulkDeleteModalOpen(false);
+      setItemsToBulkDelete([]);
+      return;
+    }
     const idSet = new Set(mutableIds);
 
     setItems((prev) => prev.filter((it) => !idSet.has(it.id)));

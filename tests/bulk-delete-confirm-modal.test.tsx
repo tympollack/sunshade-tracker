@@ -32,11 +32,11 @@ describe('BulkDeleteConfirmModal Component (BUG-TRK-BULK-DELETE-CONFIRM-MODAL)',
       />
     );
 
-    expect(screen.getByText('Permanently Delete Work Items')).toBeDefined();
+    expect(screen.getByText('Delete Selected Work Items')).toBeDefined();
     expect(
-      screen.getByText('Action cannot be undone. 3 items will be deleted.')
+      screen.getByText('3 items will be soft-deleted.')
     ).toBeDefined();
-    expect(screen.getByRole('button', { name: /Permanently Delete \(3\)/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Delete \(3\)/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeDefined();
   });
 
@@ -81,7 +81,7 @@ describe('BulkDeleteConfirmModal Component (BUG-TRK-BULK-DELETE-CONFIRM-MODAL)',
       />
     );
 
-    const deleteBtn = screen.getByRole('button', { name: /Permanently Delete \(3\)/i });
+    const deleteBtn = screen.getByRole('button', { name: /Delete \(3\)/i });
     await act(async () => {
       fireEvent.click(deleteBtn);
     });
