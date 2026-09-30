@@ -52,12 +52,13 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
     };
   }
 
-  // Filter and sanitize historical velocities
+  // Filter and sanitize historical velocities (allow v >= 0 to include zero-delivery history)
   const validVelocities = (input.historicalVelocities || [])
-    .filter((v) => typeof v === 'number' && !isNaN(v) && v > 0);
+    .filter((v) => typeof v === 'number' && !isNaN(v) && v >= 0);
 
-  // Fallback if no positive velocities exist
-  const velocities = validVelocities.length > 0 ? validVelocities : [10];
+  // Fallback only if no velocities provided or all historical velocities are zero
+  const hasProgress = validVelocities.some((v) => v > 0);
+  const velocities = hasProgress ? validVelocities : [10];
   const numVelocities = velocities.length;
 
   const distribution: number[] = new Array(iterations);

@@ -104,6 +104,7 @@ export async function POST(req: NextRequest) {
             .from('sprint_events')
             .select('actor_id, points_delta, event_type, occurred_at')
             .eq('project_id', project.id)
+            .eq('sprint_id', sprintIdentifier)
             .gte('occurred_at', twentyFourHoursAgo);
 
           if (recentEvents) {
@@ -191,6 +192,7 @@ export async function POST(req: NextRequest) {
         }
 
         let snapshotId: string | undefined;
+        let mutationError: string | undefined;
 
         if (existingId) {
           const { error: updateErr } = await supabaseAdmin
@@ -205,8 +207,10 @@ export async function POST(req: NextRequest) {
 
           if (updateErr) {
             console.error(`[burndown-rollup] Update error: ${updateErr.message}`);
+            mutationError = updateErr.message;
+          } else {
+            snapshotId = existingId;
           }
-          snapshotId = existingId;
         } else {
           const { data: inserted, error: insertErr } = await supabaseAdmin
             .from('sprint_snapshots')
@@ -226,6 +230,7 @@ export async function POST(req: NextRequest) {
 
           if (insertErr) {
             console.error(`[burndown-rollup] Insert error: ${insertErr.message}`);
+            mutationError = insertErr.message;
           } else if (inserted) {
             snapshotId = inserted.id;
           }
@@ -242,14 +247,18 @@ export async function POST(req: NextRequest) {
           total_sprint_days: totalSprintDays,
           actor_attribution: actorAttribution,
           snapshot_id: snapshotId,
+          ...(mutationError ? { error: mutationError } : {}),
         });
       }
     }
 
+    const successfulRollups = results.filter((r: any) => !r.error);
+
     return NextResponse.json({
-      success: true,
+      success: results.every((r: any) => !r.error),
       timestamp: now.toISOString(),
-      rollups_processed: results.length,
+      rollups_processed: successfulRollups.length,
+      rollups_total: results.length,
       rollups: results,
     });
   } catch (err: any) {

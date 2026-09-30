@@ -118,15 +118,15 @@ describe('TASK-TRK-BURNDOWN-CRON: /api/cron/burndown-rollup', () => {
         };
       }
       if (table === 'sprint_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              gte: vi.fn().mockResolvedValue({
-                data: mockEvents,
-                error: null,
-              }),
-            }),
+        const eventsBuilder: any = {
+          eq: vi.fn().mockImplementation(() => eventsBuilder),
+          gte: vi.fn().mockResolvedValue({
+            data: mockEvents,
+            error: null,
           }),
+        };
+        return {
+          select: vi.fn().mockReturnValue(eventsBuilder),
         };
       }
       if (table === 'sprint_snapshots') {

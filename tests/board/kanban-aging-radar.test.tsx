@@ -108,4 +108,34 @@ describe('TASK-TRK-UI-AGING-RADAR: KanbanCard aging badges and anomaly highlight
     expect(card.className).not.toContain('border-amber-500/40');
     expect(card.className).not.toContain('border-red-500/50');
   });
+
+  it('calculates elapsed WIP days from created_at as fallback when cycle_time_days is absent', () => {
+    // 9 days ago
+    const nineDaysAgo = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+    const item: WorkItem = {
+      id: 'task-fallback-1',
+      tenant_id: 'tenant-1',
+      project_id: 'proj-1',
+      title: 'Task Without Explicit Cycle Time',
+      item_type: 'task',
+      status: 'in_progress',
+      order_index: 4000,
+      created_at: nineDaysAgo,
+      updated_at: nineDaysAgo,
+      metadata: {},
+    };
+
+    render(
+      <KanbanCard
+        item={item}
+        itemHierarchy={defaultHierarchy}
+        medianCycleTime={5}
+      />
+    );
+
+    // 9 days > 1.5 * 5 = 7.5 days -> renders aging badge
+    const agingBadge = screen.getByTestId('card-aging-badge-task-fallback-1');
+    expect(agingBadge).toBeInTheDocument();
+    expect(agingBadge).toHaveTextContent('9d in progress');
+  });
 });

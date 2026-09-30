@@ -114,16 +114,14 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
 
       (supabaseAdmin.from as any).mockImplementation((table: string) => {
         if (table === 'projects') {
+          const queryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => queryBuilder),
+            is: vi.fn().mockImplementation(() => queryBuilder),
+            or: vi.fn().mockImplementation(() => queryBuilder),
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+          };
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                or: vi.fn().mockReturnValue({
-                  is: vi.fn().mockReturnValue({
-                    maybeSingle: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
-                  }),
-                }),
-              }),
-            }),
+            select: vi.fn().mockReturnValue(queryBuilder),
           };
         }
         if (table === 'work_items') {
