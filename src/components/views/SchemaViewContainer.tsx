@@ -5,6 +5,7 @@ import { Eye, AlertTriangle, Archive } from 'lucide-react';
 import { ProjectSettings, StatusDefinition } from '@/types/tracker';
 import { JsonSchemaEditor } from '@/components/JsonSchemaEditor';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+import { resolveMetricRules, DEFAULT_METRIC_RULES } from '@/lib/services/sprintAnalyticsService';
 
 export interface SchemaViewContainerProps {
   isReadOnly: boolean;
@@ -30,6 +31,8 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
     isSavingSchema,
     setIsArchiveModalOpen,
   } = props;
+
+  const activeMetricRules = resolveMetricRules(activeSchemaSettings);
 
   return (
     <div className="p-6 rounded-xl bg-slate-900/50 border border-slate-800/80 space-y-6">
@@ -201,6 +204,53 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
               </span>
             )}
           </div>
+        </div>
+
+        <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-2 md:col-span-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">
+              Sprint Metric Rules (Governance)
+            </h4>
+            <span className="text-[10px] text-slate-500 font-mono">sprint_metrics</span>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Configurable metric invariants stored as JSON in <code className="text-emerald-300 font-mono">tracker.projects.settings-&gt;sprint_metrics</code>.
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-mono">
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              window: <strong className="text-emerald-400">{activeMetricRules.velocity_window} sprints</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              runway: <strong className="text-amber-400">{Math.round(activeMetricRules.late_runway_threshold * 100)}%</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              late cap: <strong className="text-amber-300">{activeMetricRules.late_runway_max_points} pts</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              healthy: <strong className="text-emerald-400">&gt;={activeMetricRules.reliability_healthy_threshold}%</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              zero-sum: <strong className="text-emerald-400">{activeMetricRules.enforce_zero_sum ? 'enforced' : 'disabled'}</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              estimates: <strong className="text-sky-400">{activeMetricRules.lock_estimates_in_active_sprint ? 'locked' : 'open'}</strong>
+            </span>
+          </div>
+          {!isReadOnly && !activeSchemaSettings.sprint_metrics && (
+            <button
+              type="button"
+              onClick={() => {
+                const updated = {
+                  ...activeSchemaSettings,
+                  sprint_metrics: { ...DEFAULT_METRIC_RULES },
+                };
+                handleSaveSchema(updated);
+              }}
+              className="mt-2 px-2.5 py-1 text-[11px] font-mono bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/80 rounded transition-colors flex items-center gap-1.5"
+            >
+              <span>+ Populate Configurable sprint_metrics block in JSON Schema</span>
+            </button>
+          )}
         </div>
       </div>
 

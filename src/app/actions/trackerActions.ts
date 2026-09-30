@@ -546,4 +546,385 @@ export async function bulkReassignProjects(
   }
 }
 
+/**
+ * Server action to validate incoming work item against active sprint scope guardrails.
+ */
+export async function validateSprintIntakeAction(
+  tenantSlug: string,
+  sprintId: string,
+  incomingItem: any,
+  options?: import('@/lib/services/sprintGuardrailService').IntakeValidationOptions
+): Promise<{
+  success: boolean;
+  result?: import('@/lib/services/sprintGuardrailService').IntakeValidationResult;
+  error?: string;
+  code?: string;
+  required_ejection_points?: number;
+}> {
+  try {
+    if (!tenantSlug || !sprintId || !incomingItem) {
+      return { success: false, error: 'tenantSlug, sprintId, and incomingItem are required' };
+    }
+
+    // Authenticate session
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // Verify workspace access
+    const { data: tenant } = await service
+      .from('tenants')
+      .select('id')
+      .eq('slug', tenantSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!tenant) {
+      return { success: false, error: `Workspace @${tenantSlug} not found` };
+    }
+
+    const { data: member } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!member) {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('id', tenant.id)
+        .eq('owner_id', user.id)
+        .maybeSingle();
+
+      if (!owned) {
+        return { success: false, error: 'Forbidden: Access to workspace denied' };
+      }
+    }
+
+    // Strip any client-supplied rules to enforce server-side project governance
+    const safeOptions = options ? { ...options } : undefined;
+    if (safeOptions) {
+      delete safeOptions.rules;
+    }
+
+    // Verify incoming work item against database to prevent forged priorities or zero-estimate bypasses
+    let verifiedIncomingItem = incomingItem;
+    if (incomingItem?.id) {
+      const { data: dbItem } = await service
+        .from('work_items')
+        .select('*')
+        .eq('id', incomingItem.id)
+        .eq('tenant_id', tenant.id)
+        .maybeSingle();
+
+      if (dbItem) {
+        verifiedIncomingItem = {
+          ...dbItem,
+          ...incomingItem,
+          item_type: dbItem.item_type,
+          priority: dbItem.metadata?.priority || dbItem.priority || incomingItem.priority,
+          metadata: {
+            ...(dbItem.metadata || {}),
+            ...(incomingItem.metadata || {}),
+          },
+        };
+      }
+    }
+
+    const { validateSprintIntake, SprintGuardrailError } = await import(
+      '@/lib/services/sprintGuardrailServer'
+    );
+
+    try {
+      const result = await validateSprintIntake(tenantSlug, sprintId, verifiedIncomingItem, safeOptions);
+      return { success: true, result };
+    } catch (err: any) {
+      if (err instanceof SprintGuardrailError) {
+        return {
+          success: false,
+          error: err.message,
+          code: err.code,
+          required_ejection_points: err.required_ejection_points,
+        };
+      }
+      return { success: false, error: err.message || 'Intake validation failed' };
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Server action failed' };
+  }
+}
+
+/**
+ * Server action to execute an atomic sprint swap:
+ * Assigns incomingItem (and any descendants) to sprint while ejecting specified unstarted items back to backlog.
+ */
+export async function atomicSprintSwapAction(params: {
+  tenantSlug: string;
+  sprintName: string;
+  incomingItemId: string;
+  ejectedItemIds: string[];
+  options?: import('@/lib/services/sprintGuardrailService').IntakeValidationOptions;
+}): Promise<{ success: boolean; error?: string; code?: string; required_ejection_points?: number }> {
+  try {
+    const { tenantSlug, sprintName, incomingItemId, ejectedItemIds, options } = params;
+
+    if (!tenantSlug || !sprintName || !incomingItemId) {
+      return { success: false, error: 'tenantSlug, sprintName, and incomingItemId are required' };
+    }
+
+    // 1. Authenticate caller
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // Verify workspace membership and mutation permissions
+    const { data: tenant } = await service
+      .from('tenants')
+      .select('id')
+      .eq('slug', tenantSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!tenant) {
+      return { success: false, error: `Workspace @${tenantSlug} not found` };
+    }
+
+    const { data: member } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!member) {
+      const { data: owned } = await service
+        .from('tenants')
+        .select('id')
+        .eq('id', tenant.id)
+        .eq('owner_id', user.id)
+        .maybeSingle();
+
+      if (!owned) {
+        return { success: false, error: 'Forbidden: Access to workspace denied' };
+      }
+    } else if (member.role === 'viewer') {
+      return { success: false, error: 'Forbidden: Read-only viewers cannot modify sprint assignments' };
+    }
+
+    // 2. Fetch incoming item scoped to tenant
+    const { data: incomingItem, error: incErr } = await service
+      .from('work_items')
+      .select('*')
+      .eq('id', incomingItemId)
+      .eq('tenant_id', tenant.id)
+      .single();
+
+    if (incErr || !incomingItem) {
+      return { success: false, error: 'Incoming work item not found in this workspace' };
+    }
+
+    // 3. Fetch ejected items scoped to tenant
+    let ejectedItems: any[] = [];
+    if (ejectedItemIds && ejectedItemIds.length > 0) {
+      const { data: ejects, error: ejectErr } = await service
+        .from('work_items')
+        .select('*')
+        .in('id', ejectedItemIds)
+        .eq('tenant_id', tenant.id);
+
+      if (ejectErr || !ejects || ejects.length !== ejectedItemIds.length) {
+        return { success: false, error: 'One or more items specified for ejection were not found in this workspace' };
+      }
+      ejectedItems = ejects;
+    }
+
+    // 4. Validate through sprintGuardrailService
+    // Prevent callers from passing options.rules to bypass server governance
+    const safeOptions = options ? { ...options } : undefined;
+    if (safeOptions) {
+      delete safeOptions.rules;
+    }
+
+    const { validateSprintIntake, SprintGuardrailError } = await import(
+      '@/lib/services/sprintGuardrailServer'
+    );
+
+    try {
+      await validateSprintIntake(tenantSlug, sprintName, incomingItem, {
+        ...safeOptions,
+        ejectedItems,
+        ejectedItemIds,
+      });
+    } catch (err: any) {
+      if (err instanceof SprintGuardrailError) {
+        return {
+          success: false,
+          error: err.message,
+          code: err.code,
+          required_ejection_points: err.required_ejection_points,
+        };
+      }
+      return { success: false, error: err.message || 'Sprint intake rejected' };
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 5. Gather project items for hierarchical descendant resolution
+    const { data: projectItems } = await service
+      .from('work_items')
+      .select('id, parent_id, metadata')
+      .eq('project_id', incomingItem.project_id)
+      .eq('tenant_id', tenant.id);
+
+    const allProjectItems = projectItems || [];
+    const getDescendants = (parentId: string): string[] => {
+      const children = allProjectItems.filter((it: any) => it.parent_id === parentId);
+      let desc: string[] = [];
+      for (const ch of children) {
+        desc.push(ch.id);
+        desc = desc.concat(getDescendants(ch.id));
+      }
+      return desc;
+    };
+    const incomingDescendantIds = getDescendants(incomingItemId);
+
+    // 6. Database updates: assign incoming item and descendants to sprint
+    const incomingMeta = {
+      ...(incomingItem.metadata || {}),
+      sprint: sprintName,
+      added_mid_sprint: true,
+    };
+    const { error: assignErr } = await service
+      .from('work_items')
+      .update({ metadata: incomingMeta, updated_at: nowIso })
+      .eq('id', incomingItemId)
+      .eq('tenant_id', tenant.id);
+
+    if (assignErr) {
+      return { success: false, error: `Failed to assign item to sprint: ${assignErr.message}` };
+    }
+
+    const updatedDescendantIds: string[] = [];
+    for (const descId of incomingDescendantIds) {
+      const origChild = allProjectItems.find((it: any) => it.id === descId);
+      const childMeta = { ...(origChild?.metadata || {}), sprint: sprintName, added_mid_sprint: true };
+      const { error: descErr } = await service
+        .from('work_items')
+        .update({ metadata: childMeta, updated_at: nowIso })
+        .eq('id', descId)
+        .eq('tenant_id', tenant.id);
+
+      if (descErr) {
+        // Rollback root incoming item
+        await service
+          .from('work_items')
+          .update({ metadata: incomingItem.metadata || {}, updated_at: nowIso })
+          .eq('id', incomingItemId)
+          .eq('tenant_id', tenant.id);
+
+        // Rollback previously updated descendants
+        for (const revDescId of updatedDescendantIds) {
+          const orig = allProjectItems.find((it: any) => it.id === revDescId);
+          if (orig) {
+            await service
+              .from('work_items')
+              .update({ metadata: orig.metadata || {}, updated_at: nowIso })
+              .eq('id', revDescId)
+              .eq('tenant_id', tenant.id);
+          }
+        }
+        return { success: false, error: `Failed to cascade sprint assignment to child item ${descId}: ${descErr.message}` };
+      }
+      updatedDescendantIds.push(descId);
+    }
+
+    // 7. Eject selected items AND their descendants back to backlog
+    const updatedEjectedIds: string[] = [];
+    if (ejectedItemIds && ejectedItemIds.length > 0) {
+      // Expand all ejections to include any child tasks so hierarchy isn't split
+      const allEjectTargetIds = new Set<string>();
+      for (const ej of ejectedItems) {
+        allEjectTargetIds.add(ej.id);
+        const children = getDescendants(ej.id);
+        for (const cid of children) {
+          allEjectTargetIds.add(cid);
+        }
+      }
+
+      for (const targetId of allEjectTargetIds) {
+        const origTarget =
+          ejectedItems.find((i) => i.id === targetId) ||
+          allProjectItems.find((i: any) => i.id === targetId);
+
+        const nextMeta = { ...(origTarget?.metadata || {}) };
+        delete nextMeta.sprint;
+        delete nextMeta.sprint_id;
+
+        const { error: ejectUpdateErr } = await service
+          .from('work_items')
+          .update({ metadata: nextMeta, updated_at: nowIso })
+          .eq('id', targetId)
+          .eq('tenant_id', tenant.id);
+
+        if (ejectUpdateErr) {
+          // Rollback incoming item assignment
+          await service
+            .from('work_items')
+            .update({ metadata: incomingItem.metadata || {}, updated_at: nowIso })
+            .eq('id', incomingItemId)
+            .eq('tenant_id', tenant.id);
+
+          for (const descId of incomingDescendantIds) {
+            const origChild = allProjectItems.find((it: any) => it.id === descId);
+            await service
+              .from('work_items')
+              .update({ metadata: origChild?.metadata || {}, updated_at: nowIso })
+              .eq('id', descId)
+              .eq('tenant_id', tenant.id);
+          }
+
+          for (const revertedId of updatedEjectedIds) {
+            const orig =
+              ejectedItems.find((i) => i.id === revertedId) ||
+              allProjectItems.find((i: any) => i.id === revertedId);
+            if (orig) {
+              await service
+                .from('work_items')
+                .update({ metadata: orig.metadata || {}, updated_at: nowIso })
+                .eq('id', revertedId)
+                .eq('tenant_id', tenant.id);
+            }
+          }
+
+          return { success: false, error: `Failed to eject item ${targetId}: ${ejectUpdateErr.message}` };
+        }
+        updatedEjectedIds.push(targetId);
+      }
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Atomic swap failed' };
+  }
+}
+
+
 

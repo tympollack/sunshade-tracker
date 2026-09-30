@@ -18,14 +18,52 @@ export interface SprintDefinition {
   name: string;
   start_date?: string | null;
   end_date?: string | null;
+  started_at?: string | null;
+  ends_at?: string | null;
   goal?: string | null;
   status: 'planned' | 'active' | 'completed' | 'unplanned';
   is_current?: boolean;
+  is_active?: boolean;
+  committed_points?: number;
+}
+
+export interface MetricRules {
+  /** Rolling velocity window size in sprints (default: 3) */
+  velocity_window?: number;
+  /** Variance threshold (e.g. 0.10 for 10%) to determine increasing/decreasing velocity trend */
+  velocity_trend_threshold?: number;
+  /** Say/Do ratio threshold for healthy green status in % (default: 85) */
+  reliability_healthy_threshold?: number;
+  /** Say/Do ratio threshold for warning amber status in % (default: 70) */
+  reliability_warning_threshold?: number;
+  /** Elapsed sprint runway ratio cutoff to trigger sizing guardrails (default: 0.60) */
+  late_runway_threshold?: number;
+  /** Maximum story points allowed for feature items when runway threshold is exceeded (default: 2) */
+  late_runway_max_points?: number;
+  /** Item types classified as feature stories subject to late runway limits (default: ['story', 'feature']) */
+  feature_story_types?: string[];
+  /** Allowed item types when late runway is exceeded (default: ['chore', 'task', 'debt', 'documentation', 'doc', 'test', 'bug']) */
+  allowed_late_types?: string[];
+  /** Whether to enforce zero-sum item ejection when capacity is exceeded (default: true) */
+  enforce_zero_sum?: boolean;
+  /** Statuses considered unstarted and eligible for backlog ejection (default: ['not_started', 'todo', 'unplanned', 'backlog', 'open', 'planned', 'pitch_backlog']) */
+  unstarted_statuses?: string[];
+  /** Priorities permitted to bypass runway and zero-sum guardrails (default: ['P0', 'CRITICAL', 'EMERGENCY']) */
+  emergency_priorities?: string[];
+  /** Whether story points / estimates are immutable in active sprints (default: true) */
+  lock_estimates_in_active_sprint?: boolean;
+  /** Scope creep threshold % to show warning indicator (default: 15) */
+  scope_creep_warning_threshold?: number;
+  /** Scope creep threshold % to show danger indicator (default: 30) */
+  scope_creep_danger_threshold?: number;
+  [key: string]: any;
 }
 
 export interface SprintSettings {
   default_sprint?: string;
   sprints?: SprintDefinition[];
+  metric_rules?: MetricRules;
+  metrics?: MetricRules;
   [key: string]: any;
 }
 
@@ -35,6 +73,8 @@ export interface ProjectSettings {
   statuses: StatusDefinition[];
   custom_fields: string[];
   sprint_settings?: SprintSettings;
+  sprint_metrics?: MetricRules;
+  metric_rules?: MetricRules;
   github_repo?: string;
   repository_url?: string;
   [key: string]: any;

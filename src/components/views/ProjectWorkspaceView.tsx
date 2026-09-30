@@ -19,12 +19,20 @@ import { ProjectModals } from '@/components/board/ProjectModals';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
+import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation';
 import {
   sortSprintNames,
   isItemImmutableDueToCompletedSprint,
+  calculateSprintLeafPoints,
 } from '@/lib/sprint-utils';
+import {
+  validateSprintIntakePure,
+  SprintGuardrailError,
+  isSprintActive,
+  isUnstartedStatus,
+} from '@/lib/services/sprintGuardrailService';
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 import { bulkReassignProjects } from '@/app/actions/trackerActions';
 import { saveModalItem } from '@/lib/save-modal-item';
@@ -1035,6 +1043,38 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     initiateStatusChange(itemId, newStatus);
   };
 
+  const [guardrailBarrierData, setGuardrailBarrierData] = useState<{
+    incomingItem: WorkItem;
+    sprintName: string;
+    requiredEjectionPoints: number;
+    availableUnstartedItems: WorkItem[];
+  } | null>(null);
+
+  const handleConfirmGuardrailSwap = async (ejectedItemIds: string[]) => {
+    if (!guardrailBarrierData) return;
+    const { incomingItem, sprintName } = guardrailBarrierData;
+    setGuardrailBarrierData(null);
+
+    try {
+      const { atomicSprintSwapAction } = await import('@/app/actions/trackerActions');
+      const res = await atomicSprintSwapAction({
+        tenantSlug,
+        sprintName,
+        incomingItemId: incomingItem.id,
+        ejectedItemIds,
+      });
+      if (res.success) {
+        fetchData();
+        broadcastItemMutation({ type: 'ITEMS_REFRESH' });
+      } else {
+        setBulkToast(res.error || 'Failed to execute swap');
+        setTimeout(() => setBulkToast(null), 3500);
+      }
+    } catch {
+      fetchData();
+    }
+  };
+
   const handleUpdateItemSprint = async (itemId: string, newSprint: string | null) => {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
@@ -1048,6 +1088,65 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const descendantIds = getDescendantIds(items, itemId);
     const targetIds = [itemId, ...descendantIds];
     const targetIdSet = new Set(targetIds);
+
+    // Intercept with SprintGuardrailModal or validation if moving into an active sprint
+    if (newSprint && newSprint !== '__none__') {
+      const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
+      const targetSprintDef = sprintDefs.find(
+        (s: any) => s.name === newSprint || s.id === newSprint
+      );
+
+      if (targetSprintDef && isSprintActive(targetSprintDef)) {
+        const allEnteringItems = items.filter((it) => targetIdSet.has(it.id));
+        const enteringPoints = calculateSprintLeafPoints(allEnteringItems);
+        const existingSprintItems = items.filter(
+          (it) => !targetIdSet.has(it.id) && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
+        );
+
+        const incomingItemForValidation = {
+          ...item,
+          metadata: {
+            ...item.metadata,
+            story_points: enteringPoints,
+          },
+        };
+
+        const metricRules = projectSettings?.sprint_settings?.metric_rules || projectSettings?.sprint_settings?.sprint_metrics;
+
+        try {
+          validateSprintIntakePure({
+            sprint: targetSprintDef,
+            currentSprintItems: existingSprintItems,
+            incomingItem: incomingItemForValidation,
+            rules: metricRules,
+          });
+        } catch (err: any) {
+          if (err instanceof SprintGuardrailError || err.code) {
+            if (err.code === 'SCOPE_OVERFLOW') {
+              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
+              const committedPoints = targetSprintDef.committed_points ?? (targetSprintDef as any).metadata?.committed_points ?? 0;
+              const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
+              const requiredEjection = err.required_ejection_points || Math.max(1, enteringPoints - remainingCapacity);
+
+              setGuardrailBarrierData({
+                incomingItem: item,
+                sprintName: newSprint,
+                requiredEjectionPoints: requiredEjection,
+                availableUnstartedItems: existingSprintItems.filter((it) =>
+                  isUnstartedStatus(it.status, metricRules?.unstarted_statuses)
+                ),
+              });
+              return;
+            } else {
+              setBulkToast(err.message || 'Item rejected by sprint guardrail policy.');
+              setTimeout(() => setBulkToast(null), 4000);
+              return;
+            }
+          }
+          throw err;
+        }
+      }
+    }
 
     const newMetadata = { ...(item.metadata || {}) };
     if (newSprint && newSprint !== '__none__') {
@@ -1076,8 +1175,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         method: 'PATCH',
         body: JSON.stringify({ id: itemId, metadata: newMetadata }),
       });
-      if (!res.ok) fetchData();
-    } catch {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setBulkToast(errJson.error || 'Failed to update sprint');
+        setTimeout(() => setBulkToast(null), 4000);
+        fetchData();
+      }
+    } catch (err: any) {
+      setBulkToast(err?.message || 'Network error updating sprint');
+      setTimeout(() => setBulkToast(null), 4000);
       fetchData();
     }
   };
@@ -2804,6 +2910,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         isSearchOpen={isSearchOpen}
         setIsSearchOpen={setIsSearchOpen}
       />
+
+      {guardrailBarrierData && (
+        <SprintGuardrailModal
+          isOpen={true}
+          onClose={() => setGuardrailBarrierData(null)}
+          onConfirmSwap={handleConfirmGuardrailSwap}
+          incomingItem={guardrailBarrierData.incomingItem}
+          sprintName={guardrailBarrierData.sprintName}
+          requiredEjectionPoints={guardrailBarrierData.requiredEjectionPoints}
+          availableUnstartedItems={guardrailBarrierData.availableUnstartedItems}
+        />
+      )}
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
       {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (
