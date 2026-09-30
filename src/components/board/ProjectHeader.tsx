@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Eye,
+  BarChart2,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -127,6 +128,15 @@ export function ProjectHeader(props: ProjectHeaderProps) {
             </button>
           );
         })}
+        <Link
+          href={`/${tenantSlug}/${projectSlug}/analytics`}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors shrink-0"
+          title="Project Sprint & Flow Analytics"
+          data-testid="header-analytics-link"
+        >
+          <BarChart2 className="w-3.5 h-3.5 text-slate-400" />
+          <span className="hidden xl:inline">Analytics</span>
+        </Link>
         <NavToolsDropdown activeTab={activeTab} onSelectTab={(tab) => handleTabChange(tab)} />
       </div>
 
