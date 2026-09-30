@@ -145,7 +145,7 @@ export function GitHubBadge({
   const [loadingStats, setLoadingStats] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number; placeAbove: boolean } | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const badgeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

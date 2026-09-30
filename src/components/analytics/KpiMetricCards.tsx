@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { Skeleton } from '@digitalcanopy/ui';
 import { Activity, Award, TrendingDown, TrendingUp, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 export interface KpiMetrics {
@@ -27,12 +28,12 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
             className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 animate-pulse flex flex-col justify-between h-32"
           >
             <div className="flex items-center justify-between">
-              <div className="h-4 bg-slate-800 rounded w-28" />
-              <div className="w-8 h-8 bg-slate-800 rounded-lg" />
+              <Skeleton variant="text" className="h-4 w-28" />
+              <Skeleton variant="rectangular" className="w-8 h-8 rounded-lg" />
             </div>
             <div>
-              <div className="h-8 bg-slate-800 rounded w-20 mb-2" />
-              <div className="h-3 bg-slate-800/80 rounded w-36" />
+              <Skeleton variant="text" className="h-8 w-20 mb-2" />
+              <Skeleton variant="text" className="h-3 w-36" />
             </div>
           </div>
         ))}

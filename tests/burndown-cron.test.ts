@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/cron/burndown-rollup/route';
 import { supabaseAdmin } from '@/lib/db';
@@ -15,6 +15,10 @@ describe('TASK-TRK-BURNDOWN-CRON: /api/cron/burndown-rollup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = 'super-secret-cron-token';
+  });
+
+  afterAll(() => {
+    process.env.CRON_SECRET = originalCronSecret;
   });
 
   it('rejects requests with missing or invalid bearer token with 401', async () => {
