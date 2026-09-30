@@ -38,6 +38,11 @@ export async function GET(req: NextRequest) {
       searchParams.get('sprint_name') ||
       searchParams.get('sprint');
 
+    const projectIdOrSlug =
+      searchParams.get('project_id') ||
+      searchParams.get('project_slug') ||
+      searchParams.get('project');
+
     if (!sprintId) {
       return NextResponse.json(
         { error: 'sprint_id query parameter is required (e.g. ?sprint_id=sprint-2026-q4)' },
@@ -45,7 +50,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const report = await getSprintHealthReport(targetSlug, sprintId);
+    const report = await getSprintHealthReport(targetSlug, sprintId, projectIdOrSlug);
 
     return NextResponse.json(report, { status: 200 });
   } catch (err: any) {

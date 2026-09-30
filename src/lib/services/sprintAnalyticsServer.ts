@@ -15,6 +15,7 @@ import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
 export async function getSprintHealthReport(
   tenantSlug: string,
   sprintIdOrName: string,
+  projectIdOrSlug?: string | null,
   now?: Date | string | number
 ): Promise<SprintHealthReport> {
   const service = supabaseAdmin;
@@ -35,27 +36,6 @@ export async function getSprintHealthReport(
     throw new Error(`Workspace "@${tenantSlug}" not found: ${tenantErr?.message || 'tenant null'}`);
   }
 
-  // 2. Resolve Target Sprint from tracker.sprints table or projects.settings
-  let targetSprint: any = null;
-  let targetProjectId: string | null = null;
-
-  // Check tracker.sprints table first
-  try {
-    const { data: dbSprint } = await service
-      .from('sprints')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .or(`id.eq.${sprintIdOrName},name.eq.${sprintIdOrName}`)
-      .maybeSingle();
-
-    if (dbSprint) {
-      targetSprint = dbSprint;
-      targetProjectId = dbSprint.project_id;
-    }
-  } catch {
-    // Sprints table may not exist in all test environments
-  }
-
   // Query projects for sprint settings and fallback lookup
   let projQuery: any = service
     .from('projects')
@@ -69,8 +49,46 @@ export async function getSprintHealthReport(
   const { data: projects } = await projQuery;
   const projectList: any[] = projects || [];
 
+  // Match target project if specified
+  const matchedTargetProject = projectIdOrSlug
+    ? projectList.find((p: any) => p.id === projectIdOrSlug || p.slug === projectIdOrSlug)
+    : null;
+
+  // 2. Resolve Target Sprint from tracker.sprints table or projects.settings
+  let targetSprint: any = null;
+  let targetProjectId: string | null = matchedTargetProject?.id || null;
+
+  // Check tracker.sprints table with safe, structured query
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintIdOrName);
+  try {
+    let sprintQuery: any = service
+      .from('sprints')
+      .select('*')
+      .eq('tenant_id', tenant.id);
+
+    if (isUuid) {
+      sprintQuery = sprintQuery.eq('id', sprintIdOrName);
+    } else {
+      sprintQuery = sprintQuery.eq('name', sprintIdOrName);
+    }
+
+    if (targetProjectId) {
+      sprintQuery = sprintQuery.eq('project_id', targetProjectId);
+    }
+
+    const { data: dbSprint } = await sprintQuery.maybeSingle();
+
+    if (dbSprint) {
+      targetSprint = dbSprint;
+      targetProjectId = dbSprint.project_id || targetProjectId;
+    }
+  } catch {
+    // Sprints table may not exist in all test environments
+  }
+
   if (!targetSprint) {
-    for (const p of projectList) {
+    const candidateProjects = matchedTargetProject ? [matchedTargetProject] : projectList;
+    for (const p of candidateProjects) {
       const sprints: SprintDefinition[] = p.settings?.sprint_settings?.sprints || [];
       const found = sprints.find((s) => s.id === sprintIdOrName || s.name === sprintIdOrName);
       if (found) {
@@ -110,6 +128,7 @@ export async function getSprintHealthReport(
 
   // 3. Query closed historical sprints ordered by ends_at DESC LIMIT velocityWindow
   const historicalSprints: HistoricalSprint[] = [];
+  const targetEndTime = targetSprint.ends_at ? new Date(targetSprint.ends_at).getTime() : Infinity;
 
   // Attempt tracker.sprints table query
   try {
@@ -119,13 +138,19 @@ export async function getSprintHealthReport(
       .eq('tenant_id', tenant.id)
       .in('status', ['completed', 'closed', 'finished'])
       .neq('id', targetSprint.id)
-      .neq('name', targetSprint.name)
-      .order('ends_at', { ascending: false })
-      .limit(velocityWindow);
+      .neq('name', targetSprint.name);
+
+    if (targetSprint.ends_at) {
+      closedQuery = closedQuery.lte('ends_at', targetSprint.ends_at);
+    }
 
     if (targetProjectId) {
       closedQuery = closedQuery.eq('project_id', targetProjectId);
     }
+
+    closedQuery = closedQuery
+      .order('ends_at', { ascending: false })
+      .limit(velocityWindow);
 
     const { data: dbClosed } = await closedQuery;
     if (dbClosed && dbClosed.length > 0) {
@@ -153,10 +178,12 @@ export async function getSprintHealthReport(
     for (const p of relevantProjects) {
       const sprints: SprintDefinition[] = p.settings?.sprint_settings?.sprints || [];
       for (const s of sprints) {
+        const sEndTime = new Date((s as any).ends_at || s.end_date || 0).getTime();
         if (
           s.status === 'completed' &&
           s.id !== targetSprint.id &&
           s.name !== targetSprint.name &&
+          sEndTime <= targetEndTime &&
           !historicalSprints.some((h) => h.id === s.id || h.name === s.name)
         ) {
           candidateSettingsSprints.push(s);

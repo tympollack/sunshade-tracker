@@ -361,6 +361,26 @@ export function calculateWIPAge(
 }
 
 /**
+ * Filters sprint items to leaf items (cards without children present in the sprint)
+ * to prevent double-counting story points between parent containers and child tasks.
+ */
+export function getSprintLeafItems(items: WorkItemLifecycleData[]): WorkItemLifecycleData[] {
+  if (!items || items.length === 0) return [];
+  const parentRefIds = new Set<string>();
+  for (const item of items) {
+    const pid = item.parent_id;
+    if (pid && pid !== '' && pid !== '__none__' && pid !== '__root__' && pid !== item.id) {
+      parentRefIds.add(pid);
+    }
+  }
+  return items.filter((item) => {
+    if (parentRefIds.has(item.id)) return false;
+    if (item.external_ref_id && parentRefIds.has(item.external_ref_id)) return false;
+    return true;
+  });
+}
+
+/**
  * Extracts story points from an item safely.
  */
 function getItemPoints(item: WorkItemLifecycleData): number {
@@ -385,14 +405,16 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
 
   const committed = Number(sprint.committed_points ?? sprint.metadata?.committed_points) || 0;
 
-  // Aggregate item point buckets
+  // Aggregate item point buckets exclusively on leaf execution items to avoid parent-child double-counting
   let completedPoints = 0;
   let inProgressPoints = 0;
   let remainingPoints = 0;
   let totalCurrentPoints = 0;
   let pointsAddedMidSprint = 0;
 
-  for (const it of items) {
+  const pointItems = getSprintLeafItems(items);
+
+  for (const it of pointItems) {
     const pts = getItemPoints(it);
     totalCurrentPoints += pts;
 
@@ -412,8 +434,8 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     }
   }
 
-  // If pointsAddedMidSprint is not explicitly marked on items, derive from totalCurrentPoints - committed
-  if (pointsAddedMidSprint === 0 && totalCurrentPoints !== committed) {
+  // If pointsAddedMidSprint is not explicitly marked on items, derive from positive scope increase
+  if (pointsAddedMidSprint === 0 && totalCurrentPoints > committed) {
     pointsAddedMidSprint = totalCurrentPoints - committed;
   }
 
@@ -421,10 +443,16 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
   const velocityWindow = rules.velocity_window;
   const rollingVelocity = calculateRollingVelocity(historicalSprints, velocityWindow);
 
-  // 2. Velocity trend: compare current sprint points to rolling velocity using configured variance threshold
+  // 2. Velocity trend: compare delivered points (for completed sprints) or current scope (for active sprints with progress) to rolling velocity
   let velocityTrend: 'increasing' | 'stable' | 'decreasing' = 'stable';
   if (rollingVelocity > 0) {
-    const diff = totalCurrentPoints - rollingVelocity;
+    const comparisonPoints = !isActive
+      ? completedPoints
+      : completedPoints === 0
+      ? 0
+      : totalCurrentPoints;
+
+    const diff = comparisonPoints - rollingVelocity;
     const trendThreshold = rules.velocity_trend_threshold;
     if (diff > rollingVelocity * trendThreshold) {
       velocityTrend = 'increasing';

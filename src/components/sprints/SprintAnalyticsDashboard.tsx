@@ -96,19 +96,22 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
           status: string;
           project_id?: string;
           project_slug?: string;
+          project_name?: string;
         }> = [];
         const seen = new Set<string>();
 
         for (const p of d?.projects || []) {
           for (const s of p.settings?.sprint_settings?.sprints || []) {
-            if (!seen.has(s.name)) {
-              seen.add(s.name);
+            const compositeKey = `${p.id || ''}:${s.id || s.name}`;
+            if (!seen.has(compositeKey)) {
+              seen.add(compositeKey);
               sprintList.push({
                 id: s.id || s.name,
                 name: s.name,
                 status: s.status,
                 project_id: p.id,
                 project_slug: p.slug,
+                project_name: p.name,
               });
             }
           }

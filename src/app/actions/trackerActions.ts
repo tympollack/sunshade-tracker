@@ -611,12 +611,42 @@ export async function validateSprintIntakeAction(
       }
     }
 
+    // Strip any client-supplied rules to enforce server-side project governance
+    const safeOptions = options ? { ...options } : undefined;
+    if (safeOptions) {
+      delete safeOptions.rules;
+    }
+
+    // Verify incoming work item against database to prevent forged priorities or zero-estimate bypasses
+    let verifiedIncomingItem = incomingItem;
+    if (incomingItem?.id) {
+      const { data: dbItem } = await service
+        .from('work_items')
+        .select('*')
+        .eq('id', incomingItem.id)
+        .eq('tenant_id', tenant.id)
+        .maybeSingle();
+
+      if (dbItem) {
+        verifiedIncomingItem = {
+          ...dbItem,
+          ...incomingItem,
+          item_type: dbItem.item_type,
+          priority: dbItem.metadata?.priority || dbItem.priority || incomingItem.priority,
+          metadata: {
+            ...(dbItem.metadata || {}),
+            ...(incomingItem.metadata || {}),
+          },
+        };
+      }
+    }
+
     const { validateSprintIntake, SprintGuardrailError } = await import(
       '@/lib/services/sprintGuardrailServer'
     );
 
     try {
-      const result = await validateSprintIntake(tenantSlug, sprintId, incomingItem, options);
+      const result = await validateSprintIntake(tenantSlug, sprintId, verifiedIncomingItem, safeOptions);
       return { success: true, result };
     } catch (err: any) {
       if (err instanceof SprintGuardrailError) {
@@ -665,7 +695,7 @@ export async function atomicSprintSwapAction(params: {
 
     const service = supabaseAdmin;
 
-    // Verify workspace membership
+    // Verify workspace membership and mutation permissions
     const { data: tenant } = await service
       .from('tenants')
       .select('id')
@@ -695,6 +725,8 @@ export async function atomicSprintSwapAction(params: {
       if (!owned) {
         return { success: false, error: 'Forbidden: Access to workspace denied' };
       }
+    } else if (member.role === 'viewer') {
+      return { success: false, error: 'Forbidden: Read-only viewers cannot modify sprint assignments' };
     }
 
     // 2. Fetch incoming item scoped to tenant
@@ -725,13 +757,19 @@ export async function atomicSprintSwapAction(params: {
     }
 
     // 4. Validate through sprintGuardrailService
+    // Prevent callers from passing options.rules to bypass server governance
+    const safeOptions = options ? { ...options } : undefined;
+    if (safeOptions) {
+      delete safeOptions.rules;
+    }
+
     const { validateSprintIntake, SprintGuardrailError } = await import(
       '@/lib/services/sprintGuardrailServer'
     );
 
     try {
       await validateSprintIntake(tenantSlug, sprintName, incomingItem, {
-        ...options,
+        ...safeOptions,
         ejectedItems,
         ejectedItemIds,
       });
@@ -749,15 +787,16 @@ export async function atomicSprintSwapAction(params: {
 
     const nowIso = new Date().toISOString();
 
-    // 5. Gather incoming item and any descendants to prevent stranding child tasks
+    // 5. Gather project items for hierarchical descendant resolution
     const { data: projectItems } = await service
       .from('work_items')
       .select('id, parent_id, metadata')
       .eq('project_id', incomingItem.project_id)
       .eq('tenant_id', tenant.id);
 
+    const allProjectItems = projectItems || [];
     const getDescendants = (parentId: string): string[] => {
-      const children = (projectItems || []).filter((it: any) => it.parent_id === parentId);
+      const children = allProjectItems.filter((it: any) => it.parent_id === parentId);
       let desc: string[] = [];
       for (const ch of children) {
         desc.push(ch.id);
@@ -767,7 +806,7 @@ export async function atomicSprintSwapAction(params: {
     };
     const incomingDescendantIds = getDescendants(incomingItemId);
 
-    // 6. Atomic database updates: assign incoming item and descendants to sprint
+    // 6. Database updates: assign incoming item and descendants to sprint
     const incomingMeta = {
       ...(incomingItem.metadata || {}),
       sprint: sprintName,
@@ -783,31 +822,70 @@ export async function atomicSprintSwapAction(params: {
       return { success: false, error: `Failed to assign item to sprint: ${assignErr.message}` };
     }
 
+    const updatedDescendantIds: string[] = [];
     for (const descId of incomingDescendantIds) {
-      const origChild = (projectItems || []).find((it: any) => it.id === descId);
+      const origChild = allProjectItems.find((it: any) => it.id === descId);
       const childMeta = { ...(origChild?.metadata || {}), sprint: sprintName, added_mid_sprint: true };
-      await service
+      const { error: descErr } = await service
         .from('work_items')
         .update({ metadata: childMeta, updated_at: nowIso })
         .eq('id', descId)
         .eq('tenant_id', tenant.id);
+
+      if (descErr) {
+        // Rollback root incoming item
+        await service
+          .from('work_items')
+          .update({ metadata: incomingItem.metadata || {}, updated_at: nowIso })
+          .eq('id', incomingItemId)
+          .eq('tenant_id', tenant.id);
+
+        // Rollback previously updated descendants
+        for (const revDescId of updatedDescendantIds) {
+          const orig = allProjectItems.find((it: any) => it.id === revDescId);
+          if (orig) {
+            await service
+              .from('work_items')
+              .update({ metadata: orig.metadata || {}, updated_at: nowIso })
+              .eq('id', revDescId)
+              .eq('tenant_id', tenant.id);
+          }
+        }
+        return { success: false, error: `Failed to cascade sprint assignment to child item ${descId}: ${descErr.message}` };
+      }
+      updatedDescendantIds.push(descId);
     }
 
-    // 7. Eject selected items back to backlog with verified atomic status
+    // 7. Eject selected items AND their descendants back to backlog
     const updatedEjectedIds: string[] = [];
     if (ejectedItemIds && ejectedItemIds.length > 0) {
+      // Expand all ejections to include any child tasks so hierarchy isn't split
+      const allEjectTargetIds = new Set<string>();
       for (const ej of ejectedItems) {
-        const nextMeta = { ...(ej.metadata || {}) };
+        allEjectTargetIds.add(ej.id);
+        const children = getDescendants(ej.id);
+        for (const cid of children) {
+          allEjectTargetIds.add(cid);
+        }
+      }
+
+      for (const targetId of allEjectTargetIds) {
+        const origTarget =
+          ejectedItems.find((i) => i.id === targetId) ||
+          allProjectItems.find((i: any) => i.id === targetId);
+
+        const nextMeta = { ...(origTarget?.metadata || {}) };
         delete nextMeta.sprint;
         delete nextMeta.sprint_id;
+
         const { error: ejectUpdateErr } = await service
           .from('work_items')
           .update({ metadata: nextMeta, updated_at: nowIso })
-          .eq('id', ej.id)
+          .eq('id', targetId)
           .eq('tenant_id', tenant.id);
 
         if (ejectUpdateErr) {
-          // Rollback incoming item assignment and any completed ejections
+          // Rollback incoming item assignment
           await service
             .from('work_items')
             .update({ metadata: incomingItem.metadata || {}, updated_at: nowIso })
@@ -815,7 +893,7 @@ export async function atomicSprintSwapAction(params: {
             .eq('tenant_id', tenant.id);
 
           for (const descId of incomingDescendantIds) {
-            const origChild = (projectItems || []).find((it: any) => it.id === descId);
+            const origChild = allProjectItems.find((it: any) => it.id === descId);
             await service
               .from('work_items')
               .update({ metadata: origChild?.metadata || {}, updated_at: nowIso })
@@ -824,7 +902,9 @@ export async function atomicSprintSwapAction(params: {
           }
 
           for (const revertedId of updatedEjectedIds) {
-            const orig = ejectedItems.find((i) => i.id === revertedId);
+            const orig =
+              ejectedItems.find((i) => i.id === revertedId) ||
+              allProjectItems.find((i: any) => i.id === revertedId);
             if (orig) {
               await service
                 .from('work_items')
@@ -834,9 +914,9 @@ export async function atomicSprintSwapAction(params: {
             }
           }
 
-          return { success: false, error: `Failed to eject item ${ej.id}: ${ejectUpdateErr.message}` };
+          return { success: false, error: `Failed to eject item ${targetId}: ${ejectUpdateErr.message}` };
         }
-        updatedEjectedIds.push(ej.id);
+        updatedEjectedIds.push(targetId);
       }
     }
 

@@ -568,6 +568,36 @@ export async function PATCH(req: NextRequest) {
       if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
         return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
       }
+
+      // Guardrail 3: Immutable Estimates on active sprint items
+      try {
+        const itemSprint = existingItem.metadata?.sprint || existingItem.metadata?.sprint_id;
+        if (itemSprint) {
+          const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+          const activeSprintDef = sprints.find(
+            (s: any) =>
+              (s.id === itemSprint || s.name === itemSprint) &&
+              (s.status === 'active' || s.is_active || s.is_current)
+          );
+          if (activeSprintDef) {
+            const { validateEstimateImmutability, SprintGuardrailError } = await import(
+              '@/lib/services/sprintGuardrailService'
+            );
+            validateEstimateImmutability(
+              existingItem,
+              metadata,
+              activeSprintDef,
+              effectiveProjectSettings?.sprint_metrics || effectiveProjectSettings?.metric_rules
+            );
+          }
+        }
+      } catch (err: any) {
+        return NextResponse.json(
+          { error: err.message, code: err.code || 'ESTIMATE_LOCKED' },
+          { status: err.status || 409 }
+        );
+      }
+
       updateFields.metadata = metadata;
     }
 
@@ -686,6 +716,56 @@ export async function PATCH(req: NextRequest) {
       updateFields.order_index = order_index;
     } else if (prev_order !== undefined || next_order !== undefined) {
       updateFields.order_index = calculateOrderIndex(prev_order, next_order);
+    }
+
+    // Guardrail: Validate sprint intake if moving item to an active sprint
+    if (
+      metadata !== undefined &&
+      metadata?.sprint !== undefined &&
+      metadata.sprint !== existingItem.metadata?.sprint &&
+      metadata.sprint !== '__none__' &&
+      metadata.sprint !== ''
+    ) {
+      const targetSprint = metadata.sprint;
+      const { data: tenantItems } = await supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('tenant_id', authCtx.tenant.id);
+
+      const descendantIds = getDescendantIds(tenantItems || [], id);
+      const allEnteringItems = [
+        { ...existingItem, metadata: { ...existingItem.metadata, ...metadata } },
+        ...(tenantItems || []).filter((it: any) => descendantIds.includes(it.id)),
+      ];
+
+      const { validateSprintIntake, SprintGuardrailError } = await import(
+        '@/lib/services/sprintGuardrailServer'
+      );
+
+      try {
+        const { calculateSprintLeafPoints } = await import('@/lib/sprint-utils');
+        const enteringPoints = calculateSprintLeafPoints(allEnteringItems as any[]);
+        await validateSprintIntake(authCtx.tenant.slug, targetSprint, {
+          ...existingItem,
+          metadata: {
+            ...existingItem.metadata,
+            ...metadata,
+            story_points: enteringPoints,
+          },
+        });
+      } catch (err: any) {
+        if (err instanceof SprintGuardrailError) {
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: err.code,
+              required_ejection_points: err.required_ejection_points,
+            },
+            { status: err.status || 409 }
+          );
+        }
+        return NextResponse.json({ error: err.message || 'Sprint intake rejected' }, { status: 400 });
+      }
     }
 
     const { data: updated, error } = await supabaseAdmin

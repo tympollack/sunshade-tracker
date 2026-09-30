@@ -240,58 +240,58 @@ export function validateSprintIntakePure(params: {
     const incomingPoints = extractStoryPoints(incomingItem);
     const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
 
+    // Check if ejection candidates are provided for atomic ejection
+    const candidateEjections: WorkItem[] = [];
+
+    if (options?.ejectedItems && options.ejectedItems.length > 0) {
+      candidateEjections.push(...options.ejectedItems);
+    } else if (options?.ejectedItemIds && options.ejectedItemIds.length > 0) {
+      const idSet = new Set(options.ejectedItemIds);
+      for (const it of existingSprintItems) {
+        if (idSet.has(it.id) || (it.external_ref_id && idSet.has(it.external_ref_id))) {
+          candidateEjections.push(it);
+        }
+      }
+    }
+
+    // Always validate ejection candidates: must belong to the sprint and be in an unstarted status
+    let totalEjectedPoints = 0;
+    for (const ejected of candidateEjections) {
+      const itemSprint = ejected.metadata?.sprint || (ejected as any).sprint;
+      const itemSprintId = ejected.metadata?.sprint_id;
+      const matchesSprint =
+        (sprint.name && itemSprint === sprint.name) ||
+        (sprint.id && (itemSprintId === sprint.id || itemSprint === sprint.id)) ||
+        existingSprintItems.some((it) => it.id === ejected.id);
+
+      if (!matchesSprint) {
+        throw new SprintGuardrailError({
+          code: 'INVALID_EJECTION',
+          status: 400,
+          message: `Cannot eject item '${ejected.title || ejected.id}': item does not belong to active sprint '${sprint.name || sprint.id}'.`,
+          details: {
+            invalid_item_id: ejected.id,
+            sprint: sprint.name || sprint.id,
+          },
+        });
+      }
+
+      if (!isUnstartedStatus(ejected.status, rules.unstarted_statuses)) {
+        throw new SprintGuardrailError({
+          code: 'INVALID_EJECTION',
+          status: 400,
+          message: `Cannot eject item '${ejected.title || ejected.id}' (status: ${ejected.status}). Only unstarted items can be ejected back to the backlog.`,
+          details: {
+            invalid_item_id: ejected.id,
+            status: ejected.status,
+          },
+        });
+      }
+      totalEjectedPoints += extractStoryPoints(ejected);
+    }
+
     if (incomingPoints > remainingCapacity) {
       const requiredEjectionPoints = incomingPoints - remainingCapacity;
-
-      // Check if unstarted items are provided for atomic ejection
-      const candidateEjections: WorkItem[] = [];
-
-      if (options?.ejectedItems && options.ejectedItems.length > 0) {
-        candidateEjections.push(...options.ejectedItems);
-      } else if (options?.ejectedItemIds && options.ejectedItemIds.length > 0) {
-        const idSet = new Set(options.ejectedItemIds);
-        for (const it of existingSprintItems) {
-          if (idSet.has(it.id) || (it.external_ref_id && idSet.has(it.external_ref_id))) {
-            candidateEjections.push(it);
-          }
-        }
-      }
-
-      // Validate ejection candidates: must be in sprint and unstarted
-      let totalEjectedPoints = 0;
-      for (const ejected of candidateEjections) {
-        const itemSprint = ejected.metadata?.sprint || (ejected as any).sprint;
-        const itemSprintId = ejected.metadata?.sprint_id;
-        const matchesSprint =
-          (sprint.name && itemSprint === sprint.name) ||
-          (sprint.id && (itemSprintId === sprint.id || itemSprint === sprint.id)) ||
-          existingSprintItems.some((it) => it.id === ejected.id);
-
-        if (!matchesSprint) {
-          throw new SprintGuardrailError({
-            code: 'INVALID_EJECTION',
-            status: 400,
-            message: `Cannot eject item '${ejected.title || ejected.id}': item does not belong to active sprint '${sprint.name || sprint.id}'.`,
-            details: {
-              invalid_item_id: ejected.id,
-              sprint: sprint.name || sprint.id,
-            },
-          });
-        }
-
-        if (!isUnstartedStatus(ejected.status, rules.unstarted_statuses)) {
-          throw new SprintGuardrailError({
-            code: 'INVALID_EJECTION',
-            status: 400,
-            message: `Cannot eject item '${ejected.title || ejected.id}' (status: ${ejected.status}). Only unstarted items can be ejected back to the backlog.`,
-            details: {
-              invalid_item_id: ejected.id,
-              status: ejected.status,
-            },
-          });
-        }
-        totalEjectedPoints += extractStoryPoints(ejected);
-      }
 
       if (totalEjectedPoints < requiredEjectionPoints) {
         throw new SprintGuardrailError({
@@ -330,6 +330,8 @@ export function validateSprintIntakePure(params: {
       remaining_capacity: remainingCapacity,
       current_active_points: currentActivePoints,
       committed_points: committedPoints,
+      ejected_items: candidateEjections,
+      ejected_item_ids: candidateEjections.map((it) => it.id),
     };
   }
 
