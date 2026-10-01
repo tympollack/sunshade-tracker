@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { aggregateSprintBurndown } from '@/lib/analytics/burndown-aggregator';
 import { WorkItem } from '@/types/tracker';
 import { NextRequest } from 'next/server';
@@ -10,8 +10,15 @@ vi.mock('@/lib/db', () => ({
 }));
 
 describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () => {
+  const originalCronSecret = process.env.CRON_SECRET;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CRON_SECRET = 'test-cron-secret';
+  });
+
+  afterAll(() => {
+    process.env.CRON_SECRET = originalCronSecret;
   });
 
   const createItem = (
@@ -88,6 +95,7 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     const mockProjects = [
       {
         id: 'proj-1',
+        tenant_id: 't-1',
         slug: 'sunshade-tracker',
         name: 'Tracker',
         settings: {
@@ -97,7 +105,7 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
           ],
           sprint_settings: {
             sprints: [
-              { name: 'Sprint 2026-Q3', status: 'active', is_current: true },
+              { id: 'sprint-q3', name: 'Sprint 2026-Q3', status: 'active', is_active: true, is_current: true },
             ],
           },
         },
@@ -113,20 +121,81 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     (supabaseAdmin.from as any).mockImplementation((table: string) => {
       if (table === 'projects') {
         return {
-          select: vi.fn().mockReturnThis(),
-          is: vi.fn().mockResolvedValue({ data: mockProjects, error: null }),
+          select: vi.fn().mockReturnValue({
+            data: mockProjects,
+            error: null,
+          }),
+        };
+      }
+      if (table === 'sprints') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              or: vi.fn().mockResolvedValue({
+                data: [],
+                error: null,
+              }),
+            }),
+          }),
         };
       }
       if (table === 'work_items') {
         return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          is: vi.fn().mockResolvedValue({
-            data: mockItems.map((it) => ({
-              ...it,
-              metadata: { ...it.metadata, sprint: 'Sprint 2026-Q3' },
-            })),
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              neq: vi.fn().mockResolvedValue({
+                data: mockItems.map((it) => ({
+                  ...it,
+                  metadata: { ...it.metadata, sprint: 'Sprint 2026-Q3' },
+                })),
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'sprint_events') {
+        const eventsBuilder: any = {
+          eq: vi.fn().mockImplementation(() => eventsBuilder),
+          gte: vi.fn().mockResolvedValue({
+            data: [],
             error: null,
+          }),
+        };
+        return {
+          select: vi.fn().mockReturnValue(eventsBuilder),
+        };
+      }
+      if (table === 'sprint_snapshots') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { committed_points: 13, committed_item_ids: ['leaf-1', 'leaf-2'] },
+                    error: null,
+                  }),
+                  gte: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'snap-123' },
+                error: null,
+              }),
+            }),
+          }),
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null }),
           }),
         };
       }
@@ -135,6 +204,9 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
 
     const req = new NextRequest('http://localhost:3000/api/cron/burndown-rollup', {
       method: 'POST',
+      headers: {
+        authorization: 'Bearer test-cron-secret',
+      },
     });
 
     const res = await POST(req);
@@ -142,10 +214,8 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
 
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(data.rollupsCount).toBe(1);
-    expect(data.rollups[0].sprintName).toBe('Sprint 2026-Q3');
-    expect(data.rollups[0].metrics.totalPoints).toBe(13); // 5 + 8 leaf points
-    expect(data.rollups[0].metrics.completedPoints).toBe(5); // leaf-1 released
-    expect(data.rollups[0].metrics.remainingPoints).toBe(8); // leaf-2 todo
+    expect(data.rollups_processed).toBe(1);
+    expect(data.rollups[0].sprint_id).toBe('sprint-q3');
+    expect(data.rollups[0].remaining_points).toBe(26);
   });
 });

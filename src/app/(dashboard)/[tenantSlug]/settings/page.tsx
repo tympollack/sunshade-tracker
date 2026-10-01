@@ -229,7 +229,7 @@ export default function WorkspaceSettingsPage(props: PageProps) {
   const [projectList, setProjectList] = useState<any[]>([]);
   const [isReordering, setIsReordering] = useState(false);
   const [reorderSuccess, setReorderSuccess] = useState(false);
-  const reorderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reorderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReorderRef = useRef<any[] | null>(null);
   const reorderSeqRef = useRef<number>(0);
   const reorderAbortRef = useRef<AbortController | null>(null);

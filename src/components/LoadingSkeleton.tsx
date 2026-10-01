@@ -1,6 +1,9 @@
+import React from 'react';
+import { Skeleton } from '@digitalcanopy/ui';
+
 /**
  * Animated loading skeleton for the Kanban board view.
- * Shows pulse-animated placeholder cards while data is being fetched.
+ * Uses @digitalcanopy/ui shimmer skeletons while data is being fetched.
  */
 export function BoardSkeleton() {
   return (
@@ -13,10 +16,10 @@ export function BoardSkeleton() {
           {/* Column header */}
           <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-slate-700 animate-pulse" />
-              <div className="h-3 w-20 rounded bg-slate-700 animate-pulse" />
+              <Skeleton variant="circular" className="w-2.5 h-2.5" />
+              <Skeleton variant="text" className="h-3 w-20" />
             </div>
-            <div className="h-4 w-5 rounded-full bg-slate-800 animate-pulse" />
+            <Skeleton variant="rectangular" className="h-4 w-5 rounded-full" />
           </div>
 
           {/* Card skeletons */}
@@ -29,23 +32,23 @@ export function BoardSkeleton() {
               >
                 {/* Type badge + ref */}
                 <div className="flex items-center justify-between">
-                  <div className="h-4 w-12 rounded bg-slate-800 animate-pulse" />
-                  <div className="h-3 w-16 rounded bg-slate-800/60 animate-pulse" />
+                  <Skeleton variant="text" className="h-4 w-12" />
+                  <Skeleton variant="text" className="h-3 w-16" />
                 </div>
                 {/* Title */}
                 <div className="space-y-1.5">
-                  <div className="h-3.5 w-full rounded bg-slate-800 animate-pulse" />
-                  <div className="h-3.5 w-3/4 rounded bg-slate-800/70 animate-pulse" />
+                  <Skeleton variant="text" className="h-3.5 w-full" />
+                  <Skeleton variant="text" className="h-3.5 w-3/4" />
                 </div>
                 {/* Metadata badges */}
                 <div className="flex space-x-1.5 pt-0.5">
-                  <div className="h-4 w-14 rounded bg-slate-800/60 animate-pulse" />
-                  <div className="h-4 w-10 rounded bg-slate-800/60 animate-pulse" />
+                  <Skeleton variant="rectangular" className="h-4 w-14 rounded" />
+                  <Skeleton variant="rectangular" className="h-4 w-10 rounded" />
                 </div>
                 {/* Footer */}
                 <div className="pt-2 border-t border-slate-900 flex items-center justify-between">
-                  <div className="h-3 w-20 rounded bg-slate-800/50 animate-pulse" />
-                  <div className="h-5 w-24 rounded bg-slate-800/40 animate-pulse" />
+                  <Skeleton variant="text" className="h-3 w-20" />
+                  <Skeleton variant="rectangular" className="h-5 w-24 rounded" />
                 </div>
               </div>
             ))}
@@ -58,5 +61,5 @@ export function BoardSkeleton() {
 
 /** Simple single-line skeleton for inline loading states */
 export function InlineSkeleton({ className = 'h-4 w-32' }: { className?: string }) {
-  return <div className={`rounded bg-slate-800 animate-pulse ${className}`} />;
+  return <Skeleton variant="rectangular" className={className} />;
 }
