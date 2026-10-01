@@ -92,6 +92,70 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
         expect(series[i].complete).toBeGreaterThanOrEqual(series[i - 1].complete);
       }
     });
+
+    it('reconstructs initial item status from earliest transition previous_state rather than assuming current terminal status', () => {
+      const mockItems = [
+        { id: 'i1', created_at: '2026-10-01T00:00:00.000Z', status: 'complete' },
+      ];
+
+      // Item completed on Oct 3, previous_state was not_started
+      const mockEvents = [
+        {
+          work_item_id: 'i1',
+          event_type: 'status_transition',
+          previous_state: { status: 'not_started' },
+          new_state: { status: 'complete' },
+          occurred_at: '2026-10-03T12:00:00.000Z',
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, mockEvents, '2026-10-01', '2026-10-04');
+      // On Oct 1 and Oct 2, item was not_started (0 complete)
+      expect(series[0].complete).toBe(0);
+      expect(series[0].not_started).toBe(1);
+      expect(series[1].complete).toBe(0);
+      expect(series[1].not_started).toBe(1);
+      // On Oct 3 and Oct 4, item is complete (1 complete)
+      expect(series[2].complete).toBe(1);
+      expect(series[2].not_started).toBe(0);
+      expect(series[3].complete).toBe(1);
+      expect(series[3].not_started).toBe(0);
+    });
+
+    it('maintains strictly mutually exclusive status buckets when completed items are reopened', () => {
+      const mockItems = [
+        { id: 'i1', created_at: '2026-10-01T00:00:00.000Z', status: 'in_progress' },
+      ];
+
+      const mockEvents = [
+        // Completed on Oct 2
+        {
+          work_item_id: 'i1',
+          event_type: 'status_transition',
+          previous_state: { status: 'in_progress' },
+          new_state: { status: 'complete' },
+          occurred_at: '2026-10-02T12:00:00.000Z',
+        },
+        // Reopened to in_progress on Oct 3
+        {
+          work_item_id: 'i1',
+          event_type: 'status_transition',
+          previous_state: { status: 'complete' },
+          new_state: { status: 'in_progress' },
+          occurred_at: '2026-10-03T12:00:00.000Z',
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, mockEvents, '2026-10-01', '2026-10-03');
+      // Oct 2: complete is 1, in_progress is 0
+      expect(series[1].complete).toBe(1);
+      expect(series[1].in_progress).toBe(0);
+      // Oct 3: reopened! complete is 0, in_progress is 1. Total active is exactly 1 (no double-counting)
+      expect(series[2].complete).toBe(0);
+      expect(series[2].in_progress).toBe(1);
+      const totalOct3 = series[2].unplanned + series[2].not_started + series[2].in_progress + series[2].in_review + series[2].complete;
+      expect(totalOct3).toBe(1);
+    });
   });
 
   describe('GET /api/v1/projects/[projectId]/analytics/cfd', () => {
@@ -139,12 +203,14 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
           };
         }
         if (table === 'sprint_events') {
+          const eventBuilder: any = {
+            eq: vi.fn().mockImplementation(() => eventBuilder),
+            gte: vi.fn().mockImplementation(() => eventBuilder),
+            lte: vi.fn().mockImplementation(() => eventBuilder),
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockResolvedValue({ data: [], error: null }),
-              }),
-            }),
+            select: vi.fn().mockReturnValue(eventBuilder),
           };
         }
         return { select: vi.fn().mockReturnValue({ data: [], error: null }) };

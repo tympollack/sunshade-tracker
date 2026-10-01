@@ -138,4 +138,72 @@ describe('TASK-TRK-UI-AGING-RADAR: KanbanCard aging badges and anomaly highlight
     expect(agingBadge).toBeInTheDocument();
     expect(agingBadge).toHaveTextContent('9d in progress');
   });
+
+  it('does not falsely flag item as stalled when in_progress_at timestamp is recent', () => {
+    // Created 45 days ago in backlog, but moved to in_progress today (in_progress_at 1 hour ago)
+    const fortyFiveDaysAgo = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    const item: WorkItem = {
+      id: 'task-recent-wip',
+      tenant_id: 'tenant-1',
+      project_id: 'proj-1',
+      title: 'Old Ticket Moved to WIP Today',
+      item_type: 'task',
+      status: 'in_progress',
+      order_index: 5000,
+      created_at: fortyFiveDaysAgo,
+      updated_at: oneHourAgo,
+      metadata: { in_progress_at: oneHourAgo },
+    };
+
+    render(
+      <KanbanCard
+        item={item}
+        itemHierarchy={defaultHierarchy}
+        medianCycleTime={5}
+      />
+    );
+
+    // Should NOT have aging or stalled badges because elapsed in_progress WIP time is 0 days (< 5 days median)
+    expect(screen.queryByTestId('card-aging-badge-task-recent-wip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('card-stalled-badge-task-recent-wip')).not.toBeInTheDocument();
+
+    const card = screen.getByTestId('kanban-card-task-recent-wip');
+    expect(card.className).not.toContain('border-amber-500/40');
+    expect(card.className).not.toContain('border-red-500/50');
+  });
+
+  it('ordinary edits updating updated_at do not reset card aging clock', () => {
+    // Started in progress 10 days ago (10d > 1.5 * 5 = 7.5d median)
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    // User edited title 5 minutes ago
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+    const item: WorkItem = {
+      id: 'task-edited-wip',
+      tenant_id: 'tenant-1',
+      project_id: 'proj-1',
+      title: 'Edited Title on Stalled Task',
+      item_type: 'task',
+      status: 'in_progress',
+      order_index: 6000,
+      created_at: tenDaysAgo,
+      updated_at: fiveMinutesAgo,
+      metadata: { in_progress_at: tenDaysAgo },
+    };
+
+    render(
+      <KanbanCard
+        item={item}
+        itemHierarchy={defaultHierarchy}
+        medianCycleTime={5}
+      />
+    );
+
+    // Card should STILL have aging badge based on in_progress_at (10d), NOT reset by updated_at
+    const agingBadge = screen.getByTestId('card-aging-badge-task-edited-wip');
+    expect(agingBadge).toBeInTheDocument();
+    expect(agingBadge).toHaveTextContent('10d in progress');
+  });
 });

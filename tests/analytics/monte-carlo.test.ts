@@ -13,9 +13,9 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
 
     expect(duration).toBeLessThan(50);
     expect(result.iterations).toBe(1000);
-    expect(result.percentiles.p50).toBeGreaterThan(0);
-    expect(result.percentiles.p50).toBeLessThanOrEqual(result.percentiles.p85);
-    expect(result.percentiles.p85).toBeLessThanOrEqual(result.percentiles.p95);
+    expect(result.percentiles.p50!).toBeGreaterThan(0);
+    expect(result.percentiles.p50!).toBeLessThanOrEqual(result.percentiles.p85!);
+    expect(result.percentiles.p85!).toBeLessThanOrEqual(result.percentiles.p95!);
     expect(result.distribution.length).toBe(1000);
   });
 
@@ -50,14 +50,63 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
     expect(result.projectedDates.p50).toBe('2026-10-01T00:00:00.000Z');
   });
 
-  it('handles empty or non-positive velocities with safe fallback', () => {
+  it('handles empty or non-positive velocities without inventing fake progress', () => {
     const result = runMonteCarloSimulation({
       remainingStoryPoints: 50,
-      historicalVelocities: [],
-      iterations: 50,
+      historicalVelocities: [0, 0],
+      iterations: 100,
     });
 
-    expect(result.percentiles.p50).toBeGreaterThan(0);
+    expect(result.deliveredWithinHorizon).toBe(false);
+    expect(result.censoredTrials).toBe(100);
+    expect(result.percentiles.p50).toBeNull();
+    expect(result.projectedDates.p50).toBeNull();
+  });
+
+  it('preserves forecast when trial finishes exactly on the 500th sprint horizon limit', () => {
+    const result = runMonteCarloSimulation({
+      remainingStoryPoints: 500,
+      historicalVelocities: [1],
+      iterations: 100,
+      sprintLengthDays: 14,
+    });
+
+    expect(result.deliveredWithinHorizon).toBe(true);
+    expect(result.censoredTrials).toBe(0);
+    expect(result.percentiles.p50).toBe(500);
+    expect(result.percentiles.p85).toBe(500);
+    expect(result.percentiles.p95).toBe(500);
     expect(result.projectedDates.p50).toBeDefined();
+  });
+
+  it('clamps iterations to safe range between 100 and 10,000', () => {
+    const lowResult = runMonteCarloSimulation({
+      remainingStoryPoints: 20,
+      historicalVelocities: [10],
+      iterations: 10,
+    });
+    expect(lowResult.iterations).toBe(100);
+
+    const highResult = runMonteCarloSimulation({
+      remainingStoryPoints: 20,
+      historicalVelocities: [10],
+      iterations: 50000,
+    });
+    expect(highResult.iterations).toBe(10000);
+  });
+
+  it('correctly flags right-censored trials when milestone cannot finish within 500 sprints', () => {
+    const result = runMonteCarloSimulation({
+      remainingStoryPoints: 10000,
+      historicalVelocities: [1], // 1 pt/sprint would need 10,000 sprints (> 500)
+      iterations: 100,
+    });
+
+    expect(result.deliveredWithinHorizon).toBe(false);
+    expect(result.censoredTrials).toBe(100);
+    expect(result.percentiles.p50).toBeNull();
+    expect(result.percentiles.p85).toBeNull();
+    expect(result.percentiles.p95).toBeNull();
+    expect(result.projectedDates.p50).toBeNull();
   });
 });

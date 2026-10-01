@@ -96,10 +96,13 @@ export async function GET(
 
     let events: any[] = [];
     try {
+      const ninetyDaysBeforeStart = new Date(startMs - 90 * 24 * 60 * 60 * 1000).toISOString();
+
       const { data: evData, error: evErr } = await supabaseAdmin
         .from('sprint_events')
         .select('*')
         .eq('project_id', project.id)
+        .gte('occurred_at', ninetyDaysBeforeStart)
         .order('occurred_at', { ascending: true });
 
       if (evErr) {

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import {
+  isItemCompleted,
+  getCompletedStatusSet,
+  calculateSprintLeafPoints,
+} from '@/lib/sprint-utils';
 
 interface RollupResult {
   sprint_id: string;
@@ -27,10 +32,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Query all projects
-    const { data: projects, error: projErr } = await supabaseAdmin
+    // 2. Query all active, non-archived projects
+    let projQuery: any = supabaseAdmin
       .from('projects')
       .select('id, tenant_id, name, slug, settings');
+
+    if (typeof projQuery.is === 'function') {
+      projQuery = projQuery.is('deleted_at', null);
+      if (typeof projQuery.is === 'function') {
+        projQuery = projQuery.is('archived_at', null);
+      }
+    }
+
+    const { data: projects, error: projErr } = await projQuery;
 
     if (projErr) {
       return NextResponse.json(
@@ -45,6 +59,17 @@ export async function POST(req: NextRequest) {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 
     for (const project of projects || []) {
+      // Filter out archived projects configured in project settings or columns
+      if (
+        (project as any).archived_at ||
+        (project as any).deleted_at ||
+        project.settings?.archived === true ||
+        project.settings?.archived === 'true' ||
+        project.settings?.is_archived === true
+      ) {
+        continue;
+      }
+
       const activeSprints: any[] = [];
 
       // Check tracker.sprints table
@@ -71,17 +96,24 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const completedStatusSet = getCompletedStatusSet(project.settings?.statuses);
+
       // Process each active sprint
       for (const sprint of activeSprints) {
         const sprintIdentifier = sprint.id || sprint.name;
         const sprintName = sprint.name || sprint.id;
 
-        // Query non-completed items in this sprint
-        const { data: items, error: itemsErr } = await supabaseAdmin
+        // Query work items for this project
+        let itemQuery: any = supabaseAdmin
           .from('work_items')
-          .select('id, metadata, status, assignee')
-          .eq('project_id', project.id)
-          .neq('status', 'complete');
+          .select('id, parent_id, external_ref_id, metadata, status, assignee')
+          .eq('project_id', project.id);
+
+        if (typeof itemQuery.is === 'function') {
+          itemQuery = itemQuery.is('deleted_at', null);
+        }
+
+        const { data: items, error: itemsErr } = await itemQuery;
 
         if (itemsErr) {
           continue;
@@ -92,10 +124,13 @@ export async function POST(req: NextRequest) {
           return itemSprint === sprintIdentifier || itemSprint === sprintName;
         });
 
-        const remainingPoints = sprintItems.reduce((sum: number, item: any) => {
-          const pts = Number(item.metadata?.story_points ?? item.metadata?.points) || 0;
-          return sum + pts;
-        }, 0);
+        // Filter out completed items using comprehensive completion set
+        const uncompletedSprintItems = sprintItems.filter(
+          (item: any) => !isItemCompleted(item.status, completedStatusSet)
+        );
+
+        // Aggregate remaining points exclusively across leaf items to prevent parent-child double-counting
+        const remainingPoints = calculateSprintLeafPoints(uncompletedSprintItems as any);
 
         // Aggregate completed items in the last 24h from sprint_events
         const actorAttribution: Record<string, number> = {};
@@ -118,8 +153,8 @@ export async function POST(req: NextRequest) {
           // sprint_events fallback
         }
 
-        // Query initial baseline committed points
-        let baselinePoints = Number(sprint.committed_points) || 0;
+        // Query initial baseline committed points (explicit presence check preserving 0)
+        let baselinePoints: number | null = null;
         let committedItemIds: string[] = [];
 
         try {
@@ -131,7 +166,7 @@ export async function POST(req: NextRequest) {
             .eq('snapshot_type', 'commitment_baseline')
             .maybeSingle();
 
-          if (baselineSnapshot) {
+          if (baselineSnapshot && typeof baselineSnapshot.committed_points === 'number') {
             baselinePoints = Number(baselineSnapshot.committed_points);
             committedItemIds = baselineSnapshot.committed_item_ids || [];
           }
@@ -139,8 +174,13 @@ export async function POST(req: NextRequest) {
           // sprint_snapshots fallback
         }
 
-        if (baselinePoints === 0) {
-          baselinePoints = remainingPoints;
+        if (baselinePoints === null) {
+          const sprintCommit = sprint.committed_points ?? sprint.metadata?.committed_points;
+          if (typeof sprintCommit === 'number') {
+            baselinePoints = Number(sprintCommit);
+          } else {
+            baselinePoints = remainingPoints;
+          }
         }
 
         // Calculate schedule and ideal burn

@@ -153,7 +153,6 @@ export function generateCfdSeries(
   );
 
   const series: CfdDataPoint[] = [];
-  let runningMaxComplete = 0;
 
   for (const dateStr of dates) {
     const endOfDayMs = new Date(`${dateStr}T23:59:59.999Z`).getTime();
@@ -173,23 +172,32 @@ export function generateCfdSeries(
       }
 
       // Reconstruct status at end of this day from events
-      const relevantEvents = sortedEvents.filter(
-        (e) => (e.work_item_id === item.id) && new Date(e.occurred_at).getTime() <= endOfDayMs
+      const itemTransitions = sortedEvents.filter(
+        (e) => (e.work_item_id === item.id) && e.event_type === 'status_transition'
+      );
+
+      const priorTransitions = itemTransitions.filter(
+        (e) => new Date(e.occurred_at).getTime() <= endOfDayMs
       );
 
       let status = 'not_started';
-      if (relevantEvents.length > 0) {
-        const lastTransition = relevantEvents
-          .reverse()
-          .find((e) => e.event_type === 'status_transition' && e.new_state?.status);
-        if (lastTransition) {
-          status = lastTransition.new_state.status;
-        } else {
-          status = item.status;
-        }
+      if (priorTransitions.length > 0) {
+        // Last transition that occurred on or before endOfDay
+        const lastTransition = priorTransitions[priorTransitions.length - 1];
+        status = lastTransition.new_state?.status || item.status;
+      } else if (itemTransitions.length > 0) {
+        // Transitions exist later; reconstruct initial status prior to first transition
+        const earliestTransition = itemTransitions[0];
+        status =
+          earliestTransition.previous_state?.status ||
+          item.metadata?.initial_status ||
+          'not_started';
       } else {
-        // If created before endOfDay and no events, check current item status
-        status = item.status;
+        // No status transition events recorded; use initial_status or safe fallback to prevent completed items from appearing complete in historical dates
+        status =
+          item.metadata?.initial_status ||
+          (item.status === 'complete' || item.status === 'done' ? 'not_started' : item.status) ||
+          'not_started';
       }
 
       const isUnplanned = Boolean(
@@ -210,10 +218,6 @@ export function generateCfdSeries(
         counts.not_started++;
       }
     }
-
-    // Enforce monotonic non-decreasing for complete status category
-    runningMaxComplete = Math.max(runningMaxComplete, counts.complete);
-    counts.complete = runningMaxComplete;
 
     series.push({
       date: dateStr,

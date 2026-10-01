@@ -109,13 +109,19 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
   // Aging / cycle time anomaly radar logic (TASK-TRK-UI-AGING-RADAR)
   const rawCycleTime = item.metadata?.cycle_time_days;
+  const inProgressTimestamp =
+    item.metadata?.started_at ||
+    item.metadata?.in_progress_at ||
+    item.metadata?.wip_started_at ||
+    item.created_at;
+
   const computedCycleTime =
     rawCycleTime !== undefined
       ? Number(rawCycleTime)
-      : item.status === 'in_progress' && item.created_at
+      : item.status === 'in_progress' && inProgressTimestamp
       ? Math.max(
           0,
-          Math.floor((Date.now() - new Date(item.created_at).getTime()) / (1000 * 60 * 60 * 24))
+          Math.floor((Date.now() - new Date(inProgressTimestamp).getTime()) / (1000 * 60 * 60 * 24))
         )
       : undefined;
   const cycleTimeDays = computedCycleTime;
