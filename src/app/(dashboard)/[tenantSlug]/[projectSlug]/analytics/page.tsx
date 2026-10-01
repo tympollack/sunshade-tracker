@@ -233,7 +233,9 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           ? [rollingVelocity]
           : [];
 
-      if (remainingPts > 0 && simulationVelocities.length > 0) {
+      const hasPositiveVelocity = simulationVelocities.some((v) => v > 0);
+
+      if (remainingPts > 0 && hasPositiveVelocity) {
         const simulation = runMonteCarloSimulation({
           remainingStoryPoints: remainingPts,
           historicalVelocities: simulationVelocities,

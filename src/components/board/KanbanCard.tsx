@@ -112,7 +112,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   const inProgressTimestamp =
     item.metadata?.started_at ||
     item.metadata?.in_progress_at ||
-    item.updated_at ||
+    item.metadata?.wip_started_at ||
     item.created_at;
 
   const computedCycleTime =

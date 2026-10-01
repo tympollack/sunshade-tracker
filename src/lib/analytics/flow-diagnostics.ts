@@ -193,8 +193,11 @@ export function generateCfdSeries(
           item.metadata?.initial_status ||
           'not_started';
       } else {
-        // No status transition events recorded; use item status
-        status = item.status || 'not_started';
+        // No status transition events recorded; use initial_status or safe fallback to prevent completed items from appearing complete in historical dates
+        status =
+          item.metadata?.initial_status ||
+          (item.status === 'complete' || item.status === 'done' ? 'not_started' : item.status) ||
+          'not_started';
       }
 
       const isUnplanned = Boolean(

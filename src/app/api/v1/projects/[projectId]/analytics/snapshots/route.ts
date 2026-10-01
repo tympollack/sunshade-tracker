@@ -57,11 +57,17 @@ export async function GET(
       searchParams.get('sprint_name') ||
       searchParams.get('sprint');
 
+    const snapshotType = searchParams.get('snapshot_type') || 'daily_rollup';
+
     let snapshotQuery = supabaseAdmin
       .from('sprint_snapshots')
       .select('*')
       .eq('tenant_id', authCtx.tenant.id)
       .eq('project_id', project.id);
+
+    if (snapshotType !== 'all') {
+      snapshotQuery = snapshotQuery.eq('snapshot_type', snapshotType);
+    }
 
     if (sprintId) {
       snapshotQuery = snapshotQuery.eq('sprint_id', sprintId);
@@ -80,9 +86,10 @@ export async function GET(
 
     const snapshots = snapshotsData || [];
 
-    // 4. Transform snapshots into BurndownDataPoint format for BurndownChart
+    // 4. Transform snapshots into BurndownDataPoint format for BurndownChart (daily rollups only)
+    const dailyRollups = snapshots.filter((s: any) => s.snapshot_type !== 'commitment_baseline');
     let previousRemaining: number | null = null;
-    const burndownData: BurndownDataPoint[] = snapshots.map((s: any) => {
+    const burndownData: BurndownDataPoint[] = dailyRollups.map((s: any) => {
       const breakdown = s.assignee_breakdown || {};
       const dateStr = s.captured_at ? new Date(s.captured_at).toISOString().split('T')[0] : '';
       const committed = Number(s.committed_points) || 0;

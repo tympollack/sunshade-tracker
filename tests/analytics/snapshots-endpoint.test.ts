@@ -80,18 +80,13 @@ describe('TASK-TRK-BURNDOWN-SNAPSHOTS-ENDPOINT: snapshots reader and sprint list
           return projQuery;
         }
         if (table === 'sprint_snapshots') {
-          const snapQuery: any = {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockReturnValue({
-                    order: vi.fn().mockResolvedValue({ data: mockSnapshots, error: null }),
-                  }),
-                }),
-              }),
-            }),
+          const snapQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => snapQueryBuilder),
+            order: vi.fn().mockResolvedValue({ data: mockSnapshots, error: null }),
           };
-          return snapQuery;
+          return {
+            select: vi.fn().mockReturnValue(snapQueryBuilder),
+          };
         }
         return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
       });

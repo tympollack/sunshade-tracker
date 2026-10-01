@@ -61,9 +61,25 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
   const validVelocities = (input.historicalVelocities || [])
     .filter((v) => typeof v === 'number' && !isNaN(v) && v >= 0);
 
-  // Fallback only if no velocities provided or all historical velocities are zero
   const hasProgress = validVelocities.some((v) => v > 0);
-  const velocities = hasProgress ? validVelocities : [10];
+
+  // If there is zero throughput recorded across historical sprints, milestone cannot finish
+  if (!hasProgress) {
+    return {
+      remainingStoryPoints,
+      iterations,
+      sprintLengthDays,
+      startDate: startDate.toISOString(),
+      deliveredWithinHorizon: false,
+      censoredTrials: iterations,
+      percentiles: { p50: null, p85: null, p95: null },
+      projectedDates: { p50: null, p85: null, p95: null },
+      distribution: new Array(iterations).fill(Number.POSITIVE_INFINITY),
+      executionTimeMs: Math.round((performance.now() - startTime) * 100) / 100,
+    };
+  }
+
+  const velocities = validVelocities;
   const numVelocities = velocities.length;
 
   const distribution: number[] = new Array(iterations);
@@ -97,7 +113,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
   const getPercentile = (pct: number): number | null => {
     const index = Math.ceil((pct / 100) * distribution.length) - 1;
     const val = distribution[Math.max(0, Math.min(distribution.length - 1, index))];
-    return val >= MAX_SPRINTS_LIMIT || !isFinite(val) ? null : val;
+    return !isFinite(val) || val > MAX_SPRINTS_LIMIT ? null : val;
   };
 
   const p50 = getPercentile(50);
