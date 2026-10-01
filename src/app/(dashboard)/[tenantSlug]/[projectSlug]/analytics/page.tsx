@@ -51,30 +51,62 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   const [cfdData, setCfdData] = useState<CfdDataPoint[]>([]);
   const [monteCarlo, setMonteCarlo] = useState<MonteCarloSimulationResult | null>(null);
 
-  // Load project sprints & initial data
+  // Load project sprints & initial data (merging DB sprints and project settings)
   const loadSprintList = useCallback(async () => {
     try {
+      const mergedOptions: SprintOption[] = [];
+
+      // 1. Fetch from project settings
       const res = await fetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
-      if (!res.ok) return;
-      const projects = await res.json();
-      const currentProject = (projects || []).find(
-        (p: any) => p.slug === projectSlug || p.id === projectSlug
-      );
+      if (res.ok) {
+        const projects = await res.json();
+        const currentProject = (projects || []).find(
+          (p: any) => p.slug === projectSlug || p.id === projectSlug
+        );
 
-      if (currentProject) {
-        const projectSprints: any[] = currentProject.settings?.sprint_settings?.sprints || [];
-        const options: SprintOption[] = projectSprints.map((s) => ({
-          id: s.id || s.name,
-          name: s.name,
-          is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
-          status: s.status,
-        }));
-
-        setSprints(options);
-        const active = options.find((s) => s.is_active) || options[0];
-        if (active && !selectedSprintId) {
-          setSelectedSprintId(active.id);
+        if (currentProject) {
+          const projectSprints: any[] = currentProject.settings?.sprint_settings?.sprints || [];
+          for (const s of projectSprints) {
+            mergedOptions.push({
+              id: s.id || s.name,
+              name: s.name,
+              is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+              status: s.status,
+            });
+          }
         }
+      }
+
+      // 2. Supplement/merge from sprint analytics route (which queries DB sprints)
+      try {
+        const sprintListRes = await fetch(
+          `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}`
+        );
+        if (sprintListRes.ok) {
+          const dbSprintData = await sprintListRes.json();
+          const dbSprints: any[] = dbSprintData.sprints || [];
+          for (const s of dbSprints) {
+            const exists = mergedOptions.some(
+              (opt) => opt.id === s.id || opt.name === s.name
+            );
+            if (!exists) {
+              mergedOptions.push({
+                id: s.id || s.name,
+                name: s.name,
+                is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+                status: s.status,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Analytics] Supplementing sprints from DB skipped:', err);
+      }
+
+      setSprints(mergedOptions);
+      const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
+      if (active && !selectedSprintId) {
+        setSelectedSprintId(active.id);
       }
     } catch (err) {
       console.error('[Analytics] Failed to fetch project sprints:', err);
@@ -96,27 +128,55 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       let remainingPts = 0;
       let addedPts = 0;
       let droppedPts = 0;
-      let historicalVelocities: number[] = [20, 24, 18];
+      let historicalVelocities: number[] = [];
+      let reportedRollingVelocity: number | undefined;
+      let reportedSayDo: number | undefined;
+      let reportedVolatility: number | undefined;
 
       if (sprintRes.ok) {
         const sprintData = await sprintRes.json();
-        committedPts = sprintData.committed_points || 0;
-        deliveredPts = sprintData.completed_points || 0;
-        remainingPts = sprintData.remaining_points || 0;
-        addedPts = sprintData.churn_added_points || 0;
-        droppedPts = sprintData.churn_dropped_points || 0;
+        // Support both camelCase SprintHealthReport and legacy snake_case formats
+        committedPts = sprintData.committedPoints ?? sprintData.committed_points ?? 0;
+        deliveredPts = sprintData.completedPoints ?? sprintData.completed_points ?? 0;
+        remainingPts = sprintData.remainingPoints ?? sprintData.remaining_points ?? 0;
+        addedPts = sprintData.pointsAddedMidSprint ?? sprintData.churn_added_points ?? 0;
+        droppedPts = sprintData.churn_dropped_points ?? sprintData.pointsDroppedMidSprint ?? 0;
 
-        if (sprintData.historical_sprints && sprintData.historical_sprints.length > 0) {
-          historicalVelocities = sprintData.historical_sprints.map(
-            (h: any) => h.completed_points || 0
+        if (typeof sprintData.rollingVelocity === 'number') {
+          reportedRollingVelocity = sprintData.rollingVelocity;
+        } else if (typeof sprintData.rolling_velocity === 'number') {
+          reportedRollingVelocity = sprintData.rolling_velocity;
+        }
+
+        if (typeof sprintData.commitmentReliabilityPercent === 'number') {
+          reportedSayDo = sprintData.commitmentReliabilityPercent / 100;
+        }
+
+        if (typeof sprintData.scopeCreepPercent === 'number') {
+          reportedVolatility = sprintData.scopeCreepPercent;
+        }
+
+        const histList = sprintData.historicalSprints || sprintData.historical_sprints;
+        if (Array.isArray(histList) && histList.length > 0) {
+          historicalVelocities = histList.map(
+            (h: any) => h.completed_points ?? h.completedPoints ?? 0
           );
         }
       }
 
-      // Compute pure metrics using agile utils
-      const rollingVelocity = calculateRollingVelocity(historicalVelocities);
-      const sayDo = calculateSayDoRatio(committedPts, deliveredPts);
-      const volatility = calculateSprintVolatility(committedPts, addedPts, droppedPts);
+      // Compute pure metrics with fallback to utility engines
+      const rollingVelocity =
+        reportedRollingVelocity !== undefined
+          ? reportedRollingVelocity
+          : calculateRollingVelocity(historicalVelocities);
+      const sayDo =
+        reportedSayDo !== undefined
+          ? reportedSayDo
+          : calculateSayDoRatio(committedPts, deliveredPts);
+      const volatility =
+        reportedVolatility !== undefined
+          ? reportedVolatility
+          : calculateSprintVolatility(committedPts, addedPts, droppedPts);
 
       setKpiMetrics({
         rollingVelocity,
@@ -133,9 +193,30 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         finalDelivered: deliveredPts,
       });
 
-      // 2. Fetch CFD series
+      // 2. Fetch Burndown Snapshots for selected sprint
+      if (selectedSprintId) {
+        const snapRes = await fetch(
+          `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
+            selectedSprintId
+          )}&tenant_slug=${encodeURIComponent(tenantSlug)}`
+        );
+        if (snapRes.ok) {
+          const snapJson = await snapRes.json();
+          if (Array.isArray(snapJson.burndownData)) {
+            setBurndownData(snapJson.burndownData);
+          } else {
+            setBurndownData([]);
+          }
+        } else {
+          setBurndownData([]);
+        }
+      } else {
+        setBurndownData([]);
+      }
+
+      // 3. Fetch CFD series
       const cfdRes = await fetch(
-        `/api/v1/projects/${projectSlug}/analytics/cfd?startDate=${startDate}&endDate=${endDate}&tenant_slug=${tenantSlug}`
+        `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/cfd?startDate=${startDate}&endDate=${endDate}&tenant_slug=${encodeURIComponent(tenantSlug)}`
       );
       if (cfdRes.ok) {
         const cfdJson = await cfdRes.json();
@@ -144,11 +225,18 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         }
       }
 
-      // 3. Run Monte Carlo simulation for milestone projection
-      if (remainingPts > 0) {
+      // 4. Run Monte Carlo simulation for milestone projection (zero fake data fallback)
+      const simulationVelocities =
+        historicalVelocities.length > 0
+          ? historicalVelocities
+          : rollingVelocity > 0
+          ? [rollingVelocity]
+          : [];
+
+      if (remainingPts > 0 && simulationVelocities.length > 0) {
         const simulation = runMonteCarloSimulation({
           remainingStoryPoints: remainingPts,
-          historicalVelocities,
+          historicalVelocities: simulationVelocities,
           iterations: 1000,
           sprintLengthDays: 14,
         });
@@ -228,6 +316,9 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                   </h3>
                   <p className="text-xs text-slate-400">
                     Probabilistic completion forecasting over {monteCarlo.iterations.toLocaleString()} trials ({monteCarlo.executionTimeMs}ms)
+                    {!monteCarlo.deliveredWithinHorizon && monteCarlo.censoredTrials > 0 && (
+                      <span className="text-amber-400 ml-2">({monteCarlo.censoredTrials} trials exceeded 500 sprints)</span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -240,33 +331,33 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
               <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
                 <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
                 <div className="text-xl font-bold text-emerald-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p50} sprints
+                  {monteCarlo.percentiles.p50 !== null ? `${monteCarlo.percentiles.p50} sprints` : '> 500 sprints'}
                 </div>
                 <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p50.split('T')[0]}
+                  {monteCarlo.projectedDates.p50 ? monteCarlo.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
                 </div>
               </div>
 
               <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
                 <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
                 <div className="text-xl font-bold text-cyan-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p85} sprints
+                  {monteCarlo.percentiles.p85 !== null ? `${monteCarlo.percentiles.p85} sprints` : '> 500 sprints'}
                 </div>
                 <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p85.split('T')[0]}
+                  {monteCarlo.projectedDates.p85 ? monteCarlo.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
                 </div>
               </div>
 
               <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
                 <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
                 <div className="text-xl font-bold text-amber-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p95} sprints
+                  {monteCarlo.percentiles.p95 !== null ? `${monteCarlo.percentiles.p95} sprints` : '> 500 sprints'}
                 </div>
                 <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p95.split('T')[0]}
+                  {monteCarlo.projectedDates.p95 ? monteCarlo.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
                 </div>
               </div>
             </div>

@@ -90,11 +90,14 @@ describe('TASK-TRK-BURNDOWN-CRON: /api/cron/burndown-rollup', () => {
 
     (supabaseAdmin.from as any).mockImplementation((table: string) => {
       if (table === 'projects') {
+        const projQuery: any = {
+          is: vi.fn().mockImplementation(() => projQuery),
+          data: mockProjects,
+          error: null,
+        };
+        projQuery.then = (onRes: any) => Promise.resolve({ data: mockProjects, error: null }).then(onRes);
         return {
-          select: vi.fn().mockReturnValue({
-            data: mockProjects,
-            error: null,
-          }),
+          select: vi.fn().mockReturnValue(projQuery),
         };
       }
       if (table === 'sprints') {
@@ -110,15 +113,14 @@ describe('TASK-TRK-BURNDOWN-CRON: /api/cron/burndown-rollup', () => {
         };
       }
       if (table === 'work_items') {
+        const itemQuery: any = {
+          eq: vi.fn().mockImplementation(() => itemQuery),
+          is: vi.fn().mockImplementation(() => itemQuery),
+          neq: vi.fn().mockImplementation(() => itemQuery),
+        };
+        itemQuery.then = (onRes: any) => Promise.resolve({ data: mockItems, error: null }).then(onRes);
         return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              neq: vi.fn().mockResolvedValue({
-                data: mockItems,
-                error: null,
-              }),
-            }),
-          }),
+          select: vi.fn().mockReturnValue(itemQuery),
         };
       }
       if (table === 'sprint_events') {
@@ -190,5 +192,141 @@ describe('TASK-TRK-BURNDOWN-CRON: /api/cron/burndown-rollup', () => {
     expect(data.rollups[0].committed_points).toBe(30);
     expect(data.rollups[0].actor_attribution['user-alice']).toBe(5);
     expect(data.rollups[0].snapshot_id).toBe('snap-123');
+  });
+
+  it('preserves zero committed points baseline and excludes archived projects', async () => {
+    const mockProjects = [
+      {
+        id: 'proj-archived',
+        tenant_id: 'tenant-1',
+        name: 'Archived Project',
+        slug: 'archived',
+        settings: {
+          archived: true,
+          sprint_settings: {
+            sprints: [{ id: 'sprint-archived', is_active: true }],
+          },
+        },
+      },
+      {
+        id: 'proj-active',
+        tenant_id: 'tenant-1',
+        name: 'Active Zero Commit Project',
+        slug: 'active-zero',
+        settings: {
+          sprint_settings: {
+            sprints: [
+              {
+                id: 'sprint-zero',
+                name: 'Zero Commit Sprint',
+                is_active: true,
+                start_date: new Date().toISOString(),
+                end_date: new Date(Date.now() + 14 * 86400000).toISOString(),
+                committed_points: 0,
+              },
+            ],
+          },
+        },
+      },
+    ];
+
+    // Parent item (8 pts) has child item (8 pts); done item (5 pts) should be excluded
+    const mockItems = [
+      {
+        id: 'parent-1',
+        status: 'in_progress',
+        metadata: { sprint: 'Zero Commit Sprint', story_points: 8 },
+      },
+      {
+        id: 'child-1',
+        parent_id: 'parent-1',
+        status: 'in_progress',
+        metadata: { sprint: 'Zero Commit Sprint', story_points: 8 },
+      },
+      {
+        id: 'item-done',
+        status: 'done', // Should be excluded as completed
+        metadata: { sprint: 'Zero Commit Sprint', story_points: 5 },
+      },
+    ];
+
+    (supabaseAdmin.from as any).mockImplementation((table: string) => {
+      if (table === 'projects') {
+        const projQuery: any = {
+          is: vi.fn().mockImplementation(() => projQuery),
+          data: mockProjects,
+          error: null,
+        };
+        projQuery.then = (onRes: any) => Promise.resolve({ data: mockProjects, error: null }).then(onRes);
+        return { select: vi.fn().mockReturnValue(projQuery) };
+      }
+      if (table === 'sprints') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              or: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'work_items') {
+        const itemQuery: any = {
+          eq: vi.fn().mockImplementation(() => itemQuery),
+          is: vi.fn().mockImplementation(() => itemQuery),
+        };
+        itemQuery.then = (onRes: any) => Promise.resolve({ data: mockItems, error: null }).then(onRes);
+        return { select: vi.fn().mockReturnValue(itemQuery) };
+      }
+      if (table === 'sprint_events') {
+        const eventsBuilder: any = {
+          eq: vi.fn().mockImplementation(() => eventsBuilder),
+          gte: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(eventsBuilder) };
+      }
+      if (table === 'sprint_snapshots') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { committed_points: 0, committed_item_ids: [] }, // baseline committed_points is 0!
+                    error: null,
+                  }),
+                  gte: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'snap-zero' }, error: null }),
+            }),
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+        };
+      }
+      return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/cron/burndown-rollup', {
+      method: 'POST',
+      headers: { authorization: 'Bearer super-secret-cron-token' },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.rollups_processed).toBe(1);
+    // Only the active project processed; archived project was skipped
+    expect(data.rollups[0].project_id).toBe('proj-active');
+    // Committed points baseline should stay 0 and NOT fallback to remaining_points (8)
+    expect(data.rollups[0].committed_points).toBe(0);
+    // Remaining points: only child-1 (8 pts) counted; parent-1 deduplicated, done item excluded
+    expect(data.rollups[0].remaining_points).toBe(8);
   });
 });

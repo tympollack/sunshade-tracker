@@ -156,6 +156,7 @@ export interface SprintHealthReport {
   rollingVelocity: number;
   velocityWindow: number;
   historicalSprintsEvaluated: number;
+  historicalSprints?: HistoricalSprint[];
   committedPoints: number;
   currentSprintPoints: number;
   completedPoints: number;
@@ -503,6 +504,13 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     rollingVelocity,
     velocityWindow,
     historicalSprintsEvaluated: Math.min(velocityWindow, historicalSprints.length),
+    historicalSprints: historicalSprints.map((h) => ({
+      id: h.id,
+      name: h.name,
+      completed_points: h.completed_points,
+      committed_points: h.committed_points,
+      ends_at: h.ends_at,
+    })),
     committedPoints: committed,
     currentSprintPoints: totalCurrentPoints,
     completedPoints,
