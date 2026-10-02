@@ -47,6 +47,13 @@ export async function POST(req: NextRequest) {
     const auth = await authenticate(req);
     if (auth.errorResponse) return auth.errorResponse;
 
+    if (auth.context.role === 'viewer') {
+      return NextResponse.json(
+        { error: 'Forbidden: Viewer role cannot modify sprints' },
+        { status: 403 }
+      );
+    }
+
     const { tenant } = auth.context;
     const body: CreateSprintInput = await req.json();
 

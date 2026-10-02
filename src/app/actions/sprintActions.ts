@@ -9,7 +9,7 @@ import {
   RelationalSprintRecord,
 } from '@/lib/services/sprintRelationalService';
 
-async function resolveUserTenant(tenantSlug: string) {
+async function resolveUserTenant(tenantSlug: string, requireWriteRole: boolean = false) {
   const supabase = await createServerClient();
   const {
     data: { user },
@@ -48,6 +48,10 @@ async function resolveUserTenant(tenantSlug: string) {
     return { user, tenantId: null, error: 'Forbidden: You do not have access to this workspace' };
   }
 
+  if (requireWriteRole && member.role === 'viewer') {
+    return { user, tenantId: null, error: 'Forbidden: Viewer role cannot modify sprints' };
+  }
+
   return { user, tenantId: tenant.id, error: null };
 }
 
@@ -56,7 +60,7 @@ export async function listSprintsAction(
   options?: { projectId?: string; status?: string; isActive?: boolean }
 ): Promise<{ success: boolean; data?: RelationalSprintRecord[]; error?: string }> {
   try {
-    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug);
+    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug, false);
     if (authErr || !tenantId) {
       return { success: false, error: authErr || 'Unauthorized' };
     }
@@ -77,7 +81,7 @@ export async function createSprintAction(
   input: CreateSprintInput
 ): Promise<{ success: boolean; data?: RelationalSprintRecord; error?: string }> {
   try {
-    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug);
+    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug, true);
     if (authErr || !tenantId) {
       return { success: false, error: authErr || 'Unauthorized' };
     }
@@ -99,7 +103,7 @@ export async function updateSprintAction(
   updates: UpdateSprintInput
 ): Promise<{ success: boolean; data?: RelationalSprintRecord; error?: string }> {
   try {
-    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug);
+    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug, true);
     if (authErr || !tenantId) {
       return { success: false, error: authErr || 'Unauthorized' };
     }
@@ -120,7 +124,7 @@ export async function deleteSprintAction(
   sprintId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug);
+    const { tenantId, error: authErr } = await resolveUserTenant(tenantSlug, true);
     if (authErr || !tenantId) {
       return { success: false, error: authErr || 'Unauthorized' };
     }

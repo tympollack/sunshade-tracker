@@ -98,6 +98,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   });
 
   const [selectedSprintForEdit, setSelectedSprintForEdit] = useState<Partial<SprintDefinition> | null>(null);
+  const [treeSelectedProjectId, setTreeSelectedProjectId] = useState<string | null>(null);
   const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
 
   // Tree View Filtering & Sorting States
@@ -880,7 +881,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
     tenantSlug, projectSlug, currentProjectId, isAllProjects,
-    initialSearchParamItem: typeof searchParams?.item === 'string' ? searchParams.item : null,
+    initialSearchParamItem: null,
+    syncItemUrl: false,
     loading,
   });
 
@@ -1636,6 +1638,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     id: string,
     updates: Partial<WorkItem> & { metadata?: Record<string, any> }
   ) => {
+    const originalItem = items.find((it) => it.id === id);
     setItems((prev) =>
       prev.map((it) => (it.id === id ? { ...it, ...updates } : it))
     );
@@ -1645,10 +1648,30 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         body: JSON.stringify({ id, ...updates }),
       });
       if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        if (originalItem) {
+          setItems((prev) =>
+            prev.map((it) => (it.id === id ? originalItem : it))
+          );
+        }
         fetchData();
+        throw new Error(errJson.error || `Failed to update item (${res.status})`);
       }
-    } catch {
+      broadcastItemMutation({
+        type: 'ITEM_UPDATED',
+        itemId: id,
+        updates,
+        tenantSlug,
+        projectId: currentProjectId,
+      });
+    } catch (err: any) {
+      if (originalItem) {
+        setItems((prev) =>
+          prev.map((it) => (it.id === id ? originalItem : it))
+        );
+      }
       fetchData();
+      throw err;
     }
   };
 
@@ -1658,8 +1681,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const currentProj = allProjects.find((p) => p.slug === projectSlug);
       const isNew = !sprintData.id || sprintData.id === 'new';
 
+      let resolvedSprintId = sprintData.id;
+
       if (isNew) {
-        await createSprintAction(tenantSlug, {
+        const createRes = await createSprintAction(tenantSlug, {
           name: sprintData.name,
           goal: sprintData.goal,
           project_id: currentProj?.id,
@@ -1669,8 +1694,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ends_at: sprintData.ends_at,
           committed_points: sprintData.committed_points,
         });
+        if (!createRes.success || !createRes.data) {
+          throw new Error(createRes.error || 'Failed to create sprint');
+        }
+        resolvedSprintId = createRes.data.id;
       } else {
-        await updateSprintAction(tenantSlug, sprintData.id as string, {
+        const updateRes = await updateSprintAction(tenantSlug, sprintData.id as string, {
           name: sprintData.name,
           goal: sprintData.goal,
           status: sprintData.status,
@@ -1679,23 +1708,52 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ends_at: sprintData.ends_at,
           committed_points: sprintData.committed_points,
         });
+
+        // If sprint not found in relational table (legacy settings sprint), create it
+        if (!updateRes.success && updateRes.error?.includes('not found')) {
+          const createRes = await createSprintAction(tenantSlug, {
+            name: sprintData.name,
+            goal: sprintData.goal,
+            project_id: currentProj?.id,
+            status: sprintData.status,
+            is_active: sprintData.is_active,
+            started_at: sprintData.started_at,
+            ends_at: sprintData.ends_at,
+            committed_points: sprintData.committed_points,
+          });
+          if (createRes.success && createRes.data) {
+            resolvedSprintId = createRes.data.id;
+          }
+        }
       }
 
       const existing = [...(projectSettings.sprint_settings?.sprints || [])];
       const idx = existing.findIndex((s) => s.id === sprintData.id || s.name === sprintData.name);
-      if (idx >= 0) {
-        existing[idx] = { ...existing[idx], ...sprintData } as SprintDefinition;
-      } else {
-        existing.push({
-          id: sprintData.id || sprintData.name,
-          name: sprintData.name,
-          status: sprintData.status || 'planned',
-          goal: sprintData.goal,
-          started_at: sprintData.started_at,
-          ends_at: sprintData.ends_at,
-          committed_points: sprintData.committed_points,
-        } as SprintDefinition);
+      const oldSprint = idx >= 0 ? existing[idx] : null;
+
+      // If renaming currently selected sprint on canvas, update selectedSprint so canvas isn't emptied
+      if (oldSprint && oldSprint.name && sprintData.name && oldSprint.name !== sprintData.name) {
+        if (selectedSprint === oldSprint.name) {
+          setSelectedSprint(sprintData.name);
+        }
       }
+
+      const updatedSprintDef: SprintDefinition = {
+        id: resolvedSprintId && resolvedSprintId !== 'new' ? resolvedSprintId : sprintData.name,
+        name: sprintData.name,
+        status: sprintData.status || 'planned',
+        goal: sprintData.goal,
+        started_at: sprintData.started_at,
+        ends_at: sprintData.ends_at,
+        committed_points: sprintData.committed_points,
+      } as SprintDefinition;
+
+      if (idx >= 0) {
+        existing[idx] = { ...existing[idx], ...updatedSprintDef };
+      } else {
+        existing.push(updatedSprintDef);
+      }
+
       await handleSaveSprints(existing);
       await fetchData();
     } catch (err: any) {
@@ -1706,9 +1764,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleDeleteSprintLifecycle = async (sprintId: string) => {
     try {
       await deleteSprintAction(tenantSlug, sprintId);
-      const existing = (projectSettings.sprint_settings?.sprints || []).filter(
-        (s) => s.id !== sprintId && s.name !== sprintId
-      );
+      const existing = (projectSettings.sprint_settings?.sprints || []).filter((s) => {
+        const matches = s.id === sprintId || s.name === sprintId;
+        if (matches && (selectedSprint === s.name || selectedSprint === sprintId)) {
+          setSelectedSprint('all');
+        }
+        return !matches;
+      });
       await handleSaveSprints(existing);
       await fetchData();
     } catch (err: any) {
@@ -2645,6 +2707,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .filter((it) => {
           if (it.status !== s.id) return false;
           if (!effectiveSelectedLevels.includes(it.item_type)) return false;
+          if (treeSelectedProjectId && it.project_id !== treeSelectedProjectId) {
+            return false;
+          }
           if (selectedSprint !== 'all') {
             if (selectedSprint === '__none__') {
               return !it.metadata?.sprint;
@@ -2656,7 +2721,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .sort((a, b) => a.order_index - b.order_index);
     });
     return map;
-  }, [displayedStatuses, items, effectiveSelectedLevels, selectedSprint]);
+  }, [displayedStatuses, items, effectiveSelectedLevels, selectedSprint, treeSelectedProjectId]);
 
   const columnCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -2757,7 +2822,22 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             sprints={availableSprintDefs}
             tenantSlug={tenantSlug}
             onScopeFilter={(scope) => {
-              if (scope.sprintName) setSelectedSprint(scope.sprintName);
+              if (scope.sprintName !== undefined) {
+                if (!scope.sprintName) {
+                  setSelectedSprint('all');
+                } else if (scope.sprintName === 'No Sprint') {
+                  setSelectedSprint('__none__');
+                } else {
+                  setSelectedSprint(scope.sprintName);
+                }
+              } else {
+                setSelectedSprint('all');
+              }
+              if (scope.projectId !== undefined) {
+                setTreeSelectedProjectId(scope.projectId || null);
+              } else {
+                setTreeSelectedProjectId(null);
+              }
               if (scope.itemId) {
                 const found = items.find((i) => i.id === scope.itemId);
                 if (found) selectDrawerItem(found);

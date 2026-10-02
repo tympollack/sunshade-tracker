@@ -59,6 +59,7 @@ export function WorkItemInspectorDrawer({
   const [sprint, setSprint] = useState(item?.metadata?.sprint || '');
   const [parentId, setParentId] = useState(item?.parent_id || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (item) {
@@ -70,6 +71,7 @@ export function WorkItemInspectorDrawer({
       setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
       setSprint(item.metadata?.sprint || '');
       setParentId(item.parent_id || '');
+      setErrorMessage(null);
     }
   }, [item]);
 
@@ -93,7 +95,18 @@ export function WorkItemInspectorDrawer({
     if (isReadOnly || !onUpdateItem) return;
     try {
       setIsSaving(true);
+      setErrorMessage(null);
       await onUpdateItem(item.id, updates);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update field');
+      setTitle(item.title || '');
+      setDescription(item.description || '');
+      setStatus(item.status || '');
+      setAssignee(item.assignee || '');
+      const pts = item.metadata?.story_points ?? item.metadata?.points;
+      setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
+      setSprint(item.metadata?.sprint || '');
+      setParentId(item.parent_id || '');
     } finally {
       setIsSaving(false);
     }
@@ -207,6 +220,22 @@ export function WorkItemInspectorDrawer({
 
       {/* ── Main Body: Scrollable properties & triage ── */}
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-4">
+        {errorMessage && (
+          <div
+            data-testid="inspector-error-banner"
+            className="p-2.5 rounded bg-red-950/60 border border-red-800/60 text-xs text-red-300 flex items-center justify-between"
+          >
+            <span>{errorMessage}</span>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="ml-2 text-red-400 hover:text-red-200"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Title Input */}
         <div>
           <input

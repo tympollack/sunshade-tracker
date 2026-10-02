@@ -284,5 +284,36 @@ describe('TASK-TRK-SPRINT-RELATIONAL-CRUD-API: Relational tracker.sprints API & 
       const json = await res.json();
       expect(json.success).toBe(true);
     });
+
+    it('rejects POST /api/v1/sprints when caller has viewer role', async () => {
+      (authenticate as any).mockResolvedValue({
+        context: { tenant: { id: tenantId, slug: 'pym-energy' }, userId: 'u-viewer', role: 'viewer' },
+        errorResponse: null,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/sprints', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Unauthorized Sprint' }),
+      });
+      const res = await postSprintRoute(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Viewer role cannot modify sprints');
+    });
+
+    it('rejects DELETE /api/v1/sprints/[sprintId] when caller has viewer role', async () => {
+      (authenticate as any).mockResolvedValue({
+        context: { tenant: { id: tenantId, slug: 'pym-energy' }, userId: 'u-viewer', role: 'viewer' },
+        errorResponse: null,
+      });
+
+      const req = new NextRequest(`http://localhost:3000/api/v1/sprints/${sprintId}`, {
+        method: 'DELETE',
+      });
+      const res = await deleteSprintRoute(req, { params: Promise.resolve({ sprintId }) });
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Viewer role cannot modify sprints');
+    });
   });
 });

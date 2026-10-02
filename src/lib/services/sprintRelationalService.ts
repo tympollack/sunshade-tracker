@@ -118,6 +118,19 @@ export class SprintRelationalService {
         return { data: null, error: 'Sprint name is required' };
       }
 
+      if (input.project_id) {
+        const { data: proj, error: projErr } = await supabaseAdmin
+          .from('projects')
+          .select('id')
+          .eq('id', input.project_id)
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
+
+        if (projErr || !proj) {
+          return { data: null, error: 'Project does not exist or does not belong to this tenant' };
+        }
+      }
+
       const trimmedName = input.name.trim();
 
       // If active, deactivate other sprints for the project/tenant if desired
@@ -128,11 +141,17 @@ export class SprintRelationalService {
       let committedPoints = input.committed_points ?? 0;
       if (committedPoints === 0) {
         // Compute current committed points from work items assigned to this sprint name
-        const { data: items } = await supabaseAdmin
+        let itemsQuery = supabaseAdmin
           .from('work_items')
-          .select('metadata')
+          .select('metadata, project_id')
           .eq('tenant_id', tenantId)
           .is('deleted_at', null);
+
+        if (input.project_id) {
+          itemsQuery = itemsQuery.eq('project_id', input.project_id);
+        }
+
+        const { data: items } = await itemsQuery;
 
         if (items) {
           committedPoints = items
@@ -199,7 +218,21 @@ export class SprintRelationalService {
       }
 
       if (updates.goal !== undefined) updatePayload.goal = updates.goal;
-      if (updates.project_id !== undefined) updatePayload.project_id = updates.project_id;
+      if (updates.project_id !== undefined) {
+        if (updates.project_id !== null) {
+          const { data: proj, error: projErr } = await supabaseAdmin
+            .from('projects')
+            .select('id')
+            .eq('id', updates.project_id)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+
+          if (projErr || !proj) {
+            return { data: null, error: 'Project does not exist or does not belong to this tenant' };
+          }
+        }
+        updatePayload.project_id = updates.project_id;
+      }
       if (updates.started_at !== undefined) updatePayload.started_at = updates.started_at;
       if (updates.ends_at !== undefined) updatePayload.ends_at = updates.ends_at;
       if (updates.committed_points !== undefined) updatePayload.committed_points = updates.committed_points;
@@ -212,8 +245,10 @@ export class SprintRelationalService {
           if (!currentSprint.started_at && !updates.started_at) {
             updatePayload.started_at = new Date().toISOString();
           }
-        } else if (updates.status === 'completed') {
-          updatePayload.is_active = false;
+        } else if (updates.status === 'completed' || updates.status === 'planned' || updates.status === 'unplanned') {
+          if (updates.is_active === undefined) {
+            updatePayload.is_active = false;
+          }
         }
       }
 
@@ -221,6 +256,8 @@ export class SprintRelationalService {
         updatePayload.is_active = updates.is_active;
         if (updates.is_active && !updatePayload.status) {
           updatePayload.status = 'active';
+        } else if (!updates.is_active && updatePayload.status === 'active') {
+          updatePayload.status = 'planned';
         }
       }
 
@@ -242,20 +279,31 @@ export class SprintRelationalService {
         const oldName = currentSprint.name;
         const newName = updatePayload.name;
 
-        const { data: itemsToSync } = await supabaseAdmin
+        let itemsQuery = supabaseAdmin
           .from('work_items')
-          .select('id, metadata')
+          .select('id, metadata, project_id')
           .eq('tenant_id', tenantId)
           .is('deleted_at', null);
 
-        if (itemsToSync && itemsToSync.length > 0) {
+        const targetProjectId = updatePayload.project_id !== undefined ? updatePayload.project_id : currentSprint.project_id;
+        if (targetProjectId) {
+          itemsQuery = itemsQuery.eq('project_id', targetProjectId);
+        }
+
+        const { data: itemsToSync, error: itemsFetchErr } = await itemsQuery;
+        if (itemsFetchErr) {
+          console.error('Failed to fetch items for sprint rename sync:', itemsFetchErr);
+        } else if (itemsToSync && itemsToSync.length > 0) {
           const matching = itemsToSync.filter((i: any) => i.metadata?.sprint === oldName);
           for (const item of matching) {
             const nextMeta = { ...(item.metadata || {}), sprint: newName };
-            await supabaseAdmin
+            const { error: syncErr } = await supabaseAdmin
               .from('work_items')
               .update({ metadata: nextMeta })
               .eq('id', item.id);
+            if (syncErr) {
+              console.error(`Failed to update item ${item.id} metadata for renamed sprint:`, syncErr);
+            }
           }
         }
       }
@@ -291,21 +339,31 @@ export class SprintRelationalService {
 
       // Disassociate items that were in this sprint
       const sprintName = currentSprint.name;
-      const { data: items } = await supabaseAdmin
+      let itemsQuery = supabaseAdmin
         .from('work_items')
-        .select('id, metadata')
+        .select('id, metadata, project_id')
         .eq('tenant_id', tenantId)
         .is('deleted_at', null);
 
-      if (items && items.length > 0) {
+      if (currentSprint.project_id) {
+        itemsQuery = itemsQuery.eq('project_id', currentSprint.project_id);
+      }
+
+      const { data: items, error: itemsFetchErr } = await itemsQuery;
+      if (itemsFetchErr) {
+        console.error('Failed to fetch items for sprint deletion sync:', itemsFetchErr);
+      } else if (items && items.length > 0) {
         const matching = items.filter((i: any) => i.metadata?.sprint === sprintName);
         for (const item of matching) {
           const nextMeta = { ...(item.metadata || {}) };
           delete nextMeta.sprint;
-          await supabaseAdmin
+          const { error: syncErr } = await supabaseAdmin
             .from('work_items')
             .update({ metadata: nextMeta })
             .eq('id', item.id);
+          if (syncErr) {
+            console.error(`Failed to disassociate sprint from item ${item.id}:`, syncErr);
+          }
         }
       }
 

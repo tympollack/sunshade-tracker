@@ -114,4 +114,27 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
     fireEvent.click(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('renders mobile navigation trigger and supports opening mobile LHN drawer', () => {
+    const { rerender } = render(
+      <WorkspaceShell
+        leftPane={<div data-testid="mobile-tree-content">Mobile Tree Content</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const trigger = screen.getByTestId('workspace-lhn-mobile-trigger');
+    expect(trigger).toBeInTheDocument();
+
+    // Click to open mobile drawer
+    fireEvent.click(trigger);
+    const mobileOverlay = screen.getByTestId('workspace-lhn-mobile-overlay');
+    expect(mobileOverlay).toBeInTheDocument();
+    expect(screen.getAllByTestId('mobile-tree-content').length).toBeGreaterThanOrEqual(1);
+
+    const backdrop = screen.getByTestId('workspace-lhn-mobile-backdrop');
+    expect(backdrop).toBeInTheDocument();
+    fireEvent.click(backdrop);
+    expect(screen.queryByTestId('workspace-lhn-mobile-overlay')).not.toBeInTheDocument();
+  });
 });

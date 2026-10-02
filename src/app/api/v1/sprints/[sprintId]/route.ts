@@ -42,6 +42,13 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
     const auth = await authenticate(req);
     if (auth.errorResponse) return auth.errorResponse;
 
+    if (auth.context.role === 'viewer') {
+      return NextResponse.json(
+        { error: 'Forbidden: Viewer role cannot modify sprints' },
+        { status: 403 }
+      );
+    }
+
     const { tenant } = auth.context;
     const { sprintId } = await props.params;
     const updates: UpdateSprintInput = await req.json();
@@ -69,6 +76,13 @@ export async function DELETE(req: NextRequest, props: RouteParams) {
   try {
     const auth = await authenticate(req);
     if (auth.errorResponse) return auth.errorResponse;
+
+    if (auth.context.role === 'viewer') {
+      return NextResponse.json(
+        { error: 'Forbidden: Viewer role cannot modify sprints' },
+        { status: 403 }
+      );
+    }
 
     const { tenant } = auth.context;
     const { sprintId } = await props.params;

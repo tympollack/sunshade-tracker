@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 
 export interface WorkspaceShellProps {
   header?: React.ReactNode;
@@ -10,6 +10,8 @@ export interface WorkspaceShellProps {
   rightPane?: React.ReactNode;
   isLeftCollapsed?: boolean;
   onToggleLeftCollapse?: () => void;
+  isMobileLeftOpen?: boolean;
+  onToggleMobileLeft?: () => void;
   isRightOpen?: boolean;
   onCloseRight?: () => void;
   className?: string;
@@ -22,22 +24,38 @@ export function WorkspaceShell({
   rightPane,
   isLeftCollapsed: externalIsLeftCollapsed,
   onToggleLeftCollapse: externalOnToggleLeftCollapse,
+  isMobileLeftOpen: externalIsMobileLeftOpen,
+  onToggleMobileLeft: externalOnToggleMobileLeft,
   isRightOpen = false,
   onCloseRight,
   className = '',
 }: WorkspaceShellProps) {
   const [internalIsLeftCollapsed, setInternalIsLeftCollapsed] = useState(false);
+  const [internalIsMobileLeftOpen, setInternalIsMobileLeftOpen] = useState(false);
 
   const isLeftCollapsed =
     externalIsLeftCollapsed !== undefined
       ? externalIsLeftCollapsed
       : internalIsLeftCollapsed;
 
+  const isMobileLeftOpen =
+    externalIsMobileLeftOpen !== undefined
+      ? externalIsMobileLeftOpen
+      : internalIsMobileLeftOpen;
+
   const handleToggleLeft = () => {
     if (externalOnToggleLeftCollapse) {
       externalOnToggleLeftCollapse();
     } else {
       setInternalIsLeftCollapsed((prev) => !prev);
+    }
+  };
+
+  const handleToggleMobileLeft = () => {
+    if (externalOnToggleMobileLeft) {
+      externalOnToggleMobileLeft();
+    } else {
+      setInternalIsMobileLeftOpen((prev) => !prev);
     }
   };
 
@@ -125,6 +143,51 @@ export function WorkspaceShell({
               data-testid="workspace-rhn-backdrop"
               onClick={onCloseRight}
               className="2xl:hidden fixed inset-0 z-30 bg-black/50 backdrop-blur-xs top-14"
+              aria-hidden="true"
+            />
+          </>
+        )}
+
+        {/* Mobile Left Navigation Trigger (< md) */}
+        {leftPane && (
+          <button
+            type="button"
+            data-testid="workspace-lhn-mobile-trigger"
+            onClick={handleToggleMobileLeft}
+            className="md:hidden fixed bottom-4 left-4 z-30 flex items-center gap-1.5 px-3 py-2 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700/80 shadow-lg text-xs font-medium backdrop-blur-md transition-colors"
+            aria-label="Toggle navigation drawer"
+          >
+            <PanelLeftOpen className="w-4 h-4 text-indigo-400" />
+            <span>Navigation</span>
+          </button>
+        )}
+
+        {/* Mobile Left Navigation Drawer (< md) */}
+        {leftPane && isMobileLeftOpen && (
+          <>
+            <div
+              data-testid="workspace-lhn-mobile-overlay"
+              className="md:hidden fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-slate-950 border-r border-slate-800 shadow-2xl flex flex-col overflow-hidden"
+            >
+              <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-800 bg-slate-900/50 shrink-0">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Navigation</span>
+                <button
+                  type="button"
+                  onClick={handleToggleMobileLeft}
+                  className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
+                  aria-label="Close navigation drawer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
+                {leftPane}
+              </div>
+            </div>
+            <div
+              data-testid="workspace-lhn-mobile-backdrop"
+              onClick={handleToggleMobileLeft}
+              className="md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-xs"
               aria-hidden="true"
             />
           </>
