@@ -121,11 +121,24 @@ export function LeftHandNavTree({
   }, [activeWorkspaceName]);
 
   // Active Project info
-  const activeProject = useMemo(() => {
-    return projects.find((p) => p.slug === currentProjectSlug) ?? projects[0];
-  }, [projects, currentProjectSlug]);
+  const isPortfolio = currentProjectSlug === 'portfolio';
+  const isOverview =
+    (currentProjectSlug === 'all' || currentProjectSlug === 'portfolio') &&
+    !projects.some((p) => p.slug === currentProjectSlug);
 
-  const activeProjectName = activeProject?.name || currentProjectSlug || 'All Projects';
+  const activeProject = useMemo(() => {
+    if (isOverview) {
+      return {
+        id: currentProjectSlug || 'all',
+        slug: currentProjectSlug || 'all',
+        name: isPortfolio ? 'Portfolio Overview' : 'All Projects',
+      };
+    }
+    return projects.find((p) => p.slug === currentProjectSlug) ?? projects[0];
+  }, [projects, currentProjectSlug, isOverview, isPortfolio]);
+
+  const activeProjectName =
+    activeProject?.name || (isPortfolio ? 'Portfolio Overview' : 'All Projects');
 
   // Collect all expandable node IDs
   const allExpandableIds = useMemo(() => {
@@ -330,11 +343,17 @@ export function LeftHandNavTree({
           className="flex-1 min-h-0 overflow-y-auto custom-scrollbar py-2 px-1 flex flex-col items-center gap-1.5"
         >
           {treeNodes.map((node) => {
-            const isSelected =
-              (node.type === 'sprint' && activeScope.sprintName === node.title) ||
-              (node.type === 'project' && activeScope.projectSlug === node.id);
+            const isSelected = Boolean(
+              (node.type === 'sprint' &&
+                activeScope.sprintName === node.sprintName &&
+                !activeScope.projectSlug &&
+                !activeScope.itemId) ||
+              (node.type === 'project' &&
+                activeScope.projectSlug === node.projectSlug &&
+                !activeScope.itemId)
+            );
 
-            const itemCount = node.children?.length ?? 0;
+            const itemCount = node.childCount;
             const tooltipText = `${node.title} (${itemCount} item${itemCount !== 1 ? 's' : ''})`;
 
             return (
@@ -342,7 +361,11 @@ export function LeftHandNavTree({
                 key={node.id}
                 type="button"
                 onClick={() => {
-                  selectScope(node);
+                  selectScope({
+                    sprintName: node.sprintName,
+                    projectSlug: node.projectSlug,
+                    itemId: node.item?.id,
+                  });
                   if (node.item && onSelectItem) {
                     onSelectItem(node.item);
                   }

@@ -228,4 +228,70 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     expect(screen.queryByText('Hierarchy Pivot')).not.toBeInTheDocument();
     expect(screen.queryByText('Expand')).not.toBeInTheDocument();
   });
+
+  it('correctly names overview routes in collapsed badge tooltip', () => {
+    const mockWorkspaces = [
+      { id: 'ws-1', slug: 'pym-energy', name: 'PYM Energy', tier: 'enterprise' },
+    ];
+
+    const { rerender } = render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="portfolio"
+        isCollapsed={true}
+      />
+    );
+
+    const badge = screen.getByTestId('lhn-collapsed-workspace-badge');
+    expect(badge.getAttribute('title')).toBe('PYM Energy / Portfolio Overview');
+
+    rerender(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="all"
+        isCollapsed={true}
+      />
+    );
+
+    expect(badge.getAttribute('title')).toBe('PYM Energy / All Projects');
+  });
+
+  it('highlights collapsed project roots upon selection and displays childCount', () => {
+    const onFilter = vi.fn();
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        isCollapsed={true}
+        onScopeFilter={onFilter}
+      />
+    );
+
+    // Switch to project mode
+    const pivotToggle = screen.getByTestId('lhn-collapsed-pivot-toggle');
+    fireEvent.click(pivotToggle);
+
+    // Root project buttons: Cozy and SunShade Hub
+    const cozyRootBtn = screen.getByTestId('lhn-collapsed-root-project:proj-1');
+    expect(cozyRootBtn).toBeInTheDocument();
+    // Verify tooltip contains childCount (2 work items under Cozy: TASK-1, TASK-2)
+    expect(cozyRootBtn.getAttribute('title')).toContain('Cozy (2 items)');
+
+    // Click to select
+    fireEvent.click(cozyRootBtn);
+    expect(onFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ projectSlug: 'cozy' })
+    );
+
+    // Check highlighted classes
+    expect(cozyRootBtn.className).toContain('text-emerald-400');
+    expect(cozyRootBtn.className).toContain('border-emerald-500/40');
+  });
 });
