@@ -16,6 +16,7 @@ export interface UseTabSyncProps {
   isAllProjects?: boolean;
   initialSearchParamItem?: string | null;
   loading?: boolean;
+  syncItemUrl?: boolean;
 }
 
 export function useTabSync({
@@ -30,6 +31,7 @@ export function useTabSync({
   isAllProjects = false,
   initialSearchParamItem,
   loading = false,
+  syncItemUrl = true,
 }: UseTabSyncProps) {
   const handledDeepLinkRef = useRef<string | null>(null);
   const hasModalCommittedOpenRef = useRef(false);
@@ -51,6 +53,7 @@ export function useTabSync({
 
   // 1. Initial hydration from query param (?item=...)
   useEffect(() => {
+    if (!syncItemUrl) return;
     let targetId = initialSearchParamItem;
     if (!targetId && typeof window !== 'undefined') {
       targetId = new URLSearchParams(window.location.search).get('item');
@@ -110,7 +113,7 @@ export function useTabSync({
 
   // 2. URL synchronization when editingItem opens / closes
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (!syncItemUrl || typeof window === 'undefined') return;
     const url = new URL(window.location.href);
     const currentParam = url.searchParams.get('item');
 
@@ -131,11 +134,11 @@ export function useTabSync({
         }
       }
     }
-  }, [editingItem]);
+  }, [editingItem, syncItemUrl]);
 
   // 3. Browser Back/Forward navigation (popstate)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (!syncItemUrl || typeof window === 'undefined') return;
 
     const handlePopState = () => {
       const currentParam = new URLSearchParams(window.location.search).get('item');
@@ -166,7 +169,7 @@ export function useTabSync({
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [setEditingItem, tenantSlug]);
+  }, [setEditingItem, tenantSlug, syncItemUrl]);
 
   // 4. Cross-tab synchronization via BroadcastChannel (with tenant & project filtering)
   useEffect(() => {

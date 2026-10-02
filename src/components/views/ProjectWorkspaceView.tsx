@@ -40,6 +40,17 @@ import { saveModalItem } from '@/lib/save-modal-item';
 import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation } from '@/lib/sync-channel';
 import { normalizeAssignee } from '@/lib/assignee-utils';
+import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
+import { LeftHandNavTree } from '@/components/navigation/LeftHandNavTree';
+import { WorkItemInspectorDrawer } from '@/components/drawer/WorkItemInspectorDrawer';
+import { SprintInspectorDrawer } from '@/components/drawer/SprintInspectorDrawer';
+import { MobileItemBottomSheet } from '@/components/drawer/MobileItemBottomSheet';
+import { useWorkItemSelection } from '@/hooks/useWorkItemSelection';
+import {
+  createSprintAction,
+  updateSprintAction,
+  deleteSprintAction,
+} from '@/app/actions/sprintActions';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -74,6 +85,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
+
+  const requestedItem = typeof searchParams?.item === 'string' ? searchParams.item : null;
+  const {
+    selectedItem: selectedDrawerItem,
+    selectItem: selectDrawerItem,
+    isOpen: isDrawerOpen,
+    close: closeDrawer,
+  } = useWorkItemSelection({
+    items,
+    initialItemRef: requestedItem,
+  });
+
+  const [selectedSprintForEdit, setSelectedSprintForEdit] = useState<Partial<SprintDefinition> | null>(null);
+  const [treeSelectedProjectId, setTreeSelectedProjectId] = useState<string | null>(null);
+  const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
 
   // Tree View Filtering & Sorting States
   const [treeSelectedStatuses, setTreeSelectedStatuses] = useState<string[] | null>(null);
@@ -603,6 +629,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return sortSprintNames(Array.from(set), projectSettings.sprint_settings?.sprints);
   }, [items, projectSettings.sprint_settings]);
 
+  const availableSprintDefs = useMemo<SprintDefinition[]>(() => {
+    const list: SprintDefinition[] = [...(projectSettings.sprint_settings?.sprints || [])];
+    const knownNames = new Set(list.map((s) => s.name));
+    items.forEach((it) => {
+      const sName = it.metadata?.sprint;
+      if (sName && !knownNames.has(sName)) {
+        knownNames.add(sName);
+        list.push({
+          id: sName,
+          name: sName,
+          status: 'planned',
+        });
+      }
+    });
+    return list;
+  }, [projectSettings.sprint_settings?.sprints, items]);
+
   const hiddenCompletedSprintsCount = useMemo(() => {
     return availableSprints.filter((sprintName) => {
       const sprintDef = projectSettings.sprint_settings?.sprints?.find(
@@ -838,7 +881,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
     tenantSlug, projectSlug, currentProjectId, isAllProjects,
-    initialSearchParamItem: typeof searchParams?.item === 'string' ? searchParams.item : null,
+    initialSearchParamItem: null,
+    syncItemUrl: false,
     loading,
   });
 
@@ -1587,6 +1631,150 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     } catch (err) {
       console.error('Error saving sprint settings:', err);
       fetchData();
+    }
+  };
+
+  const handleUpdateField = async (
+    id: string,
+    updates: Partial<WorkItem> & { metadata?: Record<string, any> }
+  ) => {
+    const originalItem = items.find((it) => it.id === id);
+    setItems((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, ...updates } : it))
+    );
+    try {
+      const res = await apiFetch('/api/v1/items', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, ...updates }),
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        if (originalItem) {
+          setItems((prev) =>
+            prev.map((it) => (it.id === id ? originalItem : it))
+          );
+        }
+        fetchData();
+        throw new Error(errJson.error || `Failed to update item (${res.status})`);
+      }
+      broadcastItemMutation({
+        type: 'ITEM_UPDATED',
+        itemId: id,
+        updates,
+        tenantSlug,
+        projectId: currentProjectId,
+      });
+    } catch (err: any) {
+      if (originalItem) {
+        setItems((prev) =>
+          prev.map((it) => (it.id === id ? originalItem : it))
+        );
+      }
+      fetchData();
+      throw err;
+    }
+  };
+
+  const handleSaveSprintLifecycle = async (sprintData: Partial<SprintDefinition>) => {
+    try {
+      if (!sprintData.name) return;
+      const currentProj = allProjects.find((p) => p.slug === projectSlug);
+      const isNew = !sprintData.id || sprintData.id === 'new';
+
+      let resolvedSprintId = sprintData.id;
+
+      if (isNew) {
+        const createRes = await createSprintAction(tenantSlug, {
+          name: sprintData.name,
+          goal: sprintData.goal,
+          project_id: currentProj?.id,
+          status: sprintData.status,
+          is_active: sprintData.is_active,
+          started_at: sprintData.started_at,
+          ends_at: sprintData.ends_at,
+          committed_points: sprintData.committed_points,
+        });
+        if (!createRes.success || !createRes.data) {
+          throw new Error(createRes.error || 'Failed to create sprint');
+        }
+        resolvedSprintId = createRes.data.id;
+      } else {
+        const updateRes = await updateSprintAction(tenantSlug, sprintData.id as string, {
+          name: sprintData.name,
+          goal: sprintData.goal,
+          status: sprintData.status,
+          is_active: sprintData.is_active,
+          started_at: sprintData.started_at,
+          ends_at: sprintData.ends_at,
+          committed_points: sprintData.committed_points,
+        });
+
+        // If sprint not found in relational table (legacy settings sprint), create it
+        if (!updateRes.success && updateRes.error?.includes('not found')) {
+          const createRes = await createSprintAction(tenantSlug, {
+            name: sprintData.name,
+            goal: sprintData.goal,
+            project_id: currentProj?.id,
+            status: sprintData.status,
+            is_active: sprintData.is_active,
+            started_at: sprintData.started_at,
+            ends_at: sprintData.ends_at,
+            committed_points: sprintData.committed_points,
+          });
+          if (createRes.success && createRes.data) {
+            resolvedSprintId = createRes.data.id;
+          }
+        }
+      }
+
+      const existing = [...(projectSettings.sprint_settings?.sprints || [])];
+      const idx = existing.findIndex((s) => s.id === sprintData.id || s.name === sprintData.name);
+      const oldSprint = idx >= 0 ? existing[idx] : null;
+
+      // If renaming currently selected sprint on canvas, update selectedSprint so canvas isn't emptied
+      if (oldSprint && oldSprint.name && sprintData.name && oldSprint.name !== sprintData.name) {
+        if (selectedSprint === oldSprint.name) {
+          setSelectedSprint(sprintData.name);
+        }
+      }
+
+      const updatedSprintDef: SprintDefinition = {
+        id: resolvedSprintId && resolvedSprintId !== 'new' ? resolvedSprintId : sprintData.name,
+        name: sprintData.name,
+        status: sprintData.status || 'planned',
+        goal: sprintData.goal,
+        started_at: sprintData.started_at,
+        ends_at: sprintData.ends_at,
+        committed_points: sprintData.committed_points,
+      } as SprintDefinition;
+
+      if (idx >= 0) {
+        existing[idx] = { ...existing[idx], ...updatedSprintDef };
+      } else {
+        existing.push(updatedSprintDef);
+      }
+
+      await handleSaveSprints(existing);
+      await fetchData();
+    } catch (err: any) {
+      console.error('Failed to save sprint:', err);
+    }
+  };
+
+  const handleDeleteSprintLifecycle = async (sprintId: string) => {
+    try {
+      await deleteSprintAction(tenantSlug, sprintId);
+      const existing = (projectSettings.sprint_settings?.sprints || []).filter((s) => {
+        const matches = s.id === sprintId || s.name === sprintId;
+        if (matches && (selectedSprint === s.name || selectedSprint === sprintId)) {
+          setSelectedSprint('all');
+        }
+        return !matches;
+      });
+      await handleSaveSprints(existing);
+      await fetchData();
+    } catch (err: any) {
+      console.error('Failed to delete sprint:', err);
     }
   };
 
@@ -2519,6 +2707,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .filter((it) => {
           if (it.status !== s.id) return false;
           if (!effectiveSelectedLevels.includes(it.item_type)) return false;
+          if (treeSelectedProjectId && it.project_id !== treeSelectedProjectId) {
+            return false;
+          }
           if (selectedSprint !== 'all') {
             if (selectedSprint === '__none__') {
               return !it.metadata?.sprint;
@@ -2530,7 +2721,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         .sort((a, b) => a.order_index - b.order_index);
     });
     return map;
-  }, [displayedStatuses, items, effectiveSelectedLevels, selectedSprint]);
+  }, [displayedStatuses, items, effectiveSelectedLevels, selectedSprint, treeSelectedProjectId]);
 
   const columnCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -2586,257 +2777,369 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const draggedItem = draggedItemId ? items.find((i) => i.id === draggedItemId) || null : null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100">
-      {/* ── Top App Header ── */}
-      <ProjectHeader
-        tenantSlug={tenantSlug}
-        projectSlug={projectSlug}
-        allWorkspaces={allWorkspaces}
-        allProjects={allProjects}
-        isReadOnly={isReadOnly}
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        onOpenSearch={() => setIsSearchOpen(true)}
-        onOpenQuickAdd={() => setIsQuickAddOpen(true)}
-        deviations={deviations}
-        onOpenReconciliation={() => {
-          setFocusedDeviationId(null);
-          setIsReconciliationModalOpen(true);
+    <div className="h-full w-full flex flex-col overflow-hidden bg-[#090d16] text-slate-100">
+      <WorkspaceShell
+        isLeftCollapsed={isLhnCollapsed}
+        onToggleLeftCollapse={() => setIsLhnCollapsed((prev) => !prev)}
+        isRightOpen={Boolean(selectedDrawerItem || selectedSprintForEdit)}
+        onCloseRight={() => {
+          closeDrawer();
+          setSelectedSprintForEdit(null);
         }}
-        isRefreshing={isRefreshing}
-        onRefresh={() => {
-          fetchTenantInfo();
-          fetchData();
-        }}
-        items={items}
-        onSelectItem={(item) => setEditingItem(item)}
-        loading={loading}
-        currentUser={currentUser}
-        tenantInfo={tenantInfo}
-        onArchiveProject={() => setIsArchiveModalOpen(true)}
-      />
-
-      {/* ── Error banner ── */}
-      {fetchError && !loading && (
-        <div className="px-6 py-2 bg-red-950/60 border-b border-red-800/40 flex items-center space-x-2 text-sm text-red-300">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{fetchError}</span>
-          <button
-            onClick={() => setFetchError(null)}
-            className="ml-auto text-red-400 hover:text-red-300"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* ── Main Content ── */}
-      <main className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
-        {activeTab === 'board' && (
-          <BoardViewContainer
-            hiddenBoardItems={hiddenBoardItems}
-            dismissedBoardDeviationBanner={dismissedBoardDeviationBanner}
-            setDismissedBoardDeviationBanner={setDismissedBoardDeviationBanner}
-            onOpenReconciliation={() => {
-              setFocusedDeviationId(null);
-              setIsReconciliationModalOpen(true);
-            }}
-            isReadOnly={isReadOnly}
-            loading={loading}
+        header={
+          <ProjectHeader
             tenantSlug={tenantSlug}
             projectSlug={projectSlug}
-            statusFilterOptions={statusFilterOptions}
-            effectiveSelectedStatuses={effectiveSelectedStatuses}
-            setSelectedStatuses={setSelectedStatuses}
-            levelFilterOptions={levelFilterOptions}
-            effectiveSelectedLevels={effectiveSelectedLevels}
-            setSelectedLevels={setSelectedLevels}
-            selectedSprint={selectedSprint}
-            setSelectedSprint={setSelectedSprint}
-            availableSprints={availableSprints}
-            items={items}
-            projectSettings={projectSettings}
-            pointMode={pointMode}
-            handlePointModeChange={handlePointModeChange}
-            boardHeightMode={boardHeight}
-            setBoardHeightMode={setBoardHeight}
-            collapsedColumnsUp={collapsedUp}
-            toggleCollapseUp={toggleCollapseUp}
-            collapsedColumnsSideways={collapsedSideways}
-            toggleCollapseSideways={toggleCollapseSideways}
-            collapseAllColumns={collapseAllColumns}
-            expandAllColumns={expandAllColumns}
-            boardScrollRef={boardScrollRef}
-            handleBoardWheel={handleBoardWheel}
-            displayedStatuses={displayedStatuses}
-            columnCounts={columnCounts}
-            columnsItemsMap={columnsItemsMap}
-            quickAddColId={quickAddColId}
-            setQuickAddColId={setQuickAddColId}
-            quickAddTitle={quickAddTitle}
-            setQuickAddTitle={setQuickAddTitle}
-            isCreatingQuickItem={isCreatingQuickItem}
-            handleCreateQuickInlineItem={handleCreateQuickInlineItem}
-            draggedItemId={draggedItemId}
-            dragOverTarget={dragOverTarget}
-            childCountMap={childCountMap}
-            pointsRollupMap={pointsRollupMap}
-            getItemHierarchy={getItemHierarchy}
+            allWorkspaces={allWorkspaces}
             allProjects={allProjects}
-            isAllProjects={isAllProjects}
-            setEditingItem={setEditingItem}
-            setDeleteConfirmItem={setDeleteConfirmItem}
-            handleUpdateStatus={handleUpdateStatus}
-            handleUpdateType={handleUpdateType}
-            getItemStatuses={getItemStatuses}
-            handleDragStart={handleDragStart}
-            handleDragEnd={handleDragEnd}
-            handleDragOverCard={handleDragOverCard}
-            handleDrop={handleDrop}
-            handleDropOnColEnd={handleDropOnColEnd}
-            unmappedItems={unmappedItems}
-            draggedItem={draggedItem}
-          />
-        )}
-
-        {activeTab === 'tree' && (
-          <TreeViewContainer
-            handleExpandAllTreeNodes={handleExpandAllTreeNodes}
-            handleCollapseAllTreeNodes={handleCollapseAllTreeNodes}
-            selectedSprint={selectedSprint}
-            setSelectedSprint={setSelectedSprint}
-            availableSprints={availableSprints}
-            statusFilterOptions={statusFilterOptions}
-            effectiveTreeStatuses={effectiveTreeStatuses}
-            setTreeSelectedStatuses={setTreeSelectedStatuses}
-            levelFilterOptions={levelFilterOptions}
-            effectiveTreeLevels={effectiveTreeLevels}
-            setTreeSelectedLevels={setTreeSelectedLevels}
-            assigneeFilterOptions={assigneeFilterOptions}
-            effectiveTreeAssignees={effectiveTreeAssignees}
-            setTreeSelectedAssignees={setTreeSelectedAssignees}
-            treeSortBy={treeSortBy}
-            setTreeSortBy={setTreeSortBy}
-            pointMode={pointMode}
-            handlePointModeChange={handlePointModeChange}
-            treeFilteredItems={treeFilteredItems}
-            projectSettings={projectSettings}
             isReadOnly={isReadOnly}
-            loading={loading}
-            items={items}
-            treeItems={treeItems}
-            isTreeRootOver={isTreeRootOver}
-            setIsTreeRootOver={setIsTreeRootOver}
-            treeDraggedItemId={treeDraggedItemId}
-            setTreeDraggedItemId={setTreeDraggedItemId}
-            handleTreeReparent={handleTreeReparent}
-            getStatusColor={getStatusColor}
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            onOpenSearch={() => setIsSearchOpen(true)}
+            onOpenQuickAdd={() => setIsQuickAddOpen(true)}
             deviations={deviations}
-            onOpenReconciliation={(dev) => {
-              setFocusedDeviationId(dev?.id || null);
-              setIsReconciliationModalOpen(true);
-            }}
-            getItemStatuses={getItemStatuses}
-            getItemHierarchy={getItemHierarchy}
-            workspaceMembers={workspaceMembers}
-            getItemProjectSettings={getItemProjectSettings}
-            collapsedTreeNodes={collapsedTreeNodes}
-            handleToggleCollapseTreeNode={handleToggleCollapseTreeNode}
-            handleUpdateStatus={handleUpdateStatus}
-            handleTreeUpdateAssignee={handleTreeUpdateAssignee}
-            handleTreeCreateChild={handleTreeCreateChild}
-            setEditingItem={setEditingItem}
-          />
-        )}
-
-        {activeTab === 'sprint' && (
-          <SprintViewContainer
-            items={items}
-            projectSettings={projectSettings}
-            isReadOnly={isReadOnly}
-            pointMode={pointMode}
-            handlePointModeChange={handlePointModeChange}
-            sprintViewMode={sprintViewMode}
-            setSprintViewMode={setSprintViewMode}
-            handleToggleCollapseAllSprints={handleToggleCollapseAllSprints}
-            collapsedSprints={collapsedSprints}
-            toggleSprintCollapse={toggleSprintCollapse}
-            handleToggleHideCompletedSprints={handleToggleHideCompletedSprints}
-            hideCompletedSprints={hideCompletedSprints}
-            hiddenCompletedSprintsCount={hiddenCompletedSprintsCount}
-            statusFilterOptions={statusFilterOptions}
-            effectiveSprintStatuses={effectiveSprintStatuses}
-            setSprintSelectedStatuses={setSprintSelectedStatuses}
-            levelFilterOptions={levelFilterOptions}
-            effectiveSprintLevels={effectiveSprintLevels}
-            setSprintSelectedLevels={setSprintSelectedLevels}
-            sprintSortBy={sprintSortBy}
-            setSprintSortBy={setSprintSortBy}
-            setIsManageSprintsOpen={setIsManageSprintsOpen}
-            visibleSprints={visibleSprints}
-            availableSprints={availableSprints}
-            filterSprintItems={filterSprintItems}
-            sprintComparator={sprintComparator}
-            selectedItemIds={selectedItemIds}
-            handleToggleSelectItem={handleToggleSelectItem}
-            handleSelectAllInPool={handleSelectAllInPool}
-            activeSprintPopover={activeSprintPopover}
-            setActiveSprintPopover={setActiveSprintPopover}
-            setEditingItem={setEditingItem}
-            getItemHierarchy={getItemHierarchy}
-            getItemStatuses={getItemStatuses}
-            deviations={deviations}
-            setFocusedDeviationId={setFocusedDeviationId}
-            setIsReconciliationModalOpen={setIsReconciliationModalOpen}
-            isAllProjects={isAllProjects}
-            allProjects={allProjects}
-            handleUpdateStatus={handleUpdateStatus}
-            handleUpdateItemSprint={handleUpdateItemSprint}
-          />
-        )}
-
-        {activeTab === 'spark' && (
-          <SparkViewContainer
-            isReadOnly={isReadOnly}
-            sparkOverrideProject={sparkOverrideProject}
-            setSparkOverrideProject={setSparkOverrideProject}
-            sparkOverrideSprint={sparkOverrideSprint}
-            setSparkOverrideSprint={setSparkOverrideSprint}
-            sparkOverrideAssignee={sparkOverrideAssignee}
-            setSparkOverrideAssignee={setSparkOverrideAssignee}
-            allProjects={allProjects}
-            projectSlug={projectSlug}
-            availableSprints={availableSprints}
-            projectSettings={projectSettings}
-            workspaceMembers={workspaceMembers}
-            items={items}
-            sparkPayload={sparkPayload}
-            setSparkPayload={setSparkPayload}
-            isIngesting={isIngesting}
-            handleRunSparkIngest={handleRunSparkIngest}
-            ingestResponse={ingestResponse}
-            ingestedAffectedItemCount={ingestedAffectedItemCount}
             onOpenReconciliation={() => {
               setFocusedDeviationId(null);
               setIsReconciliationModalOpen(true);
             }}
+            isRefreshing={isRefreshing}
+            onRefresh={() => {
+              fetchTenantInfo();
+              fetchData();
+            }}
+            items={items}
+            onSelectItem={(item) => selectDrawerItem(item)}
+            loading={loading}
+            currentUser={currentUser}
+            tenantInfo={tenantInfo}
+            onArchiveProject={() => setIsArchiveModalOpen(true)}
           />
-        )}
+        }
+        leftPane={
+          <LeftHandNavTree
+            items={items}
+            projects={allProjects}
+            sprints={availableSprintDefs}
+            tenantSlug={tenantSlug}
+            onScopeFilter={(scope) => {
+              if (scope.sprintName !== undefined) {
+                if (!scope.sprintName) {
+                  setSelectedSprint('all');
+                } else if (scope.sprintName === 'No Sprint') {
+                  setSelectedSprint('__none__');
+                } else {
+                  setSelectedSprint(scope.sprintName);
+                }
+              } else {
+                setSelectedSprint('all');
+              }
+              if (scope.projectId !== undefined) {
+                setTreeSelectedProjectId(scope.projectId || null);
+              } else {
+                setTreeSelectedProjectId(null);
+              }
+              if (scope.itemId) {
+                const found = items.find((i) => i.id === scope.itemId);
+                if (found) selectDrawerItem(found);
+              }
+            }}
+            onSelectItem={(item) => selectDrawerItem(item)}
+            onSelectSprint={(sprintName) => {
+              const def = availableSprintDefs.find((s) => s.name === sprintName) || {
+                id: sprintName,
+                name: sprintName,
+                status: 'planned',
+              };
+              selectDrawerItem(null);
+              setSelectedSprintForEdit(def);
+            }}
+            onNewSprint={() => {
+              selectDrawerItem(null);
+              setSelectedSprintForEdit({
+                id: 'new',
+                name: '',
+                status: 'planned',
+              });
+            }}
+          />
+        }
+        centerPane={
+          <div className="flex-1 flex flex-col w-full h-full min-h-0">
+            {/* ── Error banner ── */}
+            {fetchError && !loading && (
+              <div className="px-6 py-2 bg-red-950/60 border-b border-red-800/40 flex items-center space-x-2 text-sm text-red-300 shrink-0">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{fetchError}</span>
+                <button
+                  onClick={() => setFetchError(null)}
+                  className="ml-auto text-red-400 hover:text-red-300"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
-        {activeTab === 'schema' && (
-          <SchemaViewContainer
-            isReadOnly={isReadOnly}
-            isAllProjects={isAllProjects}
-            allProjects={allProjects}
-            selectedSchemaProjectSlug={selectedSchemaProjectSlug}
-            setSelectedSchemaProjectSlug={setSelectedSchemaProjectSlug}
-            activeSchemaSettings={activeSchemaSettings}
-            handleSaveSchema={handleSaveSchema}
-            isSavingSchema={isSavingSchema}
-            setIsArchiveModalOpen={setIsArchiveModalOpen}
-          />
-        )}
-      </main>
+            <div className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+              {activeTab === 'board' && (
+                <BoardViewContainer
+                  hiddenBoardItems={hiddenBoardItems}
+                  dismissedBoardDeviationBanner={dismissedBoardDeviationBanner}
+                  setDismissedBoardDeviationBanner={setDismissedBoardDeviationBanner}
+                  onOpenReconciliation={() => {
+                    setFocusedDeviationId(null);
+                    setIsReconciliationModalOpen(true);
+                  }}
+                  isReadOnly={isReadOnly}
+                  loading={loading}
+                  tenantSlug={tenantSlug}
+                  projectSlug={projectSlug}
+                  statusFilterOptions={statusFilterOptions}
+                  effectiveSelectedStatuses={effectiveSelectedStatuses}
+                  setSelectedStatuses={setSelectedStatuses}
+                  levelFilterOptions={levelFilterOptions}
+                  effectiveSelectedLevels={effectiveSelectedLevels}
+                  setSelectedLevels={setSelectedLevels}
+                  selectedSprint={selectedSprint}
+                  setSelectedSprint={setSelectedSprint}
+                  availableSprints={availableSprints}
+                  items={items}
+                  projectSettings={projectSettings}
+                  pointMode={pointMode}
+                  handlePointModeChange={handlePointModeChange}
+                  boardHeightMode={boardHeight}
+                  setBoardHeightMode={setBoardHeight}
+                  collapsedColumnsUp={collapsedUp}
+                  toggleCollapseUp={toggleCollapseUp}
+                  collapsedColumnsSideways={collapsedSideways}
+                  toggleCollapseSideways={toggleCollapseSideways}
+                  collapseAllColumns={collapseAllColumns}
+                  expandAllColumns={expandAllColumns}
+                  boardScrollRef={boardScrollRef}
+                  handleBoardWheel={handleBoardWheel}
+                  displayedStatuses={displayedStatuses}
+                  columnCounts={columnCounts}
+                  columnsItemsMap={columnsItemsMap}
+                  quickAddColId={quickAddColId}
+                  setQuickAddColId={setQuickAddColId}
+                  quickAddTitle={quickAddTitle}
+                  setQuickAddTitle={setQuickAddTitle}
+                  isCreatingQuickItem={isCreatingQuickItem}
+                  handleCreateQuickInlineItem={handleCreateQuickInlineItem}
+                  draggedItemId={draggedItemId}
+                  dragOverTarget={dragOverTarget}
+                  childCountMap={childCountMap}
+                  pointsRollupMap={pointsRollupMap}
+                  getItemHierarchy={getItemHierarchy}
+                  allProjects={allProjects}
+                  isAllProjects={isAllProjects}
+                  setEditingItem={selectDrawerItem}
+                  setDeleteConfirmItem={setDeleteConfirmItem}
+                  handleUpdateStatus={handleUpdateStatus}
+                  handleUpdateType={handleUpdateType}
+                  getItemStatuses={getItemStatuses}
+                  handleDragStart={handleDragStart}
+                  handleDragEnd={handleDragEnd}
+                  handleDragOverCard={handleDragOverCard}
+                  handleDrop={handleDrop}
+                  handleDropOnColEnd={handleDropOnColEnd}
+                  unmappedItems={unmappedItems}
+                  draggedItem={draggedItem}
+                />
+              )}
+
+              {activeTab === 'tree' && (
+                <TreeViewContainer
+                  handleExpandAllTreeNodes={handleExpandAllTreeNodes}
+                  handleCollapseAllTreeNodes={handleCollapseAllTreeNodes}
+                  selectedSprint={selectedSprint}
+                  setSelectedSprint={setSelectedSprint}
+                  availableSprints={availableSprints}
+                  statusFilterOptions={statusFilterOptions}
+                  effectiveTreeStatuses={effectiveTreeStatuses}
+                  setTreeSelectedStatuses={setTreeSelectedStatuses}
+                  levelFilterOptions={levelFilterOptions}
+                  effectiveTreeLevels={effectiveTreeLevels}
+                  setTreeSelectedLevels={setTreeSelectedLevels}
+                  assigneeFilterOptions={assigneeFilterOptions}
+                  effectiveTreeAssignees={effectiveTreeAssignees}
+                  setTreeSelectedAssignees={setTreeSelectedAssignees}
+                  treeSortBy={treeSortBy}
+                  setTreeSortBy={setTreeSortBy}
+                  pointMode={pointMode}
+                  handlePointModeChange={handlePointModeChange}
+                  treeFilteredItems={treeFilteredItems}
+                  projectSettings={projectSettings}
+                  isReadOnly={isReadOnly}
+                  loading={loading}
+                  items={items}
+                  treeItems={treeItems}
+                  isTreeRootOver={isTreeRootOver}
+                  setIsTreeRootOver={setIsTreeRootOver}
+                  treeDraggedItemId={treeDraggedItemId}
+                  setTreeDraggedItemId={setTreeDraggedItemId}
+                  handleTreeReparent={handleTreeReparent}
+                  getStatusColor={getStatusColor}
+                  deviations={deviations}
+                  onOpenReconciliation={(dev) => {
+                    setFocusedDeviationId(dev?.id || null);
+                    setIsReconciliationModalOpen(true);
+                  }}
+                  getItemStatuses={getItemStatuses}
+                  getItemHierarchy={getItemHierarchy}
+                  workspaceMembers={workspaceMembers}
+                  getItemProjectSettings={getItemProjectSettings}
+                  collapsedTreeNodes={collapsedTreeNodes}
+                  handleToggleCollapseTreeNode={handleToggleCollapseTreeNode}
+                  handleUpdateStatus={handleUpdateStatus}
+                  handleTreeUpdateAssignee={handleTreeUpdateAssignee}
+                  handleTreeCreateChild={handleTreeCreateChild}
+                  setEditingItem={selectDrawerItem}
+                />
+              )}
+
+              {activeTab === 'sprint' && (
+                <SprintViewContainer
+                  items={items}
+                  projectSettings={projectSettings}
+                  isReadOnly={isReadOnly}
+                  pointMode={pointMode}
+                  handlePointModeChange={handlePointModeChange}
+                  sprintViewMode={sprintViewMode}
+                  setSprintViewMode={setSprintViewMode}
+                  handleToggleCollapseAllSprints={handleToggleCollapseAllSprints}
+                  collapsedSprints={collapsedSprints}
+                  toggleSprintCollapse={toggleSprintCollapse}
+                  handleToggleHideCompletedSprints={handleToggleHideCompletedSprints}
+                  hideCompletedSprints={hideCompletedSprints}
+                  hiddenCompletedSprintsCount={hiddenCompletedSprintsCount}
+                  statusFilterOptions={statusFilterOptions}
+                  effectiveSprintStatuses={effectiveSprintStatuses}
+                  setSprintSelectedStatuses={setSprintSelectedStatuses}
+                  levelFilterOptions={levelFilterOptions}
+                  effectiveSprintLevels={effectiveSprintLevels}
+                  setSprintSelectedLevels={setSprintSelectedLevels}
+                  sprintSortBy={sprintSortBy}
+                  setSprintSortBy={setSprintSortBy}
+                  setIsManageSprintsOpen={setIsManageSprintsOpen}
+                  visibleSprints={visibleSprints}
+                  availableSprints={availableSprints}
+                  filterSprintItems={filterSprintItems}
+                  sprintComparator={sprintComparator}
+                  selectedItemIds={selectedItemIds}
+                  handleToggleSelectItem={handleToggleSelectItem}
+                  handleSelectAllInPool={handleSelectAllInPool}
+                  activeSprintPopover={activeSprintPopover}
+                  setActiveSprintPopover={setActiveSprintPopover}
+                  setEditingItem={selectDrawerItem}
+                  getItemHierarchy={getItemHierarchy}
+                  getItemStatuses={getItemStatuses}
+                  deviations={deviations}
+                  setFocusedDeviationId={setFocusedDeviationId}
+                  setIsReconciliationModalOpen={setIsReconciliationModalOpen}
+                  isAllProjects={isAllProjects}
+                  allProjects={allProjects}
+                  handleUpdateStatus={handleUpdateStatus}
+                  handleUpdateItemSprint={handleUpdateItemSprint}
+                />
+              )}
+
+              {activeTab === 'spark' && (
+                <SparkViewContainer
+                  isReadOnly={isReadOnly}
+                  sparkOverrideProject={sparkOverrideProject}
+                  setSparkOverrideProject={setSparkOverrideProject}
+                  sparkOverrideSprint={sparkOverrideSprint}
+                  setSparkOverrideSprint={setSparkOverrideSprint}
+                  sparkOverrideAssignee={sparkOverrideAssignee}
+                  setSparkOverrideAssignee={setSparkOverrideAssignee}
+                  allProjects={allProjects}
+                  projectSlug={projectSlug}
+                  availableSprints={availableSprints}
+                  projectSettings={projectSettings}
+                  workspaceMembers={workspaceMembers}
+                  items={items}
+                  sparkPayload={sparkPayload}
+                  setSparkPayload={setSparkPayload}
+                  isIngesting={isIngesting}
+                  handleRunSparkIngest={handleRunSparkIngest}
+                  ingestResponse={ingestResponse}
+                  ingestedAffectedItemCount={ingestedAffectedItemCount}
+                  onOpenReconciliation={() => {
+                    setFocusedDeviationId(null);
+                    setIsReconciliationModalOpen(true);
+                  }}
+                />
+              )}
+
+              {activeTab === 'schema' && (
+                <SchemaViewContainer
+                  isReadOnly={isReadOnly}
+                  isAllProjects={isAllProjects}
+                  allProjects={allProjects}
+                  selectedSchemaProjectSlug={selectedSchemaProjectSlug}
+                  setSelectedSchemaProjectSlug={setSelectedSchemaProjectSlug}
+                  activeSchemaSettings={activeSchemaSettings}
+                  handleSaveSchema={handleSaveSchema}
+                  isSavingSchema={isSavingSchema}
+                  setIsArchiveModalOpen={setIsArchiveModalOpen}
+                />
+              )}
+            </div>
+          </div>
+        }
+        rightPane={
+          selectedDrawerItem ? (
+            <WorkItemInspectorDrawer
+              item={selectedDrawerItem}
+              isOpen={true}
+              onClose={closeDrawer}
+              onUpdateItem={handleUpdateField}
+              onExpandFull={(item) => {
+                closeDrawer();
+                setEditingItem(item);
+              }}
+              availableStatuses={projectSettings.statuses || []}
+              availableSprints={availableSprints}
+              availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
+              allItems={items}
+              isReadOnly={isReadOnly}
+              tenantSlug={tenantSlug}
+              projectSlug={projectSlug}
+            />
+          ) : selectedSprintForEdit ? (
+            <SprintInspectorDrawer
+              sprint={selectedSprintForEdit}
+              isOpen={true}
+              onClose={() => setSelectedSprintForEdit(null)}
+              onSave={handleSaveSprintLifecycle}
+              onDelete={handleDeleteSprintLifecycle}
+              isReadOnly={isReadOnly}
+              tenantSlug={tenantSlug}
+            />
+          ) : null
+        }
+      />
+
+      {/* Mobile Drawer Bottom Sheet (< 768px) */}
+      {selectedDrawerItem && (
+        <MobileItemBottomSheet
+          item={selectedDrawerItem}
+          isOpen={true}
+          onClose={closeDrawer}
+          onUpdateItem={handleUpdateField}
+          onExpandFull={(item) => {
+            closeDrawer();
+            setEditingItem(item);
+          }}
+          availableStatuses={projectSettings.statuses || []}
+          availableSprints={availableSprints}
+          availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
+          allItems={items}
+          isReadOnly={isReadOnly}
+          tenantSlug={tenantSlug}
+          projectSlug={projectSlug}
+        />
+      )}
 
       {/* Project Modals Orchestrator */}
       <ProjectModals
