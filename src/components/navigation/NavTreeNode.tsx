@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronDown, ChevronRight, Calendar, Folder, FileText, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Calendar, Folder, FileText, CheckCircle2, Settings } from 'lucide-react';
 import { PivotTreeNode, TreeFilterScope } from '@/hooks/usePivotTree';
 import { WorkItem } from '@/types/tracker';
 
@@ -13,6 +13,7 @@ export interface NavTreeNodeProps {
   activeScope?: TreeFilterScope;
   onSelectScope?: (scope: TreeFilterScope) => void;
   onSelectItem?: (item: WorkItem) => void;
+  onSelectSprint?: (sprintName: string) => void;
   expandedNodes: Set<string>;
 }
 
@@ -24,6 +25,7 @@ export function NavTreeNode({
   activeScope,
   onSelectScope,
   onSelectItem,
+  onSelectSprint,
   expandedNodes,
 }: NavTreeNodeProps) {
   const hasChildren = node.children && node.children.length > 0;
@@ -164,6 +166,22 @@ export function NavTreeNode({
             {node.rollupPoints} pts
           </span>
         )}
+
+        {/* Sprint Lifecycle Inspector Trigger */}
+        {node.type === 'sprint' && onSelectSprint && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectSprint(node.sprintName || node.title);
+            }}
+            className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-colors"
+            title="Open Sprint Lifecycle Settings"
+            aria-label="Sprint Settings"
+          >
+            <Settings className="w-3 h-3" />
+          </button>
+        )}
       </div>
 
       {/* Children branches with continuous guideline */}
@@ -182,6 +200,7 @@ export function NavTreeNode({
               activeScope={activeScope}
               onSelectScope={onSelectScope}
               onSelectItem={onSelectItem}
+              onSelectSprint={onSelectSprint}
               expandedNodes={expandedNodes}
             />
           ))}

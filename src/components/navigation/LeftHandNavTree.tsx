@@ -20,6 +20,7 @@ export interface LeftHandNavTreeProps {
   tenantSlug: string;
   onScopeFilter?: (scope: TreeFilterScope) => void;
   onSelectItem?: (item: WorkItem) => void;
+  onSelectSprint?: (sprintName: string) => void;
   onNewSprint?: () => void;
   className?: string;
 }
@@ -31,6 +32,7 @@ export function LeftHandNavTree({
   tenantSlug,
   onScopeFilter,
   onSelectItem,
+  onSelectSprint,
   onNewSprint,
   className = '',
 }: LeftHandNavTreeProps) {
@@ -217,6 +219,7 @@ export function LeftHandNavTree({
               activeScope={activeScope}
               onSelectScope={selectScope}
               onSelectItem={onSelectItem}
+              onSelectSprint={onSelectSprint}
               expandedNodes={expandedNodes}
             />
           ))
