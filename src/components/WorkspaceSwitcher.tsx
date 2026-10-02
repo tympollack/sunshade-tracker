@@ -24,6 +24,7 @@ export interface WorkspaceSwitcherProps {
    */
   isScrolled?: boolean;
   fullWidth?: boolean;
+  variant?: 'default' | 'compact';
 }
 
 const ROLE_ICON: Record<string, React.ReactNode> = {
@@ -57,6 +58,7 @@ export function WorkspaceSwitcher({
   workspaces,
   isScrolled = false,
   fullWidth = false,
+  variant = 'default',
 }: WorkspaceSwitcherProps) {
   const router = useSafeRouter();
   const [open, setOpen] = useState(false);
@@ -142,8 +144,13 @@ export function WorkspaceSwitcher({
       <button
         ref={triggerRef}
         onClick={toggleOpen}
+        data-testid="workspace-switcher-trigger"
         className={
-          fullWidth
+          variant === 'compact'
+            ? `flex items-center space-x-1.5 py-1 px-1.5 rounded-md text-xs font-medium transition-colors min-w-0 hover:bg-slate-800 text-slate-200 ${
+                open ? 'bg-slate-800 text-white' : ''
+              }`
+            : fullWidth
             ? `flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 ${
                 open
                   ? 'bg-slate-800 border-slate-700 text-white'
@@ -156,13 +163,15 @@ export function WorkspaceSwitcher({
               }`
         }
       >
-        <div className="flex items-center space-x-2 min-w-0 overflow-hidden">
+        <div className="flex items-center space-x-1.5 min-w-0 overflow-hidden">
           <div className="w-5 h-5 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-[10px] font-bold shrink-0">
             {initials}
           </div>
           <span
             className={
-              fullWidth
+              variant === 'compact'
+                ? 'truncate shrink min-w-0 text-slate-200 font-semibold max-w-[85px] sm:max-w-[110px]'
+                : fullWidth
                 ? 'truncate shrink min-w-0 text-slate-200 font-medium'
                 : 'max-w-[55px] sm:max-w-[80px] lg:max-w-[100px] xl:max-w-[135px] truncate shrink min-w-0 transition-all duration-200'
             }
@@ -170,22 +179,29 @@ export function WorkspaceSwitcher({
             {current?.name ?? '—'}
           </span>
         </div>
-        <div className="flex items-center space-x-1.5 shrink-0 ml-1">
-          {current && (
-            <span
-              className={`${
-                fullWidth ? 'inline-flex' : 'hidden xl:inline-flex'
-              } text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${
-                TIER_BADGE[current.tier] ?? TIER_BADGE.free
-              }`}
-            >
-              {current.tier}
-            </span>
-          )}
+        {variant !== 'compact' && (
+          <div className="flex items-center space-x-1.5 shrink-0 ml-1">
+            {current && (
+              <span
+                className={`${
+                  fullWidth ? 'inline-flex' : 'hidden xl:inline-flex'
+                } text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${
+                  TIER_BADGE[current.tier] ?? TIER_BADGE.free
+                }`}
+              >
+                {current.tier}
+              </span>
+            )}
+            <ChevronDown
+              className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+            />
+          </div>
+        )}
+        {variant === 'compact' && (
           <ChevronDown
-            className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+            className={`w-3 h-3 text-slate-500 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
           />
-        </div>
+        )}
       </button>
 
       {open && mounted && createPortal(

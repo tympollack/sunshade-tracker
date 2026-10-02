@@ -78,6 +78,7 @@ export function LeftHandNavTree({
     projects,
     sprints,
     tenantSlug,
+    scopedProjectSlug: currentProjectSlug,
     onScopeFilter,
   });
 
@@ -184,26 +185,35 @@ export function LeftHandNavTree({
       ) : (
         <div
           data-testid="lhn-scope-header"
-          className="p-2 border-b border-slate-800/80 bg-slate-900/30 shrink-0 flex flex-col gap-1.5"
+          className="p-2 border-b border-slate-800/80 bg-slate-900/30 shrink-0"
         >
-          {/* Top row: Workspace badge with tenant dropdown */}
-          <WorkspaceSwitcher
-            currentTenantSlug={tenantSlug}
-            workspaces={workspacesList}
-            fullWidth={true}
-          />
-
-          {/* Sub row: Active Project selector */}
-          {projects.length > 0 && (
-            <ProjectSwitcher
-              tenantSlug={tenantSlug}
-              currentProjectSlug={currentProjectSlug || projects[0]?.slug || 'all'}
-              projects={projects}
-              onArchiveCurrentProject={onArchiveProject}
-              isReadOnly={isReadOnly}
-              fullWidth={true}
+          {/* Unified Scope Switcher Row: [PE] PYM Energy / Awesomany ▾ */}
+          <div
+            data-testid="lhn-unified-scope-row"
+            className="flex items-center gap-1 px-1.5 py-1 rounded-lg bg-slate-900/90 border border-slate-800 text-xs text-slate-200 min-w-0 w-full overflow-hidden"
+          >
+            {/* Workspace switcher (compact) */}
+            <WorkspaceSwitcher
+              currentTenantSlug={tenantSlug}
+              workspaces={workspacesList}
+              variant="compact"
             />
-          )}
+
+            {/* Separator */}
+            <span className="text-slate-600 shrink-0 font-light select-none">/</span>
+
+            {/* Project switcher (compact) */}
+            {projects.length > 0 && (
+              <ProjectSwitcher
+                tenantSlug={tenantSlug}
+                currentProjectSlug={currentProjectSlug || projects[0]?.slug || 'all'}
+                projects={projects}
+                onArchiveCurrentProject={onArchiveProject}
+                isReadOnly={isReadOnly}
+                variant="compact"
+              />
+            )}
+          </div>
         </div>
       )}
 

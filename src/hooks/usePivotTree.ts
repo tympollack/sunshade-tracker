@@ -36,6 +36,7 @@ interface UsePivotTreeOptions {
   projects: Array<{ id: string; slug: string; name: string }>;
   sprints?: SprintDefinition[];
   tenantSlug: string;
+  scopedProjectSlug?: string;
   onScopeFilter?: (scope: TreeFilterScope) => void;
 }
 
@@ -75,6 +76,7 @@ export function usePivotTree({
   projects,
   sprints = [],
   tenantSlug,
+  scopedProjectSlug,
   onScopeFilter,
 }: UsePivotTreeOptions) {
   const [pivotMode, setPivotMode] = useState<PivotMode>('sprint');
@@ -163,87 +165,184 @@ export function usePivotTree({
       projectLookup.set(p.slug, p);
     });
 
+    const isSpecificProjectScoped = Boolean(
+      scopedProjectSlug &&
+      scopedProjectSlug !== 'all' &&
+      scopedProjectSlug !== 'portfolio'
+    );
+    const scopedProj = isSpecificProjectScoped
+      ? projects.find((p) => p.slug === scopedProjectSlug || p.id === scopedProjectSlug)
+      : undefined;
+
     if (pivotMode === 'sprint') {
-      // Cadence Mode: Sprint > Project > Item
-      return sprintBuckets.map((sprintName): PivotTreeNode => {
-        const sprintId = `sprint:${sprintName}`;
-        const isUnassigned = sprintName === 'No Sprint';
+      // Cadence Mode: Sprint > (Project) > Item
+      return sprintBuckets
+        .map((sprintName): PivotTreeNode | null => {
+          const sprintId = `sprint:${sprintName}`;
+          const isUnassigned = sprintName === 'No Sprint';
 
-        // Items in this sprint
-        const sprintItems = items.filter((item) => {
-          const itemSprint = item.metadata?.sprint;
-          if (isUnassigned) {
-            return !itemSprint || String(itemSprint).trim() === '';
+          // Items in this sprint
+          const sprintItems = items.filter((item) => {
+            const itemSprint = item.metadata?.sprint;
+            if (isUnassigned) {
+              return !itemSprint || String(itemSprint).trim() === '';
+            }
+            return itemSprint === sprintName;
+          });
+
+          // Resolve sprint badge / status
+          const sprintDef = sprints.find((s) => s.name === sprintName);
+          let badge: string | undefined;
+          if (sprintDef?.is_active || sprintDef?.status === 'active') {
+            badge = 'Active';
+          } else if (sprintDef?.status === 'completed') {
+            badge = 'Completed';
+          } else if (sprintDef?.status === 'planned') {
+            badge = 'Planned';
           }
-          return itemSprint === sprintName;
-        });
 
-        // Group items by project
-        const projectGroups = new Map<string, WorkItem[]>();
-        sprintItems.forEach((item) => {
-          const pId = item.project_id;
-          if (!projectGroups.has(pId)) {
-            projectGroups.set(pId, []);
-          }
-          projectGroups.get(pId)!.push(item);
-        });
+          if (isSpecificProjectScoped && scopedProj) {
+            // When already scoped to a specific project, omit redundant project folder in Cadence mode
+            const pItems = sprintItems.filter((item) => item.project_id === scopedProj.id);
+            if (pItems.length === 0 && isUnassigned) {
+              return null;
+            }
 
-        // Resolve sprint badge / status
-        const sprintDef = sprints.find((s) => s.name === sprintName);
-        let badge: string | undefined;
-        if (sprintDef?.is_active || sprintDef?.status === 'active') {
-          badge = 'Active';
-        } else if (sprintDef?.status === 'completed') {
-          badge = 'Completed';
-        } else if (sprintDef?.status === 'planned') {
-          badge = 'Planned';
-        }
-
-        // Build project child branches
-        const projectNodes: PivotTreeNode[] = projects
-          .filter((p) => projectGroups.has(p.id) || !isUnassigned)
-          .map((proj) => {
-            const pItems = projectGroups.get(proj.id) || [];
             const builtItemTree = buildTree(pItems);
             const childItemNodes = builtItemTree.map((node) =>
-              convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sprintName)
+              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sprintName)
             );
 
-            const projTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
-            const projChildCount = pItems.length;
+            const totalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
 
             return {
-              id: `${sprintId}:project:${proj.id}`,
-              title: proj.name,
-              type: 'project' as const,
-              projectId: proj.id,
-              projectSlug: proj.slug,
+              id: sprintId,
+              title: sprintName,
+              type: 'sprint' as const,
               sprintName,
+              projectId: scopedProj.id,
+              projectSlug: scopedProj.slug,
               children: childItemNodes,
-              childCount: projChildCount,
-              rollupPoints: projTotalPoints,
-              depth: 1,
+              childCount: pItems.length,
+              rollupPoints: totalPoints,
+              badge,
+              depth: 0,
             };
-          })
-          .filter((pn) => pn.childCount > 0 || !isUnassigned);
+          }
 
-        const totalSprintPoints = projectNodes.reduce((acc, p) => acc + p.rollupPoints, 0);
-        const totalSprintItems = sprintItems.length;
+          // Unscoped: group items by project
+          const projectGroups = new Map<string, WorkItem[]>();
+          sprintItems.forEach((item) => {
+            const pId = item.project_id;
+            if (!projectGroups.has(pId)) {
+              projectGroups.set(pId, []);
+            }
+            projectGroups.get(pId)!.push(item);
+          });
 
-        return {
-          id: sprintId,
-          title: sprintName,
-          type: 'sprint' as const,
-          sprintName,
-          children: projectNodes,
-          childCount: totalSprintItems,
-          rollupPoints: totalSprintPoints,
-          badge,
-          depth: 0,
-        };
-      });
+          // Build project child branches
+          const projectNodes: PivotTreeNode[] = projects
+            .filter((p) => projectGroups.has(p.id) || !isUnassigned)
+            .map((proj) => {
+              const pItems = projectGroups.get(proj.id) || [];
+              const builtItemTree = buildTree(pItems);
+              const childItemNodes = builtItemTree.map((node) =>
+                convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sprintName)
+              );
+
+              const projTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
+              const projChildCount = pItems.length;
+
+              return {
+                id: `${sprintId}:project:${proj.id}`,
+                title: proj.name,
+                type: 'project' as const,
+                projectId: proj.id,
+                projectSlug: proj.slug,
+                sprintName,
+                children: childItemNodes,
+                childCount: projChildCount,
+                rollupPoints: projTotalPoints,
+                depth: 1,
+              };
+            })
+            .filter((pn) => pn.childCount > 0 || !isUnassigned);
+
+          const totalSprintPoints = projectNodes.reduce((acc, p) => acc + p.rollupPoints, 0);
+          const totalSprintItems = sprintItems.length;
+
+          return {
+            id: sprintId,
+            title: sprintName,
+            type: 'sprint' as const,
+            sprintName,
+            children: projectNodes,
+            childCount: totalSprintItems,
+            rollupPoints: totalSprintPoints,
+            badge,
+            depth: 0,
+          };
+        })
+        .filter((sn): sn is PivotTreeNode => sn !== null);
     } else {
       // Domain Mode: Project > Sprint > Item
+      function sGroupsHas(m: Map<string, WorkItem[]>, k: string) {
+        return m.has(k);
+      }
+
+      if (isSpecificProjectScoped && scopedProj) {
+        // When a specific project is selected, do not repeat the redundant root project folder inside the tree
+        const projItems = items.filter((item) => item.project_id === scopedProj.id);
+
+        const sprintGroups = new Map<string, WorkItem[]>();
+        projItems.forEach((item) => {
+          const sName = item.metadata?.sprint || 'No Sprint';
+          if (!sGroupsHas(sprintGroups, sName)) {
+            sprintGroups.set(sName, []);
+          }
+          sprintGroups.get(sName)!.push(item);
+        });
+
+        const sprintNodes: PivotTreeNode[] = sprintBuckets
+          .filter((sName) => sprintGroups.has(sName))
+          .map((sName) => {
+            const sItems = sprintGroups.get(sName) || [];
+            const builtItemTree = buildTree(sItems);
+            const childItemNodes = builtItemTree.map((node) =>
+              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sName)
+            );
+
+            const sTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
+            const sChildCount = sItems.length;
+
+            const sprintDef = sprints.find((s) => s.name === sName);
+            let badge: string | undefined;
+            if (sprintDef?.is_active || sprintDef?.status === 'active') {
+              badge = 'Active';
+            } else if (sprintDef?.status === 'completed') {
+              badge = 'Completed';
+            } else if (sprintDef?.status === 'planned') {
+              badge = 'Planned';
+            }
+
+            return {
+              id: `${scopedProj.id}:sprint:${sName}`,
+              title: sName,
+              type: 'sprint' as const,
+              projectId: scopedProj.id,
+              projectSlug: scopedProj.slug,
+              sprintName: sName,
+              children: childItemNodes,
+              childCount: sChildCount,
+              rollupPoints: sTotalPoints,
+              badge,
+              depth: 0,
+            };
+          });
+
+        return sprintNodes;
+      }
+
       return projects.map((proj): PivotTreeNode => {
         const projId = `project:${proj.id}`;
         const projItems = items.filter((item) => item.project_id === proj.id);
@@ -257,10 +356,6 @@ export function usePivotTree({
           }
           sprintGroups.get(sName)!.push(item);
         });
-
-        function sGroupsHas(m: Map<string, WorkItem[]>, k: string) {
-          return m.has(k);
-        }
 
         // Build sprint child branches under this project
         const sprintNodes: PivotTreeNode[] = sprintBuckets
@@ -316,7 +411,7 @@ export function usePivotTree({
         };
       });
     }
-  }, [items, projects, sprints, pivotMode]);
+  }, [items, projects, sprints, pivotMode, scopedProjectSlug]);
 
   const selectScope = useCallback(
     (scope: TreeFilterScope) => {

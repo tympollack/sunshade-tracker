@@ -23,6 +23,7 @@ export interface ProjectSwitcherProps {
    */
   isScrolled?: boolean;
   fullWidth?: boolean;
+  variant?: 'default' | 'compact';
 }
 
 export function ProjectSwitcher({
@@ -33,6 +34,7 @@ export function ProjectSwitcher({
   isReadOnly = false,
   isScrolled = false,
   fullWidth = false,
+  variant = 'default',
 }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
@@ -110,7 +112,11 @@ export function ProjectSwitcher({
         onClick={toggleOpen}
         data-testid="project-switcher-trigger"
         className={
-          fullWidth
+          variant === 'compact'
+            ? `flex items-center space-x-1 py-1 px-1.5 rounded-md text-xs font-medium transition-colors min-w-0 hover:bg-slate-800 text-slate-300 hover:text-white ${
+                open ? 'bg-slate-800 text-white' : ''
+              }`
+            : fullWidth
             ? `flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 ${
                 open
                   ? 'bg-slate-800 border-slate-700 text-white'
@@ -123,15 +129,19 @@ export function ProjectSwitcher({
               }`
         }
       >
-        <div className="flex items-center space-x-2 min-w-0 overflow-hidden">
-          {isAll ? (
-            <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-          ) : (
-            <Folder className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <div className="flex items-center space-x-1.5 min-w-0 overflow-hidden">
+          {variant !== 'compact' && (
+            isAll ? (
+              <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            ) : (
+              <Folder className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            )
           )}
           <span
             className={
-              fullWidth
+              variant === 'compact'
+                ? 'truncate shrink min-w-0 text-slate-200 font-medium max-w-[90px] sm:max-w-[120px]'
+                : fullWidth
                 ? 'truncate shrink min-w-0 text-slate-200 font-medium'
                 : 'max-w-[50px] sm:max-w-[75px] lg:max-w-[95px] xl:max-w-[130px] truncate shrink min-w-0 transition-all duration-200'
             }
