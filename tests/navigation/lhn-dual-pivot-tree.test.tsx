@@ -373,4 +373,43 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     expect(taskNode).toBeDefined();
     expect(taskNode?.style.paddingLeft).toBe('32px');
   });
+
+  it('highlights scoped sprint upon selection in both expanded tree and collapsed rail', () => {
+    const { rerender } = render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+        isCollapsed={false}
+      />
+    );
+
+    // Click on Sprint 2026-Q4 row
+    const sprintNodeText = screen.getByText('Sprint 2026-Q4');
+    const sprintRow = sprintNodeText.closest('[role="treeitem"]');
+    expect(sprintRow).toBeDefined();
+
+    fireEvent.click(sprintRow!);
+    // Check that sprint row receives selected styling (bg-emerald-500/15)
+    expect(sprintRow?.className).toContain('bg-emerald-500/15');
+    expect(sprintRow?.className).toContain('text-emerald-300');
+
+    // Also verify in collapsed rail
+    rerender(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+        isCollapsed={true}
+      />
+    );
+
+    const collapsedSprintBtn = screen.getByTestId('lhn-collapsed-root-sprint:Sprint 2026-Q4');
+    expect(collapsedSprintBtn).toBeInTheDocument();
+    fireEvent.click(collapsedSprintBtn);
+    expect(collapsedSprintBtn.className).toContain('text-emerald-400');
+    expect(collapsedSprintBtn.className).toContain('border-emerald-500/40');
+  });
 });

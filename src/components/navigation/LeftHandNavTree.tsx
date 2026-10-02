@@ -356,7 +356,7 @@ export function LeftHandNavTree({
             const isSelected = Boolean(
               (node.type === 'sprint' &&
                 activeScope.sprintName === node.sprintName &&
-                !activeScope.projectSlug &&
+                (!activeScope.projectSlug || activeScope.projectSlug === node.projectSlug) &&
                 !activeScope.itemId) ||
               (node.type === 'project' &&
                 activeScope.projectSlug === node.projectSlug &&

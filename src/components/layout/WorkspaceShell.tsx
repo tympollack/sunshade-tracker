@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 
 export interface WorkspaceShellProps {
@@ -20,6 +20,8 @@ export interface WorkspaceShellProps {
 const DEFAULT_LHN_WIDTH = 280;
 const MIN_LHN_WIDTH = 200;
 const MAX_LHN_WIDTH = 560;
+const MIN_CANVAS_WIDTH = 320;
+const DESKTOP_INSPECTOR_WIDTH = 384;
 const STORAGE_KEY_LHN_WIDTH = 'sunshade_lhn_width';
 
 export function WorkspaceShell({
@@ -37,47 +39,72 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const [internalIsLeftCollapsed, setInternalIsLeftCollapsed] = useState(false);
   const [internalIsMobileLeftOpen, setInternalIsMobileLeftOpen] = useState(false);
-  const [lhnWidth, setLhnWidth] = useState<number>(() => {
-    if (typeof window === 'undefined') return DEFAULT_LHN_WIDTH;
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_LHN_WIDTH);
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (!isNaN(parsed) && parsed >= MIN_LHN_WIDTH && parsed <= MAX_LHN_WIDTH) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return DEFAULT_LHN_WIDTH;
-  });
+  // Initialize to DEFAULT_LHN_WIDTH to prevent SSR hydration mismatch; hydrate from localStorage on mount
+  const [lhnWidth, setLhnWidth] = useState<number>(DEFAULT_LHN_WIDTH);
   const [isDraggingLhn, setIsDraggingLhn] = useState(false);
+
+  // Dynamically clamp maximum sidebar width so canvas is never squeezed below MIN_CANVAS_WIDTH
+  const getMaxLhnWidth = useCallback(() => {
+    if (typeof window === 'undefined') return MAX_LHN_WIDTH;
+    const windowWidth = window.innerWidth;
+    const isDesktopInspectorDocked = isRightOpen && Boolean(rightPane) && windowWidth >= 1024;
+    const reservedWidth = (isDesktopInspectorDocked ? DESKTOP_INSPECTOR_WIDTH : 0) + MIN_CANVAS_WIDTH;
+    const available = windowWidth - reservedWidth;
+    return Math.max(MIN_LHN_WIDTH, Math.min(MAX_LHN_WIDTH, available));
+  }, [isRightOpen, rightPane]);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_LHN_WIDTH);
       if (saved) {
         const parsed = parseInt(saved, 10);
-        if (!isNaN(parsed) && parsed >= MIN_LHN_WIDTH && parsed <= MAX_LHN_WIDTH) {
-          setLhnWidth(parsed);
+        const maxAllowed = getMaxLhnWidth();
+        if (!isNaN(parsed) && parsed >= MIN_LHN_WIDTH) {
+          setLhnWidth(Math.min(maxAllowed, parsed));
         }
       }
     } catch {}
-  }, []);
+  }, [getMaxLhnWidth]);
+
+  // Re-clamp effective width when window or inspector state changes
+  useEffect(() => {
+    const handleResize = () => {
+      const maxAllowed = getMaxLhnWidth();
+      setLhnWidth((prev) => (prev > maxAllowed ? maxAllowed : prev));
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [getMaxLhnWidth]);
 
   useEffect(() => {
     if (!isDraggingLhn) return;
 
     const handlePointerMove = (e: MouseEvent | PointerEvent) => {
-      const clamped = Math.min(MAX_LHN_WIDTH, Math.max(MIN_LHN_WIDTH, e.clientX));
+      const clientX =
+        typeof e.clientX === 'number' && !isNaN(e.clientX)
+          ? e.clientX
+          : (e as any).touches?.[0]?.clientX;
+      if (typeof clientX !== 'number' || isNaN(clientX)) return;
+
+      const maxAllowed = getMaxLhnWidth();
+      const clamped = Math.min(maxAllowed, Math.max(MIN_LHN_WIDTH, clientX));
       setLhnWidth(clamped);
     };
 
     const handlePointerUp = (e: MouseEvent | PointerEvent) => {
-      const finalWidth = Math.min(MAX_LHN_WIDTH, Math.max(MIN_LHN_WIDTH, e.clientX));
-      setLhnWidth(finalWidth);
-      try {
-        localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(finalWidth));
-      } catch {}
+      const clientX =
+        typeof e.clientX === 'number' && !isNaN(e.clientX)
+          ? e.clientX
+          : (e as any).touches?.[0]?.clientX;
+      if (typeof clientX === 'number' && !isNaN(clientX)) {
+        const maxAllowed = getMaxLhnWidth();
+        const finalWidth = Math.min(maxAllowed, Math.max(MIN_LHN_WIDTH, clientX));
+        setLhnWidth(finalWidth);
+        try {
+          localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(finalWidth));
+        } catch {}
+      }
       setIsDraggingLhn(false);
     };
 
@@ -88,6 +115,7 @@ export function WorkspaceShell({
     window.addEventListener('mouseup', handlePointerUp);
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
 
     return () => {
       document.body.classList.remove('select-none');
@@ -96,15 +124,17 @@ export function WorkspaceShell({
       window.removeEventListener('mouseup', handlePointerUp);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [isDraggingLhn]);
+  }, [isDraggingLhn, getMaxLhnWidth]);
 
-  const handleSplitterMouseDown = (e: React.MouseEvent) => {
+  const startDragging = (e: React.MouseEvent | React.PointerEvent) => {
     e.preventDefault();
     setIsDraggingLhn(true);
   };
 
   const handleSplitterKeyDown = (e: React.KeyboardEvent) => {
+    const maxAllowed = getMaxLhnWidth();
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
       const newWidth = Math.max(MIN_LHN_WIDTH, lhnWidth - 10);
@@ -114,7 +144,7 @@ export function WorkspaceShell({
       } catch {}
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      const newWidth = Math.min(MAX_LHN_WIDTH, lhnWidth + 10);
+      const newWidth = Math.min(maxAllowed, lhnWidth + 10);
       setLhnWidth(newWidth);
       try {
         localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(newWidth));
@@ -208,9 +238,10 @@ export function WorkspaceShell({
                 aria-label="Resize Left Navigation"
                 tabIndex={0}
                 data-testid="workspace-lhn-splitter"
-                onMouseDown={handleSplitterMouseDown}
+                onPointerDown={startDragging}
+                onMouseDown={startDragging}
                 onKeyDown={handleSplitterKeyDown}
-                className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-30 transition-colors group ${
+                className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-30 transition-colors group touch-none ${
                   isDraggingLhn ? 'bg-emerald-500' : 'hover:bg-emerald-500/50'
                 }`}
                 title="Drag to resize sidebar width"

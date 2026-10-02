@@ -171,6 +171,56 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
     expect(localStorage.getItem('sunshade_lhn_width')).toBe('280');
   });
 
+  it('supports touch drag resizing via pointer events on touch devices', () => {
+    localStorage.clear();
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+    expect(splitter.className).toContain('touch-none');
+
+    // Initiate touch drag with pointerDown
+    fireEvent.pointerDown(splitter, { clientX: 280, pointerType: 'touch' });
+    expect(document.body.classList.contains('select-none')).toBe(true);
+
+    fireEvent.pointerMove(window, { clientX: 350, pointerType: 'touch' });
+    expect(lhn.style.width).toBe('350px');
+
+    fireEvent.pointerUp(window, { clientX: 350, pointerType: 'touch' });
+    expect(document.body.classList.contains('select-none')).toBe(false);
+    expect(lhn.style.width).toBe('350px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('350');
+  });
+
+  it('clamps maximum sidebar width to protect canvas when inspector is docked at 1024px', () => {
+    // Simulate 1024px viewport (lg breakpoint where inspector is docked inline at 384px)
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1024 });
+
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+        rightPane={<div>Inspector</div>}
+        isRightOpen={true}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+
+    // Drag to 600px: With window=1024, inspector=384, canvas min=320, available is 1024 - 704 = 320px
+    fireEvent.mouseDown(splitter, { clientX: 280 });
+    fireEvent.mouseMove(window, { clientX: 600 });
+    fireEvent.mouseUp(window, { clientX: 600 });
+
+    expect(lhn.style.width).toBe('320px');
+  });
+
   it('renders non-blocking slide-over overlay with mobile-only backdrop when isRightOpen is true', () => {
     const onClose = vi.fn();
     render(

@@ -32,8 +32,13 @@ export function NavTreeNode({
 
   // Determine whether this node is currently active in filter scope
   const isSelected = Boolean(
-    (node.type === 'sprint' && activeScope?.sprintName === node.sprintName && !activeScope?.projectSlug && !activeScope?.itemId) ||
-    (node.type === 'project' && activeScope?.projectSlug === node.projectSlug && !activeScope?.itemId) ||
+    (node.type === 'sprint' &&
+      activeScope?.sprintName === node.sprintName &&
+      (!activeScope?.projectSlug || activeScope?.projectSlug === node.projectSlug) &&
+      !activeScope?.itemId) ||
+    (node.type === 'project' &&
+      activeScope?.projectSlug === node.projectSlug &&
+      !activeScope?.itemId) ||
     (node.type === 'item' && activeScope?.itemId === node.item?.id)
   );
 
