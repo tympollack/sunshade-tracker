@@ -57,7 +57,7 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
 
     const dockedRhn = screen.getByTestId('workspace-rhn-docked');
     expect(dockedRhn).toBeInTheDocument();
-    expect(dockedRhn.className).toContain('2xl:flex');
+    expect(dockedRhn.className).toContain('lg:flex');
     expect(dockedRhn.className).toContain('w-96');
     expect(dockedRhn.className).toContain('shrink-0');
   });
@@ -92,7 +92,7 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
     expect(lhn.className).toContain('w-14');
   });
 
-  it('renders overlay drawer and backdrop on laptop/tablet when isRightOpen is true', () => {
+  it('renders non-blocking slide-over overlay with mobile-only backdrop when isRightOpen is true', () => {
     const onClose = vi.fn();
     render(
       <WorkspaceShell
@@ -105,12 +105,13 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
 
     const overlay = screen.getByTestId('workspace-rhn-overlay');
     expect(overlay).toBeInTheDocument();
-    expect(overlay.className).toContain('2xl:hidden');
+    expect(overlay.className).toContain('lg:hidden');
     expect(overlay.className).toContain('fixed');
-    expect(overlay.className).toContain('w-[420px]');
+    expect(overlay.className).toContain('pointer-events-auto');
 
     const backdrop = screen.getByTestId('workspace-rhn-backdrop');
     expect(backdrop).toBeInTheDocument();
+    expect(backdrop.className).toContain('md:hidden');
     fireEvent.click(backdrop);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

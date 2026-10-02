@@ -4,6 +4,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LeftHandNavTree } from '@/components/navigation/LeftHandNavTree';
 import { WorkItem } from '@/types/tracker';
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+}));
+
 const mockProjects = [
   { id: 'proj-1', slug: 'cozy', name: 'Cozy' },
   { id: 'proj-2', slug: 'hub', name: 'SunShade Hub' },
@@ -98,7 +106,7 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     fireEvent.click(projectsTab);
 
     // Root nodes should now be project names
-    expect(screen.getByText('Cozy')).toBeInTheDocument();
+    expect(screen.getAllByText('Cozy').length).toBeGreaterThan(0);
     expect(screen.getByText('SunShade Hub')).toBeInTheDocument();
   });
 
@@ -138,5 +146,152 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     expect(onFilter).toHaveBeenCalledWith(
       expect.objectContaining({ sprintName: 'Sprint 2026-Q4' })
     );
+  });
+
+  it('renders stacked Workspace and Project selectors at top of LHN when expanded', () => {
+    const mockWorkspaces = [
+      {
+        id: 'ws-1',
+        slug: 'pym-energy',
+        name: 'PYM Energy',
+        tier: 'enterprise',
+      },
+    ];
+
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="cozy"
+        isCollapsed={false}
+      />
+    );
+
+    const scopeHeader = screen.getByTestId('lhn-scope-header');
+    expect(scopeHeader).toBeInTheDocument();
+    expect(screen.getByText('PYM Energy')).toBeInTheDocument();
+    expect(screen.getByText('Cozy')).toBeInTheDocument();
+    expect(screen.getByTestId('project-switcher-trigger')).toBeInTheDocument();
+  });
+
+  it('renders collapsed icon rail with compact initial badge, single pivot toggle icon, and root icons when isCollapsed is true', () => {
+    const mockWorkspaces = [
+      {
+        id: 'ws-1',
+        slug: 'pym-energy',
+        name: 'PYM Energy',
+        tier: 'enterprise',
+      },
+    ];
+    const onToggle = vi.fn();
+
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="cozy"
+        isCollapsed={true}
+        onToggleCollapse={onToggle}
+      />
+    );
+
+    // 1. Compact initial square badge with tooltip
+    const collapsedScope = screen.getByTestId('lhn-collapsed-scope');
+    expect(collapsedScope).toBeInTheDocument();
+    const badge = screen.getByTestId('lhn-collapsed-workspace-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('PE');
+    expect(badge.getAttribute('title')).toBe('PYM Energy / Cozy');
+
+    fireEvent.click(badge);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    // 2. Single centered pivot toggle button with tooltip
+    const pivotToggle = screen.getByTestId('lhn-collapsed-pivot-toggle');
+    expect(pivotToggle).toBeInTheDocument();
+    expect(pivotToggle.getAttribute('title')).toBe('Pivot: Sprints (Click to switch)');
+
+    // Toggle pivot mode from sprint to project
+    fireEvent.click(pivotToggle);
+    expect(pivotToggle.getAttribute('title')).toBe('Pivot: Projects (Click to switch)');
+
+    // 3. Collapsed root icon rail
+    const rail = screen.getByTestId('lhn-collapsed-rail');
+    expect(rail).toBeInTheDocument();
+
+    // Verify text labels and tabs are hidden
+    expect(screen.queryByRole('tab', { name: /sprints/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Hierarchy Pivot')).not.toBeInTheDocument();
+    expect(screen.queryByText('Expand')).not.toBeInTheDocument();
+  });
+
+  it('correctly names overview routes in collapsed badge tooltip', () => {
+    const mockWorkspaces = [
+      { id: 'ws-1', slug: 'pym-energy', name: 'PYM Energy', tier: 'enterprise' },
+    ];
+
+    const { rerender } = render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="portfolio"
+        isCollapsed={true}
+      />
+    );
+
+    const badge = screen.getByTestId('lhn-collapsed-workspace-badge');
+    expect(badge.getAttribute('title')).toBe('PYM Energy / Portfolio Overview');
+
+    rerender(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        allWorkspaces={mockWorkspaces}
+        currentProjectSlug="all"
+        isCollapsed={true}
+      />
+    );
+
+    expect(badge.getAttribute('title')).toBe('PYM Energy / All Projects');
+  });
+
+  it('highlights collapsed project roots upon selection and displays childCount', () => {
+    const onFilter = vi.fn();
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        isCollapsed={true}
+        onScopeFilter={onFilter}
+      />
+    );
+
+    // Switch to project mode
+    const pivotToggle = screen.getByTestId('lhn-collapsed-pivot-toggle');
+    fireEvent.click(pivotToggle);
+
+    // Root project buttons: Cozy and SunShade Hub
+    const cozyRootBtn = screen.getByTestId('lhn-collapsed-root-project:proj-1');
+    expect(cozyRootBtn).toBeInTheDocument();
+    // Verify tooltip contains childCount (2 work items under Cozy: TASK-1, TASK-2)
+    expect(cozyRootBtn.getAttribute('title')).toContain('Cozy (2 items)');
+
+    // Click to select
+    fireEvent.click(cozyRootBtn);
+    expect(onFilter).toHaveBeenCalledWith(
+      expect.objectContaining({ projectSlug: 'cozy' })
+    );
+
+    // Check highlighted classes
+    expect(cozyRootBtn.className).toContain('text-emerald-400');
+    expect(cozyRootBtn.className).toContain('border-emerald-500/40');
   });
 });
