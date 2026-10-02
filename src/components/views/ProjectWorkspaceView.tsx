@@ -2821,6 +2821,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             projects={allProjects}
             sprints={availableSprintDefs}
             tenantSlug={tenantSlug}
+            allWorkspaces={allWorkspaces}
+            currentProjectSlug={projectSlug}
+            onArchiveProject={() => setIsArchiveModalOpen(true)}
+            isReadOnly={isReadOnly}
+            isCollapsed={isLhnCollapsed}
+            onToggleCollapse={() => setIsLhnCollapsed((prev) => !prev)}
             onScopeFilter={(scope) => {
               if (scope.sprintName !== undefined) {
                 if (!scope.sprintName) {

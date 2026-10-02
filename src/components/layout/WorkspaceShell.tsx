@@ -82,7 +82,11 @@ export function WorkspaceShell({
             }`}
           >
             {/* Collapse / Expand rail toggle bar */}
-            <div className="flex items-center justify-end px-2 py-1.5 border-b border-slate-800/60 bg-slate-900/40 shrink-0">
+            <div
+              className={`flex items-center ${
+                isLeftCollapsed ? 'justify-center' : 'justify-end'
+              } px-2 py-1.5 border-b border-slate-800/60 bg-slate-900/40 shrink-0`}
+            >
               <button
                 type="button"
                 onClick={handleToggleLeft}
@@ -118,31 +122,31 @@ export function WorkspaceShell({
         {/* ── Right Pane (RHN Drawer) ── */}
         {isRightOpen && rightPane && (
           <>
-            {/* Desktop wide-screen docked pane (>= 1440px / 2xl) */}
+            {/* Desktop wide-screen docked pane (>= 1024px / lg) - non-blocking inline pinned pane */}
             <aside
               data-testid="workspace-rhn-docked"
-              className="hidden 2xl:flex w-96 shrink-0 border-l border-slate-800 bg-slate-900/90 backdrop-blur-md flex-col overflow-hidden relative z-20"
+              className="hidden lg:flex w-96 shrink-0 border-l border-slate-800 bg-slate-900/90 backdrop-blur-md flex-col overflow-hidden relative z-20"
             >
               <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
                 {rightPane}
               </div>
             </aside>
 
-            {/* Laptop / Tablet slide-over overlay (< 1440px) */}
+            {/* Mobile / Tablet slide-over overlay (< 1024px / lg) with isolated pointer events */}
             <div
               data-testid="workspace-rhn-overlay"
-              className="2xl:hidden fixed inset-y-0 right-0 z-40 w-[420px] max-w-full bg-slate-900/95 border-l border-slate-800 shadow-2xl backdrop-blur-md flex flex-col overflow-hidden top-14"
+              className="lg:hidden fixed inset-y-0 right-0 z-40 w-full sm:w-[420px] max-w-full bg-slate-900/95 border-l border-slate-800 shadow-2xl backdrop-blur-md flex flex-col overflow-hidden top-14 pointer-events-auto"
             >
               <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
                 {rightPane}
               </div>
             </div>
 
-            {/* Backdrop for Laptop / Tablet slide-over */}
+            {/* Backdrop: hidden on desktop & tablet (>= 768px / md), rendered only for mobile (< 768px) */}
             <div
               data-testid="workspace-rhn-backdrop"
               onClick={onCloseRight}
-              className="2xl:hidden fixed inset-0 z-30 bg-black/50 backdrop-blur-xs top-14"
+              className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-xs top-14"
               aria-hidden="true"
             />
           </>

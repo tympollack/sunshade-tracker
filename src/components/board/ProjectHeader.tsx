@@ -14,8 +14,6 @@ import {
   BarChart2,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
-import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
-import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserMenu } from '@/components/UserMenu';
@@ -81,23 +79,8 @@ export function ProjectHeader(props: ProjectHeaderProps) {
 
   return (
     <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-      <div className="flex items-center space-x-1 sm:space-x-1.5 md:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink overflow-hidden">
+      <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink-0">
         <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextBelowLg />
-        <span className="text-slate-700 shrink-0 text-xs select-none">/</span>
-        {/* Workspace Switcher */}
-        <WorkspaceSwitcher
-          currentTenantSlug={tenantSlug}
-          workspaces={allWorkspaces}
-        />
-        <span className="text-slate-700 shrink-0 text-xs select-none">/</span>
-        {/* Project Switcher */}
-        <ProjectSwitcher
-          tenantSlug={tenantSlug}
-          currentProjectSlug={projectSlug}
-          projects={allProjects}
-          onArchiveCurrentProject={onArchiveProject}
-          isReadOnly={isReadOnly}
-        />
       </div>
 
       {/* View tabs */}
