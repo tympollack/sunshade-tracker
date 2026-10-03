@@ -35,9 +35,11 @@ export function NavTreeNode({
     (node.type === 'sprint' &&
       activeScope?.sprintName === node.sprintName &&
       (!activeScope?.projectSlug || activeScope?.projectSlug === node.projectSlug) &&
+      (!activeScope?.projectId || activeScope?.projectId === node.projectId) &&
       !activeScope?.itemId) ||
     (node.type === 'project' &&
-      activeScope?.projectSlug === node.projectSlug &&
+      ((activeScope?.projectId && activeScope?.projectId === node.projectId) ||
+        (activeScope?.projectSlug && activeScope?.projectSlug === node.projectSlug)) &&
       !activeScope?.itemId) ||
     (node.type === 'item' && activeScope?.itemId === node.item?.id)
   );
@@ -52,6 +54,7 @@ export function NavTreeNode({
         onSelectScope({
           sprintName: node.sprintName,
           projectSlug: node.projectSlug,
+          projectId: node.projectId || node.item.project_id,
           itemId: node.item.id,
         });
       }
@@ -60,6 +63,7 @@ export function NavTreeNode({
         onSelectScope({
           sprintName: node.sprintName,
           projectSlug: node.projectSlug,
+          projectId: node.projectId,
         });
       }
       if (hasChildren) {
@@ -70,6 +74,7 @@ export function NavTreeNode({
         onSelectScope({
           sprintName: node.sprintName,
           projectSlug: node.projectSlug,
+          projectId: node.projectId,
         });
       }
       if (hasChildren) {
@@ -173,7 +178,11 @@ export function NavTreeNode({
         )}
 
         {/* Sprint Lifecycle Inspector Trigger */}
-        {node.type === 'sprint' && onSelectSprint && (
+        {node.type === 'sprint' &&
+          node.id !== 'sprint:unassigned' &&
+          node.sprintName !== 'No Sprint' &&
+          node.title !== 'No Sprint' &&
+          onSelectSprint && (
           <button
             type="button"
             onClick={(e) => {

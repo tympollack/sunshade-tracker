@@ -95,10 +95,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   } = useWorkItemSelection({
     items,
     initialItemRef: requestedItem,
+    tenantSlug,
   });
 
   const [selectedSprintForEdit, setSelectedSprintForEdit] = useState<Partial<SprintDefinition> | null>(null);
   const [treeSelectedProjectId, setTreeSelectedProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTreeSelectedProjectId(null);
+  }, [projectSlug]);
+
   const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
 
   // Tree View Filtering & Sorting States
@@ -1642,6 +1648,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setItems((prev) =>
       prev.map((it) => (it.id === id ? { ...it, ...updates } : it))
     );
+
+    const rollbackItemUpdates = (it: WorkItem): WorkItem => {
+      if (!originalItem || it.id !== id) return it;
+      const rolledBack = { ...it };
+      for (const key of Object.keys(updates) as (keyof WorkItem)[]) {
+        if (key === 'metadata') {
+          rolledBack.metadata = {
+            ...(rolledBack.metadata || {}),
+            ...(originalItem.metadata || {}),
+          };
+        } else {
+          (rolledBack as any)[key] = originalItem[key];
+        }
+      }
+      return rolledBack;
+    };
+
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'PATCH',
@@ -1650,9 +1673,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
         if (originalItem) {
-          setItems((prev) =>
-            prev.map((it) => (it.id === id ? originalItem : it))
-          );
+          setItems((prev) => prev.map(rollbackItemUpdates));
         }
         fetchData();
         throw new Error(errJson.error || `Failed to update item (${res.status})`);
@@ -1666,9 +1687,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
     } catch (err: any) {
       if (originalItem) {
-        setItems((prev) =>
-          prev.map((it) => (it.id === id ? originalItem : it))
-        );
+        setItems((prev) => prev.map(rollbackItemUpdates));
       }
       fetchData();
       throw err;
@@ -1710,19 +1729,25 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         });
 
         // If sprint not found in relational table (legacy settings sprint), create it
-        if (!updateRes.success && updateRes.error?.includes('not found')) {
-          const createRes = await createSprintAction(tenantSlug, {
-            name: sprintData.name,
-            goal: sprintData.goal,
-            project_id: currentProj?.id,
-            status: sprintData.status,
-            is_active: sprintData.is_active,
-            started_at: sprintData.started_at,
-            ends_at: sprintData.ends_at,
-            committed_points: sprintData.committed_points,
-          });
-          if (createRes.success && createRes.data) {
-            resolvedSprintId = createRes.data.id;
+        if (!updateRes.success) {
+          if (updateRes.error?.toLowerCase().includes('not found') || updateRes.error?.includes('PGRST116')) {
+            const createRes = await createSprintAction(tenantSlug, {
+              name: sprintData.name,
+              goal: sprintData.goal,
+              project_id: currentProj?.id,
+              status: sprintData.status,
+              is_active: sprintData.is_active,
+              started_at: sprintData.started_at,
+              ends_at: sprintData.ends_at,
+              committed_points: sprintData.committed_points,
+            });
+            if (createRes.success && createRes.data) {
+              resolvedSprintId = createRes.data.id;
+            } else {
+              throw new Error(createRes.error || 'Failed to create sprint in relational storage');
+            }
+          } else {
+            throw new Error(updateRes.error || 'Failed to update sprint');
           }
         }
       }
@@ -1745,6 +1770,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         goal: sprintData.goal,
         started_at: sprintData.started_at,
         ends_at: sprintData.ends_at,
+        start_date: sprintData.start_date || (sprintData.started_at ? String(sprintData.started_at).slice(0, 10) : undefined),
+        end_date: sprintData.end_date || (sprintData.ends_at ? String(sprintData.ends_at).slice(0, 10) : undefined),
         committed_points: sprintData.committed_points,
       } as SprintDefinition;
 
@@ -1758,12 +1785,48 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       await fetchData();
     } catch (err: any) {
       console.error('Failed to save sprint:', err);
+      throw err;
     }
   };
 
   const handleDeleteSprintLifecycle = async (sprintId: string) => {
     try {
-      await deleteSprintAction(tenantSlug, sprintId);
+      const targetSprint = (projectSettings.sprint_settings?.sprints || []).find(
+        (s) => s.id === sprintId || s.name === sprintId
+      );
+      const sprintName = targetSprint?.name || sprintId;
+
+      // 1. Relational sprint deletion (tolerate 'not found' for legacy sprints)
+      const deleteRes = await deleteSprintAction(tenantSlug, sprintId).catch((e) => ({
+        success: false,
+        error: e.message || String(e),
+      }));
+      if (!deleteRes.success && deleteRes.error && !deleteRes.error.toLowerCase().includes('not found')) {
+        throw new Error(deleteRes.error || 'Failed to delete relational sprint');
+      }
+
+      // 2. Disassociate any items still assigned to this sprint (handles legacy settings sprints)
+      const assignedItems = items.filter(
+        (it) => it.metadata?.sprint === sprintName || it.metadata?.sprint === sprintId
+      );
+      if (assignedItems.length > 0) {
+        await Promise.all(
+          assignedItems.map((it) =>
+            apiFetch('/api/v1/items', {
+              method: 'PATCH',
+              body: JSON.stringify({
+                id: it.id,
+                metadata: {
+                  ...(it.metadata || {}),
+                  sprint: null,
+                },
+              }),
+            })
+          )
+        );
+      }
+
+      // 3. Remove sprint from legacy settings definition
       const existing = (projectSettings.sprint_settings?.sprints || []).filter((s) => {
         const matches = s.id === sprintId || s.name === sprintId;
         if (matches && (selectedSprint === s.name || selectedSprint === sprintId)) {
@@ -1775,6 +1838,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       await fetchData();
     } catch (err: any) {
       console.error('Failed to delete sprint:', err);
+      throw err;
     }
   };
 
@@ -2851,6 +2915,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             }}
             onSelectItem={(item) => selectDrawerItem(item)}
             onSelectSprint={(sprintName) => {
+              if (
+                !sprintName ||
+                sprintName === 'No Sprint' ||
+                sprintName === 'unassigned' ||
+                sprintName === 'sprint:unassigned' ||
+                sprintName === '__none__'
+              ) {
+                return;
+              }
               const def = availableSprintDefs.find((s) => s.name === sprintName) || {
                 id: sprintName,
                 name: sprintName,
@@ -3095,23 +3168,25 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         }
         rightPane={
           selectedDrawerItem ? (
-            <WorkItemInspectorDrawer
-              item={selectedDrawerItem}
-              isOpen={true}
-              onClose={closeDrawer}
-              onUpdateItem={handleUpdateField}
-              onExpandFull={(item) => {
-                closeDrawer();
-                setEditingItem(item);
-              }}
-              availableStatuses={projectSettings.statuses || []}
-              availableSprints={availableSprints}
-              availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
-              allItems={items}
-              isReadOnly={isReadOnly}
-              tenantSlug={tenantSlug}
-              projectSlug={projectSlug}
-            />
+            <div className="hidden md:contents">
+              <WorkItemInspectorDrawer
+                item={selectedDrawerItem}
+                isOpen={true}
+                onClose={closeDrawer}
+                onUpdateItem={handleUpdateField}
+                onExpandFull={(item) => {
+                  closeDrawer();
+                  setEditingItem(item);
+                }}
+                availableStatuses={projectSettings.statuses || []}
+                availableSprints={availableSprints}
+                availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
+                allItems={items}
+                isReadOnly={isReadOnly}
+                tenantSlug={tenantSlug}
+                projectSlug={projectSlug}
+              />
+            </div>
           ) : selectedSprintForEdit ? (
             <SprintInspectorDrawer
               sprint={selectedSprintForEdit}

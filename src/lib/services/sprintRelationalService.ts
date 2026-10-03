@@ -41,6 +41,61 @@ export interface RelationalSprintRecord {
   updated_at: string;
 }
 
+export const ALLOWED_SPRINT_STATUSES = new Set(['planned', 'active', 'completed', 'unplanned']);
+
+export function validateSprintInput(
+  input: CreateSprintInput | UpdateSprintInput,
+  isPatch = false
+): string | null {
+  if (!isPatch || input.name !== undefined) {
+    if (typeof input.name !== 'string' || !input.name.trim()) {
+      return 'Field "name" must be a non-empty string';
+    }
+  }
+
+  if (input.status !== undefined && input.status !== null) {
+    if (!ALLOWED_SPRINT_STATUSES.has(input.status)) {
+      return `Invalid status "${input.status}": must be one of planned, active, completed, unplanned`;
+    }
+  }
+
+  if (input.committed_points !== undefined && input.committed_points !== null) {
+    if (
+      typeof input.committed_points !== 'number' ||
+      isNaN(input.committed_points) ||
+      input.committed_points < 0
+    ) {
+      return 'Field "committed_points" must be a non-negative number';
+    }
+  }
+
+  if (input.is_active !== undefined && input.is_active !== null) {
+    if (typeof input.is_active !== 'boolean') {
+      return 'Field "is_active" must be a boolean';
+    }
+  }
+
+  if (input.started_at !== undefined && input.started_at !== null) {
+    if (typeof input.started_at !== 'string' || isNaN(Date.parse(input.started_at))) {
+      return 'Field "started_at" must be a valid ISO date string';
+    }
+  }
+
+  if (input.ends_at !== undefined && input.ends_at !== null) {
+    if (typeof input.ends_at !== 'string' || isNaN(Date.parse(input.ends_at))) {
+      return 'Field "ends_at" must be a valid ISO date string';
+    }
+  }
+
+  if (input.project_id !== undefined && input.project_id !== null) {
+    if (typeof input.project_id !== 'string') {
+      return 'Field "project_id" must be a string or null';
+    }
+  }
+
+  return null;
+}
+
 export class SprintRelationalService {
   /**
    * List sprints for a given tenant, with optional project and status filters.
@@ -114,6 +169,11 @@ export class SprintRelationalService {
     input: CreateSprintInput
   ): Promise<{ data: RelationalSprintRecord | null; error: string | null }> {
     try {
+      const validationError = validateSprintInput(input, false);
+      if (validationError) {
+        return { data: null, error: validationError };
+      }
+
       if (!input.name || !input.name.trim()) {
         return { data: null, error: 'Sprint name is required' };
       }
@@ -201,10 +261,27 @@ export class SprintRelationalService {
     updates: UpdateSprintInput
   ): Promise<{ data: RelationalSprintRecord | null; error: string | null }> {
     try {
+      const validationError = validateSprintInput(updates, true);
+      if (validationError) {
+        return { data: null, error: validationError };
+      }
+
       // 1. Fetch current sprint
       const { data: currentSprint, error: fetchErr } = await this.getSprintById(tenantId, sprintId);
       if (fetchErr || !currentSprint) {
         return { data: null, error: fetchErr || 'Sprint not found' };
+      }
+
+      // SEC: Protect completed sprint items - completed sprints cannot be renamed
+      if (
+        currentSprint.status === 'completed' &&
+        updates.name !== undefined &&
+        updates.name.trim() !== currentSprint.name
+      ) {
+        return {
+          data: null,
+          error: 'Cannot rename a completed sprint: items in completed sprints are locked and immutable',
+        };
       }
 
       const updatePayload: Record<string, any> = {};
@@ -279,30 +356,38 @@ export class SprintRelationalService {
         const oldName = currentSprint.name;
         const newName = updatePayload.name;
 
+        // Query work items belonging to the source project where items currently live
         let itemsQuery = supabaseAdmin
           .from('work_items')
           .select('id, metadata, project_id')
           .eq('tenant_id', tenantId)
           .is('deleted_at', null);
 
-        const targetProjectId = updatePayload.project_id !== undefined ? updatePayload.project_id : currentSprint.project_id;
-        if (targetProjectId) {
-          itemsQuery = itemsQuery.eq('project_id', targetProjectId);
+        const sourceProjectId = currentSprint.project_id;
+        if (sourceProjectId) {
+          itemsQuery = itemsQuery.eq('project_id', sourceProjectId);
         }
 
         const { data: itemsToSync, error: itemsFetchErr } = await itemsQuery;
         if (itemsFetchErr) {
           console.error('Failed to fetch items for sprint rename sync:', itemsFetchErr);
+          return { data: null, error: `Failed to fetch work items for sprint rename sync: ${itemsFetchErr.message}` };
         } else if (itemsToSync && itemsToSync.length > 0) {
           const matching = itemsToSync.filter((i: any) => i.metadata?.sprint === oldName);
+          const movingProject = updatePayload.project_id !== undefined && updatePayload.project_id !== currentSprint.project_id;
           for (const item of matching) {
             const nextMeta = { ...(item.metadata || {}), sprint: newName };
+            const itemUpdatePayload: Record<string, any> = { metadata: nextMeta };
+            if (movingProject) {
+              itemUpdatePayload.project_id = updatePayload.project_id;
+            }
             const { error: syncErr } = await supabaseAdmin
               .from('work_items')
-              .update({ metadata: nextMeta })
+              .update(itemUpdatePayload)
               .eq('id', item.id);
             if (syncErr) {
               console.error(`Failed to update item ${item.id} metadata for renamed sprint:`, syncErr);
+              return { data: null, error: `Failed to update work item ${item.id} for renamed sprint: ${syncErr.message}` };
             }
           }
         }
@@ -315,7 +400,7 @@ export class SprintRelationalService {
   }
 
   /**
-   * Delete a sprint entity and optionally disassociate work items.
+   * Delete a sprint entity and disassociate work items.
    */
   static async deleteSprint(
     tenantId: string,
@@ -327,17 +412,15 @@ export class SprintRelationalService {
         return { success: false, error: fetchErr || 'Sprint not found' };
       }
 
-      const { error: deleteErr } = await supabaseAdmin
-        .from('sprints')
-        .delete()
-        .eq('tenant_id', tenantId)
-        .eq('id', sprintId);
-
-      if (deleteErr) {
-        return { success: false, error: deleteErr.message };
+      // SEC: Protect completed sprint items - completed sprints cannot be deleted
+      if (currentSprint.status === 'completed') {
+        return {
+          success: false,
+          error: 'Cannot delete a completed sprint: items in completed sprints are locked and immutable',
+        };
       }
 
-      // Disassociate items that were in this sprint
+      // 1. Disassociate items that were in this sprint BEFORE deleting the sprint
       const sprintName = currentSprint.name;
       let itemsQuery = supabaseAdmin
         .from('work_items')
@@ -352,19 +435,33 @@ export class SprintRelationalService {
       const { data: items, error: itemsFetchErr } = await itemsQuery;
       if (itemsFetchErr) {
         console.error('Failed to fetch items for sprint deletion sync:', itemsFetchErr);
+        return { success: false, error: `Failed to fetch work items for sprint deletion: ${itemsFetchErr.message}` };
       } else if (items && items.length > 0) {
         const matching = items.filter((i: any) => i.metadata?.sprint === sprintName);
         for (const item of matching) {
           const nextMeta = { ...(item.metadata || {}) };
           delete nextMeta.sprint;
+          delete nextMeta.sprint_id;
           const { error: syncErr } = await supabaseAdmin
             .from('work_items')
             .update({ metadata: nextMeta })
             .eq('id', item.id);
           if (syncErr) {
             console.error(`Failed to disassociate sprint from item ${item.id}:`, syncErr);
+            return { success: false, error: `Failed to disassociate sprint from item ${item.id}: ${syncErr.message}` };
           }
         }
+      }
+
+      // 2. Delete the sprint row from database
+      const { error: deleteErr } = await supabaseAdmin
+        .from('sprints')
+        .delete()
+        .eq('tenant_id', tenantId)
+        .eq('id', sprintId);
+
+      if (deleteErr) {
+        return { success: false, error: deleteErr.message };
       }
 
       return { success: true, error: null };
