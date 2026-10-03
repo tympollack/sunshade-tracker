@@ -32,8 +32,13 @@ export function NavTreeNode({
 
   // Determine whether this node is currently active in filter scope
   const isSelected = Boolean(
-    (node.type === 'sprint' && activeScope?.sprintName === node.sprintName && !activeScope?.projectSlug && !activeScope?.itemId) ||
-    (node.type === 'project' && activeScope?.projectSlug === node.projectSlug && !activeScope?.itemId) ||
+    (node.type === 'sprint' &&
+      activeScope?.sprintName === node.sprintName &&
+      (!activeScope?.projectSlug || activeScope?.projectSlug === node.projectSlug) &&
+      !activeScope?.itemId) ||
+    (node.type === 'project' &&
+      activeScope?.projectSlug === node.projectSlug &&
+      !activeScope?.itemId) ||
     (node.type === 'item' && activeScope?.itemId === node.item?.id)
   );
 
@@ -106,7 +111,7 @@ export function NavTreeNode({
             ? 'bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30'
             : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
         }`}
-        style={{ paddingLeft: `${Math.max(4, depth * 12 + 4)}px` }}
+        style={{ paddingLeft: `${depth * 14 + 4}px` }}
       >
         {/* Disclosure Toggle Arrow */}
         <button
@@ -188,7 +193,7 @@ export function NavTreeNode({
       {hasChildren && isExpanded && (
         <div
           role="group"
-          className="flex flex-col relative ml-2.5 border-l border-slate-800/80 my-0.5"
+          className="flex flex-col relative ml-1 border-l border-slate-800/80 my-0.5"
         >
           {node.children.map((child) => (
             <NavTreeNode

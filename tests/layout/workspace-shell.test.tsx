@@ -46,7 +46,7 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
 
     const lhn = screen.getByTestId('workspace-lhn');
     expect(lhn).toBeInTheDocument();
-    expect(lhn.className).toContain('w-64');
+    expect(lhn.style.width).toBe('280px');
     expect(lhn.className).toContain('shrink-0');
     expect(lhn.className).toContain('border-r');
 
@@ -74,7 +74,7 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
     );
 
     const lhn = screen.getByTestId('workspace-lhn');
-    expect(lhn.className).toContain('w-64');
+    expect(lhn.style.width).toBe('280px');
 
     const collapseBtn = screen.getByRole('button', { name: /collapse navigation tree/i });
     fireEvent.click(collapseBtn);
@@ -90,6 +90,135 @@ describe('TASK-TRK-VIEWPORT-LOCK-SCAFFOLD: WorkspaceShell', () => {
     );
 
     expect(lhn.className).toContain('w-14');
+    expect(lhn.style.width).toBe('56px');
+    expect(screen.queryByTestId('workspace-lhn-splitter')).not.toBeInTheDocument();
+  });
+
+  it('renders interactive splitter handle and resizes sidebar within 200px-560px bounds', () => {
+    localStorage.clear();
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+    expect(splitter).toBeInTheDocument();
+    expect(splitter).toHaveAttribute('role', 'separator');
+    expect(lhn.style.width).toBe('280px');
+
+    // 1. Drag resize to 380px
+    fireEvent.mouseDown(splitter, { clientX: 280 });
+    expect(document.body.classList.contains('select-none')).toBe(true);
+
+    fireEvent.mouseMove(window, { clientX: 380 });
+    expect(lhn.style.width).toBe('380px');
+
+    fireEvent.mouseUp(window, { clientX: 380 });
+    expect(document.body.classList.contains('select-none')).toBe(false);
+    expect(lhn.style.width).toBe('380px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('380');
+
+    // 2. Clamps to max 560px
+    fireEvent.mouseDown(splitter, { clientX: 380 });
+    fireEvent.mouseMove(window, { clientX: 700 });
+    fireEvent.mouseUp(window, { clientX: 700 });
+    expect(lhn.style.width).toBe('560px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('560');
+
+    // 3. Clamps to min 200px
+    fireEvent.mouseDown(splitter, { clientX: 560 });
+    fireEvent.mouseMove(window, { clientX: 120 });
+    fireEvent.mouseUp(window, { clientX: 120 });
+    expect(lhn.style.width).toBe('200px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('200');
+  });
+
+  it('restores chosen width from localStorage on mount', () => {
+    localStorage.setItem('sunshade_lhn_width', '340');
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    expect(lhn.style.width).toBe('340px');
+  });
+
+  it('supports keyboard arrow resizing on splitter handle', () => {
+    localStorage.clear();
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+    expect(lhn.style.width).toBe('280px');
+
+    fireEvent.keyDown(splitter, { key: 'ArrowRight' });
+    expect(lhn.style.width).toBe('290px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('290');
+
+    fireEvent.keyDown(splitter, { key: 'ArrowLeft' });
+    expect(lhn.style.width).toBe('280px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('280');
+  });
+
+  it('supports touch drag resizing via pointer events on touch devices', () => {
+    localStorage.clear();
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+    expect(splitter.className).toContain('touch-none');
+
+    // Initiate touch drag with pointerDown
+    fireEvent.pointerDown(splitter, { clientX: 280, pointerType: 'touch' });
+    expect(document.body.classList.contains('select-none')).toBe(true);
+
+    fireEvent.pointerMove(window, { clientX: 350, pointerType: 'touch' });
+    expect(lhn.style.width).toBe('350px');
+
+    fireEvent.pointerUp(window, { clientX: 350, pointerType: 'touch' });
+    expect(document.body.classList.contains('select-none')).toBe(false);
+    expect(lhn.style.width).toBe('350px');
+    expect(localStorage.getItem('sunshade_lhn_width')).toBe('350');
+  });
+
+  it('clamps maximum sidebar width to protect canvas when inspector is docked at 1024px', () => {
+    // Simulate 1024px viewport (lg breakpoint where inspector is docked inline at 384px)
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1024 });
+
+    render(
+      <WorkspaceShell
+        leftPane={<div>Tree Items</div>}
+        centerPane={<div>Central Board</div>}
+        rightPane={<div>Inspector</div>}
+        isRightOpen={true}
+      />
+    );
+
+    const lhn = screen.getByTestId('workspace-lhn');
+    const splitter = screen.getByTestId('workspace-lhn-splitter');
+
+    // Drag to 600px: With window=1024, inspector=384, canvas min=320, available is 1024 - 704 = 320px
+    fireEvent.mouseDown(splitter, { clientX: 280 });
+    fireEvent.mouseMove(window, { clientX: 600 });
+    fireEvent.mouseUp(window, { clientX: 600 });
+
+    expect(lhn.style.width).toBe('320px');
   });
 
   it('renders non-blocking slide-over overlay with mobile-only backdrop when isRightOpen is true', () => {

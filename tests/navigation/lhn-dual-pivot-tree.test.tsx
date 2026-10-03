@@ -148,7 +148,7 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     );
   });
 
-  it('renders stacked Workspace and Project selectors at top of LHN when expanded', () => {
+  it('renders unified Workspace and Project switcher row at top of LHN when expanded', () => {
     const mockWorkspaces = [
       {
         id: 'ws-1',
@@ -171,9 +171,11 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
 
     const scopeHeader = screen.getByTestId('lhn-scope-header');
     expect(scopeHeader).toBeInTheDocument();
+    expect(screen.getByTestId('lhn-unified-scope-row')).toBeInTheDocument();
     expect(screen.getByText('PYM Energy')).toBeInTheDocument();
     expect(screen.getByText('Cozy')).toBeInTheDocument();
     expect(screen.getByTestId('project-switcher-trigger')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-switcher-trigger')).toBeInTheDocument();
   });
 
   it('renders collapsed icon rail with compact initial badge, single pivot toggle icon, and root icons when isCollapsed is true', () => {
@@ -293,5 +295,121 @@ describe('TASK-TRK-LHN-DUAL-PIVOT-TREE: LeftHandNavTree & usePivotTree', () => {
     // Check highlighted classes
     expect(cozyRootBtn.className).toContain('text-emerald-400');
     expect(cozyRootBtn.className).toContain('border-emerald-500/40');
+  });
+
+  it('omits redundant project folder when scoped to a specific project in Cadence mode', () => {
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+      />
+    );
+
+    // Expand all nodes
+    const expandAllBtn = screen.getByTitle('Expand All');
+    fireEvent.click(expandAllBtn);
+
+    // Sprint 2026-Q4 is rendered
+    expect(screen.getByText('Sprint 2026-Q4')).toBeInTheDocument();
+    // Its item "Design Three-Pane Layout" is directly visible
+    expect(screen.getByText('Design Three-Pane Layout')).toBeInTheDocument();
+    // And there should NOT be an intermediate [📁 Cozy] folder inside the tree!
+    // Since "Cozy" is in the scope switcher row at the top, let's verify no treeitem is named "Cozy"
+    const treeItems = screen.getAllByRole('treeitem');
+    const treeItemTitles = treeItems.map((el) => el.textContent);
+    expect(treeItemTitles.some((t) => t?.includes('Cozy'))).toBe(false);
+  });
+
+  it('omits redundant root project folder when scoped to a specific project in Domain mode', () => {
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+      />
+    );
+
+    // Switch to Domain (Projects) mode
+    const projectsTab = screen.getByRole('tab', { name: /projects/i });
+    fireEvent.click(projectsTab);
+
+    // The root nodes should directly be the sprints of the scoped project (Sprint 2026-Q4), not [📁 Cozy]
+    expect(screen.getByText('Sprint 2026-Q4')).toBeInTheDocument();
+    const treeItems = screen.getAllByRole('treeitem');
+    const treeItemTitles = treeItems.map((el) => el.textContent);
+    expect(treeItemTitles.some((t) => t?.includes('Cozy'))).toBe(false);
+  });
+
+  it('applies 14px per depth level indentation to tree nodes', () => {
+    render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+      />
+    );
+
+    // Expand all
+    const expandAllBtn = screen.getByTitle('Expand All');
+    fireEvent.click(expandAllBtn);
+
+    const treeItems = screen.getAllByRole('treeitem');
+    // Root sprint node at depth 0: paddingLeft = 0 * 14 + 4 = 4px
+    const sprintNode = treeItems.find((el) => el.textContent?.includes('Sprint 2026-Q4'));
+    expect(sprintNode).toBeDefined();
+    expect(sprintNode?.style.paddingLeft).toBe('4px');
+
+    // Child item node at depth 1: paddingLeft = 1 * 14 + 4 = 18px
+    const itemNode = treeItems.find((el) => el.textContent?.includes('Design Three-Pane Layout'));
+    expect(itemNode).toBeDefined();
+    expect(itemNode?.style.paddingLeft).toBe('18px');
+
+    // Child task node at depth 2: paddingLeft = 2 * 14 + 4 = 32px
+    const taskNode = treeItems.find((el) => el.textContent?.includes('Scaffold Workspace Shell'));
+    expect(taskNode).toBeDefined();
+    expect(taskNode?.style.paddingLeft).toBe('32px');
+  });
+
+  it('highlights scoped sprint upon selection in both expanded tree and collapsed rail', () => {
+    const { rerender } = render(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+        isCollapsed={false}
+      />
+    );
+
+    // Click on Sprint 2026-Q4 row
+    const sprintNodeText = screen.getByText('Sprint 2026-Q4');
+    const sprintRow = sprintNodeText.closest('[role="treeitem"]');
+    expect(sprintRow).toBeDefined();
+
+    fireEvent.click(sprintRow!);
+    // Check that sprint row receives selected styling (bg-emerald-500/15)
+    expect(sprintRow?.className).toContain('bg-emerald-500/15');
+    expect(sprintRow?.className).toContain('text-emerald-300');
+
+    // Also verify in collapsed rail
+    rerender(
+      <LeftHandNavTree
+        items={mockItems}
+        projects={mockProjects}
+        tenantSlug="pym-energy"
+        currentProjectSlug="cozy"
+        isCollapsed={true}
+      />
+    );
+
+    const collapsedSprintBtn = screen.getByTestId('lhn-collapsed-root-sprint:Sprint 2026-Q4');
+    expect(collapsedSprintBtn).toBeInTheDocument();
+    fireEvent.click(collapsedSprintBtn);
+    expect(collapsedSprintBtn.className).toContain('text-emerald-400');
+    expect(collapsedSprintBtn.className).toContain('border-emerald-500/40');
   });
 });

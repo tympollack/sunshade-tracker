@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 
 export interface WorkspaceShellProps {
@@ -17,6 +17,13 @@ export interface WorkspaceShellProps {
   className?: string;
 }
 
+const DEFAULT_LHN_WIDTH = 280;
+const MIN_LHN_WIDTH = 200;
+const MAX_LHN_WIDTH = 560;
+const MIN_CANVAS_WIDTH = 320;
+const DESKTOP_INSPECTOR_WIDTH = 384;
+const STORAGE_KEY_LHN_WIDTH = 'sunshade_lhn_width';
+
 export function WorkspaceShell({
   header,
   leftPane,
@@ -32,6 +39,118 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const [internalIsLeftCollapsed, setInternalIsLeftCollapsed] = useState(false);
   const [internalIsMobileLeftOpen, setInternalIsMobileLeftOpen] = useState(false);
+  // Initialize to DEFAULT_LHN_WIDTH to prevent SSR hydration mismatch; hydrate from localStorage on mount
+  const [lhnWidth, setLhnWidth] = useState<number>(DEFAULT_LHN_WIDTH);
+  const [isDraggingLhn, setIsDraggingLhn] = useState(false);
+
+  // Dynamically clamp maximum sidebar width so canvas is never squeezed below MIN_CANVAS_WIDTH
+  const getMaxLhnWidth = useCallback(() => {
+    if (typeof window === 'undefined') return MAX_LHN_WIDTH;
+    const windowWidth = window.innerWidth;
+    const isDesktopInspectorDocked = isRightOpen && Boolean(rightPane) && windowWidth >= 1024;
+    const reservedWidth = (isDesktopInspectorDocked ? DESKTOP_INSPECTOR_WIDTH : 0) + MIN_CANVAS_WIDTH;
+    const available = windowWidth - reservedWidth;
+    return Math.max(MIN_LHN_WIDTH, Math.min(MAX_LHN_WIDTH, available));
+  }, [isRightOpen, rightPane]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_LHN_WIDTH);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        const maxAllowed = getMaxLhnWidth();
+        if (!isNaN(parsed) && parsed >= MIN_LHN_WIDTH) {
+          setLhnWidth(Math.min(maxAllowed, parsed));
+        }
+      }
+    } catch {}
+  }, [getMaxLhnWidth]);
+
+  // Re-clamp effective width when window or inspector state changes
+  useEffect(() => {
+    const handleResize = () => {
+      const maxAllowed = getMaxLhnWidth();
+      setLhnWidth((prev) => (prev > maxAllowed ? maxAllowed : prev));
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [getMaxLhnWidth]);
+
+  useEffect(() => {
+    if (!isDraggingLhn) return;
+
+    const handlePointerMove = (e: MouseEvent | PointerEvent) => {
+      const clientX =
+        typeof e.clientX === 'number' && !isNaN(e.clientX)
+          ? e.clientX
+          : (e as any).touches?.[0]?.clientX;
+      if (typeof clientX !== 'number' || isNaN(clientX)) return;
+
+      const maxAllowed = getMaxLhnWidth();
+      const clamped = Math.min(maxAllowed, Math.max(MIN_LHN_WIDTH, clientX));
+      setLhnWidth(clamped);
+    };
+
+    const handlePointerUp = (e: MouseEvent | PointerEvent) => {
+      const clientX =
+        typeof e.clientX === 'number' && !isNaN(e.clientX)
+          ? e.clientX
+          : (e as any).touches?.[0]?.clientX;
+      if (typeof clientX === 'number' && !isNaN(clientX)) {
+        const maxAllowed = getMaxLhnWidth();
+        const finalWidth = Math.min(maxAllowed, Math.max(MIN_LHN_WIDTH, clientX));
+        setLhnWidth(finalWidth);
+        try {
+          localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(finalWidth));
+        } catch {}
+      }
+      setIsDraggingLhn(false);
+    };
+
+    document.body.classList.add('select-none');
+    document.body.style.cursor = 'col-resize';
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      document.body.classList.remove('select-none');
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [isDraggingLhn, getMaxLhnWidth]);
+
+  const startDragging = (e: React.MouseEvent | React.PointerEvent) => {
+    e.preventDefault();
+    setIsDraggingLhn(true);
+  };
+
+  const handleSplitterKeyDown = (e: React.KeyboardEvent) => {
+    const maxAllowed = getMaxLhnWidth();
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const newWidth = Math.max(MIN_LHN_WIDTH, lhnWidth - 10);
+      setLhnWidth(newWidth);
+      try {
+        localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(newWidth));
+      } catch {}
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const newWidth = Math.min(maxAllowed, lhnWidth + 10);
+      setLhnWidth(newWidth);
+      try {
+        localStorage.setItem(STORAGE_KEY_LHN_WIDTH, String(newWidth));
+      } catch {}
+    }
+  };
 
   const isLeftCollapsed =
     externalIsLeftCollapsed !== undefined
@@ -77,9 +196,10 @@ export function WorkspaceShell({
         {leftPane && (
           <aside
             data-testid="workspace-lhn"
-            className={`hidden md:flex flex-col border-r border-slate-800 bg-slate-950/70 transition-all duration-200 ease-in-out shrink-0 overflow-hidden ${
-              isLeftCollapsed ? 'w-14' : 'w-64'
-            }`}
+            style={{ width: isLeftCollapsed ? 56 : lhnWidth }}
+            className={`hidden md:flex flex-col border-r border-slate-800 bg-slate-950/70 shrink-0 overflow-hidden relative ${
+              isDraggingLhn ? 'transition-none select-none' : 'transition-[width] duration-200 ease-in-out'
+            } ${isLeftCollapsed ? 'w-14' : ''}`}
           >
             {/* Collapse / Expand rail toggle bar */}
             <div
@@ -106,6 +226,33 @@ export function WorkspaceShell({
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
               {leftPane}
             </div>
+
+            {/* Interactive Resizable Splitter Handle */}
+            {!isLeftCollapsed && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-valuenow={lhnWidth}
+                aria-valuemin={MIN_LHN_WIDTH}
+                aria-valuemax={MAX_LHN_WIDTH}
+                aria-label="Resize Left Navigation"
+                tabIndex={0}
+                data-testid="workspace-lhn-splitter"
+                onPointerDown={startDragging}
+                onMouseDown={startDragging}
+                onKeyDown={handleSplitterKeyDown}
+                className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize z-30 transition-colors group touch-none ${
+                  isDraggingLhn ? 'bg-emerald-500' : 'hover:bg-emerald-500/50'
+                }`}
+                title="Drag to resize sidebar width"
+              >
+                <div
+                  className={`w-0.5 h-full mx-auto transition-colors ${
+                    isDraggingLhn ? 'bg-emerald-400' : 'group-hover:bg-emerald-400/80'
+                  }`}
+                />
+              </div>
+            )}
           </aside>
         )}
 
