@@ -338,23 +338,18 @@ export class SprintRelationalService {
         }
       }
 
-      // 2. Perform sprint update
-      const { data: updated, error: updateErr } = await supabaseAdmin
-        .from('sprints')
-        .update(updatePayload)
-        .eq('tenant_id', tenantId)
-        .eq('id', sprintId)
-        .select()
-        .single();
+      // 2. Synchronization: If sprint name changed OR project moved, update assigned work items
+      const isRenaming = Boolean(updatePayload.name && updatePayload.name !== currentSprint.name);
+      const isMovingProject = Boolean(
+        updatePayload.project_id !== undefined &&
+        updatePayload.project_id !== currentSprint.project_id
+      );
 
-      if (updateErr) {
-        return { data: null, error: updateErr.message };
-      }
+      const rolledBackItems: Array<{ id: string; origPayload: Record<string, any> }> = [];
 
-      // 3. Synchronization: If sprint name changed, update assigned work items metadata
-      if (updatePayload.name && updatePayload.name !== currentSprint.name) {
+      if (isRenaming || isMovingProject) {
         const oldName = currentSprint.name;
-        const newName = updatePayload.name;
+        const newName = isRenaming ? (updatePayload.name as string) : currentSprint.name;
 
         // Query work items belonging to the source project where items currently live
         let itemsQuery = supabaseAdmin
@@ -370,27 +365,69 @@ export class SprintRelationalService {
 
         const { data: itemsToSync, error: itemsFetchErr } = await itemsQuery;
         if (itemsFetchErr) {
-          console.error('Failed to fetch items for sprint rename sync:', itemsFetchErr);
-          return { data: null, error: `Failed to fetch work items for sprint rename sync: ${itemsFetchErr.message}` };
+          console.error('Failed to fetch items for sprint sync:', itemsFetchErr);
+          return { data: null, error: `Failed to fetch work items for sprint synchronization: ${itemsFetchErr.message}` };
         } else if (itemsToSync && itemsToSync.length > 0) {
-          const matching = itemsToSync.filter((i: any) => i.metadata?.sprint === oldName);
-          const movingProject = updatePayload.project_id !== undefined && updatePayload.project_id !== currentSprint.project_id;
+          const matching = itemsToSync.filter(
+            (i: any) =>
+              i.metadata?.sprint === oldName ||
+              (isRenaming && i.metadata?.sprint === newName)
+          );
+
           for (const item of matching) {
-            const nextMeta = { ...(item.metadata || {}), sprint: newName };
-            const itemUpdatePayload: Record<string, any> = { metadata: nextMeta };
-            if (movingProject) {
+            const origPayload: Record<string, any> = {
+              metadata: item.metadata,
+              project_id: item.project_id,
+            };
+
+            const itemUpdatePayload: Record<string, any> = {};
+            if (isRenaming) {
+              itemUpdatePayload.metadata = { ...(item.metadata || {}), sprint: newName };
+            }
+            if (isMovingProject) {
               itemUpdatePayload.project_id = updatePayload.project_id;
             }
+
             const { error: syncErr } = await supabaseAdmin
               .from('work_items')
               .update(itemUpdatePayload)
               .eq('id', item.id);
+
             if (syncErr) {
-              console.error(`Failed to update item ${item.id} metadata for renamed sprint:`, syncErr);
-              return { data: null, error: `Failed to update work item ${item.id} for renamed sprint: ${syncErr.message}` };
+              console.error(`Failed to update item ${item.id} for sprint sync:`, syncErr);
+              // Rollback previously updated items
+              for (const rolled of rolledBackItems) {
+                await supabaseAdmin
+                  .from('work_items')
+                  .update(rolled.origPayload)
+                  .eq('id', rolled.id);
+              }
+              return { data: null, error: `Failed to update work item ${item.id} for sprint synchronization: ${syncErr.message}` };
             }
+
+            rolledBackItems.push({ id: item.id, origPayload });
           }
         }
+      }
+
+      // 3. Perform sprint entity update
+      const { data: updated, error: updateErr } = await supabaseAdmin
+        .from('sprints')
+        .update(updatePayload)
+        .eq('tenant_id', tenantId)
+        .eq('id', sprintId)
+        .select()
+        .single();
+
+      if (updateErr) {
+        // Rollback any items updated during sync
+        for (const rolled of rolledBackItems) {
+          await supabaseAdmin
+            .from('work_items')
+            .update(rolled.origPayload)
+            .eq('id', rolled.id);
+        }
+        return { data: null, error: updateErr.message };
       }
 
       return { data: updated as RelationalSprintRecord, error: null };
@@ -436,21 +473,33 @@ export class SprintRelationalService {
       if (itemsFetchErr) {
         console.error('Failed to fetch items for sprint deletion sync:', itemsFetchErr);
         return { success: false, error: `Failed to fetch work items for sprint deletion: ${itemsFetchErr.message}` };
-      } else if (items && items.length > 0) {
-        const matching = items.filter((i: any) => i.metadata?.sprint === sprintName);
-        for (const item of matching) {
-          const nextMeta = { ...(item.metadata || {}) };
-          delete nextMeta.sprint;
-          delete nextMeta.sprint_id;
-          const { error: syncErr } = await supabaseAdmin
-            .from('work_items')
-            .update({ metadata: nextMeta })
-            .eq('id', item.id);
-          if (syncErr) {
-            console.error(`Failed to disassociate sprint from item ${item.id}:`, syncErr);
-            return { success: false, error: `Failed to disassociate sprint from item ${item.id}: ${syncErr.message}` };
+      }
+
+      const matching = items ? items.filter((i: any) => i.metadata?.sprint === sprintName) : [];
+      const rolledBackItems: Array<{ id: string; origMetadata: Record<string, any> }> = [];
+
+      for (const item of matching) {
+        const nextMeta = { ...(item.metadata || {}) };
+        delete nextMeta.sprint;
+        delete nextMeta.sprint_id;
+        const { error: syncErr } = await supabaseAdmin
+          .from('work_items')
+          .update({ metadata: nextMeta })
+          .eq('id', item.id);
+
+        if (syncErr) {
+          console.error(`Failed to disassociate sprint from item ${item.id}:`, syncErr);
+          // Rollback any items that were detached before this failure
+          for (const rolled of rolledBackItems) {
+            await supabaseAdmin
+              .from('work_items')
+              .update({ metadata: rolled.origMetadata })
+              .eq('id', rolled.id);
           }
+          return { success: false, error: `Failed to disassociate sprint from item ${item.id}: ${syncErr.message}` };
         }
+
+        rolledBackItems.push({ id: item.id, origMetadata: item.metadata });
       }
 
       // 2. Delete the sprint row from database
@@ -461,6 +510,13 @@ export class SprintRelationalService {
         .eq('id', sprintId);
 
       if (deleteErr) {
+        // Rollback all detached items if sprint deletion fails
+        for (const rolled of rolledBackItems) {
+          await supabaseAdmin
+            .from('work_items')
+            .update({ metadata: rolled.origMetadata })
+            .eq('id', rolled.id);
+        }
         return { success: false, error: deleteErr.message };
       }
 

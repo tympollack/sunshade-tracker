@@ -111,6 +111,53 @@ describe('PR-75 Review Comments Verification Suite', () => {
       expect(result.current.selectedItem).toBeNull();
       expect(window.location.search).not.toContain('item=TRK-101');
     });
+
+    it('Comment 8 (PR 76): late deep-link lookup does not override selection or reopen closed drawer when URL is cleared', async () => {
+      window.history.replaceState(null, '', 'http://localhost:3000/pym-energy/board?item=PENDING-ITEM');
+
+      let resolveFetch: (data: any) => void = () => {};
+      const pendingFetch = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockReturnValue(pendingFetch);
+
+      const { result } = renderHook(() =>
+        useWorkItemSelection({
+          items: mockItems,
+          tenantSlug: 'pym-energy',
+        })
+      );
+
+      // User immediately closes or navigates before fetch resolves
+      act(() => {
+        result.current.close();
+      });
+
+      expect(result.current.selectedItem).toBeNull();
+      expect(result.current.isOpen).toBe(false);
+
+      // Now the pending fetch resolves with an item
+      const fetchedItem: WorkItem = {
+        ...mockItems[0],
+        id: 'item-delayed',
+        external_ref_id: 'PENDING-ITEM',
+      };
+
+      await act(async () => {
+        resolveFetch({
+          ok: true,
+          json: async () => ({ items: [fetchedItem] }),
+        });
+      });
+
+      // The selection MUST remain null because user closed the drawer
+      expect(result.current.selectedItem).toBeNull();
+      expect(result.current.isOpen).toBe(false);
+
+      global.fetch = originalFetch;
+    });
   });
 
   describe('Comment 8: WorkItemInspectorDrawer Assignee Normalization', () => {
@@ -406,6 +453,145 @@ describe('PR-75 Review Comments Verification Suite', () => {
       const res = await SprintRelationalService.deleteSprint('tenant-1', 'sp-1');
 
       expect(res.error).toContain('Failed to disassociate sprint from item item-1');
+    });
+
+    it('Comment 3 (PR 76): project-only sprint move updates work items project_id without rename', async () => {
+      const mockCurrentSprint = {
+        id: 'sp-move-only',
+        name: 'Sprint Stationary Name',
+        project_id: 'proj-old',
+        status: 'active',
+      };
+
+      const mockSelectById = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockCurrentSprint, error: null }),
+          }),
+        }),
+      });
+
+      const mockSingleUpdate = vi.fn().mockResolvedValue({
+        data: { ...mockCurrentSprint, project_id: 'proj-new' },
+        error: null,
+      });
+      const mockUpdate = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: mockSingleUpdate,
+            }),
+          }),
+        }),
+      });
+
+      const mockProjectCheck = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'proj-new' }, error: null }),
+          }),
+        }),
+      });
+
+      const mockWorkItemsEqProject = vi.fn().mockResolvedValue({
+        data: [{ id: 'item-10', project_id: 'proj-old', metadata: { sprint: 'Sprint Stationary Name' } }],
+        error: null,
+      });
+      const mockWorkItemsIs = vi.fn().mockReturnValue({
+        eq: mockWorkItemsEqProject,
+      });
+      const mockWorkItemsEqTenant = vi.fn().mockReturnValue({
+        is: mockWorkItemsIs,
+      });
+      const mockWorkItemsSelect = vi.fn().mockReturnValue({
+        eq: mockWorkItemsEqTenant,
+      });
+
+      const mockWorkItemUpdate = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ error: null }),
+      });
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'sprints') {
+          return { select: mockSelectById, update: mockUpdate };
+        }
+        if (table === 'projects') {
+          return { select: mockProjectCheck };
+        }
+        if (table === 'work_items') {
+          return { select: mockWorkItemsSelect, update: mockWorkItemUpdate };
+        }
+        return {};
+      });
+
+      const res = await SprintRelationalService.updateSprint('tenant-1', 'sp-move-only', {
+        project_id: 'proj-new',
+      });
+
+      expect(res.error).toBeNull();
+      // Verifies work_items was updated with new project_id
+      expect(mockWorkItemUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ project_id: 'proj-new' })
+      );
+    });
+
+    it('Comment 7 (PR 76): deleteSprint rolls back detached items if sprint deletion fails', async () => {
+      const mockCurrentSprint = {
+        id: 'sp-fail-delete',
+        name: 'Sprint Rollback',
+        project_id: 'proj-1',
+        status: 'active',
+      };
+
+      const mockSelectById = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockCurrentSprint, error: null }),
+          }),
+        }),
+      });
+
+      const mockWorkItemsEqProject = vi.fn().mockResolvedValue({
+        data: [{ id: 'item-rollback-1', metadata: { sprint: 'Sprint Rollback' } }],
+        error: null,
+      });
+      const mockWorkItemsIs = vi.fn().mockReturnValue({
+        eq: mockWorkItemsEqProject,
+      });
+      const mockWorkItemsEqTenant = vi.fn().mockReturnValue({
+        is: mockWorkItemsIs,
+      });
+      const mockWorkItemsSelect = vi.fn().mockReturnValue({
+        eq: mockWorkItemsEqTenant,
+      });
+
+      const mockWorkItemUpdate = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ error: null }),
+      });
+
+      const mockSprintDelete = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: { message: 'Foreign key constraint violation' } }),
+        }),
+      });
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'sprints') {
+          return { select: mockSelectById, delete: mockSprintDelete };
+        }
+        if (table === 'work_items') {
+          return { select: mockWorkItemsSelect, update: mockWorkItemUpdate };
+        }
+        return {};
+      });
+
+      const res = await SprintRelationalService.deleteSprint('tenant-1', 'sp-fail-delete');
+
+      expect(res.error).toContain('Foreign key constraint violation');
+      // Verifies rollback was triggered to restore original metadata
+      expect(mockWorkItemUpdate).toHaveBeenCalledWith({
+        metadata: { sprint: 'Sprint Rollback' },
+      });
     });
   });
 });

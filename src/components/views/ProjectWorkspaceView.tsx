@@ -105,6 +105,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setTreeSelectedProjectId(null);
   }, [projectSlug]);
 
+  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
+    setIsDesktopOrTablet(mediaQuery.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktopOrTablet(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
   const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
 
   // Tree View Filtering & Sorting States
@@ -1630,6 +1641,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         fetchData();
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Failed to save sprint settings (${res.status})`);
       } else {
         setBulkToast('Sprint configurations saved.');
         setTimeout(() => setBulkToast(null), 3000);
@@ -1637,6 +1650,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     } catch (err) {
       console.error('Error saving sprint settings:', err);
       fetchData();
+      throw err;
     }
   };
 
@@ -1654,10 +1668,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const rolledBack = { ...it };
       for (const key of Object.keys(updates) as (keyof WorkItem)[]) {
         if (key === 'metadata') {
-          rolledBack.metadata = {
-            ...(rolledBack.metadata || {}),
-            ...(originalItem.metadata || {}),
-          };
+          rolledBack.metadata = originalItem.metadata;
         } else {
           (rolledBack as any)[key] = originalItem[key];
         }
@@ -1811,18 +1822,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       );
       if (assignedItems.length > 0) {
         await Promise.all(
-          assignedItems.map((it) =>
-            apiFetch('/api/v1/items', {
+          assignedItems.map(async (it) => {
+            const nextMeta = {
+              ...(it.metadata || {}),
+              sprint: null,
+              sprint_id: null,
+            };
+            const res = await apiFetch('/api/v1/items', {
               method: 'PATCH',
               body: JSON.stringify({
                 id: it.id,
-                metadata: {
-                  ...(it.metadata || {}),
-                  sprint: null,
-                },
+                metadata: nextMeta,
               }),
-            })
-          )
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || `Failed to disassociate work item ${it.id} (${res.status})`);
+            }
+          })
         );
       }
 
@@ -2845,7 +2862,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       <WorkspaceShell
         isLeftCollapsed={isLhnCollapsed}
         onToggleLeftCollapse={() => setIsLhnCollapsed((prev) => !prev)}
-        isRightOpen={Boolean(selectedDrawerItem || selectedSprintForEdit)}
+        isRightOpen={Boolean((isDesktopOrTablet && selectedDrawerItem) || selectedSprintForEdit)}
         onCloseRight={() => {
           closeDrawer();
           setSelectedSprintForEdit(null);
@@ -3167,26 +3184,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           </div>
         }
         rightPane={
-          selectedDrawerItem ? (
-            <div className="hidden md:contents">
-              <WorkItemInspectorDrawer
-                item={selectedDrawerItem}
-                isOpen={true}
-                onClose={closeDrawer}
-                onUpdateItem={handleUpdateField}
-                onExpandFull={(item) => {
-                  closeDrawer();
-                  setEditingItem(item);
-                }}
-                availableStatuses={projectSettings.statuses || []}
-                availableSprints={availableSprints}
-                availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
-                allItems={items}
-                isReadOnly={isReadOnly}
-                tenantSlug={tenantSlug}
-                projectSlug={projectSlug}
-              />
-            </div>
+          isDesktopOrTablet && selectedDrawerItem ? (
+            <WorkItemInspectorDrawer
+              item={selectedDrawerItem}
+              isOpen={true}
+              onClose={closeDrawer}
+              onUpdateItem={handleUpdateField}
+              onExpandFull={(item) => {
+                closeDrawer();
+                setEditingItem(item);
+              }}
+              availableStatuses={projectSettings.statuses || []}
+              availableSprints={availableSprints}
+              availableAssignees={workspaceMembers.map((m) => m.full_name || m.user_id)}
+              allItems={items}
+              isReadOnly={isReadOnly}
+              tenantSlug={tenantSlug}
+              projectSlug={projectSlug}
+            />
           ) : selectedSprintForEdit ? (
             <SprintInspectorDrawer
               sprint={selectedSprintForEdit}

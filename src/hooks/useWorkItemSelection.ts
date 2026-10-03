@@ -93,7 +93,14 @@ export function useWorkItemSelection({
         .then((data) => (data?.items && data.items.length > 0 ? (data.items[0] as WorkItem) : null))
         .catch(() => null);
 
+    const isStillRequested = () => {
+      if (typeof window === 'undefined') return false;
+      const currentParam = new URLSearchParams(window.location.search).get('item');
+      return currentParam?.trim().toLowerCase() === clean.toLowerCase();
+    };
+
     fetchByParam(primaryParam).then((item) => {
+      if (!isStillRequested()) return;
       if (item) {
         setSelectedItem(item);
         if (onItemChange) {
@@ -101,6 +108,7 @@ export function useWorkItemSelection({
         }
       } else {
         fetchByParam(fallbackParam).then((fallbackItem) => {
+          if (!isStillRequested()) return;
           if (fallbackItem) {
             setSelectedItem(fallbackItem);
             if (onItemChange) {
@@ -110,7 +118,7 @@ export function useWorkItemSelection({
             // Item does not exist anywhere, clean up search param if it's still clean
             if (typeof window !== 'undefined') {
               const url = new URL(window.location.href);
-              if (url.searchParams.get('item') === clean) {
+              if (url.searchParams.get('item')?.trim().toLowerCase() === clean.toLowerCase()) {
                 url.searchParams.delete('item');
                 window.history.replaceState(null, '', url.pathname + url.search);
               }
