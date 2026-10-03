@@ -7,16 +7,21 @@ export interface UseWorkItemSelectionOptions {
   items: WorkItem[];
   initialItemRef?: string | null;
   onItemChange?: (item: WorkItem | null) => void;
+  tenantSlug?: string;
 }
 
 export function useWorkItemSelection({
   items,
   initialItemRef,
   onItemChange,
+  tenantSlug,
 }: UseWorkItemSelectionOptions) {
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const selectedItemRef = useRef<WorkItem | null>(null);
+  selectedItemRef.current = selectedItem;
+  const initialItemRefProcessed = useRef(false);
 
   // Resolve item by external_ref_id or UUID
   const findItemByRef = useCallback(
@@ -39,12 +44,94 @@ export function useWorkItemSelection({
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const itemParam = params.get('item');
-    const matched = findItemByRef(itemParam || initialItemRef);
-    setSelectedItem(matched);
-    if (onItemChange) {
-      onItemChange(matched);
+
+    // Only fallback to initialItemRef on first run if ?item is not present in URL
+    let targetRef: string | null = itemParam;
+    if (!targetRef && !initialItemRefProcessed.current && initialItemRef) {
+      targetRef = initialItemRef;
     }
-  }, [findItemByRef, initialItemRef, onItemChange]);
+    initialItemRefProcessed.current = true;
+
+    if (!targetRef) {
+      setSelectedItem(null);
+      if (onItemChange) {
+        onItemChange(null);
+      }
+      return;
+    }
+
+    const clean = targetRef.trim();
+    const matched = findItemByRef(clean);
+    if (matched) {
+      setSelectedItem(matched);
+      if (onItemChange) {
+        onItemChange(matched);
+      }
+      return;
+    }
+
+    // If already selected and matches targetRef, preserve it (e.g. out-of-project item already loaded)
+    const current = selectedItemRef.current;
+    if (
+      current &&
+      (current.id === clean ||
+        current.external_ref_id?.toLowerCase() === clean.toLowerCase())
+    ) {
+      return;
+    }
+
+    // Out-of-project deep link: attempt fetch by UUID or external_ref_id
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clean);
+    const primaryParam = isUuid ? 'ids' : 'refs';
+    const fallbackParam = isUuid ? 'refs' : 'ids';
+
+    const fetchByParam = (paramName: 'ids' | 'refs') =>
+      fetch(`/api/v1/items/bulk?${paramName}=${encodeURIComponent(clean)}`, {
+        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => (data?.items && data.items.length > 0 ? (data.items[0] as WorkItem) : null))
+        .catch(() => null);
+
+    const isStillRequested = () => {
+      if (typeof window === 'undefined') return false;
+      const currentParam = new URLSearchParams(window.location.search).get('item');
+      return currentParam?.trim().toLowerCase() === clean.toLowerCase();
+    };
+
+    fetchByParam(primaryParam).then((item) => {
+      if (!isStillRequested()) return;
+      if (item) {
+        setSelectedItem(item);
+        if (onItemChange) {
+          onItemChange(item);
+        }
+      } else {
+        fetchByParam(fallbackParam).then((fallbackItem) => {
+          if (!isStillRequested()) return;
+          if (fallbackItem) {
+            setSelectedItem(fallbackItem);
+            if (onItemChange) {
+              onItemChange(fallbackItem);
+            }
+          } else {
+            // Item does not exist anywhere, clean up search param if it's still clean
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location.href);
+              if (url.searchParams.get('item')?.trim().toLowerCase() === clean.toLowerCase()) {
+                url.searchParams.delete('item');
+                window.history.replaceState(null, '', url.pathname + url.search);
+              }
+            }
+            setSelectedItem(null);
+            if (onItemChange) {
+              onItemChange(null);
+            }
+          }
+        });
+      }
+    });
+  }, [findItemByRef, initialItemRef, onItemChange, tenantSlug]);
 
   // Initial load check
   useEffect(() => {

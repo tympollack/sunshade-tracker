@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticate } from '@/lib/auth-guard';
-import { SprintRelationalService, CreateSprintInput } from '@/lib/services/sprintRelationalService';
+import { SprintRelationalService, CreateSprintInput, validateSprintInput } from '@/lib/services/sprintRelationalService';
 
 /**
  * GET /api/v1/sprints
@@ -56,6 +56,11 @@ export async function POST(req: NextRequest) {
 
     const { tenant } = auth.context;
     const body: CreateSprintInput = await req.json();
+
+    const validationError = validateSprintInput(body, false);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
 
     if (!body.name || !body.name.trim()) {
       return NextResponse.json(

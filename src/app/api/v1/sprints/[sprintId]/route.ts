@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticate } from '@/lib/auth-guard';
-import { SprintRelationalService, UpdateSprintInput } from '@/lib/services/sprintRelationalService';
+import { SprintRelationalService, UpdateSprintInput, validateSprintInput } from '@/lib/services/sprintRelationalService';
 
 interface RouteParams {
   params: Promise<{ sprintId: string }>;
@@ -52,6 +52,11 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
     const { tenant } = auth.context;
     const { sprintId } = await props.params;
     const updates: UpdateSprintInput = await req.json();
+
+    const validationError = validateSprintInput(updates, true);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
 
     const { data, error } = await SprintRelationalService.updateSprint(tenant.id, sprintId, updates);
     if (error) {

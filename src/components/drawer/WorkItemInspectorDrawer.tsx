@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { WorkItem, StatusDefinition } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
+import { normalizeAssignee } from '@/lib/assignee-utils';
 
 export interface WorkItemInspectorDrawerProps {
   item: WorkItem | null;
@@ -52,7 +53,7 @@ export function WorkItemInspectorDrawer({
   const [title, setTitle] = useState(item?.title || '');
   const [description, setDescription] = useState(item?.description || '');
   const [status, setStatus] = useState(item?.status || '');
-  const [assignee, setAssignee] = useState(item?.assignee || '');
+  const [assignee, setAssignee] = useState(normalizeAssignee(item?.assignee) || '');
   const [points, setPoints] = useState<number | ''>(
     item?.metadata?.story_points ?? item?.metadata?.points ?? ''
   );
@@ -66,7 +67,7 @@ export function WorkItemInspectorDrawer({
       setTitle(item.title || '');
       setDescription(item.description || '');
       setStatus(item.status || '');
-      setAssignee(item.assignee || '');
+      setAssignee(normalizeAssignee(item.assignee) || '');
       const pts = item.metadata?.story_points ?? item.metadata?.points;
       setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
       setSprint(item.metadata?.sprint || '');
@@ -102,7 +103,7 @@ export function WorkItemInspectorDrawer({
       setTitle(item.title || '');
       setDescription(item.description || '');
       setStatus(item.status || '');
-      setAssignee(item.assignee || '');
+      setAssignee(normalizeAssignee(item.assignee) || '');
       const pts = item.metadata?.story_points ?? item.metadata?.points;
       setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
       setSprint(item.metadata?.sprint || '');
@@ -118,8 +119,9 @@ export function WorkItemInspectorDrawer({
   };
 
   const handleAssigneeChange = (newAssignee: string) => {
-    setAssignee(newAssignee);
-    handleFieldChange({ assignee: newAssignee || null });
+    const canonical = normalizeAssignee(newAssignee) || '';
+    setAssignee(canonical);
+    handleFieldChange({ assignee: canonical || null });
   };
 
   const handlePointsBlur = () => {
@@ -288,7 +290,7 @@ export function WorkItemInspectorDrawer({
               <span>Assignee</span>
             </span>
             <select
-              value={assignee}
+              value={normalizeAssignee(assignee) || ''}
               onChange={(e) => handleAssigneeChange(e.target.value)}
               disabled={isReadOnly}
               aria-label="Assignee"
@@ -296,7 +298,7 @@ export function WorkItemInspectorDrawer({
             >
               <option value="">Unassigned</option>
               {availableAssignees.map((a) => (
-                <option key={a} value={a}>
+                <option key={a} value={normalizeAssignee(a) || a}>
                   {a}
                 </option>
               ))}

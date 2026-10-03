@@ -357,9 +357,11 @@ export function LeftHandNavTree({
               (node.type === 'sprint' &&
                 activeScope.sprintName === node.sprintName &&
                 (!activeScope.projectSlug || activeScope.projectSlug === node.projectSlug) &&
+                (!activeScope.projectId || activeScope.projectId === node.projectId) &&
                 !activeScope.itemId) ||
               (node.type === 'project' &&
-                activeScope.projectSlug === node.projectSlug &&
+                ((activeScope.projectId && activeScope.projectId === node.projectId) ||
+                  (activeScope.projectSlug && activeScope.projectSlug === node.projectSlug)) &&
                 !activeScope.itemId)
             );
 
@@ -374,6 +376,7 @@ export function LeftHandNavTree({
                   selectScope({
                     sprintName: node.sprintName,
                     projectSlug: node.projectSlug,
+                    projectId: node.projectId,
                     itemId: node.item?.id,
                   });
                   if (node.item && onSelectItem) {
