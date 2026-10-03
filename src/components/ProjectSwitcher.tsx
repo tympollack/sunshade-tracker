@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronDown, Plus, Folder, Settings, Layers, Archive } from 'lucide-react';
 
@@ -23,6 +22,8 @@ export interface ProjectSwitcherProps {
    * to condense breadcrumb to icon while keeping desktop label visible.
    */
   isScrolled?: boolean;
+  fullWidth?: boolean;
+  variant?: 'default' | 'compact';
 }
 
 export function ProjectSwitcher({
@@ -32,8 +33,9 @@ export function ProjectSwitcher({
   onArchiveCurrentProject,
   isReadOnly = false,
   isScrolled = false,
+  fullWidth = false,
+  variant = 'default',
 }: ProjectSwitcherProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -104,26 +106,50 @@ export function ProjectSwitcher({
   };
 
   return (
-    <div className="relative min-w-0 shrink">
+    <div className={`relative min-w-0 ${fullWidth ? 'w-full' : 'shrink'}`}>
       <button
         ref={triggerRef}
         onClick={toggleOpen}
         data-testid="project-switcher-trigger"
-        className={`flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 max-w-full ${
-          open
-            ? 'bg-slate-800 border-slate-700 text-white'
-            : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
-        }`}
+        className={
+          variant === 'compact'
+            ? `flex items-center space-x-1 py-1 px-1.5 rounded-md text-xs font-medium transition-colors min-w-0 hover:bg-slate-800 text-slate-300 hover:text-white ${
+                open ? 'bg-slate-800 text-white' : ''
+              }`
+            : fullWidth
+            ? `flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 ${
+                open
+                  ? 'bg-slate-800 border-slate-700 text-white'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
+              }`
+            : `flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors min-w-0 max-w-full ${
+                open
+                  ? 'bg-slate-800 border-slate-700 text-white'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:border-slate-700'
+              }`
+        }
       >
-        {isAll ? (
-          <Layers className="w-3 h-3 text-emerald-400 shrink-0" />
-        ) : (
-          <Folder className="w-3 h-3 text-emerald-400 shrink-0" />
-        )}
-        <span className="max-w-[50px] sm:max-w-[75px] lg:max-w-[95px] xl:max-w-[130px] truncate shrink min-w-0 transition-all duration-200">
-          {currentProject?.name || currentProjectSlug}
-        </span>
-        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+        <div className="flex items-center space-x-1.5 min-w-0 overflow-hidden">
+          {variant !== 'compact' && (
+            isAll ? (
+              <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            ) : (
+              <Folder className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            )
+          )}
+          <span
+            className={
+              variant === 'compact'
+                ? 'truncate shrink min-w-0 text-slate-200 font-medium max-w-[90px] sm:max-w-[120px]'
+                : fullWidth
+                ? 'truncate shrink min-w-0 text-slate-200 font-medium'
+                : 'max-w-[50px] sm:max-w-[75px] lg:max-w-[95px] xl:max-w-[130px] truncate shrink min-w-0 transition-all duration-200'
+            }
+          >
+            {currentProject?.name || currentProjectSlug}
+          </span>
+        </div>
+        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform shrink-0 ml-1 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && mounted && createPortal(
