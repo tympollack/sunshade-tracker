@@ -23,6 +23,9 @@ import {
   StatementDateStepper,
   StatementTimeframe,
 } from './StatementDateStepper';
+import { ProjectFocusAccordion } from './ProjectFocusAccordion';
+import { VelocitySettingsPopover } from './VelocitySettingsPopover';
+import { EstimationCalibrationPayload } from '@/lib/services/estimationCalibrationService';
 import {
   getPeriodRange,
   getWeekRange,
@@ -55,9 +58,23 @@ export function StatementGenerator({
   const [dateValidationError, setDateValidationError] = useState<string | null>(null);
 
   const [data, setData] = useState<EfficiencyMetricsPayload | null>(initialData || null);
+  const [calibrationData, setCalibrationData] = useState<EstimationCalibrationPayload | null>(null);
+  const [simulatedRatio, setSimulatedRatio] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
+
+  const velocityProjects = React.useMemo(() => {
+    return (
+      calibrationData?.projects.map((p) => ({
+        id: p.projectId,
+        name: p.projectName,
+        slug: p.projectSlug,
+        currentRatio: p.configuredRatio,
+        isCustom: p.isCustomRatio,
+      })) || []
+    );
+  }, [calibrationData?.projects]);
 
   // Synchronize URL query params shallowly without full unmount
   const updateUrl = useCallback((tf: StatementTimeframe, start: string, end: string) => {
@@ -69,6 +86,33 @@ export function StatementGenerator({
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.pushState(null, '', newUrl);
   }, []);
+
+  // Fetch telemetry calibration data
+  const fetchCalibration = useCallback(
+    async (startDateStr: string, endDateStr: string, simRatio?: number | null) => {
+      try {
+        const params = new URLSearchParams({
+          tenant_slug: tenantSlug,
+          start_date: new Date(startDateStr).toISOString(),
+          end_date: new Date(`${endDateStr}T23:59:59.999Z`).toISOString(),
+        });
+        const activeRatio = simRatio !== undefined ? simRatio : simulatedRatio;
+        if (typeof activeRatio === 'number' && activeRatio > 0) {
+          params.set('simulate_ratio', String(activeRatio));
+        }
+        const res = await fetch(`/api/v1/statements/calibration?${params.toString()}`, {
+          headers: { 'x-tenant-slug': tenantSlug },
+        });
+        if (res.ok) {
+          const calPayload: EstimationCalibrationPayload = await res.json();
+          setCalibrationData(calPayload);
+        }
+      } catch {
+        // Fallback
+      }
+    },
+    [tenantSlug, simulatedRatio]
+  );
 
   // Compute preset dates based on timeframe selection
   const computePresetDates = useCallback((tf: StatementTimeframe): { start: string; end: string } => {
@@ -123,13 +167,16 @@ export function StatementGenerator({
         const payload: EfficiencyMetricsPayload = await res.json();
         setData(payload);
         onDataChange?.(payload);
+
+        // Fetch telemetric estimation calibration alongside statement
+        fetchCalibration(startDateStr, endDateStr);
       } catch (err: any) {
         setError(err.message || 'Error generating statement');
       } finally {
         setLoading(false);
       }
     },
-    [tenantSlug, onDataChange]
+    [tenantSlug, onDataChange, fetchCalibration]
   );
 
   const isFirstMount = useRef(true);
@@ -256,8 +303,22 @@ export function StatementGenerator({
           onRangeChange={handleRangeChange}
         />
 
-        {/* Action buttons (Print, CSV, JSON) */}
-        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+        {/* Action buttons (Velocity Settings, Print, CSV, JSON) */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-auto">
+          <VelocitySettingsPopover
+            tenantSlug={tenantSlug}
+            defaultRatio={calibrationData?.defaultVelocityRatio ?? 2.0}
+            projects={velocityProjects}
+            onRatioSimulate={(simRatio) => {
+              setSimulatedRatio(simRatio);
+              fetchCalibration(customStartDate, customEndDate, simRatio);
+            }}
+            onSettingsSaved={() => {
+              setSimulatedRatio(null);
+              fetchCalibration(customStartDate, customEndDate, null);
+            }}
+          />
+
           <button
             type="button"
             onClick={handlePrint}
@@ -429,6 +490,14 @@ export function StatementGenerator({
               </div>
             </div>
           </div>
+
+          {/* Project Workload Focus & Estimation Calibration Accordion */}
+          {calibrationData?.projects && calibrationData.projects.length > 0 && (
+            <ProjectFocusAccordion
+              projects={calibrationData.projects}
+              targetVelocityRatio={calibrationData.defaultVelocityRatio}
+            />
+          )}
 
           {/* Itemized Yield Table */}
           <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 space-y-4">
