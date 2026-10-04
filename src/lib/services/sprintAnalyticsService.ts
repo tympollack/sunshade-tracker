@@ -50,7 +50,7 @@ export const DEFAULT_METRIC_RULES: Required<MetricRules> = {
   enforce_zero_sum: true,
   unstarted_statuses: ['not_started', 'todo', 'unplanned', 'backlog', 'open', 'planned', 'pitch_backlog'],
   in_progress_statuses: ['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing'],
-  completed_statuses: ['done', 'completed', 'resolved', 'closed', 'shipped'],
+  completed_statuses: ['complete', 'completed', 'done', 'resolved', 'closed', 'shipped'],
   emergency_priorities: ['P0', 'CRITICAL', 'EMERGENCY'],
   lock_estimates_in_active_sprint: true,
   scope_creep_warning_threshold: 15,

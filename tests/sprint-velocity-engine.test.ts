@@ -357,7 +357,7 @@ describe('TASK-TRK-VELOCITY-ENGINE: Rolling Velocity & Enterprise KPI Engine', (
       expect(res.status).toBe(403);
     });
 
-    it('returns 400 when sprint_id is missing', async () => {
+    it('returns available sprints when sprint_id is omitted', async () => {
       (authenticate as any).mockResolvedValue({
         context: { tenant: { slug: 'pym-energy' }, userId: 'u-1', role: 'admin' },
         errorResponse: null,
@@ -366,9 +366,9 @@ describe('TASK-TRK-VELOCITY-ENGINE: Rolling Velocity & Enterprise KPI Engine', (
       const req = new NextRequest('http://localhost:3000/api/v1/sprints/analytics');
       const res = await getSprintAnalyticsRoute(req);
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.error).toContain('sprint_id');
+      expect(Array.isArray(json.sprints)).toBe(true);
     });
 
     it('returns 200 with sprint telemetry report on valid authenticated request', async () => {
