@@ -19,8 +19,19 @@ import {
   formatEfficiencyStatementCSV,
   formatEfficiencyStatementJSON,
 } from '@/lib/services/valueLedgerService';
+import {
+  StatementDateStepper,
+  StatementTimeframe,
+} from './StatementDateStepper';
+import {
+  getPeriodRange,
+  getWeekRange,
+  getMonthRange,
+  getQuarterRange,
+  getYearRange,
+} from '@/lib/utils/dateRanges';
 
-export type StatementTimeframe = 'month' | 'quarter' | 'year' | 'custom';
+export type { StatementTimeframe };
 
 export interface StatementGeneratorProps {
   tenantSlug: string;
@@ -38,12 +49,9 @@ export function StatementGenerator({
   const [timeframe, setTimeframe] = useState<StatementTimeframe>('month');
 
   // Date range inputs (YYYY-MM-DD for standard HTML date input)
-  const now = new Date();
-  const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const defaultEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-
-  const [customStartDate, setCustomStartDate] = useState(defaultStartDate);
-  const [customEndDate, setCustomEndDate] = useState(defaultEndDate);
+  const initialMonth = getMonthRange();
+  const [customStartDate, setCustomStartDate] = useState(initialMonth.startDate);
+  const [customEndDate, setCustomEndDate] = useState(initialMonth.endDate);
   const [dateValidationError, setDateValidationError] = useState<string | null>(null);
 
   const [data, setData] = useState<EfficiencyMetricsPayload | null>(initialData || null);
@@ -51,29 +59,34 @@ export function StatementGenerator({
   const [error, setError] = useState<string | null>(null);
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
 
+  // Synchronize URL query params shallowly without full unmount
+  const updateUrl = useCallback((tf: StatementTimeframe, start: string, end: string) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('timeframe', tf);
+    params.set('start', start);
+    params.set('end', end);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState(null, '', newUrl);
+  }, []);
+
   // Compute preset dates based on timeframe selection
   const computePresetDates = useCallback((tf: StatementTimeframe): { start: string; end: string } => {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth();
-
+    if (tf === 'week') {
+      const range = getWeekRange();
+      return { start: range.startDate, end: range.endDate };
+    }
     if (tf === 'month') {
-      const start = new Date(y, m, 1).toISOString().slice(0, 10);
-      const end = new Date(y, m + 1, 0).toISOString().slice(0, 10);
-      return { start, end };
+      const range = getMonthRange();
+      return { start: range.startDate, end: range.endDate };
     }
-
     if (tf === 'quarter') {
-      const q = Math.floor(m / 3);
-      const start = new Date(y, q * 3, 1).toISOString().slice(0, 10);
-      const end = new Date(y, q * 3 + 3, 0).toISOString().slice(0, 10);
-      return { start, end };
+      const range = getQuarterRange();
+      return { start: range.startDate, end: range.endDate };
     }
-
     if (tf === 'year') {
-      const start = new Date(y, 0, 1).toISOString().slice(0, 10);
-      const end = new Date(y, 11, 31).toISOString().slice(0, 10);
-      return { start, end };
+      const range = getYearRange();
+      return { start: range.startDate, end: range.endDate };
     }
 
     return { start: customStartDate, end: customEndDate };
@@ -121,6 +134,49 @@ export function StatementGenerator({
 
   const isFirstMount = useRef(true);
 
+  // Initialize from URL search parameters on mount if available
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const tfParam = params.get('timeframe') as StatementTimeframe | null;
+    const startParam = params.get('start');
+    const endParam = params.get('end');
+
+    if (tfParam && ['week', 'month', 'quarter', 'year', 'custom'].includes(tfParam)) {
+      setTimeframe(tfParam);
+      if (startParam && endParam) {
+        setCustomStartDate(startParam);
+        setCustomEndDate(endParam);
+        if (!initialData) {
+          fetchStatement(tfParam, startParam, endParam);
+        }
+        return;
+      }
+    }
+  }, [fetchStatement, initialData]);
+
+  // Listen to popstate for browser navigation (forward/back)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tfParam = params.get('timeframe') as StatementTimeframe | null;
+      const startParam = params.get('start');
+      const endParam = params.get('end');
+
+      if (tfParam && ['week', 'month', 'quarter', 'year', 'custom'].includes(tfParam)) {
+        setTimeframe(tfParam);
+        if (startParam && endParam) {
+          setCustomStartDate(startParam);
+          setCustomEndDate(endParam);
+          fetchStatement(tfParam, startParam, endParam);
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [fetchStatement]);
+
   // Trigger statement fetch when timeframe or preset changes
   useEffect(() => {
     if (isFirstMount.current) {
@@ -139,7 +195,17 @@ export function StatementGenerator({
       const { start, end } = computePresetDates(tf);
       setCustomStartDate(start);
       setCustomEndDate(end);
+      updateUrl(tf, start, end);
+    } else {
+      updateUrl('custom', customStartDate, customEndDate);
     }
+  };
+
+  const handleRangeChange = (start: string, end: string) => {
+    setCustomStartDate(start);
+    setCustomEndDate(end);
+    fetchStatement(timeframe, start, end);
+    updateUrl(timeframe, start, end);
   };
 
   const handleCustomDateSubmit = (e: React.FormEvent) => {
@@ -149,6 +215,7 @@ export function StatementGenerator({
       return;
     }
     fetchStatement('custom', customStartDate, customEndDate);
+    updateUrl('custom', customStartDate, customEndDate);
   };
 
   // Export handlers
@@ -179,30 +246,18 @@ export function StatementGenerator({
   return (
     <div className={`space-y-6 ${className}`} data-testid="statement-generator">
       {/* Timeframe Range Selector Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-sm print:hidden">
-        <div className="flex flex-wrap items-center gap-2" data-testid="timeframe-selector">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider mr-1">
-            Timeframe:
-          </span>
-          {(['month', 'quarter', 'year', 'custom'] as const).map((tf) => (
-            <button
-              key={tf}
-              type="button"
-              data-testid={`timeframe-btn-${tf}`}
-              onClick={() => handleTimeframeChange(tf)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
-                timeframe === tf
-                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                  : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'
-              }`}
-            >
-              {tf}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-sm print:hidden">
+        <StatementDateStepper
+          timeframe={timeframe}
+          startDate={customStartDate}
+          endDate={customEndDate}
+          periodLabel={data?.dateRange.periodLabel}
+          onTimeframeChange={handleTimeframeChange}
+          onRangeChange={handleRangeChange}
+        />
 
         {/* Action buttons (Print, CSV, JSON) */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
           <button
             type="button"
             onClick={handlePrint}

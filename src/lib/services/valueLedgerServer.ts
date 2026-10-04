@@ -7,7 +7,7 @@ import {
 export interface GetEfficiencyOptions {
   startDate?: string;
   endDate?: string;
-  period?: 'monthly' | 'all-time' | 'month' | 'quarter' | 'year' | 'custom';
+  period?: 'monthly' | 'all-time' | 'month' | 'quarter' | 'year' | 'week' | 'weekly' | 'custom';
   periodMultiplier?: number;
 }
 
@@ -237,6 +237,7 @@ export async function getTenantEfficiencyMetrics(
     if (options?.period === 'quarter') periodMultiplier = 3;
     else if (options?.period === 'year') periodMultiplier = 12;
     else if (options?.period === 'monthly' || options?.period === 'month') periodMultiplier = 1;
+    else if (options?.period === 'week' || options?.period === 'weekly') periodMultiplier = 0.25;
   }
 
   return computeEfficiencyMetrics({
