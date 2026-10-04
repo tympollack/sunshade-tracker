@@ -48,6 +48,10 @@ export interface MetricRules {
   enforce_zero_sum?: boolean;
   /** Statuses considered unstarted and eligible for backlog ejection (default: ['not_started', 'todo', 'unplanned', 'backlog', 'open', 'planned', 'pitch_backlog']) */
   unstarted_statuses?: string[];
+  /** Statuses considered in-progress / active WIP */
+  in_progress_statuses?: string[];
+  /** Statuses considered completed / done */
+  completed_statuses?: string[];
   /** Priorities permitted to bypass runway and zero-sum guardrails (default: ['P0', 'CRITICAL', 'EMERGENCY']) */
   emergency_priorities?: string[];
   /** Whether story points / estimates are immutable in active sprints (default: true) */

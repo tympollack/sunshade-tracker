@@ -49,6 +49,8 @@ export const DEFAULT_METRIC_RULES: Required<MetricRules> = {
   allowed_late_types: ['chore', 'task', 'debt', 'documentation', 'doc', 'test', 'bug'],
   enforce_zero_sum: true,
   unstarted_statuses: ['not_started', 'todo', 'unplanned', 'backlog', 'open', 'planned', 'pitch_backlog'],
+  in_progress_statuses: ['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing'],
+  completed_statuses: ['done', 'completed', 'resolved', 'closed', 'shipped'],
   emergency_priorities: ['P0', 'CRITICAL', 'EMERGENCY'],
   lock_estimates_in_active_sprint: true,
   scope_creep_warning_threshold: 15,
@@ -99,17 +101,23 @@ export function resolveMetricRules(settingsOrObject?: any): Required<MetricRules
     if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
       resolved.late_runway_max_points = rawRules.late_runway_max_points;
     }
-    if (Array.isArray(rawRules.feature_story_types) && rawRules.feature_story_types.length > 0) {
+    if (Array.isArray(rawRules.feature_story_types)) {
       resolved.feature_story_types = rawRules.feature_story_types.map((s: any) => String(s).toLowerCase().trim());
     }
-    if (Array.isArray(rawRules.allowed_late_types) && rawRules.allowed_late_types.length > 0) {
+    if (Array.isArray(rawRules.allowed_late_types)) {
       resolved.allowed_late_types = rawRules.allowed_late_types.map((s: any) => String(s).toLowerCase().trim());
     }
     if (typeof rawRules.enforce_zero_sum === 'boolean') {
       resolved.enforce_zero_sum = rawRules.enforce_zero_sum;
     }
-    if (Array.isArray(rawRules.unstarted_statuses) && rawRules.unstarted_statuses.length > 0) {
+    if (Array.isArray(rawRules.unstarted_statuses)) {
       resolved.unstarted_statuses = rawRules.unstarted_statuses.map((s: any) => String(s).toLowerCase().trim());
+    }
+    if (Array.isArray(rawRules.in_progress_statuses)) {
+      resolved.in_progress_statuses = rawRules.in_progress_statuses.map((s: any) => String(s).toLowerCase().trim());
+    }
+    if (Array.isArray(rawRules.completed_statuses)) {
+      resolved.completed_statuses = rawRules.completed_statuses.map((s: any) => String(s).toLowerCase().trim());
     }
     if (Array.isArray(rawRules.emergency_priorities) && rawRules.emergency_priorities.length > 0) {
       resolved.emergency_priorities = rawRules.emergency_priorities.map((s: any) => String(s).toUpperCase().trim());
@@ -292,12 +300,19 @@ export function getReliabilityStatus(
  * Pure calculation: Cycle Time across completed work items.
  * Mean time in days from status: in_progress to status: complete.
  */
-export function calculateCycleTime(items?: WorkItemLifecycleData[]): number {
+export function calculateCycleTime(
+  items?: WorkItemLifecycleData[],
+  customCompletedStatuses?: string[] | Set<string>
+): number {
   if (!items || items.length === 0) return 0;
+
+  const completedSet = customCompletedStatuses
+    ? (customCompletedStatuses instanceof Set ? customCompletedStatuses : new Set(customCompletedStatuses.map(s => s.toLowerCase().trim())))
+    : COMPLETED_STATUSES;
 
   const completedItems = items.filter((it) => {
     const st = String(it.status || '').toLowerCase().trim();
-    return COMPLETED_STATUSES.has(st);
+    return completedSet.has(st);
   });
 
   if (completedItems.length === 0) return 0;
@@ -330,13 +345,18 @@ export function calculateCycleTime(items?: WorkItemLifecycleData[]): number {
  */
 export function calculateWIPAge(
   items?: WorkItemLifecycleData[],
-  nowParam?: Date | string | number
+  nowParam?: Date | string | number,
+  customInProgressStatuses?: string[] | Set<string>
 ): number {
   if (!items || items.length === 0) return 0;
 
+  const inProgressSet = customInProgressStatuses
+    ? (customInProgressStatuses instanceof Set ? customInProgressStatuses : new Set(customInProgressStatuses.map(s => s.toLowerCase().trim())))
+    : IN_PROGRESS_STATUSES;
+
   const inProgressItems = items.filter((it) => {
     const st = String(it.status || '').toLowerCase().trim();
-    return IN_PROGRESS_STATUSES.has(st);
+    return inProgressSet.has(st);
   });
 
   if (inProgressItems.length === 0) return 0;
@@ -415,16 +435,28 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
 
   const pointItems = getSprintLeafItems(items);
 
+  // Status classification sets resolved from project metric rules
+  const effectiveCompletedStatuses = new Set(
+    rules.completed_statuses && rules.completed_statuses.length > 0
+      ? rules.completed_statuses.map((s) => s.toLowerCase().trim())
+      : COMPLETED_STATUSES
+  );
+  const effectiveInProgressStatuses = new Set(
+    rules.in_progress_statuses && rules.in_progress_statuses.length > 0
+      ? rules.in_progress_statuses.map((s) => s.toLowerCase().trim())
+      : IN_PROGRESS_STATUSES
+  );
+
   for (const it of pointItems) {
     const pts = getItemPoints(it);
     totalCurrentPoints += pts;
 
     const st = String(it.status || '').toLowerCase().trim();
-    if (COMPLETED_STATUSES.has(st)) {
+    if (effectiveCompletedStatuses.has(st)) {
       completedPoints += pts;
     } else {
       remainingPoints += pts;
-      if (IN_PROGRESS_STATUSES.has(st)) {
+      if (effectiveInProgressStatuses.has(st)) {
         inProgressPoints += pts;
       }
     }
@@ -473,8 +505,8 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
   });
 
   // 5. Cycle time & WIP age
-  const cycleTimeDays = calculateCycleTime(items);
-  const wipAgeDays = calculateWIPAge(items, now);
+  const cycleTimeDays = calculateCycleTime(items, effectiveCompletedStatuses);
+  const wipAgeDays = calculateWIPAge(items, now, effectiveInProgressStatuses);
 
   // 6. Runway elapsed ratio & late runway lock based on configured threshold
   const startedAt = sprint.started_at || sprint.start_date;

@@ -193,11 +193,24 @@ export function ItemDetailsTab({
             onChange={(e) => onItemTypeChange(e.target.value)}
             className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
           >
-            {effectiveProjectSettings.hierarchy.map((h) => (
-              <option key={h.type} value={h.type}>
-                {h.label} (Level {h.level})
-              </option>
-            ))}
+            {effectiveProjectSettings.hierarchy
+              .filter((h) => {
+                if (
+                  Array.isArray(effectiveProjectSettings.allowed_story_types) &&
+                  effectiveProjectSettings.allowed_story_types.length > 0
+                ) {
+                  return (
+                    effectiveProjectSettings.allowed_story_types.includes(h.type.toLowerCase().trim()) ||
+                    h.type.toLowerCase().trim() === (itemType || '').toLowerCase().trim()
+                  );
+                }
+                return true;
+              })
+              .map((h) => (
+                <option key={h.type} value={h.type}>
+                  {h.label} (Level {h.level})
+                </option>
+              ))}
           </select>
         </div>
 

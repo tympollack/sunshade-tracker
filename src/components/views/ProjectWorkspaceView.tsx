@@ -3178,6 +3178,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleSaveSchema={handleSaveSchema}
                   isSavingSchema={isSavingSchema}
                   setIsArchiveModalOpen={setIsArchiveModalOpen}
+                  activeItems={
+                    isAllProjects
+                      ? items.filter((it) => {
+                          const activeProj = allProjects.find(
+                            (p) => p.slug === (selectedSchemaProjectSlug || allProjects[0]?.slug)
+                          );
+                          return activeProj ? it.project_id === activeProj.id : true;
+                        })
+                      : items
+                  }
                 />
               )}
             </div>
