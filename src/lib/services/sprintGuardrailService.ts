@@ -204,7 +204,11 @@ export function validateSprintIntakePure(params: {
     // If elapsed_ratio > rules.late_runway_threshold (default 0.60), enforce strict sizing:
     if (elapsedRatio > rules.late_runway_threshold) {
       const incomingPoints = extractStoryPoints(incomingItem);
-      if (isFeatureStory(incomingItem, rules.feature_story_types) && incomingPoints > rules.late_runway_max_points) {
+      const incomingType = String(incomingItem.item_type || incomingItem.type || incomingItem.metadata?.item_type || '').toLowerCase().trim();
+      const isAllowedLateType = (rules.allowed_late_types || []).some((t) => t.toLowerCase().trim() === incomingType);
+      const isFeature = isFeatureStory(incomingItem, rules.feature_story_types);
+
+      if ((isFeature || !isAllowedLateType) && incomingPoints > rules.late_runway_max_points) {
         const thresholdPercent = Math.round(rules.late_runway_threshold * 100);
         const remainingPercent = 100 - thresholdPercent;
         throw new SprintGuardrailError({

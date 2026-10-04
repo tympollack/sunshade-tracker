@@ -346,6 +346,20 @@ export async function POST(req: NextRequest) {
     const resolvedType = item_type || defaultType;
     const resolvedStatus = status || defaultStatus;
 
+    // Validate against allowed_story_types if configured
+    if (
+      Array.isArray(projectSettings?.allowed_story_types) &&
+      projectSettings.allowed_story_types.length > 0 &&
+      !projectSettings.allowed_story_types.map((t: string) => t.toLowerCase().trim()).includes(resolvedType.toLowerCase().trim())
+    ) {
+      return NextResponse.json(
+        {
+          error: `Item type '${resolvedType}' is not allowed for creation. Allowed types: [${projectSettings.allowed_story_types.join(', ')}]`,
+        },
+        { status: 422 }
+      );
+    }
+
     // Validate hierarchy nesting if parent_id is given
     if (parent_id && projectSettings?.hierarchy) {
       const { data: parentItem } = await supabaseAdmin

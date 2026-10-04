@@ -3,7 +3,7 @@
 import React from 'react';
 import { Shield, Zap, Lock, Unlock, HelpCircle, Minus, Plus } from 'lucide-react';
 import { MetricRules } from '@/types/tracker';
-import { DEFAULT_METRIC_RULES } from '@/lib/services/sprintAnalyticsService';
+import { DEFAULT_METRIC_RULES, resolveMetricRules } from '@/lib/services/sprintAnalyticsService';
 
 export interface SprintGovernanceFormProps {
   metrics?: MetricRules;
@@ -58,7 +58,7 @@ export function SprintGovernanceForm({
 
   const handleUpdate = (patch: Partial<MetricRules>) => {
     if (readOnly) return;
-    const base = metrics || { ...DEFAULT_METRIC_RULES };
+    const base = metrics ? { ...resolveMetricRules(metrics), ...metrics } : resolveMetricRules();
     const updated: MetricRules = {
       ...base,
       ...patch,

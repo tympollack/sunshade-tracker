@@ -302,17 +302,14 @@ export function TaxonomyConfigEditor({
   // 1. Allowed Story Types
   const allowedStoryTypes =
     settings.allowed_story_types ||
-    settings.sprint_metrics?.feature_story_types ||
-    DEFAULT_METRIC_RULES.feature_story_types;
+    (settings.hierarchy && settings.hierarchy.length > 0
+      ? settings.hierarchy.map((h) => h.type.toLowerCase().trim())
+      : DEFAULT_STORY_TYPE_SUGGESTIONS);
 
   const handleUpdateStoryTypes = (newTypes: string[]) => {
     const updated = {
       ...settings,
       allowed_story_types: newTypes,
-      sprint_metrics: {
-        ...(settings.sprint_metrics || {}),
-        feature_story_types: newTypes,
-      },
     };
     onChange(updated);
   };

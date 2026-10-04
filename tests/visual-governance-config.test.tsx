@@ -20,6 +20,7 @@ const baseSettings: ProjectSettings = {
     { id: 'done', label: 'Done', color: '#22c55e', order: 3 },
   ],
   custom_fields: ['priority', 'points'],
+  allowed_story_types: ['epic', 'story'],
   sprint_metrics: {
     velocity_window: 3,
     late_runway_threshold: 0.60,
@@ -316,6 +317,47 @@ describe('TASK-TRK-SCHEMA-TAB-VIEW-SWITCHER: ProjectSchemaView', () => {
     expect(handleChange).toHaveBeenCalledWith(
       expect.objectContaining({
         allowed_story_types: ['epic'],
+      })
+    );
+  });
+
+  it('displays saveError banner in Visual Form mode when onSave rejects', async () => {
+    const handleSave = vi.fn().mockRejectedValue(new Error('Network schema save rejected'));
+    render(<ProjectSchemaView settings={baseSettings} onSave={handleSave} initialMode="visual" />);
+
+    const saveBtn = screen.getByRole('button', { name: /save schema/i });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Network schema save rejected')).toBeDefined();
+    });
+  });
+
+  it('preserves existing metric_rules overrides when editing SprintGovernanceForm from ProjectSchemaEditor', () => {
+    const handleChange = vi.fn();
+    const settingsWithMetricRules: ProjectSettings = {
+      ...baseSettings,
+      sprint_metrics: undefined,
+      metric_rules: {
+        velocity_window: 7,
+        enforce_zero_sum: false,
+        late_runway_threshold: 0.75,
+      },
+    };
+
+    render(<ProjectSchemaEditor settings={settingsWithMetricRules} onChange={handleChange} />);
+
+    // Toggle zero-sum switch
+    const zeroSumSwitch = screen.getByRole('switch', { name: /toggle zero-sum enforcement/i });
+    fireEvent.click(zeroSumSwitch);
+
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sprint_metrics: expect.objectContaining({
+          velocity_window: 7,
+          late_runway_threshold: 0.75,
+          enforce_zero_sum: true,
+        }),
       })
     );
   });

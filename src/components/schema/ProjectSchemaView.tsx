@@ -42,6 +42,7 @@ export function ProjectSchemaView({
   const [rawText, setRawText] = useState(() => JSON.stringify(settings, null, 2));
   const [rawError, setRawError] = useState<string | null>(null);
   const [syntaxToast, setSyntaxToast] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [collapseLevel, setCollapseLevel] = useState<number>(3);
 
@@ -51,6 +52,7 @@ export function ProjectSchemaView({
     setRawText(JSON.stringify(settings, null, 2));
     setRawError(null);
     setSyntaxToast(null);
+    setSaveError(null);
   }, [settings]);
 
   // Handle switching view mode with locked transition if JSON syntax is invalid
@@ -155,10 +157,13 @@ export function ProjectSchemaView({
     try {
       await onSave(payloadToSave);
       setSaveSuccess(true);
+      setSaveError(null);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
       setSaveSuccess(false);
-      setRawError(err.message || 'Failed to save schema settings.');
+      const msg = err.message || 'Failed to save schema settings.';
+      setSaveError(msg);
+      setRawError(msg);
     }
   };
 
@@ -287,6 +292,24 @@ export function ProjectSchemaView({
         </div>
       </div>
 
+      {/* Save Error Banner (Visible in all view modes) */}
+      {saveError && (
+        <div className="px-4 py-2.5 bg-red-950/90 border-b border-red-800/80 flex items-center justify-between text-xs text-red-200 animate-in slide-in-from-top-1">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="font-mono">{saveError}</span>
+          </div>
+          <button
+            type="button"
+            aria-label="Dismiss save error"
+            onClick={() => setSaveError(null)}
+            className="text-red-400 hover:text-white p-0.5 rounded transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Syntax Error Toast / Banner */}
       {syntaxToast && (
         <div className="px-4 py-2.5 bg-red-950/90 border-b border-red-800/80 flex items-center justify-between text-xs text-red-200 animate-in slide-in-from-top-1">
@@ -305,7 +328,7 @@ export function ProjectSchemaView({
       )}
 
       {/* Raw Error Banner (when in raw mode) */}
-      {mode === 'raw' && rawError && !syntaxToast && (
+      {mode === 'raw' && rawError && !syntaxToast && !saveError && (
         <div className="px-4 py-2 bg-red-950/70 border-b border-red-800/50 flex items-center space-x-2 text-xs text-red-300">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="font-mono">{rawError}</span>

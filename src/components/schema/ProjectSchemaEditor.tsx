@@ -53,7 +53,12 @@ export function ProjectSchemaEditor({
 
       {/* 1. Sprint Metric Rules (Governance) Interactive Card */}
       <SprintGovernanceForm
-        metrics={settings.sprint_metrics}
+        metrics={
+          settings.sprint_metrics ||
+          settings.metric_rules ||
+          settings.sprint_settings?.metric_rules ||
+          settings.sprint_settings?.metrics
+        }
         onChange={(updatedMetrics) => {
           onChange({
             ...settings,
