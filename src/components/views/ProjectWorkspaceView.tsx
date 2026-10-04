@@ -3178,6 +3178,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleSaveSchema={handleSaveSchema}
                   isSavingSchema={isSavingSchema}
                   setIsArchiveModalOpen={setIsArchiveModalOpen}
+                  activeItems={items}
                 />
               )}
             </div>
