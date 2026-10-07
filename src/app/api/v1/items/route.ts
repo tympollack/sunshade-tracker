@@ -583,6 +583,13 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
       }
 
+      const { reconcileSprintMetadata } = await import('@/lib/bulk-items');
+      const resolvedMetadata = reconcileSprintMetadata(
+        existingItem.metadata || {},
+        metadata,
+        effectiveProjectSettings
+      );
+
       // Guardrail 3: Immutable Estimates on active sprint items
       try {
         const itemSprint = existingItem.metadata?.sprint || existingItem.metadata?.sprint_id;
@@ -594,15 +601,49 @@ export async function PATCH(req: NextRequest) {
               (s.status === 'active' || s.is_active || s.is_current)
           );
           if (activeSprintDef) {
-            const { validateEstimateImmutability, SprintGuardrailError } = await import(
+            const { validateEstimateImmutability } = await import(
               '@/lib/services/sprintGuardrailService'
             );
             validateEstimateImmutability(
               existingItem,
-              metadata,
+              resolvedMetadata,
               activeSprintDef,
               effectiveProjectSettings?.sprint_metrics || effectiveProjectSettings?.metric_rules
             );
+          }
+        }
+
+        // Active sprint intake guard: reject assigning estimated items to active sprint without mid-sprint flag
+        const targetSprintName = resolvedMetadata?.sprint;
+        const targetSprintId = resolvedMetadata?.sprint_id;
+        const prevSprintName = existingItem.metadata?.sprint;
+        const prevSprintId = existingItem.metadata?.sprint_id;
+        const isSprintChanging = targetSprintName !== prevSprintName || targetSprintId !== prevSprintId;
+
+        if (isSprintChanging && targetSprintName) {
+          const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+          const activeSprint = sprints.find(
+            (s: any) =>
+              (s.name === targetSprintName || s.id === targetSprintName || (targetSprintId && s.id === targetSprintId)) &&
+              (s.status === 'active' || s.is_active || s.is_current)
+          );
+          if (activeSprint) {
+            const hasPoints =
+              (existingItem.metadata?.story_points !== undefined && existingItem.metadata?.story_points !== null && Number(existingItem.metadata.story_points) > 0) ||
+              (existingItem.metadata?.points !== undefined && existingItem.metadata?.points !== null && Number(existingItem.metadata.points) > 0) ||
+              (resolvedMetadata?.story_points !== undefined && resolvedMetadata?.story_points !== null && Number(resolvedMetadata.story_points) > 0);
+            const isAddedMidSprint = Boolean(
+              resolvedMetadata?.added_mid_sprint || existingItem.metadata?.added_mid_sprint
+            );
+            if (hasPoints && !isAddedMidSprint) {
+              return NextResponse.json(
+                {
+                  error: `Cannot assign item "${existingItem.title || existingItem.id}" with estimated points to active sprint "${activeSprint.name}". Active sprint scope is locked.`,
+                  code: 'ESTIMATE_LOCKED',
+                },
+                { status: 409 }
+              );
+            }
           }
         }
       } catch (err: any) {
@@ -612,7 +653,7 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      updateFields.metadata = metadata;
+      updateFields.metadata = resolvedMetadata;
     }
 
     // Validate item_type against effective project schema

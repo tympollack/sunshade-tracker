@@ -1214,27 +1214,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     }
 
+    const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
+    const isMovingToBacklog = !newSprint || newSprint === '__none__';
+    const targetSprintName = isMovingToBacklog ? null : newSprint;
+    const targetSprintDef = targetSprintName
+      ? sprintDefs.find((s: any) => s.name === targetSprintName || s.id === targetSprintName) ||
+        availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
+      : null;
+    const targetSprintId = targetSprintDef?.id || null;
+
     const newMetadata = { ...(item.metadata || {}) };
-    if (newSprint && newSprint !== '__none__') {
-      newMetadata.sprint = newSprint;
+    if (targetSprintName) {
+      newMetadata.sprint = targetSprintDef?.name || targetSprintName;
+      if (targetSprintId) {
+        newMetadata.sprint_id = targetSprintId;
+      } else {
+        delete newMetadata.sprint_id;
+      }
     } else {
       delete newMetadata.sprint;
+      delete newMetadata.sprint_id;
     }
-
-    setItems((prev) =>
-      prev.map((it) => {
-        if (targetIdSet.has(it.id)) {
-          const nextMeta = { ...(it.metadata || {}) };
-          if (newSprint && newSprint !== '__none__') {
-            nextMeta.sprint = newSprint;
-          } else {
-            delete nextMeta.sprint;
-          }
-          return { ...it, metadata: nextMeta };
-        }
-        return it;
-      })
-    );
 
     try {
       const res = await apiFetch('/api/v1/items', {
@@ -1245,12 +1245,32 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const errJson = await res.json().catch(() => ({}));
         setBulkToast(errJson.error || 'Failed to update sprint');
         setTimeout(() => setBulkToast(null), 4000);
-        fetchData();
+        return;
       }
+
+      setItems((prev) =>
+        prev.map((it) => {
+          if (targetIdSet.has(it.id)) {
+            const nextMeta = { ...(it.metadata || {}) };
+            if (targetSprintName) {
+              nextMeta.sprint = targetSprintDef?.name || targetSprintName;
+              if (targetSprintId) {
+                nextMeta.sprint_id = targetSprintId;
+              } else {
+                delete nextMeta.sprint_id;
+              }
+            } else {
+              delete nextMeta.sprint;
+              delete nextMeta.sprint_id;
+            }
+            return { ...it, metadata: nextMeta };
+          }
+          return it;
+        })
+      );
     } catch (err: any) {
       setBulkToast(err?.message || 'Network error updating sprint');
       setTimeout(() => setBulkToast(null), 4000);
-      fetchData();
     }
   };
 
@@ -1948,22 +1968,41 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setTimeout(() => setBulkToast(null), 3500);
     }
 
+    const isMovingToBacklog = !targetSprint || targetSprint === '__none__';
+    const targetSprintName = isMovingToBacklog ? null : targetSprint;
+
+    // Resolve target sprint definition to get canonical name and relational sprint_id
+    const targetSprintDef = targetSprintName
+      ? availableSprintDefs.find(
+          (s) => s.name === targetSprintName || s.id === targetSprintName
+        ) ||
+        (projectSettings?.sprint_settings?.sprints || []).find(
+          (s: any) => s.name === targetSprintName || s.id === targetSprintName
+        )
+      : null;
+
+    const targetSprintId = targetSprintDef?.id || null;
+
+    // Active sprint lock guard: check if target sprint is active and items have points
+    if (targetSprintDef && isSprintActive(targetSprintDef)) {
+      const estimatedItems = mutableItems.filter(
+        (it) => Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0
+      );
+      if (estimatedItems.length > 0) {
+        setBulkToast(
+          `Cannot move ${estimatedItems.length} estimated item(s) to active sprint "${targetSprintDef.name}". Active sprint scope is locked.`
+        );
+        setTimeout(() => setBulkToast(null), 4000);
+        return;
+      }
+    }
+
     const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
 
-    setItems((prev) =>
-      prev.map((it) => {
-        if (!idSet.has(it.id)) return it;
-        const newMeta = { ...(it.metadata || {}) };
-        if (targetSprint && targetSprint !== '__none__') {
-          newMeta.sprint = targetSprint;
-        } else {
-          delete newMeta.sprint;
-        }
-        return { ...it, metadata: newMeta };
-      })
-    );
-
+    // Eliminate optimistic state rollback:
+    // Do NOT mutate items optimistically prior to mutation confirmation.
+    // Instead, indicate bulk operation is in progress via isBulkApplying.
     setIsBulkApplying(true);
     try {
       const res = await apiFetch('/api/v1/items/bulk', {
@@ -1972,7 +2011,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ids: mutableIds,
           updates: {
             metadata: {
-              sprint: targetSprint && targetSprint !== '__none__' ? targetSprint : null,
+              sprint: targetSprintName,
+              sprint_id: targetSprintId,
             },
           },
         }),
@@ -1981,16 +2021,37 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const err = await res.json().catch(() => ({}));
         setBulkToast(`Failed to move sprint: ${err.error || 'Server rejected update'}`);
         setTimeout(() => setBulkToast(null), 4000);
-        fetchData();
-      } else {
-        setBulkToast(`Moved ${mutableIds.length} items to ${targetSprint && targetSprint !== '__none__' ? targetSprint : 'Backlog'}.`);
-        setTimeout(() => setBulkToast(null), 3000);
-        setSelectedItemIds(new Set());
+        return;
       }
+
+      // Mutation succeeded: apply updated sprint state now
+      setItems((prev) =>
+        prev.map((it) => {
+          if (!idSet.has(it.id)) return it;
+          const newMeta = { ...(it.metadata || {}) };
+          if (targetSprintName) {
+            newMeta.sprint = targetSprintDef?.name || targetSprintName;
+            if (targetSprintId) {
+              newMeta.sprint_id = targetSprintId;
+            } else {
+              delete newMeta.sprint_id;
+            }
+          } else {
+            delete newMeta.sprint;
+            delete newMeta.sprint_id;
+          }
+          return { ...it, metadata: newMeta };
+        })
+      );
+
+      setBulkToast(
+        `Moved ${mutableIds.length} items to ${targetSprintDef?.name || targetSprintName || 'Backlog'}.`
+      );
+      setTimeout(() => setBulkToast(null), 3000);
+      setSelectedItemIds(new Set());
     } catch (err: any) {
       setBulkToast(`Network error moving items: ${err?.message || 'Failed to communicate with server'}`);
       setTimeout(() => setBulkToast(null), 4000);
-      fetchData();
     } finally {
       setIsBulkApplying(false);
     }
