@@ -240,6 +240,13 @@ export async function getTenantEfficiencyMetrics(
     else if (options?.period === 'week' || options?.period === 'weekly') periodMultiplier = 0.25;
   }
 
+  // Scale projectMonths for sub-monthly periods (e.g. weekly reports with periodMultiplier = 0.25)
+  // to avoid awarding a full calendar-month allowance (2.0 hrs) for 1 week of activity (0.5 hrs).
+  const effectiveProjectMonths =
+    periodMultiplier !== undefined && periodMultiplier < 1
+      ? Number((activeProjectsCount * periodMultiplier).toFixed(2))
+      : totalProjectMonths;
+
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,
     tenantName: tenant.name,
@@ -250,6 +257,6 @@ export async function getTenantEfficiencyMetrics(
     startDate,
     endDate,
     periodMultiplier,
-    projectMonths: totalProjectMonths,
+    projectMonths: effectiveProjectMonths,
   });
 }

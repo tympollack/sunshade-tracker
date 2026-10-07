@@ -46,13 +46,16 @@ export function VelocitySettingsPopover({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Only synchronize baselineRatio with prop when popover is closed and not simulating
   useEffect(() => {
-    setBaselineRatio(defaultRatio);
-  }, [defaultRatio]);
+    if (!isOpen && !isSimulating) {
+      setBaselineRatio(defaultRatio);
+    }
+  }, [defaultRatio, isOpen, isSimulating]);
 
-  // Initialize project overrides from props
+  // Initialize project overrides from props when popover is closed
   useEffect(() => {
-    if (!projects || projects.length === 0) return;
+    if (isOpen || !projects || projects.length === 0) return;
     const initialMap: Record<string, { inherit: boolean; ratio: number }> = {};
     for (const p of projects) {
       initialMap[p.id] = {
@@ -61,7 +64,7 @@ export function VelocitySettingsPopover({
       };
     }
     setProjectOverrides(initialMap);
-  }, [projects, defaultRatio]);
+  }, [projects, defaultRatio, isOpen]);
 
   const handleBaselineChange = (val: number) => {
     const clamped = Math.max(0.5, Math.min(8.0, Math.round(val * 4) / 4));

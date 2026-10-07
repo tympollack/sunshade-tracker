@@ -76,46 +76,11 @@ export function StatementGenerator({
     );
   }, [calibrationData?.projects]);
 
-  // Synchronize URL query params shallowly without full unmount
-  const updateUrl = useCallback((tf: StatementTimeframe, start: string, end: string) => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    params.set('timeframe', tf);
-    params.set('start', start);
-    params.set('end', end);
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.history.pushState(null, '', newUrl);
-  }, []);
+  const statementReqIdRef = useRef(0);
+  const calibrationReqIdRef = useRef(0);
 
-  // Fetch telemetry calibration data
-  const fetchCalibration = useCallback(
-    async (startDateStr: string, endDateStr: string, simRatio?: number | null) => {
-      try {
-        const params = new URLSearchParams({
-          tenant_slug: tenantSlug,
-          start_date: new Date(startDateStr).toISOString(),
-          end_date: new Date(`${endDateStr}T23:59:59.999Z`).toISOString(),
-        });
-        const activeRatio = simRatio !== undefined ? simRatio : simulatedRatio;
-        if (typeof activeRatio === 'number' && activeRatio > 0) {
-          params.set('simulate_ratio', String(activeRatio));
-        }
-        const res = await fetch(`/api/v1/statements/calibration?${params.toString()}`, {
-          headers: { 'x-tenant-slug': tenantSlug },
-        });
-        if (res.ok) {
-          const calPayload: EstimationCalibrationPayload = await res.json();
-          setCalibrationData(calPayload);
-        }
-      } catch {
-        // Fallback
-      }
-    },
-    [tenantSlug, simulatedRatio]
-  );
-
-  // Compute preset dates based on timeframe selection
-  const computePresetDates = useCallback((tf: StatementTimeframe): { start: string; end: string } => {
+  // Pure preset calculation that does not depend on dynamic component state
+  const getPresetDates = useCallback((tf: StatementTimeframe): { start: string; end: string } => {
     if (tf === 'week') {
       const range = getWeekRange();
       return { start: range.startDate, end: range.endDate };
@@ -132,11 +97,53 @@ export function StatementGenerator({
       const range = getYearRange();
       return { start: range.startDate, end: range.endDate };
     }
+    return { start: '', end: '' };
+  }, []);
 
-    return { start: customStartDate, end: customEndDate };
-  }, [customStartDate, customEndDate]);
+  // Synchronize URL query params shallowly without full unmount
+  const updateUrl = useCallback((tf: StatementTimeframe, start: string, end: string) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('timeframe', tf);
+    params.set('start', start);
+    params.set('end', end);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState(null, '', newUrl);
+  }, []);
 
-  // Fetch statement data for the active timeframe and dates
+  // Fetch telemetry calibration data with request sequence guarding
+  const fetchCalibration = useCallback(
+    async (startDateStr: string, endDateStr: string, simRatio?: number | null) => {
+      const reqId = ++calibrationReqIdRef.current;
+      try {
+        const params = new URLSearchParams({
+          tenant_slug: tenantSlug,
+          start_date: new Date(startDateStr).toISOString(),
+          end_date: new Date(`${endDateStr}T23:59:59.999Z`).toISOString(),
+        });
+        const activeRatio = simRatio !== undefined ? simRatio : simulatedRatio;
+        if (typeof activeRatio === 'number' && activeRatio > 0) {
+          params.set('simulate_ratio', String(activeRatio));
+        }
+        const res = await fetch(`/api/v1/statements/calibration?${params.toString()}`, {
+          headers: { 'x-tenant-slug': tenantSlug },
+        });
+        if (reqId !== calibrationReqIdRef.current) return;
+
+        if (res.ok) {
+          const calPayload: EstimationCalibrationPayload = await res.json();
+          if (reqId === calibrationReqIdRef.current) {
+            setCalibrationData(calPayload);
+          }
+        }
+      } catch {
+        // Fallback
+      }
+    },
+    [tenantSlug, simulatedRatio]
+  );
+
+  // Fetch statement data for the active timeframe and dates with request sequence guarding
   const fetchStatement = useCallback(
     async (tf: StatementTimeframe, startDateStr: string, endDateStr: string) => {
       if (tf === 'custom' && startDateStr > endDateStr) {
@@ -146,6 +153,7 @@ export function StatementGenerator({
       setDateValidationError(null);
       setLoading(true);
       setError(null);
+      const reqId = ++statementReqIdRef.current;
 
       try {
         const queryParams = new URLSearchParams({
@@ -159,29 +167,35 @@ export function StatementGenerator({
           headers: { 'x-tenant-slug': tenantSlug },
         });
 
+        if (reqId !== statementReqIdRef.current) return;
+
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `HTTP ${res.status}: Failed to generate statement`);
         }
 
         const payload: EfficiencyMetricsPayload = await res.json();
+        if (reqId !== statementReqIdRef.current) return;
+
         setData(payload);
         onDataChange?.(payload);
 
         // Fetch telemetric estimation calibration alongside statement
         fetchCalibration(startDateStr, endDateStr);
       } catch (err: any) {
-        setError(err.message || 'Error generating statement');
+        if (reqId === statementReqIdRef.current) {
+          setError(err.message || 'Error generating statement');
+        }
       } finally {
-        setLoading(false);
+        if (reqId === statementReqIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [tenantSlug, onDataChange, fetchCalibration]
   );
 
-  const isFirstMount = useRef(true);
-
-  // Initialize from URL search parameters on mount if available
+  // Initialize from URL search parameters on mount if available, or fetch initial preset if no initialData
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -196,11 +210,23 @@ export function StatementGenerator({
         setCustomEndDate(endParam);
         if (!initialData) {
           fetchStatement(tfParam, startParam, endParam);
+        } else {
+          fetchCalibration(startParam, endParam);
         }
         return;
       }
     }
-  }, [fetchStatement, initialData]);
+
+    if (!initialData) {
+      const { start, end } = getPresetDates('month');
+      setCustomStartDate(start);
+      setCustomEndDate(end);
+      fetchStatement('month', start, end);
+    } else {
+      const { start, end } = getPresetDates('month');
+      fetchCalibration(start, end);
+    }
+  }, [tenantSlug, fetchStatement, fetchCalibration, getPresetDates, initialData]);
 
   // Listen to popstate for browser navigation (forward/back)
   useEffect(() => {
@@ -224,27 +250,17 @@ export function StatementGenerator({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [fetchStatement]);
 
-  // Trigger statement fetch when timeframe or preset changes
-  useEffect(() => {
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      if (initialData) return;
-    }
-    if (timeframe !== 'custom') {
-      const { start, end } = computePresetDates(timeframe);
-      fetchStatement(timeframe, start, end);
-    }
-  }, [timeframe, computePresetDates, fetchStatement, initialData]);
-
   const handleTimeframeChange = (tf: StatementTimeframe) => {
     setTimeframe(tf);
     if (tf !== 'custom') {
-      const { start, end } = computePresetDates(tf);
+      const { start, end } = getPresetDates(tf);
       setCustomStartDate(start);
       setCustomEndDate(end);
       updateUrl(tf, start, end);
+      fetchStatement(tf, start, end);
     } else {
       updateUrl('custom', customStartDate, customEndDate);
+      fetchStatement('custom', customStartDate, customEndDate);
     }
   };
 
@@ -495,6 +511,7 @@ export function StatementGenerator({
           {calibrationData?.projects && calibrationData.projects.length > 0 && (
             <ProjectFocusAccordion
               projects={calibrationData.projects}
+              tenantSlug={tenantSlug}
               targetVelocityRatio={calibrationData.defaultVelocityRatio}
             />
           )}

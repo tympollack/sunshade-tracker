@@ -15,17 +15,20 @@ import { CalibrationBar } from './CalibrationBar';
 
 export interface ProjectFocusAccordionProps {
   projects: ProjectCalibrationGroup[];
+  tenantSlug?: string;
   targetVelocityRatio?: number;
   onSelectItem?: (externalRefId: string) => void;
   className?: string;
 }
 
-const STORAGE_KEY = 'statement_accordion_state';
+const getStorageKey = (tenantSlug?: string) =>
+  tenantSlug ? `statement_accordion_state_${tenantSlug}` : 'statement_accordion_state';
 
 const EMPTY_PROJECTS: ProjectCalibrationGroup[] = [];
 
 export function ProjectFocusAccordion({
   projects = EMPTY_PROJECTS,
+  tenantSlug,
   targetVelocityRatio = 2.0,
   onSelectItem,
   className = '',
@@ -36,29 +39,29 @@ export function ProjectFocusAccordion({
   useEffect(() => {
     if (!Array.isArray(projects) || projects.length === 0) return;
 
+    let savedMap: Record<string, boolean> = {};
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(getStorageKey(tenantSlug));
       if (saved) {
-        setOpenMap(JSON.parse(saved));
-        return;
+        savedMap = JSON.parse(saved);
       }
     } catch {
       // Fallback
     }
 
-    // Default: expand all projects initially
+    // Default: expand all projects initially, respecting saved preferences for known projects
     const defaults = projects.reduce<Record<string, boolean>>((acc, p) => {
-      acc[p.projectId] = true;
+      acc[p.projectId] = savedMap[p.projectId] !== undefined ? savedMap[p.projectId] : true;
       return acc;
     }, {});
     setOpenMap(defaults);
-  }, [projects]);
+  }, [projects, tenantSlug]);
 
   const toggleProject = (projectId: string) => {
     setOpenMap((prev) => {
       const next = { ...prev, [projectId]: !prev[projectId] };
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        localStorage.setItem(getStorageKey(tenantSlug), JSON.stringify(next));
       } catch {
         // Storage quota / privacy mode fallback
       }

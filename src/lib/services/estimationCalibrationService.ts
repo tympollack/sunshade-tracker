@@ -72,7 +72,16 @@ export interface CalibrationTelemetryOptions {
   simulatedRatio?: number;
 }
 
-const DEFAULT_COMPLETION_STATUSES = new Set(['complete', 'completed', 'done', 'closed', 'resolved']);
+const DEFAULT_COMPLETION_STATUSES = new Set([
+  'complete',
+  'completed',
+  'done',
+  'closed',
+  'resolved',
+  'shipped',
+  'approved',
+  'published',
+]);
 
 /**
  * Core backend aggregation service calculating telemetric estimation calibration.
@@ -154,22 +163,42 @@ export async function getEstimationCalibrationTelemetry(
   const startMs = new Date(startDate).getTime();
   const endMs = new Date(endDate).getTime();
 
-  // 4. Fetch all work items for this tenant
-  let itemsQuery: any = service
-    .from('work_items')
-    .select('id, project_id, parent_id, external_ref_id, item_type, status, title, metadata, created_at, updated_at')
-    .eq('tenant_id', tenant.id);
+  // 4. Fetch all work items for this tenant with pagination
+  const allItems: any[] = [];
+  const PAGE_SIZE = 1000;
+  let offset = 0;
+  let hasMore = true;
 
-  if (typeof itemsQuery.is === 'function') {
-    itemsQuery = itemsQuery.is('deleted_at', null);
+  while (hasMore) {
+    let itemsQuery: any = service
+      .from('work_items')
+      .select('id, project_id, parent_id, external_ref_id, item_type, status, title, metadata, created_at, updated_at')
+      .eq('tenant_id', tenant.id);
+
+    if (typeof itemsQuery.is === 'function') {
+      itemsQuery = itemsQuery.is('deleted_at', null);
+    }
+
+    if (typeof itemsQuery.range === 'function') {
+      itemsQuery = itemsQuery.range(offset, offset + PAGE_SIZE - 1);
+    }
+
+    const { data: pageData, error: itemsErr } = await itemsQuery;
+    if (itemsErr) {
+      throw new Error(`Failed to load work items for workspace: ${itemsErr.message}`);
+    }
+
+    if (pageData && pageData.length > 0) {
+      allItems.push(...pageData);
+      if (pageData.length < PAGE_SIZE || typeof itemsQuery.range !== 'function') {
+        hasMore = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
+    } else {
+      hasMore = false;
+    }
   }
-
-  const { data: rawItems, error: itemsErr } = await itemsQuery;
-  if (itemsErr) {
-    throw new Error(`Failed to load work items for workspace: ${itemsErr.message}`);
-  }
-
-  const allItems: any[] = rawItems || [];
 
   // Identify parent IDs to determine leaf nodes
   const parentIdSet = new Set<string>();
@@ -252,22 +281,23 @@ export async function getEstimationCalibrationTelemetry(
   // 5. Query logged time from tracker.work_item_time_logs
   const timeLogsMap = new Map<string, number>();
   if (completedItemIds.length > 0) {
-    try {
-      let timeLogQuery: any = service
-        .from('work_item_time_logs')
-        .select('work_item_id, duration_seconds')
-        .eq('tenant_id', tenant.id)
-        .in('work_item_id', completedItemIds);
+    let timeLogQuery: any = service
+      .from('work_item_time_logs')
+      .select('work_item_id, duration_seconds')
+      .eq('tenant_id', tenant.id)
+      .in('work_item_id', completedItemIds);
 
-      const { data: logs } = await timeLogQuery;
-      if (Array.isArray(logs)) {
-        for (const log of logs) {
-          const hours = (log.duration_seconds || 0) / 3600.0;
-          timeLogsMap.set(log.work_item_id, (timeLogsMap.get(log.work_item_id) || 0) + hours);
-        }
+    const { data: logs, error: logsErr } = await timeLogQuery;
+    if (logsErr) {
+      if (logsErr.code !== '42P01' && !logsErr.message?.includes('does not exist')) {
+        throw new Error(`Failed to query work item time logs: ${logsErr.message}`);
       }
-    } catch {
-      // Graceful fallback if time logs table is empty or mocked
+    }
+    if (Array.isArray(logs)) {
+      for (const log of logs) {
+        const hours = (log.duration_seconds || 0) / 3600.0;
+        timeLogsMap.set(log.work_item_id, (timeLogsMap.get(log.work_item_id) || 0) + hours);
+      }
     }
   }
 
@@ -352,22 +382,24 @@ export async function getEstimationCalibrationTelemetry(
       title.includes('triage') ||
       item.metadata?.source_type === 'hotfix';
 
-    const itemCreatedMs = item.created_at ? new Date(item.created_at).getTime() : 0;
-    const isMidCycleCreation = itemCreatedMs > startMs + 24 * 3600 * 1000; // Created >1 day into period
-
-    const isChurn =
+    const isExplicitUnplanned =
       Boolean(item.metadata?.unplanned) ||
+      Boolean(item.metadata?.added_mid_sprint) ||
       Boolean(item.metadata?.churn) ||
-      isBug ||
-      isMidCycleCreation;
+      Boolean(item.metadata?.scope_churn) ||
+      Boolean(item.metadata?.unplanned_churn);
+
+    const isChurn = isExplicitUnplanned || isBug;
 
     const classification: 'planned_scope' | 'unplanned_churn' = isChurn ? 'unplanned_churn' : 'planned_scope';
     const churnReason = isBug
       ? 'bug_hotfix'
-      : isMidCycleCreation
-      ? 'mid_cycle_creation'
+      : item.metadata?.added_mid_sprint
+      ? 'added_mid_sprint'
       : item.metadata?.unplanned
       ? 'unplanned_triage'
+      : isExplicitUnplanned
+      ? 'scope_churn'
       : undefined;
 
     const completedAtStr = compMs ? new Date(compMs).toISOString() : null;
@@ -416,8 +448,8 @@ export async function getEstimationCalibrationTelemetry(
     const projItems = projectItemsMap.get(projId) || [];
 
     const isCustomRatio =
-      Boolean(projRecord?.settings?.velocity_ratio) &&
-      Number(projRecord?.settings?.velocity_ratio) !== defaultTenantRatio;
+      projRecord?.settings?.velocity_ratio !== undefined &&
+      projRecord?.settings?.velocity_ratio !== null;
 
     const configuredRatio =
       typeof options?.simulatedRatio === 'number' && !isNaN(options.simulatedRatio) && options.simulatedRatio > 0

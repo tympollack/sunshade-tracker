@@ -178,4 +178,22 @@ describe('TASK-TRK-PROJECT-ACCORDION-UI: ProjectFocusAccordion Component', () =>
     expect(screen.getByTestId('mobile-items-list')).toBeInTheDocument();
     expect(screen.getByTestId('mobile-item-card-item-101')).toBeInTheDocument();
   });
+
+  it('isolates accordion localStorage keys across workspace boundaries', () => {
+    render(
+      <ProjectFocusAccordion
+        projects={mockProjects}
+        tenantSlug="cyberdyne"
+        targetVelocityRatio={2.0}
+      />
+    );
+
+    const toggleBtn = screen.getByTestId('accordion-toggle-proj-1');
+    fireEvent.click(toggleBtn);
+
+    const saved = JSON.parse(
+      localStorage.getItem('statement_accordion_state_cyberdyne') || '{}'
+    );
+    expect(saved['proj-1']).toBe(false);
+  });
 });

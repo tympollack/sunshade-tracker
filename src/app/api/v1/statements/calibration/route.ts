@@ -114,9 +114,19 @@ export async function GET(req: NextRequest) {
       periodLabel = `Weekly Calibration (${startDateParam.slice(0, 10)} to ${endDateParam.slice(0, 10)})`;
     }
 
+    let resolvedStartDate = startDateParam || undefined;
+    if (resolvedStartDate && /^\d{4}-\d{2}-\d{2}$/.test(resolvedStartDate)) {
+      resolvedStartDate = `${resolvedStartDate}T00:00:00.000Z`;
+    }
+
+    let resolvedEndDate = endDateParam || undefined;
+    if (resolvedEndDate && /^\d{4}-\d{2}-\d{2}$/.test(resolvedEndDate)) {
+      resolvedEndDate = `${resolvedEndDate}T23:59:59.999Z`;
+    }
+
     const payload = await getEstimationCalibrationTelemetry(targetSlug, {
-      startDate: startDateParam || undefined,
-      endDate: endDateParam || undefined,
+      startDate: resolvedStartDate,
+      endDate: resolvedEndDate,
       periodLabel,
       simulatedRatio,
     });

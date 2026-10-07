@@ -46,17 +46,25 @@ export async function updateVelocitySettingsAction(
       return { success: false, error: `Workspace "@${tenantSlug}" not found.` };
     }
 
-    // 2. Validate authorization if authenticated user is present
-    if (user && tenant.owner_id !== user.id) {
-      const { data: member } = await supabaseAdmin
+    // 2. Validate authorization (session required, viewers forbidden)
+    if (!user) {
+      return { success: false, error: 'Unauthorized: Session required to modify workspace settings.' };
+    }
+
+    if (tenant.owner_id !== user.id) {
+      const { data: member, error: memberErr } = await supabaseAdmin
         .from('tenant_members')
         .select('role')
         .eq('tenant_id', tenant.id)
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (!member) {
+      if (memberErr || !member) {
         return { success: false, error: 'Forbidden: You do not have permissions to edit workspace settings.' };
+      }
+
+      if (member.role === 'viewer') {
+        return { success: false, error: 'Forbidden: Viewer role cannot modify workspace settings.' };
       }
     }
 
@@ -85,12 +93,19 @@ export async function updateVelocitySettingsAction(
     // 4. Update project overrides if specified
     if (Array.isArray(config.projectOverrides) && config.projectOverrides.length > 0) {
       for (const override of config.projectOverrides) {
-        const { data: proj } = await supabaseAdmin
+        const { data: proj, error: projFetchErr } = await supabaseAdmin
           .from('projects')
           .select('id, settings')
           .eq('id', override.projectId)
           .eq('tenant_id', tenant.id)
           .maybeSingle();
+
+        if (projFetchErr) {
+          return {
+            success: false,
+            error: `Failed to fetch project ${override.projectId}: ${projFetchErr.message}`,
+          };
+        }
 
         if (proj) {
           const projSettings = { ...(proj.settings || {}) };
@@ -100,13 +115,20 @@ export async function updateVelocitySettingsAction(
             projSettings.velocity_ratio = override.velocityRatio;
           }
 
-          await supabaseAdmin
+          const { error: projUpdateErr } = await supabaseAdmin
             .from('projects')
             .update({
               settings: projSettings,
               updated_at: new Date().toISOString(),
             })
             .eq('id', proj.id);
+
+          if (projUpdateErr) {
+            return {
+              success: false,
+              error: `Failed to update velocity settings for project ${override.projectId}: ${projUpdateErr.message}`,
+            };
+          }
         }
       }
     }
