@@ -261,16 +261,17 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             </button>
           )}
 
-          {/* Manage Sprints Button */}
+          {/* Configure Sprints / + New Sprint Button */}
           {!isReadOnly && (
             <button
               type="button"
               onClick={() => setIsManageSprintsOpen(true)}
               className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 hover:text-emerald-200 transition-colors flex items-center space-x-1.5 font-medium cursor-pointer"
               data-testid="open-manage-sprints-btn"
+              title="Configure Sprints / + New Sprint"
             >
               <Settings2 className="w-3.5 h-3.5" />
-              <span>Manage Sprints</span>
+              <span>Configure Sprints / + New Sprint</span>
             </button>
           )}
 
