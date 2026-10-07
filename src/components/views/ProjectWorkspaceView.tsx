@@ -1217,11 +1217,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
     const isMovingToBacklog = !newSprint || newSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : newSprint;
-    const targetSprintDef = targetSprintName
-      ? sprintDefs.find((s: any) => s.name === targetSprintName || s.id === targetSprintName) ||
-        availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
+    const configuredSprintDef = targetSprintName
+      ? sprintDefs.find((s: any) => s.name === targetSprintName || s.id === targetSprintName)
       : null;
-    const targetSprintId = targetSprintDef?.id || null;
+    const targetSprintDef =
+      configuredSprintDef ||
+      (targetSprintName
+        ? availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
+        : null);
+    const targetSprintId = configuredSprintDef?.id || null;
 
     const newMetadata = { ...(item.metadata || {}) };
     if (targetSprintName) {
@@ -1971,26 +1975,43 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const isMovingToBacklog = !targetSprint || targetSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : targetSprint;
 
-    // Resolve target sprint definition to get canonical name and relational sprint_id
-    const targetSprintDef = targetSprintName
-      ? availableSprintDefs.find(
-          (s) => s.name === targetSprintName || s.id === targetSprintName
-        ) ||
-        (projectSettings?.sprint_settings?.sprints || []).find(
+    // Resolve target sprint definition: only configured sprints have real relational sprint_ids.
+    // Ad-hoc sprints missing from settings should NOT receive fabricated string IDs.
+    const configuredSprintDef = targetSprintName
+      ? (projectSettings?.sprint_settings?.sprints || []).find(
           (s: any) => s.name === targetSprintName || s.id === targetSprintName
         )
       : null;
 
-    const targetSprintId = targetSprintDef?.id || null;
+    const targetSprintDef =
+      configuredSprintDef ||
+      (targetSprintName
+        ? availableSprintDefs.find(
+            (s) => s.name === targetSprintName || s.id === targetSprintName
+          )
+        : null);
 
-    // Active sprint lock guard: check if target sprint is active and items have points
+    const targetSprintId = configuredSprintDef?.id || null;
+
+    // Active sprint lock guard: only check items that are actually entering the active sprint
     if (targetSprintDef && isSprintActive(targetSprintDef)) {
-      const estimatedItems = mutableItems.filter(
+      const itemsEnteringSprint = mutableItems.filter((it) => {
+        const curSprintName = it.metadata?.sprint;
+        const curSprintId = it.metadata?.sprint_id;
+        const isAlreadyInTarget = Boolean(
+          (configuredSprintDef?.id && curSprintId === configuredSprintDef.id) ||
+          (targetSprintDef.name && curSprintName === targetSprintDef.name)
+        );
+        return !isAlreadyInTarget;
+      });
+
+      const estimatedItemsEntering = itemsEnteringSprint.filter(
         (it) => Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0
       );
-      if (estimatedItems.length > 0) {
+
+      if (estimatedItemsEntering.length > 0) {
         setBulkToast(
-          `Cannot move ${estimatedItems.length} estimated item(s) to active sprint "${targetSprintDef.name}". Active sprint scope is locked.`
+          `Cannot move ${estimatedItemsEntering.length} estimated item(s) to active sprint "${targetSprintDef.name}". Active sprint scope is locked.`
         );
         setTimeout(() => setBulkToast(null), 4000);
         return;
