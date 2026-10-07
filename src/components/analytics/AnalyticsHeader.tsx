@@ -132,10 +132,12 @@ export function AnalyticsHeader({
           <NavToolsDropdown
             activeTab={'analytics' as any}
             onSelectTab={(tab) => {
-              if (onSelectTab) {
-                onSelectTab(tab);
-              } else if (typeof window !== 'undefined') {
-                window.location.href = `/${tenantSlug}/${projectSlug}?tab=${tab}`;
+              if (tab === 'spark' || tab === 'schema') {
+                if (onSelectTab) {
+                  onSelectTab(tab);
+                } else if (typeof window !== 'undefined') {
+                  window.location.href = `/${tenantSlug}/${projectSlug}?tab=${tab}`;
+                }
               }
             }}
             tenantSlug={tenantSlug}

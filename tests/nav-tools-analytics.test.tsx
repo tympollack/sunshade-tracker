@@ -93,10 +93,10 @@ describe('STORY-TRK-NAV-TOOLS-ANALYTICS & TASK-TRK-NAV-TOOLS-ANALYTICS-MENU', ()
       expect(analyticsItem).toHaveTextContent('Sprint & flow telemetry');
       expect(analyticsItem).toHaveAttribute('href', '/sunshade/portfolio/analytics');
 
-      // Selecting closes dropdown and triggers callback
+      // Selecting closes dropdown without triggering dashboard tab callback
       analyticsItem.addEventListener('click', (e) => e.preventDefault(), { once: true });
       fireEvent.click(analyticsItem);
-      expect(onSelectTab).toHaveBeenCalledWith('analytics');
+      expect(onSelectTab).not.toHaveBeenCalled();
       expect(screen.queryByTestId('nav-tools-dropdown-menu')).not.toBeInTheDocument();
     });
 
@@ -122,6 +122,22 @@ describe('STORY-TRK-NAV-TOOLS-ANALYTICS & TASK-TRK-NAV-TOOLS-ANALYTICS-MENU', ()
       const analyticsItem = screen.getByTestId('tool-item-analytics');
       expect(analyticsItem.className).toContain('bg-cyan-500/15');
       expect(analyticsItem.className).toContain('text-cyan-300');
+    });
+
+    it('does NOT highlight Tools or Analytics when project name contains analytics (e.g. /sunshade/analytics-team)', () => {
+      render(
+        <NavToolsDropdown
+          activeTab="board"
+          onSelectTab={vi.fn()}
+          tenantSlug="sunshade"
+          projectSlug="analytics-team"
+          pathname="/sunshade/analytics-team"
+        />
+      );
+
+      const trigger = screen.getByTestId('nav-tools-dropdown-trigger');
+      expect(trigger.className).not.toContain('bg-emerald-500/20');
+      expect(trigger.className).not.toContain('text-emerald-300');
     });
 
     it('highlights Tools button when activeTab is set to analytics', () => {
@@ -167,7 +183,23 @@ describe('STORY-TRK-NAV-TOOLS-ANALYTICS & TASK-TRK-NAV-TOOLS-ANALYTICS-MENU', ()
 
       analyticsTool.addEventListener('click', (e) => e.preventDefault(), { once: true });
       fireEvent.click(analyticsTool);
-      expect(onTabChange).toHaveBeenCalledWith('analytics');
+      expect(onTabChange).not.toHaveBeenCalled();
+    });
+
+    it('does NOT highlight mobile tools button when project name contains analytics', () => {
+      render(
+        <MobileBottomNav
+          activeTab="board"
+          onTabChange={vi.fn()}
+          tenantSlug="sunshade"
+          projectSlug="analytics-team"
+          pathname="/sunshade/analytics-team"
+        />
+      );
+
+      const toolsBtn = screen.getByTestId('mobile-nav-tools');
+      expect(toolsBtn.className).not.toContain('text-emerald-400');
+      expect(screen.queryByTestId('mobile-nav-active-pill-tools')).not.toBeInTheDocument();
     });
   });
 

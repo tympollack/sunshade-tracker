@@ -18,6 +18,40 @@ function useSafePathname(): string | null {
   return null;
 }
 
+function useSafeParams(): Record<string, string | string[] | undefined> {
+  try {
+    if (typeof NextNav.useParams === 'function') {
+      const params = NextNav.useParams();
+      if (params && typeof params === 'object') {
+        return params as Record<string, string | string[] | undefined>;
+      }
+    }
+  } catch {
+    // Ignore when outside Next.js App Router context
+  }
+  return {};
+}
+
+export function isAnalyticsRoute(pathname: string | null | undefined, analyticsHref?: string): boolean {
+  if (!pathname) return false;
+  if (analyticsHref && pathname === analyticsHref) return true;
+  if (pathname === '/analytics' || pathname === '/sprints/analytics') return true;
+
+  const cleanPath = pathname.split('?')[0].split('#')[0];
+  const segments = cleanPath.split('/').filter(Boolean);
+  if (segments.length === 0) return false;
+
+  // Must end strictly with segment 'analytics'
+  if (segments[segments.length - 1] !== 'analytics') return false;
+
+  // If there are exactly 2 segments, e.g. /sunshade/analytics, that is a project board whose slug is 'analytics'
+  if (segments.length === 2) {
+    return false;
+  }
+
+  return true;
+}
+
 export interface NavToolsDropdownProps {
   activeTab?: DashboardTab | string;
   onSelectTab: (tab: DashboardTab) => void;
@@ -95,21 +129,19 @@ export function NavToolsDropdown({
 
   const hookPathname = useSafePathname();
   const currentPathname = pathname ?? hookPathname ?? '';
-
-  const isAnalyticsActive = Boolean(
-    activeTab === 'analytics' ||
-    (currentPathname && (currentPathname === '/analytics' || currentPathname.endsWith('/analytics') || currentPathname.includes('/analytics')))
-  );
-
-  const isToolActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
+  const params = useSafeParams();
+  const effectiveTenantSlug = tenantSlug || (typeof params.tenantSlug === 'string' ? params.tenantSlug : undefined);
+  const effectiveProjectSlug = projectSlug || (typeof params.projectSlug === 'string' ? params.projectSlug : undefined);
 
   let effectiveAnalyticsHref = '/analytics';
   if (analyticsHref) {
     effectiveAnalyticsHref = analyticsHref;
-  } else if (tenantSlug && projectSlug) {
-    effectiveAnalyticsHref = `/${tenantSlug}/${projectSlug}/analytics`;
+  } else if (effectiveTenantSlug && effectiveProjectSlug) {
+    effectiveAnalyticsHref = `/${effectiveTenantSlug}/${effectiveProjectSlug}/analytics`;
+  } else if (effectiveTenantSlug) {
+    effectiveAnalyticsHref = `/${effectiveTenantSlug}/sprints/analytics`;
   } else if (currentPathname) {
-    const parts = currentPathname.split('/').filter(Boolean);
+    const parts = currentPathname.split('?')[0].split('#')[0].split('/').filter(Boolean);
     if (parts.length >= 2) {
       if (parts[1] !== 'settings' && parts[1] !== 'sprints' && parts[1] !== 'statements') {
         effectiveAnalyticsHref = `/${parts[0]}/${parts[1]}/analytics`;
@@ -120,6 +152,12 @@ export function NavToolsDropdown({
       effectiveAnalyticsHref = `/${parts[0]}/sprints/analytics`;
     }
   }
+
+  const isAnalyticsActive = Boolean(
+    activeTab === 'analytics' || isAnalyticsRoute(currentPathname, effectiveAnalyticsHref)
+  );
+
+  const isToolActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
 
   return (
     <div className="relative shrink-0">
@@ -163,7 +201,6 @@ export function NavToolsDropdown({
             href={effectiveAnalyticsHref}
             onClick={() => {
               setOpen(false);
-              onSelectTab('analytics' as any);
             }}
             className={`w-full flex items-center space-x-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors cursor-pointer ${
               isAnalyticsActive

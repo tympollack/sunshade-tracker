@@ -6,6 +6,7 @@ import * as NextNav from 'next/navigation';
 import { Kanban, GitFork, Calendar, Wrench, Cpu, Settings, X, BarChart2 } from 'lucide-react';
 import { DashboardTab } from '@/components/rev_trk_02';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
+import { isAnalyticsRoute } from '@/components/NavToolsDropdown';
 
 function useSafePathname(): string | null {
   try {
@@ -67,18 +68,17 @@ export function MobileBottomNav({
   const hookPathname = useSafePathname();
   const currentPathname = pathname ?? hookPathname ?? '';
 
-  const isAnalyticsActive = Boolean(
-    activeTab === 'analytics' ||
-    (currentPathname && (currentPathname === '/analytics' || currentPathname.endsWith('/analytics') || currentPathname.includes('/analytics')))
-  );
-
-  const isToolsActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
-
   const effectiveAnalyticsHref =
     analyticsHref ||
     (tenantSlug && projectSlug
       ? `/${tenantSlug}/${projectSlug}/analytics`
       : '/analytics');
+
+  const isAnalyticsActive = Boolean(
+    activeTab === 'analytics' || isAnalyticsRoute(currentPathname, effectiveAnalyticsHref)
+  );
+
+  const isToolsActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
 
   return (
     <>
@@ -124,7 +124,6 @@ export function MobileBottomNav({
             data-testid="mobile-nav-tool-analytics"
             onClick={() => {
               setToolsOpen(false);
-              onTabChange('analytics' as any);
             }}
             className={`w-full flex items-center space-x-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors cursor-pointer ${
               isAnalyticsActive
