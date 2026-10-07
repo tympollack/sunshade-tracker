@@ -54,6 +54,160 @@ export function validateItemPayloadSizes(item: {
   return null;
 }
 
+/**
+ * Reconciles relational sprint_id and metadata.sprint to prevent payload mismatches
+ * and stale sprint_id bindings when moving items between sprints or into backlog.
+ */
+export function reconcileSprintMetadata(
+  existingMeta: Record<string, any> = {},
+  incomingMeta: Record<string, any> = {},
+  projectSettings?: ProjectSettings,
+  options?: { fullReplacement?: boolean }
+): Record<string, any> {
+  const isFullReplacement = Boolean(options?.fullReplacement);
+  const merged: Record<string, any> = isFullReplacement
+    ? { ...incomingMeta }
+    : { ...existingMeta, ...incomingMeta };
+
+  if (!isFullReplacement) {
+    for (const [k, v] of Object.entries(incomingMeta)) {
+      if (v === null) {
+        delete merged[k];
+      }
+    }
+  }
+
+  const sprintRequested = Object.prototype.hasOwnProperty.call(incomingMeta, 'sprint');
+  const sprintIdRequested = Object.prototype.hasOwnProperty.call(incomingMeta, 'sprint_id');
+
+  // If in full-replacement mode and incoming metadata does NOT specify sprint or sprint_id:
+  // ensure any sprint/sprint_id are not present.
+  if (isFullReplacement && !sprintRequested && !sprintIdRequested) {
+    delete merged.sprint;
+    delete merged.sprint_id;
+    return merged;
+  }
+
+  // If neither sprint nor sprint_id was in incoming updates (in partial update mode), return merged as is
+  if (!sprintRequested && !sprintIdRequested) {
+    return merged;
+  }
+
+  const incomingSprint = incomingMeta.sprint;
+  const incomingSprintId = incomingMeta.sprint_id;
+
+  // 1. Moving to backlog / unassigned
+  const isBacklogSprint =
+    sprintRequested && (incomingSprint === null || incomingSprint === '__none__' || incomingSprint === '');
+  const isBacklogSprintId =
+    sprintIdRequested && (incomingSprintId === null || incomingSprintId === '' || incomingSprintId === '__none__');
+
+  if (isBacklogSprint || isBacklogSprintId) {
+    if (isBacklogSprint) {
+      delete merged.sprint;
+      delete merged.sprint_id;
+    } else if (isBacklogSprintId) {
+      delete merged.sprint_id;
+      if (!sprintRequested) {
+        delete merged.sprint;
+      }
+    }
+    return merged;
+  }
+
+  // 2. Sprint assignment or change
+  const sprints = projectSettings?.sprint_settings?.sprints || [];
+
+  if (sprintRequested && incomingSprint) {
+    // Lookup by incoming sprint name or id
+    const matched = sprints.find(
+      (s: any) => s.name === incomingSprint || s.id === incomingSprint
+    );
+
+    if (matched) {
+      merged.sprint = matched.name || incomingSprint;
+      if (matched.id) {
+        merged.sprint_id = matched.id;
+      } else {
+        delete merged.sprint_id;
+      }
+    } else {
+      // Ad-hoc sprint not in projectSettings has NO relational sprint ID:
+      merged.sprint = incomingSprint;
+      delete merged.sprint_id;
+    }
+  } else if (sprintIdRequested && incomingSprintId) {
+    // Only sprint_id was passed
+    const matched = sprints.find(
+      (s: any) => s.id === incomingSprintId || s.name === incomingSprintId
+    );
+
+    if (matched) {
+      merged.sprint = matched.name;
+      merged.sprint_id = matched.id || incomingSprintId;
+    } else {
+      delete merged.sprint_id;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Evaluates whether an item is transitioning into an active sprint from backlog or another sprint.
+ * Distinguishes genuine sprint transitions from field normalization/backfills on items already in the sprint.
+ */
+export function isMovingIntoActiveSprint(
+  existingMeta: Record<string, any> | undefined,
+  targetMeta: Record<string, any> | undefined,
+  sprints: any[] = []
+): { isIntake: boolean; activeSprint?: any } {
+  const targetName = targetMeta?.sprint;
+  const targetId = targetMeta?.sprint_id;
+
+  // If destination is backlog/unassigned, not moving into active sprint
+  if (!targetName && !targetId) {
+    return { isIntake: false };
+  }
+  if (targetName === '__none__' || targetName === '') {
+    return { isIntake: false };
+  }
+
+  // Find destination sprint definition in settings
+  const targetDef = sprints.find(
+    (s: any) => (targetId && s.id === targetId) || (targetName && (s.name === targetName || s.id === targetName))
+  );
+
+  const isActive =
+    targetDef && (targetDef.status === 'active' || targetDef.is_active || targetDef.is_current);
+
+  if (!isActive) {
+    return { isIntake: false };
+  }
+
+  // Destination IS an active sprint. Now check if the item was already in this sprint.
+  const prevName = existingMeta?.sprint;
+  const prevId = existingMeta?.sprint_id;
+
+  const prevDef = sprints.find(
+    (s: any) => (prevId && s.id === prevId) || (prevName && (s.name === prevName || s.id === prevName))
+  );
+
+  // If previous definition is the same active sprint definition, or names match, it was already in this sprint!
+  const isAlreadyInSameSprint = Boolean(
+    (prevDef && targetDef && prevDef.id === targetDef.id) ||
+    (prevName && targetName && prevName === targetName) ||
+    (prevId && targetId && prevId === targetId)
+  );
+
+  if (isAlreadyInSameSprint) {
+    return { isIntake: false, activeSprint: targetDef };
+  }
+
+  // Item was in backlog or another sprint, now entering an active sprint
+  return { isIntake: true, activeSprint: targetDef };
+}
+
 export interface BulkGetParams {
   ids?: string[];
   refs?: string[];
@@ -977,16 +1131,31 @@ export async function handleBulkUpdateItems(
       if (updates.order_index !== undefined) itemUpdate.order_index = updates.order_index;
 
       if (updates.metadata !== undefined) {
-        const mergedMetadata = {
-          ...(item.metadata || {}),
-          ...updates.metadata,
-        };
-        for (const [k, v] of Object.entries(updates.metadata)) {
-          if (v === null) {
-            delete mergedMetadata[k];
+        const mergedMetadata = reconcileSprintMetadata(item.metadata, updates.metadata, projectSettings);
+        itemUpdate.metadata = mergedMetadata;
+
+        // Active sprint immutability guard
+        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
+
+        if (isIntake && activeSprint) {
+          const hasPoints =
+            (item.metadata?.story_points !== undefined && item.metadata?.story_points !== null && Number(item.metadata.story_points) > 0) ||
+            (item.metadata?.points !== undefined && item.metadata?.points !== null && Number(item.metadata.points) > 0) ||
+            (mergedMetadata?.story_points !== undefined && mergedMetadata?.story_points !== null && Number(mergedMetadata.story_points) > 0);
+          const isAddedMidSprint = Boolean(
+            mergedMetadata?.added_mid_sprint || item.metadata?.added_mid_sprint
+          );
+          if (hasPoints && !isAddedMidSprint) {
+            return {
+              success: false,
+              updated_count: 0,
+              items: [],
+              error: `Cannot assign item "${item.title || item.id}" with estimated points to active sprint "${activeSprint.name}". Active sprint scope is locked.`,
+              status: 409,
+            };
           }
         }
-        itemUpdate.metadata = mergedMetadata;
       }
 
       plannedUpdates.push({ id: item.id, fields: itemUpdate });
@@ -1379,16 +1548,31 @@ export async function handleBulkUpdateItems(
       if (it.order_index !== undefined) patchFields.order_index = it.order_index;
 
       if (it.metadata !== undefined) {
-        const mergedMetadata = {
-          ...(existing.metadata || {}),
-          ...it.metadata,
-        };
-        for (const [k, v] of Object.entries(it.metadata)) {
-          if (v === null) {
-            delete mergedMetadata[k];
+        const mergedMetadata = reconcileSprintMetadata(existing.metadata, it.metadata, projectSettings);
+        patchFields.metadata = mergedMetadata;
+
+        // Active sprint immutability guard
+        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
+
+        if (isIntake && activeSprint) {
+          const hasPoints =
+            (existing.metadata?.story_points !== undefined && existing.metadata?.story_points !== null && Number(existing.metadata.story_points) > 0) ||
+            (existing.metadata?.points !== undefined && existing.metadata?.points !== null && Number(existing.metadata.points) > 0) ||
+            (mergedMetadata?.story_points !== undefined && mergedMetadata?.story_points !== null && Number(mergedMetadata.story_points) > 0);
+          const isAddedMidSprint = Boolean(
+            mergedMetadata?.added_mid_sprint || existing.metadata?.added_mid_sprint
+          );
+          if (hasPoints && !isAddedMidSprint) {
+            return {
+              success: false,
+              updated_count: 0,
+              items: [],
+              error: `Cannot assign item "${existing.title || existing.id}" with estimated points to active sprint "${activeSprint.name}". Active sprint scope is locked.`,
+              status: 409,
+            };
           }
         }
-        patchFields.metadata = mergedMetadata;
       }
 
       plannedUpdates.push({ id: it.id, fields: patchFields });
