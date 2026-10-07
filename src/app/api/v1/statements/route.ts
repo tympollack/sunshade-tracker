@@ -124,6 +124,13 @@ export async function GET(req: NextRequest) {
       } else if (periodParam === 'month') {
         startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+      } else if (periodParam === 'week') {
+        const d = new Date(now);
+        const day = d.getDay();
+        const diffToMonday = day === 0 ? -6 : 1 - day;
+        d.setDate(d.getDate() + diffToMonday);
+        startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+        endDate = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 6, 23, 59, 59, 999).toISOString();
       }
     }
 
@@ -148,6 +155,8 @@ export async function GET(req: NextRequest) {
         ? 'quarter'
         : periodParam === 'month'
         ? 'monthly'
+        : periodParam === 'week'
+        ? 'weekly'
         : 'custom';
 
     const payload = await getTenantEfficiencyMetrics(targetSlug, {
@@ -155,7 +164,15 @@ export async function GET(req: NextRequest) {
       endDate,
       period,
       periodMultiplier:
-        periodParam === 'year' ? 12 : periodParam === 'quarter' ? 3 : periodParam === 'month' ? 1 : undefined,
+        periodParam === 'year'
+          ? 12
+          : periodParam === 'quarter'
+          ? 3
+          : periodParam === 'month'
+          ? 1
+          : periodParam === 'week'
+          ? 0.25
+          : undefined,
     });
 
     // Custom period label decoration
@@ -166,6 +183,8 @@ export async function GET(req: NextRequest) {
     } else if (periodParam === 'year') {
       const dStart = new Date(startDate!);
       payload.dateRange.periodLabel = `${dStart.getFullYear()} Annual Statement`;
+    } else if (periodParam === 'week' && startDate && endDate) {
+      payload.dateRange.periodLabel = `Weekly Statement (${startDate.slice(0, 10)} to ${endDate.slice(0, 10)})`;
     } else if (periodParam === 'custom' && startDate && endDate) {
       payload.dateRange.periodLabel = `Custom Statement (${startDate.slice(0, 10)} to ${endDate.slice(0, 10)})`;
     }
