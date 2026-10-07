@@ -627,14 +627,28 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return affectedItemIds.size;
   }, [lastIngestedItemIds, deviations]);
 
-  // Derive all available sprints
+  // Relational sprints loaded from tracker.sprints database table
+  const [dbSprints, setDbSprints] = useState<SprintDefinition[]>([]);
+
+  // Derive all available sprints from database table (tracker.sprints), project settings, and work item metadata
   const availableSprints = useMemo(() => {
     const set = new Set<string>();
+
+    // 1. Configured relational sprints from tracker.sprints
+    (dbSprints || []).forEach((s: any) => {
+      if (s.name && s.status !== 'unplanned' && s.name.toLowerCase() !== 'unplanned') {
+        set.add(s.name);
+      }
+    });
+
+    // 2. Configured sprints from project settings
     (projectSettings.sprint_settings?.sprints || []).forEach((s: any) => {
       if (s.name && s.status !== 'unplanned' && s.name.toLowerCase() !== 'unplanned') {
         set.add(s.name);
       }
     });
+
+    // 3. Work item metadata sprints
     items.forEach((it) => {
       if (it.metadata?.sprint) {
         const s = String(it.metadata.sprint).trim();
@@ -643,44 +657,63 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         }
       }
     });
-    return sortSprintNames(Array.from(set), projectSettings.sprint_settings?.sprints);
-  }, [items, projectSettings.sprint_settings]);
+
+    const mergedDefs = [
+      ...(dbSprints || []),
+      ...(projectSettings.sprint_settings?.sprints || []),
+    ];
+    return sortSprintNames(Array.from(set), mergedDefs);
+  }, [items, projectSettings.sprint_settings, dbSprints]);
 
   const availableSprintDefs = useMemo<SprintDefinition[]>(() => {
-    const list: SprintDefinition[] = [...(projectSettings.sprint_settings?.sprints || [])];
-    const knownNames = new Set(list.map((s) => s.name));
+    const map = new Map<string, SprintDefinition>();
+
+    // Relational sprints from tracker.sprints table
+    (dbSprints || []).forEach((s) => {
+      if (s.name) map.set(s.name, s);
+    });
+
+    // Sprints from project settings (merged/overlay)
+    (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
+      if (s.name) {
+        const existing = map.get(s.name);
+        map.set(s.name, existing ? { ...existing, ...s } : s);
+      }
+    });
+
+    // Sprints from work items
     items.forEach((it) => {
       const sName = it.metadata?.sprint;
-      if (sName && !knownNames.has(sName)) {
-        knownNames.add(sName);
-        list.push({
+      if (sName && !map.has(sName)) {
+        map.set(sName, {
           id: sName,
           name: sName,
           status: 'planned',
         });
       }
     });
-    return list;
-  }, [projectSettings.sprint_settings?.sprints, items]);
+
+    return Array.from(map.values());
+  }, [dbSprints, projectSettings.sprint_settings?.sprints, items]);
 
   const hiddenCompletedSprintsCount = useMemo(() => {
     return availableSprints.filter((sprintName) => {
-      const sprintDef = projectSettings.sprint_settings?.sprints?.find(
+      const sprintDef = availableSprintDefs.find(
         (s: any) => s.name === sprintName || s.id === sprintName
       );
       return sprintDef?.status?.toLowerCase() === 'completed';
     }).length;
-  }, [availableSprints, projectSettings.sprint_settings]);
+  }, [availableSprints, availableSprintDefs]);
 
   const visibleSprints = useMemo(() => {
     if (!hideCompletedSprints) return availableSprints;
     return availableSprints.filter((sprintName) => {
-      const sprintDef = projectSettings.sprint_settings?.sprints?.find(
+      const sprintDef = availableSprintDefs.find(
         (s: any) => s.name === sprintName || s.id === sprintName
       );
       return sprintDef?.status?.toLowerCase() !== 'completed';
     });
-  }, [availableSprints, hideCompletedSprints, projectSettings.sprint_settings]);
+  }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
 
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);
   const lastSprintInitializedProjectRef = useRef<string | null>(null);
@@ -886,6 +919,30 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       } else {
         const err = await itemsRes.json().catch(() => ({}));
         setFetchError(err.error || `Failed to load items (${itemsRes.status})`);
+      }
+
+      // Query configured relational sprints from tracker.sprints table
+      try {
+        const sprintsUrl = `/api/v1/sprints?tenant_slug=${tenantSlug}`;
+        const sprintsRes = await apiFetch(sprintsUrl);
+        if (sprintsRes.ok) {
+          const sData = await sprintsRes.json();
+          if (Array.isArray(sData.sprints)) {
+            const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
+              id: s.id,
+              name: s.name,
+              status: s.status || (s.is_active ? 'active' : 'planned'),
+              goal: s.goal || null,
+              start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
+              end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
+              is_current: Boolean(s.is_active || s.status === 'active'),
+              committed_points: s.committed_points || 0,
+            }));
+            setDbSprints(mappedDbSprints);
+          }
+        }
+      } catch {
+        // Silently tolerate in environments where relational endpoint is unmocked
       }
     } catch (err: any) {
       setFetchError(err.message || 'Network error. Check your connection.');
@@ -1668,8 +1725,41 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.error || `Failed to save sprint settings (${res.status})`);
       } else {
+        // Synchronize with tracker.sprints table
+        try {
+          const currentProj = allProjects.find((p) => p.slug === projectSlug);
+          for (const s of sprints) {
+            const existingInDb = dbSprints.find((dbS) => dbS.id === s.id || dbS.name === s.name);
+            if (existingInDb) {
+              await updateSprintAction(tenantSlug, existingInDb.id, {
+                name: s.name,
+                goal: s.goal,
+                status: s.status,
+                is_active: s.status === 'active' || s.is_current,
+                started_at: s.start_date || s.started_at,
+                ends_at: s.end_date || s.ends_at,
+                committed_points: s.committed_points,
+              }).catch(() => null);
+            } else {
+              await createSprintAction(tenantSlug, {
+                name: s.name,
+                goal: s.goal,
+                project_id: currentProj?.id,
+                status: s.status,
+                is_active: s.status === 'active' || s.is_current,
+                started_at: s.start_date || s.started_at,
+                ends_at: s.end_date || s.ends_at,
+                committed_points: s.committed_points,
+              }).catch(() => null);
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to sync sprints with tracker.sprints:', e);
+        }
+
         setBulkToast('Sprint configurations saved.');
         setTimeout(() => setBulkToast(null), 3000);
+        fetchData();
       }
     } catch (err) {
       console.error('Error saving sprint settings:', err);
@@ -3411,6 +3501,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         isManageSprintsOpen={isManageSprintsOpen}
         setIsManageSprintsOpen={setIsManageSprintsOpen}
         handleSaveSprints={handleSaveSprints}
+        availableSprintDefs={availableSprintDefs}
         isSearchOpen={isSearchOpen}
         setIsSearchOpen={setIsSearchOpen}
       />
