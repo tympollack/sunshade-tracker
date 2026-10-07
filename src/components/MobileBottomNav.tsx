@@ -1,15 +1,32 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Kanban, GitFork, Calendar, Wrench, Cpu, Settings, X } from 'lucide-react';
+import Link from 'next/link';
+import * as NextNav from 'next/navigation';
+import { Kanban, GitFork, Calendar, Wrench, Cpu, Settings, X, BarChart2 } from 'lucide-react';
 import { DashboardTab } from '@/components/rev_trk_02';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 
+function useSafePathname(): string | null {
+  try {
+    if (typeof NextNav.usePathname === 'function') {
+      return NextNav.usePathname();
+    }
+  } catch {
+    // Ignore when outside Next.js App Router context
+  }
+  return null;
+}
+
 export interface MobileBottomNavProps {
-  activeTab: DashboardTab;
+  activeTab: DashboardTab | string;
   onTabChange: (tab: DashboardTab) => void;
   pointMode?: 'macro' | 'granular';
   onPointModeChange?: (mode: 'macro' | 'granular') => void;
+  tenantSlug?: string;
+  projectSlug?: string;
+  analyticsHref?: string;
+  pathname?: string;
 }
 
 export function MobileBottomNav({
@@ -17,6 +34,10 @@ export function MobileBottomNav({
   onTabChange,
   pointMode,
   onPointModeChange,
+  tenantSlug,
+  projectSlug,
+  analyticsHref,
+  pathname,
 }: MobileBottomNavProps) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsButtonRef = useRef<HTMLButtonElement>(null);
@@ -43,7 +64,21 @@ export function MobileBottomNav({
     { id: 'sprint' as const, label: 'Sprint', icon: Calendar },
   ];
 
-  const isToolsActive = activeTab === 'spark' || activeTab === 'schema';
+  const hookPathname = useSafePathname();
+  const currentPathname = pathname ?? hookPathname ?? '';
+
+  const isAnalyticsActive = Boolean(
+    activeTab === 'analytics' ||
+    (currentPathname && (currentPathname === '/analytics' || currentPathname.endsWith('/analytics') || currentPathname.includes('/analytics')))
+  );
+
+  const isToolsActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
+
+  const effectiveAnalyticsHref =
+    analyticsHref ||
+    (tenantSlug && projectSlug
+      ? `/${tenantSlug}/${projectSlug}/analytics`
+      : '/analytics');
 
   return (
     <>
@@ -82,6 +117,27 @@ export function MobileBottomNav({
               />
             </div>
           )}
+
+          {/* Analytics & Telemetry (TASK-TRK-NAV-TOOLS-ANALYTICS-MENU) */}
+          <Link
+            href={effectiveAnalyticsHref}
+            data-testid="mobile-nav-tool-analytics"
+            onClick={() => {
+              setToolsOpen(false);
+              onTabChange('analytics' as any);
+            }}
+            className={`w-full flex items-center space-x-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors cursor-pointer ${
+              isAnalyticsActive
+                ? 'bg-cyan-500/15 text-cyan-300 font-medium'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4 text-cyan-400 shrink-0" />
+            <div className="flex flex-col text-left">
+              <span className="font-medium text-slate-100">Analytics & Telemetry</span>
+              <span className="text-[10px] text-slate-400">Sprint & flow telemetry</span>
+            </div>
+          </Link>
 
           <button
             type="button"

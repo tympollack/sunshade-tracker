@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Calendar, ChevronLeft, Layers, RefreshCw } from 'lucide-react';
+import { NavToolsDropdown } from '@/components/NavToolsDropdown';
 
 export interface SprintOption {
   id: string;
@@ -24,6 +25,7 @@ interface AnalyticsHeaderProps {
   onChangeEndDate: (date: string) => void;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  onSelectTab?: (tab: string) => void;
 }
 
 export function AnalyticsHeader({
@@ -39,6 +41,7 @@ export function AnalyticsHeader({
   onChangeEndDate,
   onRefresh,
   isRefreshing = false,
+  onSelectTab,
 }: AnalyticsHeaderProps) {
   return (
     <header className="bg-slate-900/90 border-b border-slate-800 backdrop-blur sticky top-0 z-30 px-4 sm:px-6 py-4">
@@ -124,6 +127,21 @@ export function AnalyticsHeader({
               <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
             </button>
           )}
+
+          {/* Workspace Tools Dropdown (TASK-TRK-NAV-TOOLS-ANALYTICS-MENU) */}
+          <NavToolsDropdown
+            activeTab={'analytics' as any}
+            onSelectTab={(tab) => {
+              if (onSelectTab) {
+                onSelectTab(tab);
+              } else if (typeof window !== 'undefined') {
+                window.location.href = `/${tenantSlug}/${projectSlug}?tab=${tab}`;
+              }
+            }}
+            tenantSlug={tenantSlug}
+            projectSlug={projectSlug}
+            analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
+          />
         </div>
       </div>
     </header>

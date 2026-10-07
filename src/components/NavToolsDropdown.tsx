@@ -2,15 +2,39 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Cpu, Settings, ChevronDown, Wrench } from 'lucide-react';
+import Link from 'next/link';
+import * as NextNav from 'next/navigation';
+import { Cpu, Settings, ChevronDown, Wrench, BarChart2 } from 'lucide-react';
 import { DashboardTab } from '@/components/rev_trk_02';
 
-interface NavToolsDropdownProps {
-  activeTab: DashboardTab;
-  onSelectTab: (tab: DashboardTab) => void;
+function useSafePathname(): string | null {
+  try {
+    if (typeof NextNav.usePathname === 'function') {
+      return NextNav.usePathname();
+    }
+  } catch {
+    // Ignore when outside Next.js App Router context
+  }
+  return null;
 }
 
-export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownProps) {
+export interface NavToolsDropdownProps {
+  activeTab?: DashboardTab | string;
+  onSelectTab: (tab: DashboardTab) => void;
+  tenantSlug?: string;
+  projectSlug?: string;
+  analyticsHref?: string;
+  pathname?: string;
+}
+
+export function NavToolsDropdown({
+  activeTab,
+  onSelectTab,
+  tenantSlug,
+  projectSlug,
+  analyticsHref,
+  pathname,
+}: NavToolsDropdownProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -69,7 +93,33 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
     setOpen((o) => !o);
   };
 
-  const isToolActive = activeTab === 'spark' || activeTab === 'schema';
+  const hookPathname = useSafePathname();
+  const currentPathname = pathname ?? hookPathname ?? '';
+
+  const isAnalyticsActive = Boolean(
+    activeTab === 'analytics' ||
+    (currentPathname && (currentPathname === '/analytics' || currentPathname.endsWith('/analytics') || currentPathname.includes('/analytics')))
+  );
+
+  const isToolActive = activeTab === 'spark' || activeTab === 'schema' || isAnalyticsActive;
+
+  let effectiveAnalyticsHref = '/analytics';
+  if (analyticsHref) {
+    effectiveAnalyticsHref = analyticsHref;
+  } else if (tenantSlug && projectSlug) {
+    effectiveAnalyticsHref = `/${tenantSlug}/${projectSlug}/analytics`;
+  } else if (currentPathname) {
+    const parts = currentPathname.split('/').filter(Boolean);
+    if (parts.length >= 2) {
+      if (parts[1] !== 'settings' && parts[1] !== 'sprints' && parts[1] !== 'statements') {
+        effectiveAnalyticsHref = `/${parts[0]}/${parts[1]}/analytics`;
+      } else {
+        effectiveAnalyticsHref = `/${parts[0]}/sprints/analytics`;
+      }
+    } else if (parts.length === 1) {
+      effectiveAnalyticsHref = `/${parts[0]}/sprints/analytics`;
+    }
+  }
 
   return (
     <div className="relative shrink-0">
@@ -108,6 +158,26 @@ export function NavToolsDropdown({ activeTab, onSelectTab }: NavToolsDropdownPro
           <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-800/80 mb-1">
             Secondary Tools
           </div>
+
+          <Link
+            href={effectiveAnalyticsHref}
+            onClick={() => {
+              setOpen(false);
+              onSelectTab('analytics' as any);
+            }}
+            className={`w-full flex items-center space-x-2.5 px-2.5 py-2 text-xs rounded-lg transition-colors cursor-pointer ${
+              isAnalyticsActive
+                ? 'bg-cyan-500/15 text-cyan-300 font-medium'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+            data-testid="tool-item-analytics"
+          >
+            <BarChart2 className="w-4 h-4 text-cyan-400 shrink-0" />
+            <div className="flex flex-col text-left">
+              <span className="font-medium text-slate-100">Analytics & Telemetry</span>
+              <span className="text-[10px] text-slate-400">Sprint & flow telemetry</span>
+            </div>
+          </Link>
 
           <button
             type="button"

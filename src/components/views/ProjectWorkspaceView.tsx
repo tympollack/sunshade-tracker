@@ -3477,6 +3477,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         onTabChange={handleTabChange}
         pointMode={pointMode}
         onPointModeChange={handlePointModeChange}
+        tenantSlug={tenantSlug}
+        projectSlug={projectSlug}
+        analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
       />
     </div>
   );
