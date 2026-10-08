@@ -278,6 +278,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder="e.g. Sprint 2026-Q4"
+                    data-testid="sprint-form-name-input"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -287,6 +288,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                   <select
                     value={formStatus}
                     onChange={(e) => setFormStatus(e.target.value as any)}
+                    data-testid="sprint-form-status-select"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 cursor-pointer"
                   >
                     <option value="completed">Completed</option>
@@ -302,6 +304,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                     type="date"
                     value={formStartDate}
                     onChange={(e) => setFormStartDate(e.target.value)}
+                    data-testid="sprint-form-start-date-input"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -312,6 +315,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                     type="date"
                     value={formEndDate}
                     onChange={(e) => setFormEndDate(e.target.value)}
+                    data-testid="sprint-form-end-date-input"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -323,6 +327,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                     value={formGoal}
                     onChange={(e) => setFormGoal(e.target.value)}
                     placeholder="Key delivery objective or sprint focus..."
+                    data-testid="sprint-form-goal-input"
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 resize-none"
                   />
                 </div>
@@ -339,6 +344,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
                 <button
                   type="button"
                   onClick={handleSaveSprintForm}
+                  data-testid="save-sprint-form-btn"
                   className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 transition-colors flex items-center space-x-1.5 shadow-sm"
                 >
                   <Save className="w-3.5 h-3.5" />
@@ -357,6 +363,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
               <button
                 type="button"
                 onClick={handleStartAdd}
+                data-testid="create-new-sprint-btn"
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-colors flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -476,6 +483,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
             type="button"
             onClick={handleCommitAll}
             disabled={isSaving}
+            data-testid="save-all-sprints-btn"
             className="px-4 py-2 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
           >
             {isSaving ? (

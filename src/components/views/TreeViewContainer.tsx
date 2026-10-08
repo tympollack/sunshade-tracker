@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { TreeNode } from '@/components/TreeNode';
@@ -51,6 +51,7 @@ export interface TreeViewContainerProps {
   handleTreeUpdateAssignee: (itemId: string, assignee: string | null) => Promise<void> | void;
   handleTreeCreateChild: (parentId: string, title: string, itemType: string) => Promise<void> | void;
   setEditingItem: (item: WorkItem) => void;
+  availableSprintDefs?: SprintDefinition[];
 }
 
 export function TreeViewContainer(props: TreeViewContainerProps) {
@@ -60,6 +61,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
     selectedSprint,
     setSelectedSprint,
     availableSprints,
+    availableSprintDefs = [],
     statusFilterOptions,
     effectiveTreeStatuses,
     setTreeSelectedStatuses,
@@ -267,7 +269,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
                 isFilteredBySprint={selectedSprint !== 'all'}
                 pointMode={pointMode}
                 members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
-                isImmutable={(it) => isReadOnly || isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it))}
+                isImmutable={(it) => isReadOnly || isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it), availableSprintDefs)}
                 collapsedNodeIds={collapsedTreeNodes}
                 onToggleCollapse={handleToggleCollapseTreeNode}
                 onUpdateStatus={handleUpdateStatus}

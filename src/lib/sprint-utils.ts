@@ -213,7 +213,8 @@ export function getSprintStatusBadge(status?: string | null): {
  */
 export function isItemImmutableDueToCompletedSprint(
   item: WorkItem,
-  settings?: ProjectSettings
+  settings?: ProjectSettings,
+  sprintDefs?: SprintDefinition[]
 ): boolean {
   if (!item || !item.metadata?.sprint) return false;
 
@@ -223,7 +224,9 @@ export function isItemImmutableDueToCompletedSprint(
   }
 
   const sprintName = String(item.metadata.sprint);
-  const sprintDef = settings?.sprint_settings?.sprints?.find((s) => s.name === sprintName);
+  const sprintDef =
+    sprintDefs?.find((s) => s.name === sprintName || s.id === sprintName) ||
+    settings?.sprint_settings?.sprints?.find((s) => s.name === sprintName || s.id === sprintName);
 
   return sprintDef?.status === 'completed';
 }
