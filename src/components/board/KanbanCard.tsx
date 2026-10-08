@@ -10,6 +10,7 @@ import {
   Pencil,
   Trash2,
   User,
+  Eye,
 } from 'lucide-react';
 import { WorkItem, HierarchyLevel, StatusDefinition, Project } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
@@ -137,6 +138,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     cycleTimeDays > 1.5 * medianCycleTime &&
     item.status === 'in_progress';
 
+  // Explicit or computed flags (TASK-TRK-CARD-FLAG-BADGES)
+  const flagMeta = item.metadata?.flag || item.metadata?.flags;
+  const hasFlag = (f: string) => {
+    if (typeof flagMeta === 'string') return flagMeta.toLowerCase() === f.toLowerCase();
+    if (Array.isArray(flagMeta)) return flagMeta.some((x) => String(x).toLowerCase() === f.toLowerCase());
+    return false;
+  };
+
+  const isStalled = isSevereStalled || hasFlag('stall') || hasFlag('stalled');
+  const isAging = (!isStalled && isAgingInProgress) || hasFlag('aging');
+  const isReview = hasFlag('review') || hasFlag('in_review') || Boolean(item.metadata?.needs_review);
+
   return (
     <div
       draggable={!isCardImmutable && !isReadOnly && Boolean(onDragStart)}
@@ -151,10 +164,12 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       } ${
         isBeingDragged
           ? 'opacity-40 border-dashed border-emerald-500'
-          : isSevereStalled
-          ? 'border-red-500/50 hover:border-red-500/70'
-          : isAgingInProgress
-          ? 'border-amber-500/40 hover:border-amber-500/60'
+          : isStalled
+          ? 'border-red-500/50 hover:border-red-500/70 border-l-4 border-l-red-500'
+          : isAging
+          ? 'border-amber-500/40 hover:border-amber-500/60 border-l-4 border-l-amber-500'
+          : isReview
+          ? 'border-purple-500/40 hover:border-purple-500/60 border-l-4 border-l-purple-500'
           : 'border-slate-800/90'
       }`}
     >
@@ -247,31 +262,43 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             </span>
           )}
 
-          {/* Aging Work Item Anomaly Badges (TASK-TRK-UI-AGING-RADAR) */}
-          {isSevereStalled && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-950/70 text-red-300 border border-red-800/50 font-sans font-semibold shrink-0"
-              title={`Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)`}
-              data-testid={`card-stalled-badge-${item.id}`}
-            >
-              <AlertCircle className="w-2.5 h-2.5 text-red-400" />
-              <span>Stalled Review</span>
-            </span>
-          )}
-
-          {!isSevereStalled && isAgingInProgress && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/50 font-sans font-semibold shrink-0"
-              title={`Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)`}
-              data-testid={`card-aging-badge-${item.id}`}
-            >
-              <Clock className="w-2.5 h-2.5 text-amber-400" />
-              <span>{cycleTimeDays}d in progress</span>
-            </span>
-          )}
         </div>
 
         <div className="flex items-center space-x-1 shrink-0 ml-auto">
+          {/* Compact Flag Badges (TASK-TRK-CARD-FLAG-BADGES) */}
+          {isStalled && (
+            <span
+              className="w-5 h-5 flex items-center justify-center rounded bg-red-950/80 text-red-400 border border-red-800/60 shrink-0"
+              title={cycleTimeDays !== undefined ? `Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)` : 'Stalled Review'}
+              data-testid={`card-stalled-badge-${item.id}`}
+            >
+              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+              <span className="sr-only">Stalled Review</span>
+            </span>
+          )}
+
+          {!isStalled && isAging && (
+            <span
+              className="w-5 h-5 flex items-center justify-center rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 shrink-0"
+              title={cycleTimeDays !== undefined ? `Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)` : 'Aging in progress'}
+              data-testid={`card-aging-badge-${item.id}`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span className="sr-only">{cycleTimeDays !== undefined ? `${cycleTimeDays}d in progress` : 'Aging in progress'}</span>
+            </span>
+          )}
+
+          {isReview && (
+            <span
+              className="w-5 h-5 flex items-center justify-center rounded bg-purple-950/80 text-purple-400 border border-purple-800/60 shrink-0"
+              title="Needs Review"
+              data-testid={`card-review-badge-${item.id}`}
+            >
+              <Eye className="w-3.5 h-3.5 text-purple-400" />
+              <span className="sr-only">Needs Review</span>
+            </span>
+          )}
+
           {isCardImmutable && (
             <span
               className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
