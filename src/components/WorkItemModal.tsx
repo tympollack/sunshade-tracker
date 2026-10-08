@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { WorkItem, ProjectSettings, AuditLogEntry } from '@/types/tracker';
+import { WorkItem, ProjectSettings, AuditLogEntry, SprintDefinition } from '@/types/tracker';
 import { ConfirmDeleteModal } from '@/components/ConfirmDeleteModal';
 import { AssociatedItemsTab } from '@/components/modal/tabs/AssociatedItemsTab';
 import { ActivityLogTab } from '@/components/modal/tabs/ActivityLogTab';
@@ -38,6 +38,7 @@ export interface WorkItemModalProps {
   onCreateChildItem?: (payload: QuickAddPayload) => Promise<WorkItem | void>;
   onRefresh?: () => Promise<void> | void;
   initialTab?: 'details' | 'associated' | 'children' | 'activity';
+  availableSprintDefs?: SprintDefinition[];
 }
 
 export function WorkItemModal(props: WorkItemModalProps) {
@@ -56,6 +57,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
     onCreateChildItem,
     onRefresh,
     initialTab = 'details',
+    availableSprintDefs = [],
   } = props;
 
   const [activeTab, setActiveTab] = useState<'details' | 'associated' | 'children' | 'activity'>(initialTab);
@@ -80,6 +82,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
     projects,
     onSave: props.onSave,
     onClose,
+    availableSprintDefs,
   });
 
   const fetchAuditLogs = async (itemId: string) => {

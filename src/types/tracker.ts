@@ -15,6 +15,7 @@ export interface StatusDefinition {
 
 export interface SprintDefinition {
   id: string;
+  project_id?: string | null;
   name: string;
   start_date?: string | null;
   end_date?: string | null;

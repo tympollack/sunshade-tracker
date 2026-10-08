@@ -636,6 +636,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
     // 1. Configured relational sprints from tracker.sprints
     (dbSprints || []).forEach((s: any) => {
+      if (!isAllProjects && currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+        return;
+      }
       if (s.name && s.status !== 'unplanned' && s.name.toLowerCase() !== 'unplanned') {
         set.add(s.name);
       }
@@ -658,18 +661,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     });
 
+    const scopedDbSprints = !isAllProjects && currentProjectId
+      ? (dbSprints || []).filter((s) => !s.project_id || s.project_id === currentProjectId)
+      : (dbSprints || []);
     const mergedDefs = [
-      ...(dbSprints || []),
+      ...scopedDbSprints,
       ...(projectSettings.sprint_settings?.sprints || []),
     ];
     return sortSprintNames(Array.from(set), mergedDefs);
-  }, [items, projectSettings.sprint_settings, dbSprints]);
+  }, [items, projectSettings.sprint_settings, dbSprints, isAllProjects, currentProjectId]);
 
   const availableSprintDefs = useMemo<SprintDefinition[]>(() => {
     const map = new Map<string, SprintDefinition>();
 
     // Relational sprints from tracker.sprints table
     (dbSprints || []).forEach((s) => {
+      if (!isAllProjects && currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+        return;
+      }
       if (s.name) map.set(s.name, s);
     });
 
@@ -694,7 +703,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     });
 
     return Array.from(map.values());
-  }, [dbSprints, projectSettings.sprint_settings?.sprints, items]);
+  }, [dbSprints, projectSettings.sprint_settings?.sprints, items, isAllProjects, currentProjectId]);
 
   const hiddenCompletedSprintsCount = useMemo(() => {
     return availableSprints.filter((sprintName) => {
@@ -859,6 +868,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setIsRefreshing(true);
     setFetchError(null);
     try {
+      let targetProjectId = currentProjectId;
       const settingsRes = await apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
       if (settingsRes.ok) {
         const sData = await settingsRes.json();
@@ -873,6 +883,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         } else if (!isAllProjects) {
           const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
           if (proj) {
+            targetProjectId = proj.id;
             const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
             if (detailRes.ok) {
               const detail = await detailRes.json();
@@ -923,13 +934,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       // Query configured relational sprints from tracker.sprints table
       try {
-        const sprintsUrl = `/api/v1/sprints?tenant_slug=${tenantSlug}`;
+        const sprintsUrl = !isAllProjects && targetProjectId
+          ? `/api/v1/sprints?project_id=${targetProjectId}&tenant_slug=${tenantSlug}`
+          : `/api/v1/sprints?tenant_slug=${tenantSlug}`;
         const sprintsRes = await apiFetch(sprintsUrl);
         if (sprintsRes.ok) {
           const sData = await sprintsRes.json();
           if (Array.isArray(sData.sprints)) {
             const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
               id: s.id,
+              project_id: s.project_id,
               name: s.name,
               status: s.status || (s.is_active ? 'active' : 'planned'),
               goal: s.goal || null,
@@ -950,7 +964,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
+  }, [apiFetch, tenantSlug, projectSlug, isAllProjects, currentProjectId]);
 
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
@@ -1116,7 +1130,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const item = items.find((i) => i.id === itemId);
       if (!item || item.status === targetStatus) return;
 
-      if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+      if (isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
         setBulkToast('Completed items in closed sprints are immutable.');
         setTimeout(() => setBulkToast(null), 3000);
         return;
@@ -1159,7 +1173,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       executeStatusChange(itemId, targetStatus, prevOrder, nextOrder);
     },
-    [items, isCompleteStatus, isNotStartedStatus, isInProgressStatus, projectSettings, executeStatusChange]
+    [items, isCompleteStatus, isNotStartedStatus, isInProgressStatus, projectSettings, executeStatusChange, availableSprintDefs]
   );
 
   const handleUpdateStatus = async (itemId: string, newStatus: string) => {
@@ -1202,7 +1216,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
 
-    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
       setBulkToast('Completed items in closed sprints are immutable.');
       setTimeout(() => setBulkToast(null), 3000);
       return;
@@ -1339,7 +1353,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
 
-    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
       setBulkToast('Completed items in closed sprints are immutable.');
       setTimeout(() => setBulkToast(null), 3000);
       return;
@@ -1377,7 +1391,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
 
-    if (isItemImmutableDueToCompletedSprint(item, getItemProjectSettings(item))) {
+    if (isItemImmutableDueToCompletedSprint(item, getItemProjectSettings(item), availableSprintDefs)) {
       setBulkToast('Completed items in closed sprints are immutable.');
       setTimeout(() => setBulkToast(null), 3000);
       return;
@@ -1462,7 +1476,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
     const draggedProjectSettings = getItemProjectSettings(draggedItem);
 
-    if (isItemImmutableDueToCompletedSprint(draggedItem, draggedProjectSettings)) {
+    if (isItemImmutableDueToCompletedSprint(draggedItem, draggedProjectSettings, availableSprintDefs)) {
       setBulkToast('Completed items in closed sprints are immutable.');
       setTimeout(() => setBulkToast(null), 3000);
       return;
@@ -1648,7 +1662,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const handleDeleteItem = async (itemId: string): Promise<boolean> => {
     const item = items.find((it) => it.id === itemId);
-    if (item && isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (item && isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
       setBulkToast('Cannot delete locked items in closed sprints.');
       setTimeout(() => setBulkToast(null), 3000);
       return false;
@@ -1726,35 +1740,57 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         throw new Error(errJson.error || `Failed to save sprint settings (${res.status})`);
       } else {
         // Synchronize with tracker.sprints table
-        try {
-          const currentProj = allProjects.find((p) => p.slug === projectSlug);
-          for (const s of sprints) {
-            const existingInDb = dbSprints.find((dbS) => dbS.id === s.id || dbS.name === s.name);
-            if (existingInDb) {
-              await updateSprintAction(tenantSlug, existingInDb.id, {
-                name: s.name,
-                goal: s.goal,
-                status: s.status,
-                is_active: s.status === 'active' || s.is_current,
-                started_at: s.start_date || s.started_at,
-                ends_at: s.end_date || s.ends_at,
-                committed_points: s.committed_points,
-              }).catch(() => null);
-            } else {
-              await createSprintAction(tenantSlug, {
-                name: s.name,
-                goal: s.goal,
-                project_id: currentProj?.id,
-                status: s.status,
-                is_active: s.status === 'active' || s.is_current,
-                started_at: s.start_date || s.started_at,
-                ends_at: s.end_date || s.ends_at,
-                committed_points: s.committed_points,
-              }).catch(() => null);
+        const currentProj = allProjects.find((p) => p.slug === projectSlug);
+
+        // 1. Delete sprints removed from the sprint list
+        const toDelete = dbSprints.filter(
+          (dbS) =>
+            (!dbS.project_id || !currentProj || dbS.project_id === currentProj.id) &&
+            !sprints.some((s) => s.id === dbS.id || s.name === dbS.name)
+        );
+        for (const sDel of toDelete) {
+          const delRes = await deleteSprintAction(tenantSlug, sDel.id);
+          if (!delRes.success && delRes.error && !delRes.error.toLowerCase().includes('not found')) {
+            throw new Error(delRes.error || `Failed to delete sprint ${sDel.name}`);
+          }
+        }
+
+        // 2. Synchronize active and modified sprints
+        for (const s of sprints) {
+          const resolvedStartedAt =
+            s.start_date !== undefined ? (s.start_date || null) : (s.started_at || null);
+          const resolvedEndsAt =
+            s.end_date !== undefined ? (s.end_date || null) : (s.ends_at || null);
+
+          const existingInDb = dbSprints.find((dbS) => dbS.id === s.id || dbS.name === s.name);
+          if (existingInDb) {
+            const updateRes = await updateSprintAction(tenantSlug, existingInDb.id, {
+              name: s.name,
+              goal: s.goal !== undefined ? (s.goal || null) : undefined,
+              status: s.status,
+              is_active: s.status === 'active' || s.is_current,
+              started_at: resolvedStartedAt,
+              ends_at: resolvedEndsAt,
+              committed_points: s.committed_points,
+            });
+            if (!updateRes.success) {
+              throw new Error(updateRes.error || `Failed to update sprint ${s.name}`);
+            }
+          } else {
+            const createRes = await createSprintAction(tenantSlug, {
+              name: s.name,
+              goal: s.goal || null,
+              project_id: currentProj?.id,
+              status: s.status,
+              is_active: s.status === 'active' || s.is_current,
+              started_at: resolvedStartedAt,
+              ends_at: resolvedEndsAt,
+              committed_points: s.committed_points,
+            });
+            if (!createRes.success) {
+              throw new Error(createRes.error || `Failed to create sprint ${s.name}`);
             }
           }
-        } catch (e) {
-          console.warn('Failed to sync sprints with tracker.sprints:', e);
         }
 
         setBulkToast('Sprint configurations saved.');
@@ -1916,9 +1952,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const handleDeleteSprintLifecycle = async (sprintId: string) => {
     try {
-      const targetSprint = (projectSettings.sprint_settings?.sprints || []).find(
-        (s) => s.id === sprintId || s.name === sprintId
-      );
+      const targetSprint =
+        (projectSettings.sprint_settings?.sprints || []).find(
+          (s) => s.id === sprintId || s.name === sprintId
+        ) || (dbSprints || []).find((s) => s.id === sprintId || s.name === sprintId);
       const sprintName = targetSprint?.name || sprintId;
 
       // 1. Relational sprint deletion (tolerate 'not found' for legacy sprints)
@@ -2046,7 +2083,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleBulkMoveSprint = async (targetSprint: string | null) => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
-      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (mutableItems.length === 0) {
       if (selectedList.length > 0) {
@@ -2173,7 +2210,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     if (selectedList.length === 0 || !targetProjectId) return;
 
     const lockedItems = selectedList.filter((it) =>
-      isItemImmutableDueToCompletedSprint(it, projectSettings)
+      isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (lockedItems.length > 0) {
       setBulkToast(
@@ -2214,7 +2251,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleBulkSetStatus = async (targetStatus: string) => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
-      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (mutableItems.length === 0) {
       if (selectedList.length > 0) {
@@ -2262,7 +2299,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleBulkAssign = async (assignee: string | null) => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
-      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (mutableItems.length === 0) {
       if (selectedList.length > 0) {
@@ -2310,7 +2347,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleBulkAdjustPoints = async (points: number | null) => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
-      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (mutableItems.length === 0) {
       if (selectedList.length > 0) {
@@ -2370,7 +2407,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const handleBulkDelete = () => {
     const selectedList = items.filter((it) => selectedItemIds.has(it.id));
     const mutableItems = selectedList.filter(
-      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings)
+      (it) => !isItemImmutableDueToCompletedSprint(it, projectSettings, availableSprintDefs)
     );
     if (mutableItems.length === 0) {
       if (selectedList.length > 0) {
@@ -2429,7 +2466,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   // Drag and Drop Handlers
   const handleDragStart = (e: React.DragEvent, item: WorkItem) => {
-    if (isReadOnly || isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (isReadOnly || isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
       e.preventDefault();
       return;
     }
@@ -2460,7 +2497,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const item = items.find((i) => i.id === itemId);
     if (!item) return;
 
-    if (isItemImmutableDueToCompletedSprint(item, projectSettings)) {
+    if (isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)) {
       setDraggedItemId(null);
       setDragOverTarget(null);
       return;
@@ -3170,6 +3207,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   selectedSprint={selectedSprint}
                   setSelectedSprint={setSelectedSprint}
                   availableSprints={availableSprints}
+                  availableSprintDefs={availableSprintDefs}
                   items={items}
                   projectSettings={projectSettings}
                   pointMode={pointMode}
@@ -3222,6 +3260,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   selectedSprint={selectedSprint}
                   setSelectedSprint={setSelectedSprint}
                   availableSprints={availableSprints}
+                  availableSprintDefs={availableSprintDefs}
                   statusFilterOptions={statusFilterOptions}
                   effectiveTreeStatuses={effectiveTreeStatuses}
                   setTreeSelectedStatuses={setTreeSelectedStatuses}
@@ -3291,6 +3330,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   setIsManageSprintsOpen={setIsManageSprintsOpen}
                   visibleSprints={visibleSprints}
                   availableSprints={availableSprints}
+                  availableSprintDefs={availableSprintDefs}
                   filterSprintItems={filterSprintItems}
                   sprintComparator={sprintComparator}
                   selectedItemIds={selectedItemIds}

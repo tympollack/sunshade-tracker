@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { WorkItem, ProjectSettings, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, ProjectSettings, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -19,6 +19,7 @@ export interface UseWorkItemFormProps {
   projects?: Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>;
   onSave: (id: string, updates: Partial<WorkItem>) => Promise<void> | void;
   onClose: () => void;
+  availableSprintDefs?: SprintDefinition[];
 }
 
 export function useWorkItemForm({
@@ -34,6 +35,7 @@ export function useWorkItemForm({
   projects = [],
   onSave,
   onClose,
+  availableSprintDefs = [],
 }: UseWorkItemFormProps) {
   const [title, setTitle] = useState(item?.title || '');
   const [description, setDescription] = useState(item?.description || '');
@@ -81,7 +83,7 @@ export function useWorkItemForm({
     }
   }, [selectedProjectId, effectiveProjectSettings]);
 
-  const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, effectiveProjectSettings) : false;
+  const isSprintLocked = item ? isItemImmutableDueToCompletedSprint(item, effectiveProjectSettings, availableSprintDefs) : false;
   const isLocked = isSprintLocked || isReadOnly;
 
   // Sync form state when item changes

@@ -199,6 +199,7 @@ export function ProjectModals(props: ProjectModalsProps) {
         onSelectItem={(it) => setEditingItem(it)}
         onCreateChildItem={handleModalCreateChildItem}
         onRefresh={fetchData}
+        availableSprintDefs={availableSprintDefs}
       />
 
       {!isReadOnly && (

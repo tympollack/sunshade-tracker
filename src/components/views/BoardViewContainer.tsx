@@ -14,7 +14,7 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
@@ -86,6 +86,7 @@ export interface BoardViewContainerProps {
   handleDropOnColEnd: (e: React.DragEvent, colId: string) => void;
   unmappedItems: WorkItem[];
   draggedItem: WorkItem | null;
+  availableSprintDefs?: SprintDefinition[];
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -107,6 +108,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     selectedSprint,
     setSelectedSprint,
     availableSprints,
+    availableSprintDefs = [],
     items,
     projectSettings,
     pointMode,
@@ -388,7 +390,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                         const isBeingDragged = draggedItemId === item.id;
                         const isDragTarget =
                           dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
-                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings);
+                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs);
 
                         return (
                           <div key={item.id} className="relative">
@@ -458,7 +460,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                     itemHierarchy={getItemHierarchy(item)}
                     allProjects={allProjects}
                     isAllProjects={isAllProjects}
-                    isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings)}
+                    isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)}
                     isReadOnly={isReadOnly}
                     onEditItem={setEditingItem}
                     onDeleteItem={setDeleteConfirmItem}
