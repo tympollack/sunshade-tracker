@@ -146,10 +146,94 @@ describe('TASK-TRK-VIEW-ORIENTATION-TOGGLE: Toolbar Orientation Toggle & Desktop
       const sidewaysBtn = screen.getByTestId('column-collapse-sideways-btn-backlog');
       expect(sidewaysBtn).toBeInTheDocument();
 
-      // Vertical collapse chevron has md:hidden, retiring it from desktop view
+      // Vertical collapse chevron has md:hidden, retiring it from desktop view when not collapsed
       const verticalBtn = screen.getByTestId('column-collapse-up-btn-backlog');
       expect(verticalBtn).toBeInTheDocument();
       expect(verticalBtn.className).toContain('md:hidden');
+    });
+
+    it('in horizontal columns view: when column is collapsed upward, expand button is exposed on desktop and clicking header or button expands it (PR-82 comment 1)', () => {
+      const handleToggleCollapseUp = vi.fn();
+
+      render(
+        <BoardViewContainer
+          {...({
+            items: sampleItems,
+            projectSettings: sampleSettings,
+            projectSlug: 'sunshade-tracker',
+            tenantSlug: 'sunshade',
+            isReadOnly: false,
+            loading: false,
+            setEditingItem: () => {},
+            setDeleteConfirmItem: () => {},
+            handleUpdateStatus: () => {},
+            handleUpdateType: () => {},
+            handleDragStart: () => {},
+            handleDragEnd: () => {},
+            handleDragOverCard: () => {},
+            handleDrop: () => {},
+            childCountMap: new Map(),
+            pointsRollupMap: new Map(),
+            allProjects: [],
+            isAllProjects: false,
+            pointMode: 'granular',
+            handlePointModeChange: () => {},
+            getItemHierarchy: () => sampleSettings.hierarchy,
+            getItemStatuses: () => sampleSettings.statuses,
+            displayedStatuses: sampleSettings.statuses,
+            columnsItemsMap: { backlog: sampleItems, in_progress: [] },
+            collapsedColumnsUp: new Set(['backlog']),
+            collapsedColumnsSideways: new Set(),
+            statusFilterOptions: [],
+            effectiveSelectedStatuses: [],
+            setSelectedStatuses: () => {},
+            levelFilterOptions: [],
+            effectiveSelectedLevels: [],
+            setSelectedLevels: () => {},
+            selectedSprint: 'all',
+            setSelectedSprint: () => {},
+            availableSprints: [],
+            collapseAllColumns: () => {},
+            expandAllColumns: () => {},
+            toggleCollapseUp: handleToggleCollapseUp,
+            toggleCollapseSideways: () => {},
+            boardHeightMode: 'standard',
+            setBoardHeightMode: () => {},
+            boardScrollRef: { current: null },
+            handleBoardWheel: () => {},
+            columnCounts: { backlog: 1, in_progress: 0 },
+            draggedItemId: null,
+            dragOverTarget: null,
+            quickAddColId: null,
+            setQuickAddColId: () => {},
+            quickAddTitle: '',
+            setQuickAddTitle: () => {},
+            isCreatingQuickItem: false,
+            handleCreateQuickInlineItem: () => {},
+            hiddenBoardItems: [],
+            dismissedBoardDeviationBanner: false,
+            setDismissedBoardDeviationBanner: () => {},
+            onOpenReconciliation: () => {},
+            boardOrientation: 'columns',
+          } as any)}
+        />
+      );
+
+      // Expand button is exposed on desktop without md:hidden
+      const verticalBtn = screen.getByTestId('column-collapse-up-btn-backlog');
+      expect(verticalBtn).toBeInTheDocument();
+      expect(verticalBtn.className).not.toContain('md:hidden');
+      expect(verticalBtn).toHaveAttribute('title', 'Expand Backlog');
+
+      // Clicking expand button toggles upward collapse
+      fireEvent.click(verticalBtn);
+      expect(handleToggleCollapseUp).toHaveBeenCalledWith('backlog');
+
+      // Clicking column header directly toggles collapse
+      const columnHeader = screen.getByText('Backlog').closest('div[class*="rounded-t-xl"]');
+      expect(columnHeader).not.toBeNull();
+      fireEvent.click(columnHeader!);
+      expect(handleToggleCollapseUp).toHaveBeenCalledTimes(2);
     });
 
     it('in wide stack view: vertical accordion chevron is visible across all viewports and sideways collapse is retired', () => {

@@ -335,12 +335,12 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 {/* Column Header */}
                 <div
                   onClick={() => {
-                    if (effectiveOrientation === 'stack') {
+                    if (effectiveOrientation === 'stack' || isCollapsedUp) {
                       toggleCollapseUp(col.id);
                     }
                   }}
                   className={`px-4 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-slate-950/40 rounded-t-xl ${
-                    effectiveOrientation === 'stack' ? 'cursor-pointer hover:bg-slate-900/60 transition-colors' : ''
+                    effectiveOrientation === 'stack' || isCollapsedUp ? 'cursor-pointer hover:bg-slate-900/60 transition-colors' : ''
                   }`}
                 >
                   <div className="flex items-center space-x-2 min-w-0">
@@ -392,8 +392,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                           e.stopPropagation();
                           toggleCollapseUp(col.id);
                         }}
-                        className="md:hidden p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title="Collapse column upward"
+                        className={`${isCollapsedUp ? '' : 'md:hidden'} p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors`}
+                        title={isCollapsedUp ? `Expand ${col.label}` : 'Collapse column upward'}
                         data-testid={`column-collapse-up-btn-${col.id}`}
                       >
                         {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}

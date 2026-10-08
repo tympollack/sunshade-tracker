@@ -304,5 +304,93 @@ describe('TASK-TRK-UI-AGING-RADAR: KanbanCard aging badges and anomaly highlight
       expect(card.className).toContain('border-l-4');
       expect(card.className).toContain('border-l-purple-500');
     });
+
+    it('normalizes combined metadata.flag and metadata.flags so secondary flags are preserved (PR-82 comment 2)', () => {
+      const item: WorkItem = {
+        id: 'task-multi-flag',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        title: 'Multi-Flag Task',
+        item_type: 'task',
+        status: 'in_progress',
+        order_index: 9500,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        metadata: {
+          flag: 'stall',
+          flags: ['review'],
+        },
+      };
+
+      render(
+        <KanbanCard
+          item={item}
+          itemHierarchy={defaultHierarchy}
+          medianCycleTime={5}
+        />
+      );
+
+      // Both stalled and review badges must be rendered
+      expect(screen.getByTestId('card-stalled-badge-task-multi-flag')).toBeInTheDocument();
+      expect(screen.getByTestId('card-review-badge-task-multi-flag')).toBeInTheDocument();
+    });
+
+    it('displays truthful tooltip labels without false median claims for explicit flags within normal cycle time (PR-82 comment 3)', () => {
+      const itemStalledNormal: WorkItem = {
+        id: 'task-explicit-stall',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        title: 'Explicit Stall with Fast Cycle Time',
+        item_type: 'task',
+        status: 'in_progress',
+        order_index: 9600,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        metadata: {
+          flag: 'stalled',
+          cycle_time_days: 2, // 2d < 2.5 * 5 = 12.5d
+          median_cycle_time: 5,
+        },
+      };
+
+      const itemAgingNormal: WorkItem = {
+        id: 'task-explicit-aging',
+        tenant_id: 'tenant-1',
+        project_id: 'proj-1',
+        title: 'Explicit Aging with Fast Cycle Time',
+        item_type: 'task',
+        status: 'in_progress',
+        order_index: 9700,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        metadata: {
+          flag: 'aging',
+          cycle_time_days: 3, // 3d < 1.5 * 5 = 7.5d
+          median_cycle_time: 5,
+        },
+      };
+
+      const { rerender } = render(
+        <KanbanCard
+          item={itemStalledNormal}
+          itemHierarchy={defaultHierarchy}
+          medianCycleTime={5}
+        />
+      );
+
+      const stalledBadge = screen.getByTestId('card-stalled-badge-task-explicit-stall');
+      expect(stalledBadge).toHaveAttribute('title', 'Stalled Review');
+
+      rerender(
+        <KanbanCard
+          item={itemAgingNormal}
+          itemHierarchy={defaultHierarchy}
+          medianCycleTime={5}
+        />
+      );
+
+      const agingBadge = screen.getByTestId('card-aging-badge-task-explicit-aging');
+      expect(agingBadge).toHaveAttribute('title', 'Aging in progress');
+    });
   });
 });

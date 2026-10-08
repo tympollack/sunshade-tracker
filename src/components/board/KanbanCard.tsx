@@ -48,6 +48,7 @@ export interface KanbanCardProps {
   isCardImmutable?: boolean;
   isReadOnly?: boolean;
   isBeingDragged?: boolean;
+  compact?: boolean;
   onEditItem?: (item: WorkItem) => void;
   onDeleteItem?: (item: WorkItem) => void;
   onUpdateStatus?: (itemId: string, newStatus: string) => void;
@@ -75,6 +76,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   isCardImmutable = false,
   isReadOnly = false,
   isBeingDragged = false,
+  compact = true,
   onEditItem,
   onDeleteItem,
   onUpdateStatus,
@@ -138,17 +140,251 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     cycleTimeDays > 1.5 * medianCycleTime &&
     item.status === 'in_progress';
 
-  // Explicit or computed flags (TASK-TRK-CARD-FLAG-BADGES)
-  const flagMeta = item.metadata?.flag || item.metadata?.flags;
-  const hasFlag = (f: string) => {
-    if (typeof flagMeta === 'string') return flagMeta.toLowerCase() === f.toLowerCase();
-    if (Array.isArray(flagMeta)) return flagMeta.some((x) => String(x).toLowerCase() === f.toLowerCase());
-    return false;
-  };
+  // Explicit or computed flags (TASK-TRK-CARD-FLAG-BADGES & PR-82 review comment 2)
+  const normalizedFlags = React.useMemo(() => {
+    const set = new Set<string>();
+    const extract = (val: unknown) => {
+      if (typeof val === 'string') {
+        val.split(',').forEach((f) => {
+          const trimmed = f.trim().toLowerCase();
+          if (trimmed) set.add(trimmed);
+        });
+      } else if (Array.isArray(val)) {
+        val.forEach((f) => {
+          if (typeof f === 'string' && f.trim()) {
+            set.add(f.trim().toLowerCase());
+          }
+        });
+      }
+    };
+    extract(item.metadata?.flag);
+    extract(item.metadata?.flags);
+    return set;
+  }, [item.metadata?.flag, item.metadata?.flags]);
+
+  const hasFlag = (f: string) => normalizedFlags.has(f.toLowerCase().trim());
 
   const isStalled = isSevereStalled || hasFlag('stall') || hasFlag('stalled');
   const isAging = (!isStalled && isAgingInProgress) || hasFlag('aging');
   const isReview = hasFlag('review') || hasFlag('in_review') || Boolean(item.metadata?.needs_review);
+
+  if (compact) {
+    return (
+      <div
+        draggable={!isCardImmutable && !isReadOnly && Boolean(onDragStart)}
+        onDragStart={(e) => onDragStart?.(e, item)}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onClick={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.closest('button, select, input, a')) return;
+          onEditItem?.(item);
+        }}
+        onDoubleClick={() => onEditItem?.(item)}
+        data-testid={`kanban-card-${item.id}`}
+        className={`p-2.5 rounded-lg border bg-slate-900/90 hover:bg-slate-900 cursor-pointer transition-all flex flex-col justify-between min-h-[76px] max-h-[88px] shadow-sm group hover:border-slate-700 ${
+          isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+        } ${
+          isBeingDragged
+            ? 'opacity-40 border-dashed border-emerald-500'
+            : isStalled
+            ? 'border-red-500/50 hover:border-red-500/70 border-l-4 border-l-red-500'
+            : isAging
+            ? 'border-amber-500/40 hover:border-amber-500/60 border-l-4 border-l-amber-500'
+            : isReview
+            ? 'border-purple-500/40 hover:border-purple-500/60 border-l-4 border-l-purple-500'
+            : 'border-slate-800'
+        }`}
+      >
+        {/* Line 1: Identity & Points */}
+        <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
+            <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
+
+            {/* Static Level Badge */}
+            <div className="relative inline-flex items-center shrink-0">
+              <span
+                style={{
+                  backgroundColor: '#090d16',
+                  color: lvlColor.hex,
+                  borderColor: `${lvlColor.hex}50`,
+                }}
+                className="text-[10px] font-mono font-semibold rounded px-1.5 py-0.5 border shadow-sm shrink-0"
+                title={`Hierarchy level: ${itemHierarchy.find((h) => h.type === item.item_type)?.label || item.item_type}`}
+              >
+                {itemHierarchy.find((h) => h.type === item.item_type)?.label || item.item_type}
+              </span>
+            </div>
+
+            {/* Work Item Reference ID */}
+            {item.external_ref_id ? (
+              <CopyableRefId
+                id={item.external_ref_id}
+                showHash
+                className="text-[10px] font-mono shrink-0 truncate max-w-[140px] text-slate-400"
+              />
+            ) : (
+              <CopyableRefId
+                id={item.id}
+                displayId={item.id.slice(0, 8)}
+                showHash
+                className="text-[10px] font-mono shrink-0 text-slate-400"
+                title="Click to copy UUID"
+              />
+            )}
+
+            {isAllProjects && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[80px] shrink-0"
+                title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
+              >
+                {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-1 shrink-0 ml-auto">
+            {/* Dual Point Badge */}
+            <DualPointBadge
+              storyPoints={storyPoints}
+              rollupPoints={effectiveRollupPoints}
+              childCount={effectiveChildCount}
+              pointMode={pointMode}
+              className="shrink-0"
+            />
+
+            {(item.metadata?.yield_amount !== undefined || item.metadata?.sp_yield !== undefined) && (
+              <SpYieldBadge
+                storyPoints={storyPoints}
+                yieldAmount={
+                  item.metadata?.yield_amount !== undefined
+                    ? Number(item.metadata?.yield_amount)
+                    : item.metadata?.sp_yield !== undefined
+                    ? Number(item.metadata?.sp_yield)
+                    : undefined
+                }
+                feeAmount={item.metadata?.fee_amount !== undefined ? Number(item.metadata?.fee_amount) : 0}
+                className="shrink-0"
+              />
+            )}
+
+            {/* Compact Flag Badges (TASK-TRK-CARD-FLAG-BADGES & PR-82 review comment 3) */}
+            {isStalled && (
+              <span
+                className="w-5 h-5 flex items-center justify-center rounded bg-red-950/80 text-red-400 border border-red-800/60 shrink-0"
+                title={
+                  isSevereStalled && cycleTimeDays !== undefined
+                    ? `Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)`
+                    : 'Stalled Review'
+                }
+                data-testid={`card-stalled-badge-${item.id}`}
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                <span className="sr-only">Stalled Review</span>
+              </span>
+            )}
+
+            {!isStalled && isAging && (
+              <span
+                className="w-5 h-5 flex items-center justify-center rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 shrink-0"
+                title={
+                  isAgingInProgress && cycleTimeDays !== undefined
+                    ? `Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)`
+                    : 'Aging in progress'
+                }
+                data-testid={`card-aging-badge-${item.id}`}
+              >
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span className="sr-only">
+                  {cycleTimeDays !== undefined ? `${cycleTimeDays}d in progress` : 'Aging in progress'}
+                </span>
+              </span>
+            )}
+
+            {isReview && (
+              <span
+                className="w-5 h-5 flex items-center justify-center rounded bg-purple-950/80 text-purple-400 border border-purple-800/60 shrink-0"
+                title="Needs Review"
+                data-testid={`card-review-badge-${item.id}`}
+              >
+                <Eye className="w-3.5 h-3.5 text-purple-400" />
+                <span className="sr-only">Needs Review</span>
+              </span>
+            )}
+
+            {isCardImmutable && (
+              <span
+                className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+                title="Completed item in closed sprint (immutable)"
+              >
+                <Lock className="w-2.5 h-2.5 text-purple-400" />
+                <span>Locked</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Line 2: Title */}
+        <div className="min-w-0">
+          <a
+            href={
+              typeof window !== 'undefined'
+                ? (() => {
+                    try {
+                      const sp = new URLSearchParams(window.location.search);
+                      sp.set('item', item.external_ref_id || item.id);
+                      return `?${sp.toString()}`;
+                    } catch {
+                      return `?item=${encodeURIComponent(item.external_ref_id || item.id)}`;
+                    }
+                  })()
+                : `?item=${encodeURIComponent(item.external_ref_id || item.id)}`
+            }
+            data-testid={`kanban-card-link-${item.id}`}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+              e.preventDefault();
+              onEditItem?.(item);
+            }}
+            title={item.title}
+            className="text-xs font-medium text-slate-100 hover:text-emerald-400 block leading-tight break-words line-clamp-2 transition-colors cursor-pointer"
+          >
+            {item.title}
+          </a>
+        </div>
+
+        {/* Line 3: Context & Ownership */}
+        <div className="flex items-center text-[11px] text-slate-400 gap-2 min-w-0">
+          <div className="flex items-center space-x-1.5 min-w-0 truncate">
+            <User className="w-3 h-3 text-slate-500 shrink-0" />
+            <span className="font-mono truncate text-slate-400 max-w-[90px]">
+              {item.assignee || 'unassigned'}
+            </span>
+            {item.metadata?.priority && (
+              <span className="text-[10px] text-slate-400 shrink-0">
+                · {String(item.metadata.priority)}
+              </span>
+            )}
+            {effectiveChildCount > 0 && (
+              <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                · ({effectiveChildCount} {effectiveChildCount === 1 ? 'task' : 'tasks'})
+              </span>
+            )}
+          </div>
+          {item.created_at && (
+            <span
+              data-testid={`card-timestamp-${item.id}`}
+              title={`Created ${new Date(item.created_at).toLocaleString()}`}
+              className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0 ml-auto"
+            >
+              {formatCardTimestamp(item.created_at)}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -261,15 +497,18 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
               {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
             </span>
           )}
-
         </div>
 
         <div className="flex items-center space-x-1 shrink-0 ml-auto">
-          {/* Compact Flag Badges (TASK-TRK-CARD-FLAG-BADGES) */}
+          {/* Compact Flag Badges (TASK-TRK-CARD-FLAG-BADGES & PR-82 review comment 3) */}
           {isStalled && (
             <span
               className="w-5 h-5 flex items-center justify-center rounded bg-red-950/80 text-red-400 border border-red-800/60 shrink-0"
-              title={cycleTimeDays !== undefined ? `Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)` : 'Stalled Review'}
+              title={
+                isSevereStalled && cycleTimeDays !== undefined
+                  ? `Cycle time (${cycleTimeDays}d) exceeds 2.5x project median (${medianCycleTime}d)`
+                  : 'Stalled Review'
+              }
               data-testid={`card-stalled-badge-${item.id}`}
             >
               <AlertCircle className="w-3.5 h-3.5 text-red-400" />
@@ -280,11 +519,17 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           {!isStalled && isAging && (
             <span
               className="w-5 h-5 flex items-center justify-center rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 shrink-0"
-              title={cycleTimeDays !== undefined ? `Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)` : 'Aging in progress'}
+              title={
+                isAgingInProgress && cycleTimeDays !== undefined
+                  ? `Cycle time (${cycleTimeDays}d) exceeds 1.5x project median (${medianCycleTime}d)`
+                  : 'Aging in progress'
+              }
               data-testid={`card-aging-badge-${item.id}`}
             >
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="sr-only">{cycleTimeDays !== undefined ? `${cycleTimeDays}d in progress` : 'Aging in progress'}</span>
+              <span className="sr-only">
+                {cycleTimeDays !== undefined ? `${cycleTimeDays}d in progress` : 'Aging in progress'}
+              </span>
             </span>
           )}
 
@@ -342,7 +587,19 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       {/* Card Title & Description Toggle */}
       <div className="flex items-start justify-between gap-1.5 min-w-0">
         <a
-          href={typeof window !== 'undefined' ? (() => { try { const sp = new URLSearchParams(window.location.search); sp.set('item', item.external_ref_id || item.id); return `?${sp.toString()}`; } catch { return `?item=${encodeURIComponent(item.external_ref_id || item.id)}`; } })() : `?item=${encodeURIComponent(item.external_ref_id || item.id)}`}
+          href={
+            typeof window !== 'undefined'
+              ? (() => {
+                  try {
+                    const sp = new URLSearchParams(window.location.search);
+                    sp.set('item', item.external_ref_id || item.id);
+                    return `?${sp.toString()}`;
+                  } catch {
+                    return `?item=${encodeURIComponent(item.external_ref_id || item.id)}`;
+                  }
+                })()
+              : `?item=${encodeURIComponent(item.external_ref_id || item.id)}`
+          }
           data-testid={`kanban-card-link-${item.id}`}
           onClick={(e) => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
