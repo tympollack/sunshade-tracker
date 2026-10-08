@@ -494,6 +494,25 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   // Board View Controls
   const [boardHeight, setBoardHeight] = useState<'compact' | 'standard' | 'full'>('standard');
+  const [boardOrientation, setBoardOrientation] = useState<'columns' | 'stack'>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sunshade_board_orientation');
+        if (saved === 'columns' || saved === 'stack') return saved;
+      } catch {}
+    }
+    return 'columns';
+  });
+
+  const handleOrientationChange = (mode: 'columns' | 'stack') => {
+    setBoardOrientation(mode);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('sunshade_board_orientation', mode);
+      } catch {}
+    }
+  };
+
   const [collapsedSideways, setCollapsedSideways] = useState<Set<string>>(new Set());
   const [collapsedUp, setCollapsedUp] = useState<Set<string>>(new Set());
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
@@ -2573,11 +2592,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   };
 
   const collapseAllColumns = () => {
-    setCollapsedSideways(new Set(projectSettings.statuses.map((s) => s.id)));
+    if (boardOrientation === 'stack') {
+      setCollapsedUp(new Set(projectSettings.statuses.map((s) => s.id)));
+    } else {
+      setCollapsedSideways(new Set(projectSettings.statuses.map((s) => s.id)));
+    }
   };
 
   const expandAllColumns = () => {
-    setCollapsedSideways(new Set());
+    if (boardOrientation === 'stack') {
+      setCollapsedUp(new Set());
+    } else {
+      setCollapsedSideways(new Set());
+    }
   };
 
   // Filter Options and Lookups
@@ -3214,6 +3241,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handlePointModeChange={handlePointModeChange}
                   boardHeightMode={boardHeight}
                   setBoardHeightMode={setBoardHeight}
+                  boardOrientation={boardOrientation}
+                  onOrientationChange={handleOrientationChange}
                   collapsedColumnsUp={collapsedUp}
                   toggleCollapseUp={toggleCollapseUp}
                   collapsedColumnsSideways={collapsedSideways}
