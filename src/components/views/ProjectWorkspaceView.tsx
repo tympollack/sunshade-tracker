@@ -887,7 +887,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setIsRefreshing(true);
     setFetchError(null);
     try {
-      let targetProjectId = currentProjectId;
+      let targetProjectId: string | undefined = undefined;
       const settingsRes = await apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
       if (settingsRes.ok) {
         const sData = await settingsRes.json();
@@ -983,7 +983,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [apiFetch, tenantSlug, projectSlug, isAllProjects, currentProjectId]);
+  }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
@@ -1781,13 +1781,20 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           const resolvedEndsAt =
             s.end_date !== undefined ? (s.end_date || null) : (s.ends_at || null);
 
-          const existingInDb = dbSprints.find((dbS) => dbS.id === s.id || dbS.name === s.name);
+          const targetProjectId = currentProj?.id || s.project_id;
+          const existingInDb = dbSprints.find((dbS) => {
+            if (s.id && dbS.id === s.id) return true;
+            if (dbS.name === s.name) {
+              return !dbS.project_id || !targetProjectId || dbS.project_id === targetProjectId;
+            }
+            return false;
+          });
           if (existingInDb) {
             const updateRes = await updateSprintAction(tenantSlug, existingInDb.id, {
               name: s.name,
               goal: s.goal !== undefined ? (s.goal || null) : undefined,
               status: s.status,
-              is_active: s.status === 'active' || s.is_current,
+              is_active: s.status === 'active',
               started_at: resolvedStartedAt,
               ends_at: resolvedEndsAt,
               committed_points: s.committed_points,
@@ -1801,7 +1808,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               goal: s.goal || null,
               project_id: currentProj?.id,
               status: s.status,
-              is_active: s.status === 'active' || s.is_current,
+              is_active: s.status === 'active',
               started_at: resolvedStartedAt,
               ends_at: resolvedEndsAt,
               committed_points: s.committed_points,
@@ -2152,7 +2159,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
 
       const estimatedItemsEntering = itemsEnteringSprint.filter(
-        (it) => Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0
+        (it) =>
+          Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0 &&
+          !it.metadata?.added_mid_sprint
       );
 
       if (estimatedItemsEntering.length > 0) {
@@ -3419,6 +3428,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleSaveSchema={handleSaveSchema}
                   isSavingSchema={isSavingSchema}
                   setIsArchiveModalOpen={setIsArchiveModalOpen}
+                  projectSlug={projectSlug}
                   activeItems={
                     isAllProjects
                       ? items.filter((it) => {

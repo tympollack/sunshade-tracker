@@ -21,6 +21,7 @@ export type SchemaViewMode = 'visual' | 'tree' | 'raw';
 
 export interface ProjectSchemaViewProps {
   settings: ProjectSettings;
+  projectId?: string | null;
   onSave: (updatedSettings: ProjectSettings) => Promise<void> | void;
   activeItems?: WorkItem[];
   isSaving?: boolean;
@@ -30,6 +31,7 @@ export interface ProjectSchemaViewProps {
 
 export function ProjectSchemaView({
   settings,
+  projectId,
   onSave,
   activeItems = [],
   isSaving = false,
@@ -46,14 +48,45 @@ export function ProjectSchemaView({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [collapseLevel, setCollapseLevel] = useState<number>(3);
 
+  const prevBaselineJsonRef = useRef(JSON.stringify(settings, null, 2));
+  const prevProjectIdRef = useRef(projectId);
+
   // Sync external settings changes when prop updates
   useEffect(() => {
-    setDraftData(settings);
-    setRawText(JSON.stringify(settings, null, 2));
-    setRawError(null);
-    setSyntaxToast(null);
-    setSaveError(null);
-  }, [settings]);
+    const currentFormatted = JSON.stringify(settings, null, 2);
+    const projectChanged = projectId !== undefined && prevProjectIdRef.current !== projectId;
+    prevProjectIdRef.current = projectId;
+
+    if (projectChanged) {
+      setDraftData(settings);
+      setRawText(currentFormatted);
+      prevBaselineJsonRef.current = currentFormatted;
+      setRawError(null);
+      setSyntaxToast(null);
+      setSaveError(null);
+      return;
+    }
+
+    if (currentFormatted === prevBaselineJsonRef.current) {
+      return;
+    }
+
+    // Determine if the current draft has unsaved changes compared to baseline
+    const isDirty =
+      mode === 'raw'
+        ? rawText !== prevBaselineJsonRef.current
+        : JSON.stringify(draftData, null, 2) !== prevBaselineJsonRef.current;
+
+    // Only update draft state if the draft is clean (not dirty)
+    if (!isDirty) {
+      setDraftData(settings);
+      setRawText(currentFormatted);
+      prevBaselineJsonRef.current = currentFormatted;
+      setRawError(null);
+      setSyntaxToast(null);
+      setSaveError(null);
+    }
+  }, [settings, projectId, mode, rawText, draftData]);
 
   // Handle switching view mode with locked transition if JSON syntax is invalid
   const handleSwitchMode = (targetMode: SchemaViewMode) => {
@@ -127,8 +160,10 @@ export function ProjectSchemaView({
 
   // Reset draft to initial prop settings
   const handleReset = () => {
+    const formatted = JSON.stringify(settings, null, 2);
     setDraftData(settings);
-    setRawText(JSON.stringify(settings, null, 2));
+    setRawText(formatted);
+    prevBaselineJsonRef.current = formatted;
     setRawError(null);
     setSyntaxToast(null);
   };
@@ -156,6 +191,7 @@ export function ProjectSchemaView({
 
     try {
       await onSave(payloadToSave);
+      prevBaselineJsonRef.current = JSON.stringify(payloadToSave, null, 2);
       setSaveSuccess(true);
       setSaveError(null);
       setTimeout(() => setSaveSuccess(false), 3000);

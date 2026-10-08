@@ -78,6 +78,12 @@ export function StatementGenerator({
 
   const statementReqIdRef = useRef(0);
   const calibrationReqIdRef = useRef(0);
+  const simulatedRatioRef = useRef(simulatedRatio);
+  const isInitialMountDoneRef = useRef(false);
+  const prevTenantSlugRef = useRef(tenantSlug);
+  useEffect(() => {
+    simulatedRatioRef.current = simulatedRatio;
+  }, [simulatedRatio]);
 
   // Pure preset calculation that does not depend on dynamic component state
   const getPresetDates = useCallback((tf: StatementTimeframe): { start: string; end: string } => {
@@ -121,7 +127,7 @@ export function StatementGenerator({
           start_date: new Date(startDateStr).toISOString(),
           end_date: new Date(`${endDateStr}T23:59:59.999Z`).toISOString(),
         });
-        const activeRatio = simRatio !== undefined ? simRatio : simulatedRatio;
+        const activeRatio = simRatio !== undefined ? simRatio : simulatedRatioRef.current;
         if (typeof activeRatio === 'number' && activeRatio > 0) {
           params.set('simulate_ratio', String(activeRatio));
         }
@@ -140,7 +146,7 @@ export function StatementGenerator({
         // Fallback
       }
     },
-    [tenantSlug, simulatedRatio]
+    [tenantSlug]
   );
 
   // Fetch statement data for the active timeframe and dates with request sequence guarding
@@ -198,6 +204,12 @@ export function StatementGenerator({
   // Initialize from URL search parameters on mount if available, or fetch initial preset if no initialData
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (isInitialMountDoneRef.current && prevTenantSlugRef.current === tenantSlug) {
+      return;
+    }
+    isInitialMountDoneRef.current = true;
+    prevTenantSlugRef.current = tenantSlug;
+
     const params = new URLSearchParams(window.location.search);
     const tfParam = params.get('timeframe') as StatementTimeframe | null;
     const startParam = params.get('start');
