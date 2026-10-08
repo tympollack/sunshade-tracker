@@ -385,6 +385,19 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       >
                         {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
                       </button>
+                    ) : isCollapsedUp ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapseUp(col.id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title={`Expand ${col.label}`}
+                        data-testid={`column-collapse-up-btn-${col.id}`}
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
                     ) : (
                       <button
                         type="button"
@@ -392,11 +405,11 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                           e.stopPropagation();
                           toggleCollapseUp(col.id);
                         }}
-                        className={`${isCollapsedUp ? '' : 'md:hidden'} p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors`}
-                        title={isCollapsedUp ? `Expand ${col.label}` : 'Collapse column upward'}
+                        className="md:hidden p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title="Collapse column upward"
                         data-testid={`column-collapse-up-btn-${col.id}`}
                       >
-                        {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                        <ChevronUp className="w-3.5 h-3.5" />
                       </button>
                     )}
                     {effectiveOrientation === 'columns' && (
