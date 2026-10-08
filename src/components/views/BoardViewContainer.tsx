@@ -258,18 +258,25 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 <div
                   key={col.id}
                   onClick={() => toggleCollapseSideways(col.id)}
+                  data-testid={`collapsed-rail-${col.id}`}
                   className="w-12 min-w-[48px] max-w-[48px] shrink-0 bg-slate-900/30 border border-slate-800/60 hover:border-slate-700/80 rounded-xl flex flex-col items-center py-4 cursor-pointer transition-colors group h-full"
                   title={`Expand ${col.label} (${colItems.length})`}
                 >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full mb-3 shrink-0"
-                    style={{ backgroundColor: col.color || '#94a3b8' }}
-                  />
+                  {/* Grouped status dot and item count pill at top of rail (TASK-TRK-COLLAPSED-RAIL-ALIGN) */}
+                  <div
+                    data-testid={`collapsed-rail-header-${col.id}`}
+                    className="flex flex-col items-center gap-1.5 shrink-0 mb-4"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: col.color || '#94a3b8' }}
+                    />
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono shrink-0">
+                      {colItems.length}
+                    </span>
+                  </div>
                   <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-400 group-hover:text-slate-200 transition-colors my-auto select-none">
                     {col.label}
-                  </span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono mt-3 shrink-0">
-                    {colItems.length}
                   </span>
                 </div>
               );
