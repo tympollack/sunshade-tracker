@@ -24,7 +24,7 @@ export function formatModalTimestamp(isoString?: string | null): string {
 
 export interface WorkItemModalFooterProps {
   item: WorkItem | null;
-  activeTab: 'details' | 'associated' | 'children' | 'activity';
+  activeTab: 'details' | 'associated' | 'children' | 'comments' | 'activity';
   isSaving: boolean;
   isLocked: boolean;
   canSave: boolean;

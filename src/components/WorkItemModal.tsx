@@ -12,6 +12,8 @@ import { useWorkItemForm } from '@/hooks/useWorkItemForm';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { useModalScrollLock } from '@/hooks/useModalScrollLock';
+import { WorkItemComments } from '@/components/WorkItemComments';
+import { getItemComments } from '@/app/actions/commentActions';
 
 export interface ProjectInfo {
   id: string;
@@ -37,7 +39,7 @@ export interface WorkItemModalProps {
   onSelectItem?: (item: WorkItem) => void;
   onCreateChildItem?: (payload: QuickAddPayload) => Promise<WorkItem | void>;
   onRefresh?: () => Promise<void> | void;
-  initialTab?: 'details' | 'associated' | 'children' | 'activity';
+  initialTab?: 'details' | 'associated' | 'children' | 'comments' | 'activity';
   availableSprintDefs?: SprintDefinition[];
 }
 
@@ -60,10 +62,11 @@ export function WorkItemModal(props: WorkItemModalProps) {
     availableSprintDefs = [],
   } = props;
 
-  const [activeTab, setActiveTab] = useState<'details' | 'associated' | 'children' | 'activity'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'details' | 'associated' | 'children' | 'comments' | 'activity'>(initialTab);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [commentsCount, setCommentsCount] = useState(0);
   const lastFetchedItemIdRef = useRef<string | null>(null);
 
   // Background scroll lock and outside-hover isolation (TRK-18)
@@ -107,12 +110,25 @@ export function WorkItemModal(props: WorkItemModalProps) {
     }
   };
 
+  const fetchCommentCount = async (itemId: string) => {
+    try {
+      const res = await getItemComments(itemId);
+      if (res.success && res.data) {
+        setCommentsCount(res.data.length);
+      }
+    } catch {
+      // Graceful ignore
+    }
+  };
+
   useEffect(() => {
     if (item?.id) {
       setActiveTab(initialTab);
       fetchAuditLogs(item.id);
+      fetchCommentCount(item.id);
     } else {
       setAuditLogs([]);
+      setCommentsCount(0);
     }
   }, [item?.id, initialTab]);
 
@@ -172,6 +188,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
           onTabChange={setActiveTab}
           childCount={childItems.length}
           auditLogsCount={auditLogs.length}
+          commentsCount={commentsCount}
           tenantSlug={tenantSlug}
           projectSettings={form.effectiveProjectSettings}
           onClose={onClose}
@@ -199,6 +216,13 @@ export function WorkItemModal(props: WorkItemModalProps) {
               isLoadingLogs={isLoadingLogs}
               effectiveProjectSettings={form.effectiveProjectSettings}
               onRefreshLogs={fetchAuditLogs}
+            />
+          ) : activeTab === 'comments' ? (
+            <WorkItemComments
+              itemId={item.id}
+              currentUser={props.currentUser}
+              isReadOnly={isReadOnly || form.isLocked}
+              onCommentCountChange={setCommentsCount}
             />
           ) : (
             <ItemDetailsTab

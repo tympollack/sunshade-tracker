@@ -8,6 +8,7 @@ import {
   Copy,
   Check,
   History,
+  MessageSquare,
 } from 'lucide-react';
 import { WorkItem, HierarchyLevel, AuditLogEntry } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
@@ -20,10 +21,11 @@ export interface WorkItemModalHeaderProps {
   itemType: string;
   levelColor: { hex: string; badgeBg: string; badgeText: string; badgeBorder: string };
   isLocked: boolean;
-  activeTab: 'details' | 'associated' | 'children' | 'activity';
-  onTabChange: (tab: 'details' | 'associated' | 'children' | 'activity') => void;
+  activeTab: 'details' | 'associated' | 'children' | 'comments' | 'activity';
+  onTabChange: (tab: 'details' | 'associated' | 'children' | 'comments' | 'activity') => void;
   childCount: number;
   auditLogsCount: number;
+  commentsCount?: number;
   tenantSlug?: string;
   projectSettings?: any;
   githubRepo?: string;
@@ -41,6 +43,7 @@ export function WorkItemModalHeader({
   onTabChange,
   childCount,
   auditLogsCount,
+  commentsCount,
   tenantSlug,
   projectSettings,
   githubRepo,
@@ -212,6 +215,27 @@ export function WorkItemModalHeader({
               </span>
             )}
           </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onTabChange('comments')}
+          data-testid="modal-tab-comments"
+          className={`py-2.5 px-3 text-xs font-semibold border-b-2 flex items-center space-x-1.5 transition-colors ${
+            activeTab === 'comments'
+              ? 'border-emerald-500 text-emerald-400'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          <span>Comments</span>
+          {commentsCount !== undefined && commentsCount > 0 && (
+            <span
+              data-testid="header-comments-count"
+              className="px-1.5 py-0.5 text-[10px] font-mono rounded-full bg-slate-800 text-slate-300"
+            >
+              {commentsCount}
+            </span>
+          )}
         </button>
         <button
           type="button"
