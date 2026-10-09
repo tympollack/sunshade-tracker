@@ -14,7 +14,7 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
@@ -86,10 +86,15 @@ export interface BoardViewContainerProps {
   handleDropOnColEnd: (e: React.DragEvent, colId: string) => void;
   unmappedItems: WorkItem[];
   draggedItem: WorkItem | null;
+  availableSprintDefs?: SprintDefinition[];
+  boardOrientation?: 'columns' | 'stack';
+  onOrientationChange?: (mode: 'columns' | 'stack') => void;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
   const {
+    boardOrientation: propBoardOrientation,
+    onOrientationChange: propOnOrientationChange,
     hiddenBoardItems = [],
     dismissedBoardDeviationBanner,
     setDismissedBoardDeviationBanner,
@@ -107,6 +112,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     selectedSprint,
     setSelectedSprint,
     availableSprints,
+    availableSprintDefs = [],
     items,
     projectSettings,
     pointMode,
@@ -150,6 +156,30 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     unmappedItems = [],
     draggedItem,
   } = props;
+
+  const [internalOrientation, setInternalOrientation] = React.useState<'columns' | 'stack'>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sunshade_board_orientation');
+        if (saved === 'columns' || saved === 'stack') return saved;
+      } catch {}
+    }
+    return 'columns';
+  });
+
+  const effectiveOrientation = propBoardOrientation ?? internalOrientation;
+  const handleOrientationChange = (mode: 'columns' | 'stack') => {
+    if (propOnOrientationChange) {
+      propOnOrientationChange(mode);
+    } else {
+      setInternalOrientation(mode);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('sunshade_board_orientation', mode);
+        } catch {}
+      }
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -224,6 +254,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           handlePointModeChange={handlePointModeChange}
           collapseAllColumns={collapseAllColumns}
           expandAllColumns={expandAllColumns}
+          boardOrientation={effectiveOrientation}
+          onOrientationChange={handleOrientationChange}
         />
       </div>
 
@@ -238,7 +270,12 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
         <div
           ref={boardScrollRef}
           onWheel={handleBoardWheel}
-          className={`board-scroll-container flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4 custom-scrollbar select-none ${
+          data-testid="board-scroll-canvas"
+          className={`board-scroll-container ${
+            effectiveOrientation === 'stack'
+              ? 'flex flex-col items-stretch gap-4 overflow-x-hidden pb-4'
+              : 'flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4'
+          } custom-scrollbar select-none ${
             boardHeightMode === 'compact'
               ? 'h-auto md:h-[460px] md:min-h-[460px]'
               : boardHeightMode === 'full'
@@ -248,7 +285,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
         >
           {displayedStatuses.map((col) => {
             const colItems = columnsItemsMap[col.id] || [];
-            const isCollapsedSideways = collapsedColumnsSideways.has(col.id);
+            const isCollapsedSideways = effectiveOrientation === 'columns' && collapsedColumnsSideways.has(col.id);
             const isCollapsedUp = collapsedColumnsUp.has(col.id);
 
             if (isCollapsedSideways) {
@@ -256,18 +293,25 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 <div
                   key={col.id}
                   onClick={() => toggleCollapseSideways(col.id)}
+                  data-testid={`collapsed-rail-${col.id}`}
                   className="w-12 min-w-[48px] max-w-[48px] shrink-0 bg-slate-900/30 border border-slate-800/60 hover:border-slate-700/80 rounded-xl flex flex-col items-center py-4 cursor-pointer transition-colors group h-full"
                   title={`Expand ${col.label} (${colItems.length})`}
                 >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full mb-3 shrink-0"
-                    style={{ backgroundColor: col.color || '#94a3b8' }}
-                  />
+                  {/* Grouped status dot and item count pill at top of rail (TASK-TRK-COLLAPSED-RAIL-ALIGN) */}
+                  <div
+                    data-testid={`collapsed-rail-header-${col.id}`}
+                    className="flex flex-col items-center gap-1.5 shrink-0 mb-4"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: col.color || '#94a3b8' }}
+                    />
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono shrink-0">
+                      {colItems.length}
+                    </span>
+                  </div>
                   <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-400 group-hover:text-slate-200 transition-colors my-auto select-none">
                     {col.label}
-                  </span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono mt-3 shrink-0">
-                    {colItems.length}
                   </span>
                 </div>
               );
@@ -281,12 +325,24 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                   e.dataTransfer.dropEffect = 'move';
                 }}
                 onDrop={(e) => handleDropOnColEnd(e, col.id)}
-                className={`w-full md:w-80 md:min-w-[320px] md:max-w-[320px] shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col transition-all shadow-sm ${
-                  isCollapsedUp ? 'h-auto' : 'h-full'
+                data-testid={`column-container-${col.id}`}
+                className={`w-full ${
+                  effectiveOrientation === 'columns' ? 'md:w-80 md:min-w-[320px] md:max-w-[320px]' : ''
+                } shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col transition-all shadow-sm ${
+                  isCollapsedUp ? 'h-auto' : effectiveOrientation === 'columns' ? 'h-full' : ''
                 }`}
               >
                 {/* Column Header */}
-                <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-slate-950/40 rounded-t-xl">
+                <div
+                  onClick={() => {
+                    if (effectiveOrientation === 'stack' || isCollapsedUp) {
+                      toggleCollapseUp(col.id);
+                    }
+                  }}
+                  className={`px-4 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-slate-950/40 rounded-t-xl ${
+                    effectiveOrientation === 'stack' || isCollapsedUp ? 'cursor-pointer hover:bg-slate-900/60 transition-colors' : ''
+                  }`}
+                >
                   <div className="flex items-center space-x-2 min-w-0">
                     <span
                       className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -304,7 +360,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                     {!isReadOnly && (
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setQuickAddColId(quickAddColId === col.id ? null : col.id);
                           setQuickAddTitle('');
                         }}
@@ -314,22 +371,61 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => toggleCollapseUp(col.id)}
-                      className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                      title="Collapse column upward"
-                    >
-                      {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleCollapseSideways(col.id)}
-                      className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                      title="Collapse column sideways"
-                    >
-                      <ChevronsLeftRight className="w-3.5 h-3.5" />
-                    </button>
+                    {/* Vertical collapse chevron: retired from desktop horizontal columns, active in Wide Stack and on mobile */}
+                    {effectiveOrientation === 'stack' ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapseUp(col.id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title={isCollapsedUp ? `Expand ${col.label}` : 'Collapse column upward'}
+                        data-testid={`column-collapse-up-btn-${col.id}`}
+                      >
+                        {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                      </button>
+                    ) : isCollapsedUp ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapseUp(col.id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title={`Expand ${col.label}`}
+                        data-testid={`column-collapse-up-btn-${col.id}`}
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapseUp(col.id);
+                        }}
+                        className="md:hidden p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title="Collapse column upward"
+                        data-testid={`column-collapse-up-btn-${col.id}`}
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {effectiveOrientation === 'columns' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapseSideways(col.id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                        title="Collapse column sideways"
+                        data-testid={`column-collapse-sideways-btn-${col.id}`}
+                      >
+                        <ChevronsLeftRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -377,9 +473,19 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
 
                 {/* Cards Container */}
                 {!isCollapsedUp && (
-                  <div className="board-column-scroll p-3 space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0 custom-scrollbar">
+                  <div
+                    className={`board-column-scroll p-3 custom-scrollbar ${
+                      effectiveOrientation === 'stack'
+                        ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3'
+                        : 'space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0'
+                    }`}
+                  >
                     {colItems.length === 0 ? (
-                      <div className="h-28 flex items-center justify-center border-2 border-dashed border-slate-800/60 rounded-lg text-slate-600 text-xs select-none">
+                      <div
+                        className={`flex items-center justify-center border-2 border-dashed border-slate-800/60 rounded-lg text-slate-600 text-xs select-none ${
+                          effectiveOrientation === 'stack' ? 'h-24 col-span-full' : 'h-28'
+                        }`}
+                      >
                         No items
                       </div>
                     ) : (
@@ -388,7 +494,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                         const isBeingDragged = draggedItemId === item.id;
                         const isDragTarget =
                           dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
-                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings);
+                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs);
 
                         return (
                           <div key={item.id} className="relative">
@@ -458,7 +564,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                     itemHierarchy={getItemHierarchy(item)}
                     allProjects={allProjects}
                     isAllProjects={isAllProjects}
-                    isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings)}
+                    isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)}
                     isReadOnly={isReadOnly}
                     onEditItem={setEditingItem}
                     onDeleteItem={setDeleteConfirmItem}

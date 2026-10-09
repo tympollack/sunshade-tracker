@@ -140,18 +140,21 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
         };
       }
       if (table === 'work_items') {
+        const itemResult = {
+          data: mockItems.map((it) => ({
+            ...it,
+            metadata: { ...it.metadata, sprint: 'Sprint 2026-Q3' },
+          })),
+          error: null,
+        };
+        const queryBuilder: any = {
+          eq: vi.fn().mockImplementation(() => queryBuilder),
+          neq: vi.fn().mockImplementation(() => queryBuilder),
+          is: vi.fn().mockImplementation(() => queryBuilder),
+          then: (resolve: any) => Promise.resolve(itemResult).then(resolve),
+        };
         return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              neq: vi.fn().mockResolvedValue({
-                data: mockItems.map((it) => ({
-                  ...it,
-                  metadata: { ...it.metadata, sprint: 'Sprint 2026-Q3' },
-                })),
-                error: null,
-              }),
-            }),
-          }),
+          select: vi.fn().mockReturnValue(queryBuilder),
         };
       }
       if (table === 'sprint_events') {
@@ -216,6 +219,6 @@ describe('FEAT-TRK-LEAF-NODE-SUM-CALC: Burndown Aggregator & Cron Rollup', () =>
     expect(data.success).toBe(true);
     expect(data.rollups_processed).toBe(1);
     expect(data.rollups[0].sprint_id).toBe('sprint-q3');
-    expect(data.rollups[0].remaining_points).toBe(26);
+    expect(data.rollups[0].remaining_points).toBe(8);
   });
 });

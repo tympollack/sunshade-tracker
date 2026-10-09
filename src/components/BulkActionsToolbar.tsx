@@ -82,6 +82,7 @@ export const BulkActionsToolbar: React.FC<BulkActionsToolbarProps> = ({
             if (e.target.value) onMoveToSprint(e.target.value);
           }}
           disabled={isApplying}
+          data-testid="bulk-move-sprint-select"
           className="bg-slate-950 hover:bg-slate-800 text-xs font-medium text-emerald-400 border border-slate-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 cursor-pointer disabled:opacity-50 transition-colors"
           title="Move selected items to a sprint or backlog"
         >

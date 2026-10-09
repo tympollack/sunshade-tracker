@@ -16,7 +16,7 @@ import {
   Square,
   Clock,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
@@ -75,6 +75,7 @@ export interface SprintViewContainerProps {
   allProjects: { id: string; slug: string; name: string }[];
   handleUpdateStatus: (itemId: string, newStatus: string) => Promise<void> | void;
   handleUpdateItemSprint: (itemId: string, sprintName: string | null) => Promise<void> | void;
+  availableSprintDefs?: SprintDefinition[];
 }
 
 export function SprintViewContainer(props: SprintViewContainerProps) {
@@ -103,6 +104,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     setIsManageSprintsOpen,
     visibleSprints,
     availableSprints,
+    availableSprintDefs = [],
     filterSprintItems,
     sprintComparator,
     selectedItemIds,
@@ -261,16 +263,17 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             </button>
           )}
 
-          {/* Manage Sprints Button */}
+          {/* Configure Sprints / + New Sprint Button */}
           {!isReadOnly && (
             <button
               type="button"
               onClick={() => setIsManageSprintsOpen(true)}
               className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-300 hover:text-emerald-200 transition-colors flex items-center space-x-1.5 font-medium cursor-pointer"
               data-testid="open-manage-sprints-btn"
+              title="Configure Sprints / + New Sprint"
             >
               <Settings2 className="w-3.5 h-3.5" />
-              <span>Manage Sprints</span>
+              <span>Configure Sprints / + New Sprint</span>
             </button>
           )}
 
@@ -308,9 +311,11 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const completedItems = sprintItems.filter((it) =>
             isItemCompleted(it.status, completionSet)
           );
-          const sprintDef = projectSettings.sprint_settings?.sprints?.find(
-            (s: any) => s.name === sprintName || s.id === sprintName
-          );
+          const sprintDef =
+            availableSprintDefs.find((s: any) => s.name === sprintName || s.id === sprintName) ||
+            projectSettings.sprint_settings?.sprints?.find(
+              (s: any) => s.name === sprintName || s.id === sprintName
+            );
           const isCompletedSprint = sprintDef?.status === 'completed';
           const progressPct =
             sprintItems.length > 0
@@ -340,7 +345,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               return sum;
             };
             const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings, availableSprintDefs) || isReadOnly;
             const descendantIds = getDescendantIds(items, node.id);
             const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
             const isNodeSelected = selectedItemIds.has(node.id);
@@ -515,7 +520,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   ) : (
                     sprintItems.map((item) => {
                       const isImmutable =
-                        isItemImmutableDueToCompletedSprint(item, projectSettings) || isReadOnly;
+                        isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <SprintItemRow
                           key={item.id}
@@ -584,7 +589,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               return sum;
             };
             const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings) || isReadOnly;
+            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings, availableSprintDefs) || isReadOnly;
             const descendantIds = getDescendantIds(items, node.id);
             const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
             const isNodeSelected = selectedItemIds.has(node.id);
@@ -692,7 +697,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   ) : (
                     backlogItems.map((item) => {
                       const isImmutable =
-                        isItemImmutableDueToCompletedSprint(item, projectSettings) || isReadOnly;
+                        isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <SprintItemRow
                           key={item.id}

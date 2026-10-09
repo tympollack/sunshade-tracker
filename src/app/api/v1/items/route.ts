@@ -346,6 +346,20 @@ export async function POST(req: NextRequest) {
     const resolvedType = item_type || defaultType;
     const resolvedStatus = status || defaultStatus;
 
+    // Validate against allowed_story_types if configured
+    if (
+      Array.isArray(projectSettings?.allowed_story_types) &&
+      projectSettings.allowed_story_types.length > 0 &&
+      !projectSettings.allowed_story_types.map((t: string) => t.toLowerCase().trim()).includes(resolvedType.toLowerCase().trim())
+    ) {
+      return NextResponse.json(
+        {
+          error: `Item type '${resolvedType}' is not allowed for creation. Allowed types: [${projectSettings.allowed_story_types.join(', ')}]`,
+        },
+        { status: 422 }
+      );
+    }
+
     // Validate hierarchy nesting if parent_id is given
     if (parent_id && projectSettings?.hierarchy) {
       const { data: parentItem } = await supabaseAdmin
@@ -569,6 +583,14 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
       }
 
+      const { reconcileSprintMetadata, isMovingIntoActiveSprint } = await import('@/lib/bulk-items');
+      const resolvedMetadata = reconcileSprintMetadata(
+        existingItem.metadata || {},
+        metadata,
+        effectiveProjectSettings,
+        { fullReplacement: true }
+      );
+
       // Guardrail 3: Immutable Estimates on active sprint items
       try {
         const itemSprint = existingItem.metadata?.sprint || existingItem.metadata?.sprint_id;
@@ -580,14 +602,41 @@ export async function PATCH(req: NextRequest) {
               (s.status === 'active' || s.is_active || s.is_current)
           );
           if (activeSprintDef) {
-            const { validateEstimateImmutability, SprintGuardrailError } = await import(
+            const { validateEstimateImmutability } = await import(
               '@/lib/services/sprintGuardrailService'
             );
             validateEstimateImmutability(
               existingItem,
-              metadata,
+              resolvedMetadata,
               activeSprintDef,
               effectiveProjectSettings?.sprint_metrics || effectiveProjectSettings?.metric_rules
+            );
+          }
+        }
+
+        // Active sprint intake guard: reject assigning estimated items to active sprint without mid-sprint flag
+        const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+        const { isIntake, activeSprint } = isMovingIntoActiveSprint(
+          existingItem.metadata || {},
+          resolvedMetadata,
+          sprints
+        );
+
+        if (isIntake && activeSprint) {
+          const hasPoints =
+            (existingItem.metadata?.story_points !== undefined && existingItem.metadata?.story_points !== null && Number(existingItem.metadata.story_points) > 0) ||
+            (existingItem.metadata?.points !== undefined && existingItem.metadata?.points !== null && Number(existingItem.metadata.points) > 0) ||
+            (resolvedMetadata?.story_points !== undefined && resolvedMetadata?.story_points !== null && Number(resolvedMetadata.story_points) > 0);
+          const isAddedMidSprint = Boolean(
+            resolvedMetadata?.added_mid_sprint || existingItem.metadata?.added_mid_sprint
+          );
+          if (hasPoints && !isAddedMidSprint) {
+            return NextResponse.json(
+              {
+                error: `Cannot assign item "${existingItem.title || existingItem.id}" with estimated points to active sprint "${activeSprint.name}". Active sprint scope is locked.`,
+                code: 'ESTIMATE_LOCKED',
+              },
+              { status: 409 }
             );
           }
         }
@@ -598,7 +647,7 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      updateFields.metadata = metadata;
+      updateFields.metadata = resolvedMetadata;
     }
 
     // Validate item_type against effective project schema
@@ -828,27 +877,43 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Cascade sprint change to all descendants
-    if (
+    const prevSprintName = existingItem.metadata?.sprint || null;
+    const prevSprintId = existingItem.metadata?.sprint_id || null;
+    const nextSprintName = updated.metadata?.sprint || null;
+    const nextSprintId = updated.metadata?.sprint_id || null;
+    const sprintChanged =
       metadata !== undefined &&
-      metadata?.sprint !== undefined &&
-      metadata.sprint !== existingItem.metadata?.sprint
-    ) {
-      const targetSprint = metadata.sprint;
-      const { data: tenantItems } = await supabaseAdmin
+      (prevSprintName !== nextSprintName || prevSprintId !== nextSprintId);
+
+    if (sprintChanged) {
+      const { data: tenantItems, error: fetchDescendantsErr } = await supabaseAdmin
         .from('work_items')
         .select('id, parent_id, metadata')
         .eq('tenant_id', authCtx.tenant.id);
+
+      if (fetchDescendantsErr) {
+        console.error('Failed to query items for descendant cascade:', fetchDescendantsErr);
+        return NextResponse.json(
+          { error: `Failed to query descendant items: ${fetchDescendantsErr.message}` },
+          { status: 500 }
+        );
+      }
+
       const descendantIds = getDescendantIds(tenantItems || [], id);
       if (descendantIds.length > 0) {
-        const descendantUpdates = (tenantItems || [])
-          .filter((it) => descendantIds.includes(it.id))
-          .map((it) => {
-            const nextMeta = { ...(it.metadata || {}) };
-            if (targetSprint && targetSprint !== '__none__') {
-              nextMeta.sprint = targetSprint;
-            } else {
-              delete nextMeta.sprint;
-            }
+        const { reconcileSprintMetadata } = await import('@/lib/bulk-items');
+        const descendantsToUpdate = (tenantItems || []).filter((it) => descendantIds.includes(it.id));
+        const descendantUpdates = await Promise.all(
+          descendantsToUpdate.map((it) => {
+            const nextMeta = reconcileSprintMetadata(
+              it.metadata || {},
+              {
+                sprint: nextSprintName,
+                sprint_id: nextSprintId,
+              },
+              effectiveProjectSettings,
+              { fullReplacement: false }
+            );
             return supabaseAdmin
               .from('work_items')
               .update({
@@ -857,8 +922,17 @@ export async function PATCH(req: NextRequest) {
               })
               .eq('id', it.id)
               .eq('tenant_id', authCtx.tenant.id);
-          });
-        await Promise.all(descendantUpdates);
+          })
+        );
+
+        const failedUpdate = descendantUpdates.find((res) => res.error);
+        if (failedUpdate?.error) {
+          console.error('Failed to cascade sprint update to descendant:', failedUpdate.error);
+          return NextResponse.json(
+            { error: `Failed to cascade sprint assignment to descendant items: ${failedUpdate.error.message}` },
+            { status: 500 }
+          );
+        }
       }
     }
 

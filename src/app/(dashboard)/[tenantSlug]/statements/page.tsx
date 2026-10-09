@@ -6,6 +6,8 @@ import { ArrowLeft, ShieldCheck, Loader2, Settings } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { StatementGenerator } from '@/components/statements/StatementGenerator';
+import { useWorkItemSelection } from '@/hooks/useWorkItemSelection';
+import { WorkItemInspectorDrawer } from '@/components/drawer/WorkItemInspectorDrawer';
 
 interface PageProps {
   params: Promise<{
@@ -32,6 +34,15 @@ export default function DynamicStatementsPage(props: PageProps) {
 
 function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
+
+  const {
+    selectedItem,
+    isOpen: isDrawerOpen,
+    close: closeDrawer,
+  } = useWorkItemSelection({
+    items: [],
+    tenantSlug,
+  });
 
   useEffect(() => {
     fetch('/api/v1/tenants/me', {
@@ -100,6 +111,14 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
         {/* Dynamic Statement Generator Component */}
         <StatementGenerator tenantSlug={tenantSlug} />
       </main>
+
+      {/* RHN Work Item Inspector Drawer */}
+      <WorkItemInspectorDrawer
+        item={selectedItem}
+        isOpen={isDrawerOpen}
+        onClose={closeDrawer}
+        tenantSlug={tenantSlug}
+      />
     </div>
   );
 }

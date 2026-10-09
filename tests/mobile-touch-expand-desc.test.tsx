@@ -33,6 +33,7 @@ describe('FEAT-TRK-MOBILE-TOUCH-EXPAND-DESC: Tap-to-expand accordion fallback fo
         item={mockItem}
         itemHierarchy={mockHierarchy}
         onEditItem={handleEdit}
+        compact={false}
       />
     );
 

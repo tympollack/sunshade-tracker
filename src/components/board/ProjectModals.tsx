@@ -82,6 +82,7 @@ export interface ProjectModalsProps {
   isManageSprintsOpen: boolean;
   setIsManageSprintsOpen: (open: boolean) => void;
   handleSaveSprints: (sprints: SprintDefinition[]) => Promise<void>;
+  availableSprintDefs?: SprintDefinition[];
   // Global Search
   isSearchOpen: boolean;
   setIsSearchOpen: (open: boolean) => void;
@@ -155,6 +156,7 @@ export function ProjectModals(props: ProjectModalsProps) {
     isManageSprintsOpen,
     setIsManageSprintsOpen,
     handleSaveSprints,
+    availableSprintDefs,
     isSearchOpen,
     setIsSearchOpen,
     myDisplayName,
@@ -197,6 +199,7 @@ export function ProjectModals(props: ProjectModalsProps) {
         onSelectItem={(it) => setEditingItem(it)}
         onCreateChildItem={handleModalCreateChildItem}
         onRefresh={fetchData}
+        availableSprintDefs={availableSprintDefs}
       />
 
       {!isReadOnly && (
@@ -306,7 +309,7 @@ export function ProjectModals(props: ProjectModalsProps) {
       <ManageSprintsModal
         isOpen={!isReadOnly && isManageSprintsOpen}
         onClose={() => setIsManageSprintsOpen(false)}
-        sprints={projectSettings.sprint_settings?.sprints || []}
+        sprints={availableSprintDefs || projectSettings.sprint_settings?.sprints || []}
         onSaveSprints={handleSaveSprints}
         items={items}
       />

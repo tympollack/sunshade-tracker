@@ -7,6 +7,8 @@ import {
   ChevronDown,
   ChevronRight,
   RotateCcw,
+  Columns,
+  Rows,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
@@ -28,6 +30,8 @@ export interface ProjectToolbarProps {
   handlePointModeChange: (mode: 'macro' | 'granular') => void;
   collapseAllColumns: () => void;
   expandAllColumns: () => void;
+  boardOrientation?: 'columns' | 'stack';
+  onOrientationChange?: (orientation: 'columns' | 'stack') => void;
 }
 
 /**
@@ -50,6 +54,8 @@ export function ProjectToolbar({
   handlePointModeChange,
   collapseAllColumns,
   expandAllColumns,
+  boardOrientation = 'columns',
+  onOrientationChange,
 }: ProjectToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -131,6 +137,41 @@ export function ProjectToolbar({
           </div>
 
           <div className="flex items-center space-x-2 shrink-0">
+            {onOrientationChange && (
+              <div
+                data-testid="board-orientation-toggle"
+                className="flex items-center bg-slate-900/90 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[32px]"
+              >
+                <button
+                  type="button"
+                  onClick={() => onOrientationChange('columns')}
+                  data-testid="orientation-columns-btn"
+                  className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    boardOrientation === 'columns'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Columns (horizontal swimlanes)"
+                >
+                  <Columns className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Columns</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOrientationChange('stack')}
+                  data-testid="orientation-stack-btn"
+                  className={`flex items-center space-x-1 px-2 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    boardOrientation === 'stack'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Wide Stack (vertically stacked accordions)"
+                >
+                  <Rows className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Wide Stack</span>
+                </button>
+              </div>
+            )}
             <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
             <div className="flex items-center space-x-1 bg-slate-900/90 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[32px]">
               <button
@@ -225,6 +266,43 @@ export function ProjectToolbar({
           </div>
 
           <div className="flex items-center space-x-3 shrink-0">
+            {/* Orientation Switcher (TASK-TRK-VIEW-ORIENTATION-TOGGLE) */}
+            {onOrientationChange && (
+              <div
+                data-testid="board-orientation-toggle"
+                className="flex items-center bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]"
+              >
+                <button
+                  type="button"
+                  onClick={() => onOrientationChange('columns')}
+                  data-testid="orientation-columns-btn"
+                  className={`flex items-center space-x-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    boardOrientation === 'columns'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Columns (horizontal swimlanes)"
+                >
+                  <Columns className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Columns</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOrientationChange('stack')}
+                  data-testid="orientation-stack-btn"
+                  className={`flex items-center space-x-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    boardOrientation === 'stack'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Wide Stack (vertically stacked accordions)"
+                >
+                  <Rows className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Wide Stack</span>
+                </button>
+              </div>
+            )}
+
             {/* Quick Collapse / Expand Columns */}
             <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">
               <button
