@@ -48,40 +48,44 @@ export function ProjectSchemaView({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [collapseLevel, setCollapseLevel] = useState<number>(3);
 
-  const prevBaselineJsonRef = useRef(JSON.stringify(settings, null, 2));
+  const savedBaselineJsonRef = useRef(JSON.stringify(settings, null, 2));
+  const lastObservedPropSettingsRef = useRef(JSON.stringify(settings, null, 2));
   const prevProjectIdRef = useRef(projectId);
 
   // Sync external settings changes when prop updates
   useEffect(() => {
-    const currentFormatted = JSON.stringify(settings, null, 2);
+    const currentPropFormatted = JSON.stringify(settings, null, 2);
     const projectChanged = projectId !== undefined && prevProjectIdRef.current !== projectId;
     prevProjectIdRef.current = projectId;
 
     if (projectChanged) {
       setDraftData(settings);
-      setRawText(currentFormatted);
-      prevBaselineJsonRef.current = currentFormatted;
+      setRawText(currentPropFormatted);
+      savedBaselineJsonRef.current = currentPropFormatted;
+      lastObservedPropSettingsRef.current = currentPropFormatted;
       setRawError(null);
       setSyntaxToast(null);
       setSaveError(null);
       return;
     }
 
-    if (currentFormatted === prevBaselineJsonRef.current) {
+    const propActuallyChanged = currentPropFormatted !== lastObservedPropSettingsRef.current;
+    if (!propActuallyChanged) {
       return;
     }
+    lastObservedPropSettingsRef.current = currentPropFormatted;
 
-    // Determine if the current draft has unsaved changes compared to baseline
+    // Determine if the current draft has unsaved changes compared to saved baseline
     const isDirty =
       mode === 'raw'
-        ? rawText !== prevBaselineJsonRef.current
-        : JSON.stringify(draftData, null, 2) !== prevBaselineJsonRef.current;
+        ? rawText !== savedBaselineJsonRef.current
+        : JSON.stringify(draftData, null, 2) !== savedBaselineJsonRef.current;
 
     // Only update draft state if the draft is clean (not dirty)
     if (!isDirty) {
       setDraftData(settings);
-      setRawText(currentFormatted);
-      prevBaselineJsonRef.current = currentFormatted;
+      setRawText(currentPropFormatted);
+      savedBaselineJsonRef.current = currentPropFormatted;
       setRawError(null);
       setSyntaxToast(null);
       setSaveError(null);
@@ -163,7 +167,8 @@ export function ProjectSchemaView({
     const formatted = JSON.stringify(settings, null, 2);
     setDraftData(settings);
     setRawText(formatted);
-    prevBaselineJsonRef.current = formatted;
+    savedBaselineJsonRef.current = formatted;
+    lastObservedPropSettingsRef.current = formatted;
     setRawError(null);
     setSyntaxToast(null);
   };
@@ -191,7 +196,8 @@ export function ProjectSchemaView({
 
     try {
       await onSave(payloadToSave);
-      prevBaselineJsonRef.current = JSON.stringify(payloadToSave, null, 2);
+      const savedFormatted = JSON.stringify(payloadToSave, null, 2);
+      savedBaselineJsonRef.current = savedFormatted;
       setSaveSuccess(true);
       setSaveError(null);
       setTimeout(() => setSaveSuccess(false), 3000);

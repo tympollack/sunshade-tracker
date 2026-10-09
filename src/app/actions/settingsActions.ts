@@ -68,8 +68,19 @@ export async function updateVelocitySettingsAction(
       }
     }
 
-    // 3. Pre-flight validate all project overrides
-    const projectOverrides = Array.isArray(config.projectOverrides) ? config.projectOverrides : [];
+    // 3. Pre-flight validate all project overrides (deduplicated by projectId)
+    const rawOverrides = Array.isArray(config.projectOverrides) ? config.projectOverrides : [];
+    const dedupedOverridesMap = new Map<string, number | null>();
+    for (const o of rawOverrides) {
+      if (o && o.projectId) {
+        dedupedOverridesMap.set(o.projectId, o.velocityRatio);
+      }
+    }
+    const projectOverrides = Array.from(dedupedOverridesMap.entries()).map(([projectId, velocityRatio]) => ({
+      projectId,
+      velocityRatio,
+    }));
+
     const projectsToUpdate: Array<{ id: string; settings: any; velocityRatio: number | null }> = [];
 
     for (const override of projectOverrides) {
@@ -101,17 +112,20 @@ export async function updateVelocitySettingsAction(
 
     const rollbackStack: Array<{ table: 'tenants' | 'projects'; id: string; settings: any }> = [];
 
-    const executeRollback = async () => {
-      for (const item of rollbackStack) {
-        try {
-          await supabaseAdmin
-            .from(item.table)
-            .update({ settings: item.settings, updated_at: new Date().toISOString() })
-            .eq('id', item.id);
-        } catch (rbErr) {
+    const executeRollback = async (): Promise<string[]> => {
+      const rollbackFailures: string[] = [];
+      // Replay in reverse order (LIFO)
+      for (const item of [...rollbackStack].reverse()) {
+        const { error: rbErr } = await supabaseAdmin
+          .from(item.table)
+          .update({ settings: item.settings, updated_at: new Date().toISOString() })
+          .eq('id', item.id);
+        if (rbErr) {
           console.error(`Rollback failed for ${item.table} ${item.id}:`, rbErr);
+          rollbackFailures.push(`${item.table}:${item.id} (${rbErr.message})`);
         }
       }
+      return rollbackFailures;
     };
 
     // 4. Update tenant settings
@@ -161,10 +175,14 @@ export async function updateVelocitySettingsAction(
           .eq('id', proj.id);
 
         if (projUpdateErr) {
-          await executeRollback();
+          const rbFailures = await executeRollback();
+          let errMsg = `Failed to update velocity settings for project ${override.projectId}: ${projUpdateErr.message}`;
+          if (rbFailures.length > 0) {
+            errMsg += ` (Rollback also failed for: ${rbFailures.join(', ')})`;
+          }
           return {
             success: false,
-            error: `Failed to update velocity settings for project ${override.projectId}: ${projUpdateErr.message}`,
+            error: errMsg,
           };
         }
 

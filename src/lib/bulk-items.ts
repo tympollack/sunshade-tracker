@@ -151,6 +151,7 @@ export function reconcileSprintMetadata(
       merged.sprint_id = matched.id || incomingSprintId;
     } else {
       merged.sprint_id = incomingSprintId;
+      delete merged.sprint;
     }
   }
 
@@ -1599,8 +1600,37 @@ export async function handleBulkUpdateItems(
         const mergedMetadata = reconcileSprintMetadata(existing.metadata, it.metadata, projectSettings);
         patchFields.metadata = mergedMetadata;
 
-        // Active sprint immutability guard
         const sprints = projectSettings?.sprint_settings?.sprints || [];
+
+        // Active sprint estimate immutability guard: check items already in an active sprint
+        const itemSprint = existing.metadata?.sprint || existing.metadata?.sprint_id;
+        if (itemSprint) {
+          const activeSprintDef = sprints.find(
+            (s: any) =>
+              (s.id === itemSprint || s.name === itemSprint) &&
+              (s.status === 'active' || s.is_active || s.is_current)
+          );
+          if (activeSprintDef) {
+            try {
+              validateEstimateImmutability(
+                existing,
+                mergedMetadata,
+                activeSprintDef,
+                projectSettings?.sprint_metrics || projectSettings?.metric_rules
+              );
+            } catch (err: any) {
+              return {
+                success: false,
+                updated_count: 0,
+                items: [],
+                error: err.message || `Estimates are locked while sprint "${activeSprintDef.name}" is active.`,
+                status: err.status || 409,
+              };
+            }
+          }
+        }
+
+        // Active sprint immutability guard
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
 
         if (isIntake && activeSprint) {

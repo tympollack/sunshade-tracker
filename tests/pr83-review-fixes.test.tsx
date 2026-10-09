@@ -387,4 +387,135 @@ describe('PR-83 Review Fixes Verification Suite', () => {
       });
     });
   });
+
+  describe('PR-84 Comments: Reconcile Sprint Metadata ID-only unsets stale name', () => {
+    const mockSettings: any = {
+      sprint_settings: {
+        sprints: [
+          { id: 'sprint-1-uuid', name: 'Sprint 1', status: 'active' as const },
+        ],
+      },
+    };
+
+    it('clears stale sprint name when incoming specifies unknown sprint_id only', () => {
+      const existing = { sprint: 'Old Sprint Name', sprint_id: 'old-sprint-id' };
+      const incoming = { sprint_id: 'new-unmatched-sprint-id' };
+
+      const result = reconcileSprintMetadata(existing, incoming, mockSettings);
+      expect(result.sprint_id).toBe('new-unmatched-sprint-id');
+      expect(result.sprint).toBeUndefined();
+    });
+  });
+
+  describe('PR-84 Comments: Modality B Heterogeneous Bulk Edit Active Sprint Estimate Lock', () => {
+    it('rejects estimate modification in items array when existing item is in active sprint', async () => {
+      const mockItem = {
+        id: 'item-hetero-1',
+        tenant_id: 't-1',
+        project_id: 'proj-1',
+        title: 'Active Sprint Hetero Item',
+        metadata: {
+          sprint: 'Sprint 1',
+          sprint_id: 'sprint-1-uuid',
+          story_points: 5,
+        },
+      };
+
+      const mockProjectSettings = {
+        sprint_settings: {
+          sprints: [
+            { id: 'sprint-1-uuid', name: 'Sprint 1', status: 'active' },
+          ],
+        },
+        sprint_metrics: {
+          lock_estimates_in_active_sprint: true,
+        },
+      };
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({ data: [mockItem], error: null }),
+          };
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: 'proj-1', settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        return { select: vi.fn().mockReturnThis() };
+      });
+
+      const res = await handleBulkUpdateItems(
+        't-1',
+        {
+          items: [
+            {
+              id: 'item-hetero-1',
+              metadata: {
+                story_points: 13,
+              },
+            },
+          ],
+        }
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(409);
+      expect(res.error).toContain('Estimates locked while sprint is active');
+    });
+  });
+
+  describe('PR-84 Comments: ProjectSchemaView Save Does Not Revert on Stale Prop', () => {
+    it('maintains saved schema even when parent re-renders before prop updates', async () => {
+      const initialSettings: any = {
+        schema_version: '1.0',
+        hierarchy: [{ level: 1, type: 'task', name: 'Task' }],
+      };
+      const onSave = vi.fn().mockResolvedValue(undefined);
+
+      const { rerender } = render(
+        <ProjectSchemaView
+          projectId="proj-1"
+          settings={initialSettings}
+          onSave={onSave}
+          initialMode="raw"
+        />
+      );
+
+      const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+      // User modifies schema
+      fireEvent.change(textarea, { target: { value: '{\n  "schema_version": "2.0-saved"\n}' } });
+
+      // Click save
+      const saveBtn = screen.getByRole('button', { name: /save schema/i });
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalled();
+      });
+
+      // Parent re-renders with initial (stale) settings prop because background fetch is pending
+      rerender(
+        <ProjectSchemaView
+          projectId="proj-1"
+          settings={initialSettings}
+          onSave={onSave}
+          initialMode="raw"
+        />
+      );
+
+      // Verify the textarea continues to hold the saved version and is NOT reverted to 1.0
+      expect(textarea.value).toContain('2.0-saved');
+    });
+  });
 });
