@@ -393,6 +393,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
   const [allProjects, setAllProjects] = useState<ProjectInfo[]>([]);
+  const allProjectsRef = useRef<ProjectInfo[]>(allProjects);
+  useEffect(() => {
+    allProjectsRef.current = allProjects;
+  }, [allProjects]);
+
   const isOverviewSlug = projectSlug === 'all' || projectSlug === 'portfolio';
   const hasMatchingProject = useMemo(
     () => allProjects.some((p) => p.slug === projectSlug),
@@ -887,7 +892,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setIsRefreshing(true);
     setFetchError(null);
     try {
-      let targetProjectId = currentProjectId;
+      let targetProjectId: string | undefined = undefined;
       const settingsRes = await apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
       if (settingsRes.ok) {
         const sData = await settingsRes.json();
@@ -937,6 +942,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         }
       }
 
+      // Fallback targetProjectId from known projects if projects fetch failed or omitted selected project
+      if (!isAllProjects && !targetProjectId) {
+        targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
+      }
+
       const itemsUrl = isAllProjects
         ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}`
         : `/api/v1/items?project_slug=${projectSlug}`;
@@ -952,30 +962,33 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
 
       // Query configured relational sprints from tracker.sprints table
-      try {
-        const sprintsUrl = !isAllProjects && targetProjectId
-          ? `/api/v1/sprints?project_id=${targetProjectId}&tenant_slug=${tenantSlug}`
-          : `/api/v1/sprints?tenant_slug=${tenantSlug}`;
-        const sprintsRes = await apiFetch(sprintsUrl);
-        if (sprintsRes.ok) {
-          const sData = await sprintsRes.json();
-          if (Array.isArray(sData.sprints)) {
-            const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
-              id: s.id,
-              project_id: s.project_id,
-              name: s.name,
-              status: s.status || (s.is_active ? 'active' : 'planned'),
-              goal: s.goal || null,
-              start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
-              end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
-              is_current: Boolean(s.is_active || s.status === 'active'),
-              committed_points: s.committed_points || 0,
-            }));
-            setDbSprints(mappedDbSprints);
+      // In single project view (!isAllProjects), only query when targetProjectId is known to prevent exposing unrelated sprints
+      if (isAllProjects || targetProjectId) {
+        try {
+          const sprintsUrl = !isAllProjects && targetProjectId
+            ? `/api/v1/sprints?project_id=${targetProjectId}&tenant_slug=${tenantSlug}`
+            : `/api/v1/sprints?tenant_slug=${tenantSlug}`;
+          const sprintsRes = await apiFetch(sprintsUrl);
+          if (sprintsRes.ok) {
+            const sData = await sprintsRes.json();
+            if (Array.isArray(sData.sprints)) {
+              const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
+                id: s.id,
+                project_id: s.project_id,
+                name: s.name,
+                status: s.status || (s.is_active ? 'active' : 'planned'),
+                goal: s.goal || null,
+                start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
+                end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
+                is_current: Boolean(s.is_active || s.status === 'active'),
+                committed_points: s.committed_points || 0,
+              }));
+              setDbSprints(mappedDbSprints);
+            }
           }
+        } catch {
+          // Silently tolerate in environments where relational endpoint is unmocked
         }
-      } catch {
-        // Silently tolerate in environments where relational endpoint is unmocked
       }
     } catch (err: any) {
       setFetchError(err.message || 'Network error. Check your connection.');
@@ -983,7 +996,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [apiFetch, tenantSlug, projectSlug, isAllProjects, currentProjectId]);
+  }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
 
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
@@ -1760,11 +1773,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       } else {
         // Synchronize with tracker.sprints table
         const currentProj = allProjects.find((p) => p.slug === projectSlug);
+        const scopedProjectId = currentProj?.id;
 
         // 1. Delete sprints removed from the sprint list
         const toDelete = dbSprints.filter(
           (dbS) =>
-            (!dbS.project_id || !currentProj || dbS.project_id === currentProj.id) &&
+            (scopedProjectId ? dbS.project_id === scopedProjectId : !dbS.project_id) &&
             !sprints.some((s) => s.id === dbS.id || s.name === dbS.name)
         );
         for (const sDel of toDelete) {
@@ -1781,13 +1795,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           const resolvedEndsAt =
             s.end_date !== undefined ? (s.end_date || null) : (s.ends_at || null);
 
-          const existingInDb = dbSprints.find((dbS) => dbS.id === s.id || dbS.name === s.name);
+          const targetProjectId = scopedProjectId || s.project_id;
+          const existingInDb = dbSprints.find((dbS) => {
+            if (s.id && dbS.id === s.id) return true;
+            if (dbS.name === s.name) {
+              if (targetProjectId) {
+                return dbS.project_id === targetProjectId;
+              }
+              return !dbS.project_id;
+            }
+            return false;
+          });
           if (existingInDb) {
             const updateRes = await updateSprintAction(tenantSlug, existingInDb.id, {
               name: s.name,
               goal: s.goal !== undefined ? (s.goal || null) : undefined,
               status: s.status,
-              is_active: s.status === 'active' || s.is_current,
+              is_active: s.status === 'active',
               started_at: resolvedStartedAt,
               ends_at: resolvedEndsAt,
               committed_points: s.committed_points,
@@ -1801,7 +1825,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               goal: s.goal || null,
               project_id: currentProj?.id,
               status: s.status,
-              is_active: s.status === 'active' || s.is_current,
+              is_active: s.status === 'active',
               started_at: resolvedStartedAt,
               ends_at: resolvedEndsAt,
               committed_points: s.committed_points,
@@ -2152,7 +2176,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
 
       const estimatedItemsEntering = itemsEnteringSprint.filter(
-        (it) => Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0
+        (it) =>
+          Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0 &&
+          !it.metadata?.added_mid_sprint
       );
 
       if (estimatedItemsEntering.length > 0) {
@@ -3419,6 +3445,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleSaveSchema={handleSaveSchema}
                   isSavingSchema={isSavingSchema}
                   setIsArchiveModalOpen={setIsArchiveModalOpen}
+                  projectSlug={projectSlug}
                   activeItems={
                     isAllProjects
                       ? items.filter((it) => {

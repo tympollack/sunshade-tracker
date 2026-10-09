@@ -68,7 +68,67 @@ export async function updateVelocitySettingsAction(
       }
     }
 
-    // 3. Update tenant settings
+    // 3. Pre-flight validate all project overrides (deduplicated by projectId)
+    const rawOverrides = Array.isArray(config.projectOverrides) ? config.projectOverrides : [];
+    const dedupedOverridesMap = new Map<string, number | null>();
+    for (const o of rawOverrides) {
+      if (o && o.projectId) {
+        dedupedOverridesMap.set(o.projectId, o.velocityRatio);
+      }
+    }
+    const projectOverrides = Array.from(dedupedOverridesMap.entries()).map(([projectId, velocityRatio]) => ({
+      projectId,
+      velocityRatio,
+    }));
+
+    const projectsToUpdate: Array<{ id: string; settings: any; velocityRatio: number | null }> = [];
+
+    for (const override of projectOverrides) {
+      const { data: proj, error: projFetchErr } = await supabaseAdmin
+        .from('projects')
+        .select('id, settings')
+        .eq('id', override.projectId)
+        .eq('tenant_id', tenant.id)
+        .maybeSingle();
+
+      if (projFetchErr) {
+        return {
+          success: false,
+          error: `Failed to fetch project ${override.projectId}: ${projFetchErr.message}`,
+        };
+      }
+      if (!proj) {
+        return {
+          success: false,
+          error: `Project "${override.projectId}" not found in workspace "@${tenantSlug}".`,
+        };
+      }
+      projectsToUpdate.push({
+        id: proj.id,
+        settings: proj.settings || {},
+        velocityRatio: override.velocityRatio,
+      });
+    }
+
+    const rollbackStack: Array<{ table: 'tenants' | 'projects'; id: string; settings: any }> = [];
+
+    const executeRollback = async (): Promise<string[]> => {
+      const rollbackFailures: string[] = [];
+      // Replay in reverse order (LIFO)
+      for (const item of [...rollbackStack].reverse()) {
+        const { error: rbErr } = await supabaseAdmin
+          .from(item.table)
+          .update({ settings: item.settings, updated_at: new Date().toISOString() })
+          .eq('id', item.id);
+        if (rbErr) {
+          console.error(`Rollback failed for ${item.table} ${item.id}:`, rbErr);
+          rollbackFailures.push(`${item.table}:${item.id} (${rbErr.message})`);
+        }
+      }
+      return rollbackFailures;
+    };
+
+    // 4. Update tenant settings
     const existingTenantSettings = tenant.settings || {};
     const updatedTenantSettings = {
       ...existingTenantSettings,
@@ -90,46 +150,43 @@ export async function updateVelocitySettingsAction(
       return { success: false, error: `Failed to update workspace velocity ratio: ${updateTenantErr.message}` };
     }
 
-    // 4. Update project overrides if specified
-    if (Array.isArray(config.projectOverrides) && config.projectOverrides.length > 0) {
-      for (const override of config.projectOverrides) {
-        const { data: proj, error: projFetchErr } = await supabaseAdmin
-          .from('projects')
-          .select('id, settings')
-          .eq('id', override.projectId)
-          .eq('tenant_id', tenant.id)
-          .maybeSingle();
+    rollbackStack.push({ table: 'tenants', id: tenant.id, settings: existingTenantSettings });
 
-        if (projFetchErr) {
+    // 5. Update project overrides
+    if (projectOverrides.length > 0) {
+      for (const override of projectOverrides) {
+        const proj = projectsToUpdate.find((p) => p.id === override.projectId);
+        if (!proj) continue;
+
+        const originalProjSettings = proj.settings || {};
+        const projSettings = { ...originalProjSettings };
+        if (override.velocityRatio === null || isNaN(override.velocityRatio) || override.velocityRatio <= 0) {
+          delete projSettings.velocity_ratio;
+        } else {
+          projSettings.velocity_ratio = override.velocityRatio;
+        }
+
+        const { error: projUpdateErr } = await supabaseAdmin
+          .from('projects')
+          .update({
+            settings: projSettings,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', proj.id);
+
+        if (projUpdateErr) {
+          const rbFailures = await executeRollback();
+          let errMsg = `Failed to update velocity settings for project ${override.projectId}: ${projUpdateErr.message}`;
+          if (rbFailures.length > 0) {
+            errMsg += ` (Rollback also failed for: ${rbFailures.join(', ')})`;
+          }
           return {
             success: false,
-            error: `Failed to fetch project ${override.projectId}: ${projFetchErr.message}`,
+            error: errMsg,
           };
         }
 
-        if (proj) {
-          const projSettings = { ...(proj.settings || {}) };
-          if (override.velocityRatio === null || isNaN(override.velocityRatio) || override.velocityRatio <= 0) {
-            delete projSettings.velocity_ratio;
-          } else {
-            projSettings.velocity_ratio = override.velocityRatio;
-          }
-
-          const { error: projUpdateErr } = await supabaseAdmin
-            .from('projects')
-            .update({
-              settings: projSettings,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', proj.id);
-
-          if (projUpdateErr) {
-            return {
-              success: false,
-              error: `Failed to update velocity settings for project ${override.projectId}: ${projUpdateErr.message}`,
-            };
-          }
-        }
+        rollbackStack.push({ table: 'projects', id: proj.id, settings: originalProjSettings });
       }
     }
 

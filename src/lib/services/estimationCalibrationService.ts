@@ -281,22 +281,49 @@ export async function getEstimationCalibrationTelemetry(
   // 5. Query logged time from tracker.work_item_time_logs
   const timeLogsMap = new Map<string, number>();
   if (completedItemIds.length > 0) {
-    let timeLogQuery: any = service
-      .from('work_item_time_logs')
-      .select('work_item_id, duration_seconds')
-      .eq('tenant_id', tenant.id)
-      .in('work_item_id', completedItemIds);
+    const CHUNK_SIZE = 200;
+    const PAGE_SIZE = 1000;
+    for (let i = 0; i < completedItemIds.length; i += CHUNK_SIZE) {
+      const chunk = completedItemIds.slice(i, i + CHUNK_SIZE);
+      let page = 0;
+      let hasMore = true;
 
-    const { data: logs, error: logsErr } = await timeLogQuery;
-    if (logsErr) {
-      if (logsErr.code !== '42P01' && !logsErr.message?.includes('does not exist')) {
-        throw new Error(`Failed to query work item time logs: ${logsErr.message}`);
-      }
-    }
-    if (Array.isArray(logs)) {
-      for (const log of logs) {
-        const hours = (log.duration_seconds || 0) / 3600.0;
-        timeLogsMap.set(log.work_item_id, (timeLogsMap.get(log.work_item_id) || 0) + hours);
+      while (hasMore) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        let query: any = service
+          .from('work_item_time_logs')
+          .select('work_item_id, duration_seconds')
+          .eq('tenant_id', tenant.id)
+          .in('work_item_id', chunk);
+
+        const supportsRange = typeof query.range === 'function';
+        if (supportsRange) {
+          query = query.range(from, to);
+        }
+
+        const { data: logs, error: logsErr } = await query;
+
+        if (logsErr) {
+          if (logsErr.code !== '42P01' && !logsErr.message?.includes('does not exist')) {
+            throw new Error(`Failed to query work item time logs: ${logsErr.message}`);
+          }
+          break;
+        }
+
+        if (Array.isArray(logs) && logs.length > 0) {
+          for (const log of logs) {
+            const hours = (log.duration_seconds || 0) / 3600.0;
+            timeLogsMap.set(log.work_item_id, (timeLogsMap.get(log.work_item_id) || 0) + hours);
+          }
+          if (!supportsRange || logs.length < PAGE_SIZE) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
       }
     }
   }
