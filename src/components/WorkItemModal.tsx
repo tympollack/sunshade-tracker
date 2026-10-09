@@ -13,7 +13,7 @@ import { QuickAddPayload } from '@/components/QuickAddModal';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { useModalScrollLock } from '@/hooks/useModalScrollLock';
 import { WorkItemComments } from '@/components/WorkItemComments';
-import { getItemComments } from '@/app/actions/commentActions';
+import { getCommentCount } from '@/app/actions/commentActions';
 
 export interface ProjectInfo {
   id: string;
@@ -112,9 +112,11 @@ export function WorkItemModal(props: WorkItemModalProps) {
 
   const fetchCommentCount = async (itemId: string) => {
     try {
-      const res = await getItemComments(itemId);
-      if (res.success && res.data) {
-        setCommentsCount(res.data.length);
+      const res = await getCommentCount(itemId);
+      if (res.success && typeof res.count === 'number') {
+        if (lastFetchedItemIdRef.current === itemId) {
+          setCommentsCount(res.count);
+        }
       }
     } catch {
       // Graceful ignore
@@ -124,6 +126,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
   useEffect(() => {
     if (item?.id) {
       setActiveTab(initialTab);
+      setCommentsCount(0);
       fetchAuditLogs(item.id);
       fetchCommentCount(item.id);
     } else {
@@ -222,7 +225,11 @@ export function WorkItemModal(props: WorkItemModalProps) {
               itemId={item.id}
               currentUser={props.currentUser}
               isReadOnly={isReadOnly || form.isLocked}
-              onCommentCountChange={setCommentsCount}
+              onCommentCountChange={(count) => {
+                if (lastFetchedItemIdRef.current === item.id) {
+                  setCommentsCount(count);
+                }
+              }}
             />
           ) : (
             <ItemDetailsTab

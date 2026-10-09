@@ -258,6 +258,7 @@ export function WorkItemComments({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const feedEndRef = useRef<HTMLDivElement>(null);
+  const activeItemIdRef = useRef<string>(itemId);
 
   const authorDisplayName =
     currentUser?.full_name ||
@@ -265,10 +266,12 @@ export function WorkItemComments({
     'You';
 
   const fetchComments = async (id: string) => {
+    activeItemIdRef.current = id;
     setIsLoading(true);
     setSubmitError(null);
     try {
       const res = await getItemComments(id);
+      if (activeItemIdRef.current !== id) return;
       if (res.success && res.data) {
         setComments(res.data);
         if (onCommentCountChange) {
@@ -278,14 +281,20 @@ export function WorkItemComments({
         setSubmitError(res.error);
       }
     } catch (err: any) {
-      setSubmitError(err?.message || 'Failed to load comments');
+      if (activeItemIdRef.current === id) {
+        setSubmitError(err?.message || 'Failed to load comments');
+      }
     } finally {
-      setIsLoading(false);
+      if (activeItemIdRef.current === id) {
+        setIsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
+    activeItemIdRef.current = itemId;
     if (itemId) {
+      setComments([]);
       fetchComments(itemId);
     } else {
       setComments([]);
