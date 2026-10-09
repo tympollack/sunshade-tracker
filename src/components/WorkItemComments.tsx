@@ -384,6 +384,7 @@ export function WorkItemComments({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       handleSubmit();
     }
   };

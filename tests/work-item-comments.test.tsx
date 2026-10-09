@@ -130,22 +130,22 @@ describe('Work Item Comments Feature [FEAT-TRK-ITEM-COMMENTS]', () => {
               }),
             };
           }),
-          insert: vi.fn().mockReturnValue({
+          insert: vi.fn().mockImplementation((payload: any) => ({
             select: vi.fn().mockReturnValue({
               single: vi.fn().mockResolvedValue({
                 data: {
                   id: 'c-new-created',
-                  item_id: 'item-101',
+                  item_id: payload?.item_id || 'item-101',
                   author_id: user?.id,
                   author_name: 'Verified User',
-                  content: 'A newly added comment',
+                  content: payload?.content || 'A newly added comment',
                   created_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
                 },
                 error: null,
               }),
             }),
-          }),
+          })),
           delete: vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({ error: null }),
           }),
@@ -341,6 +341,46 @@ describe('Work Item Comments Feature [FEAT-TRK-ITEM-COMMENTS]', () => {
         expect(screen.getByText('A newly added comment')).toBeDefined();
       });
       expect(onCountChange).toHaveBeenCalledWith(2);
+    });
+
+    it('submits comment on Ctrl+Enter keyboard shortcut and stops propagation', async () => {
+      setupDefaultDbMocks({ comments: [] });
+      const onCountChange = vi.fn();
+
+      render(
+        <WorkItemComments
+          itemId="item-101"
+          currentUser={{ full_name: 'Verified User' }}
+          onCommentCountChange={onCountChange}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('comment-input-textarea')).toBeDefined();
+      });
+
+      const textarea = screen.getByTestId('comment-input-textarea');
+      fireEvent.change(textarea, { target: { value: 'Shortcut submission' } });
+
+      const keyDownEvent = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      const stopPropagationSpy = vi.spyOn(keyDownEvent, 'stopPropagation');
+      const preventDefaultSpy = vi.spyOn(keyDownEvent, 'preventDefault');
+
+      await act(async () => {
+        textarea.dispatchEvent(keyDownEvent);
+      });
+
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(stopPropagationSpy).toHaveBeenCalled();
+
+      await waitFor(() => {
+        expect(screen.getByText('Shortcut submission')).toBeDefined();
+      });
     });
   });
 

@@ -138,7 +138,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
   // Handle ESC and Cmd+Enter shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (!isOpen || showConfirmDelete) return;
+      if (!isOpen || showConfirmDelete || e.defaultPrevented) return;
       if (e.key === 'Escape') {
         onClose();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
