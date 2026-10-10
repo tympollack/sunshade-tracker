@@ -48,6 +48,44 @@ export function calculateAdaptiveTickInterval(totalPoints: number, maxTicks: num
   return Math.max(1, Math.ceil(totalPoints / maxTicks));
 }
 
+/**
+ * Calculates the tick indices to display along the X-axis.
+ * Always ensures the final data point is labeled; if the final point
+ * sits too close to the preceding interval tick, it replaces that tick
+ * to avoid crowded, overlapping labels.
+ *
+ * @param dataLength Total number of data points
+ * @param maxTicks Maximum recommended tick labels
+ * @returns Array of 0-based data point indices to render as ticks
+ */
+export function getAdaptiveTickIndices(dataLength: number, maxTicks: number = 8): number[] {
+  if (dataLength <= 0) return [];
+  if (dataLength === 1) return [0];
+
+  const interval = calculateAdaptiveTickInterval(dataLength, maxTicks);
+  const indices: number[] = [];
+
+  for (let i = 0; i < dataLength; i += interval) {
+    indices.push(i);
+  }
+
+  const lastIdx = dataLength - 1;
+  const lastSelected = indices[indices.length - 1];
+
+  if (lastSelected !== lastIdx) {
+    const distance = lastIdx - lastSelected;
+    const minSpacingThreshold = Math.max(2, Math.ceil(interval / 2));
+
+    if (distance < minSpacingThreshold && indices.length > 1) {
+      indices[indices.length - 1] = lastIdx;
+    } else {
+      indices.push(lastIdx);
+    }
+  }
+
+  return indices;
+}
+
 export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -78,7 +116,7 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
   const padding = { top: 35, right: 30, bottom: 65, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
-  const tickInterval = calculateAdaptiveTickInterval(data.length);
+  const tickIndicesSet = new Set(getAdaptiveTickIndices(data.length));
 
   // Calculate totals and maximum ceiling
   const totals = data.map(
@@ -189,7 +227,7 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
 
           {/* Date Axis Labels */}
           {data.map((d, i) => {
-            if (i % tickInterval !== 0) return null;
+            if (!tickIndicesSet.has(i)) return null;
             const x = getX(i);
             const y = svgHeight - padding.bottom + 14;
             const dateLabel = d.date.includes('-')
