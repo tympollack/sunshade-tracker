@@ -72,11 +72,26 @@ export interface SprintSettings {
   [key: string]: any;
 }
 
+export type CustomFieldType = 'number' | 'string' | 'enum' | 'boolean' | 'date';
+
+export interface CustomMetadataFieldDefinition {
+  key: string;
+  label?: string;
+  type?: CustomFieldType;
+  options?: string[];
+  unit?: string;
+  placeholder?: string;
+  target_field?: string;
+  actual_field?: string;
+  description?: string;
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
   statuses: StatusDefinition[];
   custom_fields: string[];
+  custom_metadata_fields?: CustomMetadataFieldDefinition[];
   sprint_settings?: SprintSettings;
   sprint_metrics?: MetricRules;
   metric_rules?: MetricRules;

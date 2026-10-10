@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { WorkItem, StatusDefinition } from '@/types/tracker';
+import { WorkItem, StatusDefinition, ProjectSettings, CustomMetadataFieldDefinition } from '@/types/tracker';
 import { WorkItemInspectorDrawer } from './WorkItemInspectorDrawer';
 
 export interface MobileItemBottomSheetProps {
@@ -20,6 +20,8 @@ export interface MobileItemBottomSheetProps {
   isReadOnly?: boolean;
   tenantSlug: string;
   projectSlug?: string;
+  projectSettings?: ProjectSettings | null;
+  customMetadataFields?: CustomMetadataFieldDefinition[];
 }
 
 export function MobileItemBottomSheet(props: MobileItemBottomSheetProps) {
