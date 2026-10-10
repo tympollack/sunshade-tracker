@@ -86,12 +86,44 @@ export interface CustomMetadataFieldDefinition {
   description?: string;
 }
 
+export interface WorkMetricConfig {
+  field_key: string;
+  label?: string;
+  unit_label?: string;
+}
+
+export const DEFAULT_WORK_METRIC_CONFIG: WorkMetricConfig = {
+  field_key: 'story_points',
+  label: 'Story Points',
+  unit_label: 'pts',
+};
+
+export function getWorkMetricConfig(settings?: ProjectSettings | null): WorkMetricConfig {
+  if (settings?.work_metric_config?.field_key) {
+    return {
+      field_key: settings.work_metric_config.field_key,
+      label: settings.work_metric_config.label || settings.work_metric_config.field_key,
+      unit_label: settings.work_metric_config.unit_label || 'pts',
+    };
+  }
+  if (settings?.work_unit_field) {
+    return {
+      field_key: settings.work_unit_field,
+      label: settings.work_unit_field,
+      unit_label: 'pts',
+    };
+  }
+  return DEFAULT_WORK_METRIC_CONFIG;
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
   statuses: StatusDefinition[];
   custom_fields: string[];
   custom_metadata_fields?: CustomMetadataFieldDefinition[];
+  work_metric_config?: WorkMetricConfig;
+  work_unit_field?: string;
   sprint_settings?: SprintSettings;
   sprint_metrics?: MetricRules;
   metric_rules?: MetricRules;

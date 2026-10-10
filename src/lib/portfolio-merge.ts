@@ -134,6 +134,8 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
   });
 
   const firstGithubRepo = projects.find((p) => p.settings?.github_repo)?.settings?.github_repo;
+  const firstWorkMetricConfig = projects.find((p) => p.settings?.work_metric_config)?.settings?.work_metric_config;
+  const firstWorkUnitField = projects.find((p) => p.settings?.work_unit_field)?.settings?.work_unit_field;
 
   return {
     schema_version: '1.0',
@@ -145,6 +147,8 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
       default_sprint: 'all',
       sprints: mergedSprints,
     },
+    ...(firstWorkMetricConfig ? { work_metric_config: firstWorkMetricConfig } : {}),
+    ...(firstWorkUnitField ? { work_unit_field: firstWorkUnitField } : {}),
     ...(firstGithubRepo ? { github_repo: firstGithubRepo } : {}),
   };
 }
