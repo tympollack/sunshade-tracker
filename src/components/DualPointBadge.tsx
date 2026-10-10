@@ -10,6 +10,7 @@ export interface DualPointBadgeProps {
   showCompound?: boolean;          // explicitly enable compound pill if needed
   className?: string;
   testId?: string;
+  unit?: string;                   // configurable work unit suffix (e.g. 'pts', 'credits')
 }
 
 /**
@@ -32,6 +33,7 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
   showCompound = false,
   className = '',
   testId = 'dual-point-badge',
+  unit = 'pts',
 }) => {
   const intrinsic = Number(storyPoints);
   const hasIntrinsic = !isNaN(intrinsic) && intrinsic > 0;
@@ -48,9 +50,9 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
       <span
         data-testid={testId}
         className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 shrink-0 whitespace-nowrap select-none ${className}`}
-        title={`Macro estimate: ${intrinsic} pts`}
+        title={`Macro estimate: ${intrinsic} ${unit}`}
       >
-        {intrinsic} pts
+        {intrinsic} {unit}
       </span>
     );
   }
@@ -64,13 +66,13 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
         <div
           data-testid={testId}
           className={`inline-flex items-center shrink-0 whitespace-nowrap select-none ${className}`}
-          title={`Intrinsic Estimate: ${intrinsic} pts | Active child tasks: ${rollup} pts`}
+          title={`Intrinsic Estimate: ${intrinsic} ${unit} | Active child tasks: ${rollup} ${unit}`}
         >
           <span
             data-testid={`${testId}-rollup`}
             className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-l bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 shrink-0 whitespace-nowrap"
           >
-            Σ {rollup} pts
+            Σ {rollup} {unit}
           </span>
           <span
             data-testid={`${testId}-intrinsic`}
@@ -90,11 +92,11 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
           className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 shrink-0 whitespace-nowrap select-none ${className}`}
           title={
             hasIntrinsic
-              ? `Intrinsic Estimate: ${intrinsic} pts`
-              : `Active child tasks: ${rollup} pts`
+              ? `Intrinsic Estimate: ${intrinsic} ${unit}`
+              : `Active child tasks: ${rollup} ${unit}`
           }
         >
-          <span data-testid={`${testId}-rollup`}>Σ {rollup} pts</span>
+          <span data-testid={`${testId}-rollup`}>Σ {rollup} {unit}</span>
         </span>
       );
     }
@@ -104,9 +106,9 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
         <span
           data-testid={testId}
           className={`text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-slate-700/60 shrink-0 whitespace-nowrap select-none ${className}`}
-          title={`Intrinsic Estimate: ${intrinsic} pts`}
+          title={`Intrinsic Estimate: ${intrinsic} ${unit}`}
         >
-          {intrinsic} pts
+          {intrinsic} ${unit}
         </span>
       );
     }
@@ -120,9 +122,9 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
       <span
         data-testid={testId}
         className={`text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 shrink-0 whitespace-nowrap select-none ${className}`}
-        title={`${intrinsic} pts`}
+        title={`${intrinsic} ${unit}`}
       >
-        {intrinsic} pts
+        {intrinsic} {unit}
       </span>
     );
   }

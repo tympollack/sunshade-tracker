@@ -41,6 +41,7 @@ export interface TreeNodeProps {
   // UI tree lines guide props (TASK-TRK-HIER-TREE-LINES-UI)
   isLastChild?: boolean;
   ancestorRails?: boolean[];
+  unit?: string;
 }
 
 export const INDENT_STEP = 20;
@@ -97,6 +98,7 @@ export function TreeNode({
   onDragEndNode,
   isLastChild = false,
   ancestorRails = [],
+  unit = 'pts',
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
@@ -313,6 +315,7 @@ export function TreeNode({
             onUpdateAssignee={onUpdateAssignee}
             onUpdateStatus={onUpdateStatus}
             onCreateChild={onCreateChild}
+            unit={unit}
           />
         </div>
 
@@ -382,6 +385,7 @@ export function TreeNode({
                 isDraggingItemId={isDraggingItemId}
                 onDragStartNode={onDragStartNode}
                 onDragEndNode={onDragEndNode}
+                unit={unit}
               />
             );
           })}

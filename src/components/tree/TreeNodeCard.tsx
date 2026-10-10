@@ -51,6 +51,7 @@ interface TreeNodeCardProps {
   onUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   onUpdateStatus?: (itemId: string, newStatus: string) => Promise<void> | void;
   onCreateChild?: (parentId: string, title: string, itemType: string) => Promise<void> | void;
+  unit?: string;
 }
 
 export function TreeNodeCard({
@@ -83,6 +84,7 @@ export function TreeNodeCard({
   onUpdateAssignee,
   onUpdateStatus,
   onCreateChild,
+  unit = 'pts',
 }: TreeNodeCardProps) {
   return (
     <div
@@ -279,6 +281,7 @@ export function TreeNodeCard({
                       rollupPoints={effectiveRollup}
                       childCount={childCount}
                       pointMode={pointMode || 'granular'}
+                      unit={unit}
                       className="whitespace-nowrap shrink-0"
                     />
                   </span>
@@ -292,11 +295,11 @@ export function TreeNodeCard({
                     className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
                     title={
                       isFilteredBySprint
-                        ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
-                        : `Subtree total: ${item.rollupPoints} pts`
+                        ? `Subtree total: ${item.rollupPoints} ${unit} (sprint filtered)`
+                        : `Subtree total: ${item.rollupPoints} ${unit}`
                     }
                   >
-                    {item.rollupPoints} pts rollup
+                    {item.rollupPoints} {unit} rollup
                   </span>
                 );
               }

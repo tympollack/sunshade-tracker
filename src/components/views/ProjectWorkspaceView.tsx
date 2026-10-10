@@ -27,6 +27,7 @@ import {
   sortSprintNames,
   isItemImmutableDueToCompletedSprint,
   calculateSprintLeafPoints,
+  getItemWorkMetric,
 } from '@/lib/sprint-utils';
 import {
   validateSprintIntakePure,
@@ -603,10 +604,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels, treeSelectedAssignees]);
 
   const treeItems = useMemo(
-    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
-    [treeFilteredItems, treeSortComparator]
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator, projectSettings),
+    [treeFilteredItems, treeSortComparator, projectSettings]
   );
-  const allTreeItems = useMemo(() => buildTree(items), [items]);
+  const allTreeItems = useMemo(() => buildTree(items, null, 0, new Set(), undefined, projectSettings), [items, projectSettings]);
 
   const filterSprintItems = useCallback(
     (itemsList: WorkItem[]) => {
@@ -1267,7 +1268,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       if (targetSprintDef && isSprintActive(targetSprintDef)) {
         const allEnteringItems = items.filter((it) => targetIdSet.has(it.id));
-        const enteringPoints = calculateSprintLeafPoints(allEnteringItems);
+        const enteringPoints = calculateSprintLeafPoints(allEnteringItems, projectSettings);
         const existingSprintItems = items.filter(
           (it) => !targetIdSet.has(it.id) && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
         );
@@ -1292,7 +1293,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         } catch (err: any) {
           if (err instanceof SprintGuardrailError || err.code) {
             if (err.code === 'SCOPE_OVERFLOW') {
-              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
+              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems, projectSettings);
               const committedPoints = targetSprintDef.committed_points ?? (targetSprintDef as any).metadata?.committed_points ?? 0;
               const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
               const requiredEjection = err.required_ejection_points || Math.max(1, enteringPoints - remainingCapacity);
@@ -3021,7 +3022,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const children = items.filter((it) => it.parent_id === id);
       if (children.length === 0) {
         const item = items.find((it) => it.id === id);
-        return Number(item?.metadata?.story_points ?? item?.metadata?.points ?? item?.metadata?.estimate ?? 0) || 0;
+        return item ? getItemWorkMetric(item, projectSettings) : 0;
       }
       let sum = 0;
       for (const c of children) {
@@ -3036,7 +3037,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     });
     return map;
-  }, [items, childCountMap]);
+  }, [items, childCountMap, projectSettings]);
 
   // Board columns data
   const displayedStatuses = useMemo(() => {
@@ -3170,6 +3171,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             isReadOnly={isReadOnly}
             isCollapsed={isLhnCollapsed}
             onToggleCollapse={() => setIsLhnCollapsed((prev) => !prev)}
+            projectSettings={projectSettings}
             onScopeFilter={(scope) => {
               if (scope.sprintName !== undefined) {
                 if (!scope.sprintName) {

@@ -116,4 +116,53 @@ describe('FEAT-TRK-DUAL-POINT-BADGE-UI: Dual Intrinsic vs. Rollup Point Badges',
     expect(badge).toHaveClass('shrink-0');
     expect(badge).toHaveClass('whitespace-nowrap');
   });
+
+  it('renders custom unit label when unit prop is provided (TASK-TRK-DYNAMIC-LEAF-ROLLUP-ENGINE)', () => {
+    render(
+      <DualPointBadge
+        storyPoints={15}
+        rollupPoints={40}
+        childCount={2}
+        pointMode="granular"
+        unit="credits"
+      />
+    );
+
+    const badge = screen.getByTestId('dual-point-badge');
+    expect(badge).toBeInTheDocument();
+
+    const rollupPill = screen.getByTestId('dual-point-badge-rollup');
+    expect(rollupPill).toHaveTextContent('Σ 40 credits');
+    expect(badge).toHaveAttribute('title', 'Intrinsic Estimate: 15 credits');
+  });
+
+  it('renders custom unit label in macro mode and leaf mode', () => {
+    const { rerender } = render(
+      <DualPointBadge
+        storyPoints={8}
+        rollupPoints={12}
+        childCount={3}
+        pointMode="macro"
+        unit="hrs"
+      />
+    );
+
+    const macroBadge = screen.getByTestId('dual-point-badge');
+    expect(macroBadge).toHaveTextContent('8 hrs');
+    expect(macroBadge).toHaveAttribute('title', 'Macro estimate: 8 hrs');
+
+    rerender(
+      <DualPointBadge
+        storyPoints={6}
+        rollupPoints={0}
+        childCount={0}
+        pointMode="granular"
+        unit="hrs"
+      />
+    );
+
+    const leafBadge = screen.getByTestId('dual-point-badge');
+    expect(leafBadge).toHaveTextContent('6 hrs');
+    expect(leafBadge).toHaveAttribute('title', '6 hrs');
+  });
 });

@@ -1,4 +1,4 @@
-import { SprintDefinition, WorkItem, ProjectSettings } from '@/types/tracker';
+import { SprintDefinition, WorkItem, WorkItemNode, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 
 export const DEFAULT_COMPLETED_STATUS_IDS = new Set([
   'done',
@@ -269,14 +269,43 @@ export function getSprintLeafItems(items: WorkItem[]): WorkItem[] {
 }
 
 /**
+ * Extracts numeric work metric value from a work item given a metric key or project settings.
+ * Defaults to 'story_points' (and fallback to 'points' or 'estimate') if not configured.
+ */
+export function getItemWorkMetric(
+  item?: WorkItem | WorkItemNode | null,
+  metricKeyOrSettings?: string | ProjectSettings | null
+): number {
+  if (!item) return 0;
+  let key: string;
+  if (typeof metricKeyOrSettings === 'string') {
+    key = metricKeyOrSettings;
+  } else if (metricKeyOrSettings) {
+    key = getWorkMetricConfig(metricKeyOrSettings).field_key;
+  } else {
+    key = 'story_points';
+  }
+
+  const rawVal =
+    item.metadata?.[key] ??
+    (key === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined);
+
+  const num = Number(rawVal);
+  return isNaN(num) || num < 0 ? 0 : num;
+}
+
+/**
  * Calculates sprint point totals exclusively across leaf work items (items with 0 children in the sprint)
  * to eliminate parent-child double-counting.
+ * Accepts optional metric key or project settings for dynamic work unit rollups.
  */
-export function calculateSprintLeafPoints(items: WorkItem[]): number {
+export function calculateSprintLeafPoints(
+  items: WorkItem[],
+  metricKeyOrSettings?: string | ProjectSettings | null
+): number {
   const leafItems = getSprintLeafItems(items);
   return leafItems.reduce((acc, it) => {
-    const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-    return acc + (isNaN(p) || p < 0 ? 0 : p);
+    return acc + getItemWorkMetric(it, metricKeyOrSettings);
   }, 0);
 }
 
@@ -304,11 +333,14 @@ export function getSprintRootItems(items: WorkItem[]): WorkItem[] {
 
 /**
  * Calculates macro roadmap capacity by summing intrinsic estimates of root-level items in the sprint.
+ * Accepts optional metric key or project settings for dynamic work unit rollups.
  */
-export function calculateSprintMacroPoints(items: WorkItem[]): number {
+export function calculateSprintMacroPoints(
+  items: WorkItem[],
+  metricKeyOrSettings?: string | ProjectSettings | null
+): number {
   const rootItems = getSprintRootItems(items);
   return rootItems.reduce((acc, it) => {
-    const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-    return acc + (isNaN(p) || p < 0 ? 0 : p);
+    return acc + getItemWorkMetric(it, metricKeyOrSettings);
   }, 0);
 }

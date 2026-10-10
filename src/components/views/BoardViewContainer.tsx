@@ -508,6 +508,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                               childCount={childCountMap.get(item.id) || 0}
                               rollupPoints={pointsRollupMap.get(item.id) || 0}
                               pointMode={pointMode}
+                              projectSettings={projectSettings}
                               itemHierarchy={itemHierarchy}
                               allProjects={allProjects}
                               isAllProjects={isAllProjects}
@@ -561,6 +562,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                     childCount={childCountMap.get(item.id) || 0}
                     rollupPoints={pointsRollupMap.get(item.id) || 0}
                     pointMode={pointMode}
+                    projectSettings={projectSettings}
                     itemHierarchy={getItemHierarchy(item)}
                     allProjects={allProjects}
                     isAllProjects={isAllProjects}

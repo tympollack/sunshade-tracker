@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { WorkItem, SprintDefinition, ProjectSettings } from '@/types/tracker';
 import { buildTree, WorkItemNode } from '@/lib/tree';
-import { sortSprintNames } from '@/lib/sprint-utils';
+import { sortSprintNames, getItemWorkMetric } from '@/lib/sprint-utils';
 
 export type PivotMode = 'sprint' | 'project';
 
@@ -37,6 +37,7 @@ interface UsePivotTreeOptions {
   sprints?: SprintDefinition[];
   tenantSlug: string;
   scopedProjectSlug?: string;
+  projectSettings?: ProjectSettings;
   onScopeFilter?: (scope: TreeFilterScope) => void;
 }
 
@@ -45,12 +46,13 @@ function convertItemNodeToPivotNode(
   depth: number,
   projectId?: string,
   projectSlug?: string,
-  sprintName?: string
+  sprintName?: string,
+  projectSettings?: ProjectSettings
 ): PivotTreeNode {
   const children = (node.children || []).map((c) =>
-    convertItemNodeToPivotNode(c, depth + 1, projectId, projectSlug, sprintName)
+    convertItemNodeToPivotNode(c, depth + 1, projectId, projectSlug, sprintName, projectSettings)
   );
-  const ownPoints = Number(node.metadata?.story_points ?? node.metadata?.points ?? node.metadata?.estimate ?? 0) || 0;
+  const ownPoints = getItemWorkMetric(node, projectSettings);
   const rollupPoints = node.rollupPoints ?? (children.length > 0 ? children.reduce((s, c) => s + c.rollupPoints, 0) : ownPoints);
   const childCount = node.descendantCount ?? children.reduce((acc, c) => acc + 1 + c.childCount, 0);
 
@@ -77,6 +79,7 @@ export function usePivotTree({
   sprints = [],
   tenantSlug,
   scopedProjectSlug,
+  projectSettings,
   onScopeFilter,
 }: UsePivotTreeOptions) {
   const [pivotMode, setPivotMode] = useState<PivotMode>('sprint');
@@ -208,9 +211,9 @@ export function usePivotTree({
               return null;
             }
 
-            const builtItemTree = buildTree(pItems);
+            const builtItemTree = buildTree(pItems, null, 0, new Set(), undefined, projectSettings);
             const childItemNodes = builtItemTree.map((node) =>
-              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sprintName)
+              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sprintName, projectSettings)
             );
 
             const totalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
@@ -245,9 +248,9 @@ export function usePivotTree({
             .filter((p) => projectGroups.has(p.id) || !isUnassigned)
             .map((proj) => {
               const pItems = projectGroups.get(proj.id) || [];
-              const builtItemTree = buildTree(pItems);
+              const builtItemTree = buildTree(pItems, null, 0, new Set(), undefined, projectSettings);
               const childItemNodes = builtItemTree.map((node) =>
-                convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sprintName)
+                convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sprintName, projectSettings)
               );
 
               const projTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
@@ -307,9 +310,9 @@ export function usePivotTree({
           .filter((sName) => sprintGroups.has(sName))
           .map((sName) => {
             const sItems = sprintGroups.get(sName) || [];
-            const builtItemTree = buildTree(sItems);
+            const builtItemTree = buildTree(sItems, null, 0, new Set(), undefined, projectSettings);
             const childItemNodes = builtItemTree.map((node) =>
-              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sName)
+              convertItemNodeToPivotNode(node, 1, scopedProj.id, scopedProj.slug, sName, projectSettings)
             );
 
             const sTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
@@ -362,9 +365,9 @@ export function usePivotTree({
           .filter((sName) => sprintGroups.has(sName))
           .map((sName) => {
             const sItems = sprintGroups.get(sName) || [];
-            const builtItemTree = buildTree(sItems);
+            const builtItemTree = buildTree(sItems, null, 0, new Set(), undefined, projectSettings);
             const childItemNodes = builtItemTree.map((node) =>
-              convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sName)
+              convertItemNodeToPivotNode(node, 2, proj.id, proj.slug, sName, projectSettings)
             );
 
             const sTotalPoints = childItemNodes.reduce((acc, c) => acc + c.rollupPoints, 0);
