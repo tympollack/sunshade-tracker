@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   ExternalLink,
@@ -42,6 +42,16 @@ export function formatFieldLabel(key: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+export function coerceBoolean(val: any): boolean {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'string') {
+    const s = val.trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes';
+  }
+  if (typeof val === 'number') return val !== 0;
+  return false;
+}
+
 export function inferFieldDefinitionFromKey(key: string): CustomMetadataFieldDefinition {
   const normalized = key.toLowerCase();
   let type: CustomFieldType = 'string';
@@ -70,7 +80,7 @@ export function inferFieldDefinitionFromKey(key: string): CustomMetadataFieldDef
   ) {
     type = 'enum';
     if (normalized === 'priority') {
-      options = ['P0', 'P1', 'P2', 'P3', 'P4'];
+      options = ['High', 'Medium', 'Low', 'Critical', 'P0', 'P1', 'P2', 'P3', 'P4'];
     } else if (normalized === 'severity') {
       options = ['critical', 'high', 'medium', 'low'];
     } else if (normalized === 'risk') {
@@ -105,18 +115,26 @@ export function resolveCustomMetadataFields(
   projectSettings?: ProjectSettings | null,
   customMetadataFieldsProp?: CustomMetadataFieldDefinition[]
 ): CustomMetadataFieldDefinition[] {
+  let fields: CustomMetadataFieldDefinition[] = [];
   if (customMetadataFieldsProp && customMetadataFieldsProp.length > 0) {
-    return customMetadataFieldsProp;
+    fields = customMetadataFieldsProp;
+  } else if (projectSettings?.custom_metadata_fields && projectSettings.custom_metadata_fields.length > 0) {
+    fields = projectSettings.custom_metadata_fields;
+  } else if (projectSettings?.custom_fields && projectSettings.custom_fields.length > 0) {
+    fields = projectSettings.custom_fields.map((fieldKey) => inferFieldDefinitionFromKey(fieldKey));
   }
-  if (projectSettings?.custom_metadata_fields && projectSettings.custom_metadata_fields.length > 0) {
-    return projectSettings.custom_metadata_fields;
-  }
-  if (projectSettings?.custom_fields && projectSettings.custom_fields.length > 0) {
-    return projectSettings.custom_fields.map((fieldKey) => {
-      return inferFieldDefinitionFromKey(fieldKey);
-    });
-  }
-  return [];
+
+  return fields.map((field) => {
+    if (!field.type) {
+      const inferred = inferFieldDefinitionFromKey(field.key);
+      return {
+        ...field,
+        type: inferred.type,
+        options: field.options || inferred.options,
+      };
+    }
+    return field;
+  });
 }
 
 export function calculateFieldVariance(
@@ -139,16 +157,19 @@ export function calculateFieldVariance(
 
   const actual = Number(actualValue);
   const target = Number(targetValue);
-  const delta = Math.round((actual - target) * 100) / 100;
+  const rawDelta = actual - target;
+
+  let status: 'over' | 'under' | 'equal' = 'equal';
+  if (rawDelta > 0.00001) status = 'over';
+  else if (rawDelta < -0.00001) status = 'under';
+  else status = 'equal';
+
+  const delta = Math.round(rawDelta * 10000) / 10000;
 
   let percentDiff: number | null = null;
   if (target !== 0) {
-    percentDiff = Math.round(((actual - target) / target) * 100);
+    percentDiff = Math.round((rawDelta / target) * 100);
   }
-
-  let status: 'over' | 'under' | 'equal' = 'equal';
-  if (delta > 0) status = 'over';
-  else if (delta < 0) status = 'under';
 
   return {
     delta,
@@ -318,7 +339,13 @@ export function WorkItemInspectorDrawer({
     () => resolveCustomMetadataFields(projectSettings, customMetadataFields),
     [projectSettings, customMetadataFields]
   );
+  const hasExplicitPointsField = useMemo(
+    () => resolvedFields.some((f) => f.key === 'story_points' || f.key === 'points'),
+    [resolvedFields]
+  );
   const [localMeta, setLocalMeta] = useState<Record<string, any>>({});
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const latestMetadataRef = useRef<Record<string, any>>({});
 
   useEffect(() => {
     if (item) {
@@ -331,7 +358,9 @@ export function WorkItemInspectorDrawer({
       setSprint(item.metadata?.sprint || '');
       setParentId(item.parent_id || '');
       setErrorMessage(null);
-      setLocalMeta(item.metadata ? { ...item.metadata } : {});
+      const meta = item.metadata ? { ...item.metadata } : {};
+      setLocalMeta(meta);
+      latestMetadataRef.current = meta;
     }
   }, [item]);
 
@@ -352,11 +381,24 @@ export function WorkItemInspectorDrawer({
   const handleFieldChange = async (
     updates: Partial<WorkItem> & { metadata?: Record<string, any> }
   ) => {
-    if (isReadOnly || !onUpdateItem) return;
+    if (isReadOnly || !onUpdateItem || !item) return;
+
+    if (updates.metadata) {
+      latestMetadataRef.current = {
+        ...latestMetadataRef.current,
+        ...updates.metadata,
+      };
+    }
+
+    const payload = {
+      ...updates,
+      ...(updates.metadata ? { metadata: { ...latestMetadataRef.current } } : {}),
+    };
+
     try {
       setIsSaving(true);
       setErrorMessage(null);
-      await onUpdateItem(item.id, updates);
+      await onUpdateItem(item.id, payload);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to update field');
       setTitle(item.title || '');
@@ -366,7 +408,10 @@ export function WorkItemInspectorDrawer({
       const pts = item.metadata?.story_points ?? item.metadata?.points;
       setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
       setSprint(item.metadata?.sprint || '');
-      setLocalMeta(item.metadata ? { ...item.metadata } : {});
+      setParentId(item.parent_id || '');
+      const rollback = item.metadata ? { ...item.metadata } : {};
+      setLocalMeta(rollback);
+      latestMetadataRef.current = rollback;
     } finally {
       setIsSaving(false);
     }
@@ -385,9 +430,17 @@ export function WorkItemInspectorDrawer({
 
   const handlePointsBlur = () => {
     const num = points === '' ? null : Number(points);
+    const originalPoints = item.metadata?.story_points ?? item.metadata?.points;
+    if (
+      num ===
+      (originalPoints !== undefined && originalPoints !== null ? Number(originalPoints) : null)
+    ) {
+      return;
+    }
     const updatedMetadata = {
       ...(item.metadata || {}),
       ...localMeta,
+      ...latestMetadataRef.current,
       story_points: num,
       points: num,
     };
@@ -403,6 +456,7 @@ export function WorkItemInspectorDrawer({
     const nextMeta = {
       ...(item?.metadata || {}),
       ...localMeta,
+      ...latestMetadataRef.current,
       [key]: value,
     };
     if (key === 'story_points' || key === 'points') {
@@ -419,6 +473,7 @@ export function WorkItemInspectorDrawer({
     const updatedMetadata = {
       ...(item.metadata || {}),
       ...localMeta,
+      ...latestMetadataRef.current,
       sprint: newSprint || null,
     };
     setLocalMeta(updatedMetadata);
@@ -587,8 +642,8 @@ export function WorkItemInspectorDrawer({
             </select>
           </div>
 
-          {/* Fallback Story Points (when no custom fields configured in project schema) */}
-          {resolvedFields.length === 0 && (
+          {/* Story Points (rendered whenever not defined as a separate custom schema property) */}
+          {!hasExplicitPointsField && (
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-slate-400">
                 <Hash className="w-3.5 h-3.5" />
@@ -693,8 +748,12 @@ export function WorkItemInspectorDrawer({
                           onChange={(e) => handleCustomFieldChange(field.key, e.target.value)}
                           onBlur={() => {
                             const raw = localMeta[field.key];
+                            const original = item.metadata?.[field.key];
                             const num =
                               raw === '' || raw === undefined || raw === null ? null : Number(raw);
+                            if (num === (original !== undefined && original !== null ? Number(original) : null)) {
+                              return;
+                            }
                             handleCustomFieldCommit(field.key, num);
                           }}
                           onKeyDown={(e) => {
@@ -720,7 +779,7 @@ export function WorkItemInspectorDrawer({
 
                 // Boolean field
                 if (field.type === 'boolean') {
-                  const boolChecked = Boolean(val);
+                  const boolChecked = coerceBoolean(val);
                   return (
                     <div key={field.key} className="flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 text-slate-400">
@@ -822,10 +881,17 @@ export function WorkItemInspectorDrawer({
                       onChange={(e) => handleCustomFieldChange(field.key, e.target.value)}
                       onBlur={() => {
                         const raw = localMeta[field.key];
-                        const str =
+                        const original = item.metadata?.[field.key];
+                        let str: any =
                           raw === '' || raw === undefined || raw === null
                             ? null
                             : String(raw).trim();
+                        if (typeof original === 'number' && str !== null && !isNaN(Number(str))) {
+                          str = Number(str);
+                        }
+                        if (str === (original ?? null)) {
+                          return;
+                        }
                         handleCustomFieldCommit(field.key, str);
                       }}
                       onKeyDown={(e) => {

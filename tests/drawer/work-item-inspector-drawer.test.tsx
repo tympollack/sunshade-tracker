@@ -7,6 +7,7 @@ import {
   inferFieldDefinitionFromKey,
   formatFieldLabel,
   calculateFieldVariance,
+  coerceBoolean,
 } from '@/components/drawer/WorkItemInspectorDrawer';
 import { MobileItemBottomSheet } from '@/components/drawer/MobileItemBottomSheet';
 import { WorkItem, CustomMetadataFieldDefinition } from '@/types/tracker';
@@ -474,6 +475,119 @@ describe('TASK-TRK-RHN-INSPECTOR-DRAWER: Inspector Drawer & Mobile Bottom Sheet'
       expect(screen.getByLabelText('Is Blocked')).toBeDisabled();
       expect(screen.getByLabelText('Due Date')).toBeDisabled();
       expect(screen.getByLabelText('Client Notes')).toBeDisabled();
+    });
+
+    it('Review Comment 2: preserves Story Points control when custom schema fields do not contain story points', () => {
+      // Schema only defines due_date and channel
+      const customMetadataFields: CustomMetadataFieldDefinition[] = [
+        { key: 'due_date', label: 'Due Date', type: 'date' },
+        { key: 'channel', label: 'Channel', type: 'string' },
+      ];
+
+      render(
+        <WorkItemInspectorDrawer
+          item={{
+            ...mockSchemaItem,
+            metadata: {
+              ...mockSchemaItem.metadata,
+              story_points: 5,
+            },
+          }}
+          isOpen={true}
+          onClose={vi.fn()}
+          customMetadataFields={customMetadataFields}
+          tenantSlug="pym-energy"
+        />
+      );
+
+      // Story points must remain editable in core grid
+      expect(screen.getByLabelText('Story Points')).toBeInTheDocument();
+      expect(screen.getByLabelText('Story Points')).toHaveValue(5);
+    });
+
+    it('Review Comment 7: coerces string "false" and "0" properly to false', () => {
+      expect(coerceBoolean('false')).toBe(false);
+      expect(coerceBoolean('0')).toBe(false);
+      expect(coerceBoolean(false)).toBe(false);
+      expect(coerceBoolean(0)).toBe(false);
+      expect(coerceBoolean('true')).toBe(true);
+      expect(coerceBoolean('1')).toBe(true);
+      expect(coerceBoolean(true)).toBe(true);
+      expect(coerceBoolean(1)).toBe(true);
+
+      const customMetadataFields: CustomMetadataFieldDefinition[] = [
+        { key: 'is_blocked', label: 'Is Blocked', type: 'boolean' },
+      ];
+
+      render(
+        <WorkItemInspectorDrawer
+          item={{
+            ...mockSchemaItem,
+            metadata: {
+              is_blocked: 'false',
+            },
+          }}
+          isOpen={true}
+          onClose={vi.fn()}
+          customMetadataFields={customMetadataFields}
+          tenantSlug="pym-energy"
+        />
+      );
+
+      // Checkbox should NOT be checked when metadata.is_blocked is "false"
+      const checkbox = screen.getByLabelText('Is Blocked');
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it('Review Comment 4 & 5: preserves numeric type on untyped fields and provides full priority scale', () => {
+      const priorityDef = inferFieldDefinitionFromKey('priority');
+      expect(priorityDef.options).toContain('High');
+      expect(priorityDef.options).toContain('P0');
+
+      const onUpdate = vi.fn();
+      // Untyped definition without explicit type property
+      const customMetadataFields: CustomMetadataFieldDefinition[] = [
+        { key: 'actual_hours', label: 'Actual Hours' } as any,
+      ];
+
+      render(
+        <WorkItemInspectorDrawer
+          item={{
+            ...mockSchemaItem,
+            metadata: {
+              actual_hours: 8,
+            },
+          }}
+          isOpen={true}
+          onClose={vi.fn()}
+          onUpdateItem={onUpdate}
+          customMetadataFields={customMetadataFields}
+          tenantSlug="pym-energy"
+        />
+      );
+
+      // Type was inferred as number
+      const hoursInput = screen.getByLabelText('Actual Hours');
+      expect(hoursInput).toHaveValue(8);
+
+      act(() => {
+        fireEvent.change(hoursInput, { target: { value: '14' } });
+        fireEvent.blur(hoursInput);
+      });
+
+      // Updated value is committed as a number, not string
+      expect(onUpdate).toHaveBeenCalledWith(
+        'item-202',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ actual_hours: 14 }),
+        })
+      );
+    });
+
+    it('Review Comment 6: computes high precision variance without premature zero-rounding', () => {
+      const v = calculateFieldVariance(1.002, 1.0, 'planned_val');
+      expect(v?.status).toBe('over');
+      expect(v?.delta).toBe(0.002);
     });
   });
 });

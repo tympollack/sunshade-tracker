@@ -3479,7 +3479,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               isReadOnly={isReadOnly}
               tenantSlug={tenantSlug}
               projectSlug={projectSlug}
-              projectSettings={projectSettings}
+              projectSettings={getItemProjectSettings(selectedDrawerItem)}
             />
           ) : selectedSprintForEdit ? (
             <SprintInspectorDrawer
@@ -3513,7 +3513,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           isReadOnly={isReadOnly}
           tenantSlug={tenantSlug}
           projectSlug={projectSlug}
-          projectSettings={projectSettings}
+          projectSettings={getItemProjectSettings(selectedDrawerItem)}
         />
       )}
 

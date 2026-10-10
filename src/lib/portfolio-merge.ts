@@ -1,4 +1,4 @@
-import { HierarchyLevel, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 
 export interface ProjectLike {
@@ -116,10 +116,16 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
   const finalHierarchy = mergeProjectHierarchy(projects);
 
   const mergedFields = new Set<string>();
+  const mergedCustomMetaFields: CustomMetadataFieldDefinition[] = [];
   const mergedSprints: any[] = [];
 
   projects.forEach((proj) => {
     (proj.settings?.custom_fields || []).forEach((f: string) => mergedFields.add(f));
+    (proj.settings?.custom_metadata_fields || []).forEach((cmf: CustomMetadataFieldDefinition) => {
+      if (!mergedCustomMetaFields.some((m) => m.key === cmf.key)) {
+        mergedCustomMetaFields.push(cmf);
+      }
+    });
     (proj.settings?.sprint_settings?.sprints || []).forEach((s: any) => {
       if (s.name && !mergedSprints.some((ms) => ms.name === s.name)) {
         mergedSprints.push(s);
@@ -134,6 +140,7 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     statuses: finalStatuses,
     hierarchy: finalHierarchy,
     custom_fields: Array.from(mergedFields),
+    custom_metadata_fields: mergedCustomMetaFields,
     sprint_settings: {
       default_sprint: 'all',
       sprints: mergedSprints,
