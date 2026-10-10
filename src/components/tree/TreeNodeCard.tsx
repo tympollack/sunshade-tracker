@@ -10,11 +10,11 @@ import {
   Plus,
   User,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, StatusDefinition, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
+import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { DualPointBadge } from '@/components/DualPointBadge';
-import { getLevelBadgeClasses } from '@/components/TreeNode';
+import { getLevelBadgeClasses, getLevelBadgeStyle } from '@/components/TreeNode';
 
 interface ValidChildType {
   type: string;
@@ -54,6 +54,7 @@ interface TreeNodeCardProps {
   unit?: string;
   projectSettings?: ProjectSettings;
   metricKey?: string;
+  hierarchy?: HierarchyLevel[];
 }
 
 export function TreeNodeCard({
@@ -89,7 +90,11 @@ export function TreeNodeCard({
   unit = 'pts',
   projectSettings,
   metricKey: propMetricKey,
+  hierarchy,
 }: TreeNodeCardProps) {
+  const effectiveHierarchy =
+    hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy || [];
+
   return (
     <div
       draggable={!nodeIsImmutable}
@@ -132,7 +137,7 @@ export function TreeNodeCard({
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 min-w-0 w-full">
         {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
         <div
-          className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
+          className="flex items-center gap-2 md:gap-2.5 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
           data-testid={`tree-node-left-zone-${item.id}`}
         >
           {!nodeIsImmutable && (
@@ -142,7 +147,8 @@ export function TreeNodeCard({
           {/* Level Badge */}
           <span
             data-testid={`level-badge-${item.item_type}`}
-            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))} w-14 shrink-0 text-center uppercase`}
+            style={getLevelBadgeStyle(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)}
+            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)} shrink-0 text-center uppercase whitespace-nowrap`}
           >
             {item.item_type}
           </span>
