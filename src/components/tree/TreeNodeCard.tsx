@@ -10,11 +10,11 @@ import {
   Plus,
   User,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, StatusDefinition, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
+import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { DualPointBadge } from '@/components/DualPointBadge';
-import { getLevelBadgeClasses } from '@/components/TreeNode';
+import { getLevelBadgeClasses, getLevelBadgeStyle } from '@/components/TreeNode';
 
 interface ValidChildType {
   type: string;
@@ -54,6 +54,7 @@ interface TreeNodeCardProps {
   unit?: string;
   projectSettings?: ProjectSettings;
   metricKey?: string;
+  hierarchy?: HierarchyLevel[];
 }
 
 export function TreeNodeCard({
@@ -89,7 +90,11 @@ export function TreeNodeCard({
   unit = 'pts',
   projectSettings,
   metricKey: propMetricKey,
+  hierarchy,
 }: TreeNodeCardProps) {
+  const effectiveHierarchy =
+    hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy || [];
+
   return (
     <div
       draggable={!nodeIsImmutable}
@@ -142,7 +147,8 @@ export function TreeNodeCard({
           {/* Level Badge */}
           <span
             data-testid={`level-badge-${item.item_type}`}
-            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))} shrink-0 text-center uppercase whitespace-nowrap`}
+            style={getLevelBadgeStyle(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)}
+            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)} shrink-0 text-center uppercase whitespace-nowrap`}
           >
             {item.item_type}
           </span>

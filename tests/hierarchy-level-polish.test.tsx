@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, createEvent } from '@testing-library/react';
-import { TreeNode, INDENT_STEP, sanitizeTitle, getLevelBadgeClasses } from '@/components/TreeNode';
+import { TreeNode, INDENT_STEP, sanitizeTitle, getLevelBadgeClasses, getLevelBadgeStyle } from '@/components/TreeNode';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { WorkItem, WorkItemNode } from '@/types/tracker';
@@ -313,5 +313,97 @@ describe('PRJ-05 - Read-only view state during project loading', () => {
     expect(computeIsReadOnly(false, { id: 'u1' }, 'viewer')).toBe(true);
     expect(computeIsReadOnly(false, { id: 'u1' }, 'member')).toBe(false);
     expect(computeIsReadOnly(false, { id: 'u1' }, 'admin')).toBe(false);
+  });
+});
+
+describe('TASK-TRK-DYNAMIC-HIERARCHY-PALETTE - Dynamic color token mapping derived from hierarchy definitions', () => {
+  const dynamicHierarchy = [
+    { type: 'campaign', label: 'Campaign', level: 1, allowed_parents: [] },
+    { type: 'sequence', label: 'Sequence', level: 2, allowed_parents: ['campaign'] },
+    { type: 'deliverable', label: 'Deliverable', level: 3, allowed_parents: ['sequence'] },
+    { type: 'subtask', label: 'Sub-task', level: 4, allowed_parents: ['deliverable'] },
+    { type: 'custom_branded', label: 'Branded', level: 2, allowed_parents: ['campaign'], color: '#f43f5e' },
+  ];
+
+  it('maps level 1 (campaign) to purple tier, level 2 (sequence) to sky tier, level 3 (deliverable) to emerald tier, and level 4+ to slate tier', () => {
+    const l1Class = getLevelBadgeClasses('campaign', false, dynamicHierarchy);
+    expect(l1Class).toContain('bg-purple-950/60');
+    expect(l1Class).toContain('text-purple-300');
+    expect(l1Class).toContain('border-purple-800/60');
+
+    const l2Class = getLevelBadgeClasses('sequence', false, dynamicHierarchy);
+    expect(l2Class).toContain('bg-sky-950/60');
+    expect(l2Class).toContain('text-sky-300');
+    expect(l2Class).toContain('border-sky-800/60');
+
+    const l3Class = getLevelBadgeClasses('deliverable', false, dynamicHierarchy);
+    expect(l3Class).toContain('bg-emerald-950/60');
+    expect(l3Class).toContain('text-emerald-300');
+    expect(l3Class).toContain('border-emerald-800/60');
+
+    const l4Class = getLevelBadgeClasses('subtask', false, dynamicHierarchy);
+    expect(l4Class).toContain('bg-slate-800/80');
+    expect(l4Class).toContain('text-slate-300');
+  });
+
+  it('applies custom color hex code per level dynamically via getLevelBadgeStyle with fallback safety', () => {
+    const brandedStyle = getLevelBadgeStyle('custom_branded', false, dynamicHierarchy);
+    expect(brandedStyle).toBeDefined();
+    expect(brandedStyle?.color).toBe('#f43f5e');
+    expect(brandedStyle?.borderColor).toBe('#f43f5e50');
+
+    // Unmapped deviation bypasses custom styling
+    const unmappedStyle = getLevelBadgeStyle('custom_branded', true, dynamicHierarchy);
+    expect(unmappedStyle).toBeUndefined();
+
+    // Standard level without custom color returns undefined style
+    const standardStyle = getLevelBadgeStyle('campaign', false, dynamicHierarchy);
+    expect(standardStyle).toBeUndefined();
+  });
+
+  it('binds dynamic hierarchy palette and custom hex color in TreeNode rendering', () => {
+    const item: WorkItemNode = {
+      ...mockItem({
+        id: 'branded-node',
+        title: 'Branded Feature Node',
+        item_type: 'custom_branded',
+      }),
+      depth: 0,
+      children: [],
+    };
+
+    render(
+      <TreeNode
+        item={item}
+        hierarchy={dynamicHierarchy}
+      />
+    );
+
+    const badge = screen.getByTestId('level-badge-custom_branded');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveStyle({ color: 'rgb(244, 63, 94)' });
+  });
+
+  it('binds dynamic hierarchy level tier in TreeNode rendering from projectSettings', () => {
+    const item: WorkItemNode = {
+      ...mockItem({
+        id: 'deliverable-node-dyn',
+        title: 'Dynamic Deliverable Node',
+        item_type: 'deliverable',
+      }),
+      depth: 0,
+      children: [],
+    };
+
+    render(
+      <TreeNode
+        item={item}
+        projectSettings={{ hierarchy: dynamicHierarchy } as any}
+      />
+    );
+
+    const badge = screen.getByTestId('level-badge-deliverable');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveClass('bg-emerald-950/60 text-emerald-300');
   });
 });
