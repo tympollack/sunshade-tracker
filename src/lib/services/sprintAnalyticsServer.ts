@@ -239,7 +239,10 @@ export async function getSprintHealthReport(
         const st = String(it.status || '').toLowerCase().trim();
         return COMPLETED_STATUSES.has(st);
       });
-      h.completed_points = calculateSprintLeafPoints(completedItems);
+      const sprintProj = projectList.find(
+        (p: any) => p.id === (h as any).project_id || p.id === targetProjectId
+      );
+      h.completed_points = calculateSprintLeafPoints(completedItems, sprintProj?.settings);
     }
   }
 
@@ -252,12 +255,20 @@ export async function getSprintHealthReport(
         it.metadata?.sprint === sprintIdOrName)
   );
 
+  const targetProj = projectList.find(
+    (p: any) => p.id === (targetSprint as any).project_id || p.id === targetProjectId
+  );
+  const targetMetricKey =
+    targetProj?.settings?.work_metric_config?.field_key ||
+    targetProj?.settings?.work_unit_field;
+
   // 6. Run pure telemetry aggregation
   return computeSprintAnalytics({
     sprint: targetSprint,
     historicalSprints,
     items: targetSprintItems,
     rules: metricRules,
+    metricKey: targetMetricKey,
     now,
   });
 }

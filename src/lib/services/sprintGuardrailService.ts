@@ -23,6 +23,7 @@ export interface IntakeValidationOptions {
   isEmergency?: boolean;
   rules?: MetricRules;
   now?: Date | string | number;
+  metricKey?: string;
 }
 
 export interface IntakeValidationResult {
@@ -123,11 +124,16 @@ export function calculateElapsedRatio(
 }
 
 /**
- * Extracts numeric story points from item metadata or root attributes.
+ * Extracts numeric work metric points from item metadata or root attributes.
  */
-export function extractStoryPoints(item?: Partial<WorkItem> | any): number {
+export function extractStoryPoints(
+  item?: Partial<WorkItem> | any,
+  metricKey?: string
+): number {
   if (!item) return 0;
-  const p = item.metadata?.story_points ?? item.story_points ?? item.points ?? item.metadata?.points ?? item.metadata?.estimate;
+  const p = metricKey
+    ? (item.metadata?.[metricKey] ?? item?.[metricKey] ?? (metricKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
+    : (item.metadata?.story_points ?? item.story_points ?? item.points ?? item.metadata?.points ?? item.metadata?.estimate);
   const num = Number(p);
   return isNaN(num) || num < 0 ? 0 : num;
 }
@@ -166,6 +172,12 @@ export function validateSprintIntakePure(params: {
       sprint?.metadata
   );
 
+  const metricKey =
+    options?.metricKey ||
+    (params as any).metricKey ||
+    sprint?.metadata?.work_metric_config?.field_key ||
+    sprint?.metadata?.work_unit_field;
+
   // 1. Check Emergency Override flag (using configured emergency priorities)
   const itemPriority = String(
     incomingItem.metadata?.priority || incomingItem.priority || ''
@@ -203,7 +215,7 @@ export function validateSprintIntakePure(params: {
 
     // If elapsed_ratio > rules.late_runway_threshold (default 0.60), enforce strict sizing:
     if (elapsedRatio > rules.late_runway_threshold) {
-      const incomingPoints = extractStoryPoints(incomingItem);
+      const incomingPoints = extractStoryPoints(incomingItem, metricKey);
       const incomingType = String(incomingItem.item_type || incomingItem.type || incomingItem.metadata?.item_type || '').toLowerCase().trim();
       const isAllowedLateType = (rules.allowed_late_types || []).some((t) => t.toLowerCase().trim() === incomingType);
       const isFeature = isFeatureStory(incomingItem, rules.feature_story_types);
@@ -240,8 +252,8 @@ export function validateSprintIntakePure(params: {
       }
       return true;
     });
-    const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
-    const incomingPoints = extractStoryPoints(incomingItem);
+    const currentActivePoints = calculateSprintLeafPoints(existingSprintItems, metricKey);
+    const incomingPoints = extractStoryPoints(incomingItem, metricKey);
     const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
 
     // Check if ejection candidates are provided for atomic ejection
@@ -291,7 +303,7 @@ export function validateSprintIntakePure(params: {
           },
         });
       }
-      totalEjectedPoints += extractStoryPoints(ejected);
+      totalEjectedPoints += extractStoryPoints(ejected, metricKey);
     }
 
     if (incomingPoints > remainingCapacity) {

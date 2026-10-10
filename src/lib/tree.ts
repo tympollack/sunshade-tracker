@@ -1,19 +1,23 @@
-import { WorkItem, WorkItemNode } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings } from '@/types/tracker';
+import { getItemWorkMetric } from '@/lib/sprint-utils';
 
 export type { WorkItemNode };
 
 /**
  * Computes recursive subtree metrics (descendantCount and rollupPoints) for each node.
  */
-function computeSubtreeMetrics(node: WorkItemNode): { descendantCount: number; rollupPoints: number } {
-  const ownPoints = Number(node.metadata?.story_points ?? node.metadata?.points ?? node.metadata?.estimate ?? 0) || 0;
+function computeSubtreeMetrics(
+  node: WorkItemNode,
+  metricKeyOrSettings?: string | ProjectSettings | null
+): { descendantCount: number; rollupPoints: number } {
+  const ownPoints = getItemWorkMetric(node, metricKeyOrSettings);
   let descendantCount = 0;
   let childRollupSum = 0;
   const children = node.children || [];
 
   for (const child of children) {
     descendantCount += 1;
-    const childMetrics = computeSubtreeMetrics(child);
+    const childMetrics = computeSubtreeMetrics(child, metricKeyOrSettings);
     descendantCount += childMetrics.descendantCount;
     childRollupSum += childMetrics.rollupPoints;
   }
@@ -55,7 +59,8 @@ export function buildTree(
   parentId: string | null = null,
   depth = 0,
   visited = new Set<string>(),
-  sortFn?: (a: WorkItem, b: WorkItem) => number
+  sortFn?: (a: WorkItem, b: WorkItem) => number,
+  metricKeyOrSettings?: string | ProjectSettings | null
 ): WorkItemNode[] {
   const parentItem = parentId
     ? items.find((p) => p.id === parentId || (p.external_ref_id && p.external_ref_id === parentId))
@@ -102,7 +107,7 @@ export function buildTree(
       return {
         ...item,
         depth,
-        children: buildTree(items, item.id, depth + 1, nextVisited, sortFn),
+        children: buildTree(items, item.id, depth + 1, nextVisited, sortFn, metricKeyOrSettings),
       };
     });
 
@@ -111,11 +116,11 @@ export function buildTree(
     const placedIds = new Set(flattenTree(tree).map((n) => n.id));
     const unvisitedRemaining = items.filter((item) => !placedIds.has(item.id));
     if (unvisitedRemaining.length > 0) {
-      const orphanSubtrees = buildTree(unvisitedRemaining, null, 0, placedIds, sortFn);
+      const orphanSubtrees = buildTree(unvisitedRemaining, null, 0, placedIds, sortFn, metricKeyOrSettings);
       tree.push(...orphanSubtrees);
     }
 
-    tree.forEach((root) => computeSubtreeMetrics(root));
+    tree.forEach((root) => computeSubtreeMetrics(root, metricKeyOrSettings));
   }
 
   return tree;

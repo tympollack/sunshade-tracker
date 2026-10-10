@@ -10,7 +10,7 @@ import {
   Plus,
   User,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, StatusDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, StatusDefinition, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { DualPointBadge } from '@/components/DualPointBadge';
@@ -51,6 +51,9 @@ interface TreeNodeCardProps {
   onUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   onUpdateStatus?: (itemId: string, newStatus: string) => Promise<void> | void;
   onCreateChild?: (parentId: string, title: string, itemType: string) => Promise<void> | void;
+  unit?: string;
+  projectSettings?: ProjectSettings;
+  metricKey?: string;
 }
 
 export function TreeNodeCard({
@@ -83,6 +86,9 @@ export function TreeNodeCard({
   onUpdateAssignee,
   onUpdateStatus,
   onCreateChild,
+  unit = 'pts',
+  projectSettings,
+  metricKey: propMetricKey,
 }: TreeNodeCardProps) {
   return (
     <div
@@ -259,10 +265,12 @@ export function TreeNodeCard({
                   : (item.children && item.children.length > 0)
                   ? item.children.length
                   : (item.descendantCount ?? 0);
-              const rawIntrinsic =
-                item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+              const configuredKey = propMetricKey || (projectSettings ? getWorkMetricConfig(projectSettings).field_key : undefined);
+              const rawIntrinsic = configuredKey
+                ? (item.metadata?.[configuredKey] ?? (configuredKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
+                : (item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate);
               const intrinsicPoints =
-                rawIntrinsic !== undefined ? Number(rawIntrinsic) : undefined;
+                rawIntrinsic !== undefined && !isNaN(Number(rawIntrinsic)) ? Number(rawIntrinsic) : undefined;
 
               if (pointsRollup !== undefined || pointMode !== undefined) {
                 const effectiveRollup =
@@ -279,6 +287,7 @@ export function TreeNodeCard({
                       rollupPoints={effectiveRollup}
                       childCount={childCount}
                       pointMode={pointMode || 'granular'}
+                      unit={unit}
                       className="whitespace-nowrap shrink-0"
                     />
                   </span>
@@ -292,11 +301,11 @@ export function TreeNodeCard({
                     className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
                     title={
                       isFilteredBySprint
-                        ? `Subtree total: ${item.rollupPoints} pts (sprint filtered)`
-                        : `Subtree total: ${item.rollupPoints} pts`
+                        ? `Subtree total: ${item.rollupPoints} ${unit} (sprint filtered)`
+                        : `Subtree total: ${item.rollupPoints} ${unit}`
                     }
                   >
-                    {item.rollupPoints} pts rollup
+                    {item.rollupPoints} {unit} rollup
                   </span>
                 );
               }

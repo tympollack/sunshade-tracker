@@ -1,8 +1,15 @@
 'use client';
 
-import React from 'react';
-import { Eye, GitBranch, ListFilter, Sliders } from 'lucide-react';
-import { ProjectSettings, StatusDefinition, HierarchyLevel, WorkItem } from '@/types/tracker';
+import React, { useMemo } from 'react';
+import { Eye, GitBranch, ListFilter, Sliders, Gauge } from 'lucide-react';
+import {
+  ProjectSettings,
+  StatusDefinition,
+  HierarchyLevel,
+  WorkItem,
+  WorkMetricConfig,
+  getWorkMetricConfig,
+} from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
@@ -20,6 +27,126 @@ export function ProjectSchemaEditor({
   activeItems = [],
   readOnly = false,
 }: ProjectSchemaEditorProps) {
+  // Active work metric configuration
+  const currentMetricConfig = useMemo(() => getWorkMetricConfig(settings), [settings]);
+
+  // Derived options for work metric field dropdown
+  const fieldOptions = useMemo(() => {
+    const defaultPresets = [
+      { key: 'story_points', label: 'Story Points', unit_label: 'pts' },
+      { key: 'ai_credits', label: 'AI Credits', unit_label: 'credits' },
+      { key: 'hours', label: 'Hours', unit_label: 'hrs' },
+      { key: 'complexity', label: 'Complexity', unit_label: 'cmp' },
+    ];
+
+    const seenKeys = new Set(defaultPresets.map((p) => p.key));
+    const result = [...defaultPresets];
+
+    const nonNumericStandardFields = new Set([
+      'priority',
+      'tags',
+      'status',
+      'assignee',
+      'title',
+      'description',
+      'sprint',
+      'sprint_id',
+      'assignees',
+      'color',
+      'item_type',
+    ]);
+
+    (settings.custom_metadata_fields || []).forEach((f) => {
+      // Skip non-numeric fields if type is specified
+      if (
+        f.type &&
+        !['number', 'integer', 'float', 'numeric'].includes(f.type.toLowerCase())
+      ) {
+        return;
+      }
+      if (nonNumericStandardFields.has(f.key.toLowerCase())) {
+        return;
+      }
+      if (!seenKeys.has(f.key)) {
+        seenKeys.add(f.key);
+        result.push({
+          key: f.key,
+          label: f.label || f.key,
+          unit_label: f.unit || 'pts',
+        });
+      }
+    });
+
+    (settings.custom_fields || []).forEach((key) => {
+      if (nonNumericStandardFields.has(key.toLowerCase())) {
+        return;
+      }
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        result.push({
+          key,
+          label: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          unit_label: 'pts',
+        });
+      }
+    });
+
+    if (currentMetricConfig.field_key && !seenKeys.has(currentMetricConfig.field_key)) {
+      result.push({
+        key: currentMetricConfig.field_key,
+        label: currentMetricConfig.label || currentMetricConfig.field_key,
+        unit_label: currentMetricConfig.unit_label || 'pts',
+      });
+    }
+
+    return result;
+  }, [
+    settings.custom_metadata_fields,
+    settings.custom_fields,
+    currentMetricConfig.field_key,
+    currentMetricConfig.label,
+    currentMetricConfig.unit_label,
+  ]);
+
+  const handleMetricFieldChange = (newKey: string) => {
+    if (readOnly) return;
+    const matched = fieldOptions.find((o) => o.key === newKey);
+    const newConfig: WorkMetricConfig = {
+      field_key: newKey,
+      label: matched?.label || newKey,
+      unit_label: matched?.unit_label || 'pts',
+    };
+    onChange({
+      ...settings,
+      work_metric_config: newConfig,
+      work_unit_field: newKey,
+    });
+  };
+
+  const handleMetricLabelChange = (newLabel: string) => {
+    if (readOnly) return;
+    onChange({
+      ...settings,
+      work_metric_config: {
+        ...currentMetricConfig,
+        label: newLabel,
+      },
+      work_unit_field: currentMetricConfig.field_key,
+    });
+  };
+
+  const handleMetricUnitChange = (newUnit: string) => {
+    if (readOnly) return;
+    onChange({
+      ...settings,
+      work_metric_config: {
+        ...currentMetricConfig,
+        unit_label: newUnit,
+      },
+      work_unit_field: currentMetricConfig.field_key,
+    });
+  };
+
   // Update a hierarchy level's color
   const handleHierarchyColorChange = (idx: number, newColor: string) => {
     if (readOnly) return;
@@ -187,6 +314,80 @@ export function ProjectSchemaEditor({
 
         {/* Custom Fields & GitHub Repo */}
         <div className="space-y-5">
+          {/* Work Estimation Metric Unit */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+              <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider flex items-center gap-1.5">
+                <Gauge className="w-3.5 h-3.5 text-slate-400" />
+                <span>Work Metric & Estimation Unit</span>
+              </h4>
+              <span className="text-[10px] text-slate-500 font-mono">work_metric_config</span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label htmlFor="work-metric-field-select" className="text-[11px] font-medium text-slate-400">
+                  Metric Field Key
+                </label>
+                <select
+                  id="work-metric-field-select"
+                  aria-label="Work estimation metric field"
+                  disabled={readOnly}
+                  value={currentMetricConfig.field_key}
+                  onChange={(e) => handleMetricFieldChange(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                >
+                  {fieldOptions.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label} ({opt.key})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label htmlFor="work-metric-label-input" className="text-[11px] font-medium text-slate-400">
+                    Display Label
+                  </label>
+                  <input
+                    id="work-metric-label-input"
+                    type="text"
+                    aria-label="Work metric display label"
+                    value={currentMetricConfig.label || ''}
+                    disabled={readOnly}
+                    onChange={(e) => handleMetricLabelChange(e.target.value)}
+                    placeholder="e.g. Story Points"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="work-metric-unit-input" className="text-[11px] font-medium text-slate-400">
+                    Unit Symbol / Suffix
+                  </label>
+                  <input
+                    id="work-metric-unit-input"
+                    type="text"
+                    aria-label="Work metric unit suffix"
+                    value={currentMetricConfig.unit_label || ''}
+                    disabled={readOnly}
+                    onChange={(e) => handleMetricUnitChange(e.target.value)}
+                    placeholder="e.g. pts"
+                    className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1 text-[10px] text-slate-500">
+                <span>Drives rollups, burn rates &amp; capacity.</span>
+                <span className="font-mono text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/40">
+                  Preview: 5 {currentMetricConfig.unit_label || 'pts'}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Custom Fields */}
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
             <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">

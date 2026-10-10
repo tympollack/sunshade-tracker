@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, XCircle } from 'lucide-react';
 
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { buildTree, isDescendantOf, getDescendantIds, isEffectivelyUnparented } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
@@ -27,6 +27,7 @@ import {
   sortSprintNames,
   isItemImmutableDueToCompletedSprint,
   calculateSprintLeafPoints,
+  getItemWorkMetric,
 } from '@/lib/sprint-utils';
 import {
   validateSprintIntakePure,
@@ -603,10 +604,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels, treeSelectedAssignees]);
 
   const treeItems = useMemo(
-    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator),
-    [treeFilteredItems, treeSortComparator]
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator, projectSettings),
+    [treeFilteredItems, treeSortComparator, projectSettings]
   );
-  const allTreeItems = useMemo(() => buildTree(items), [items]);
+  const allTreeItems = useMemo(() => buildTree(items, null, 0, new Set(), undefined, projectSettings), [items, projectSettings]);
 
   const filterSprintItems = useCallback(
     (itemsList: WorkItem[]) => {
@@ -1267,16 +1268,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
       if (targetSprintDef && isSprintActive(targetSprintDef)) {
         const allEnteringItems = items.filter((it) => targetIdSet.has(it.id));
-        const enteringPoints = calculateSprintLeafPoints(allEnteringItems);
+        const enteringPoints = calculateSprintLeafPoints(allEnteringItems, projectSettings);
         const existingSprintItems = items.filter(
           (it) => !targetIdSet.has(it.id) && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
         );
 
+        const metricConfig = getWorkMetricConfig(projectSettings);
         const incomingItemForValidation = {
           ...item,
           metadata: {
             ...item.metadata,
             story_points: enteringPoints,
+            [metricConfig.field_key]: enteringPoints,
           },
         };
 
@@ -1288,11 +1291,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             currentSprintItems: existingSprintItems,
             incomingItem: incomingItemForValidation,
             rules: metricRules,
+            options: {
+              metricKey: metricConfig.field_key,
+            },
           });
         } catch (err: any) {
           if (err instanceof SprintGuardrailError || err.code) {
             if (err.code === 'SCOPE_OVERFLOW') {
-              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems);
+              const currentActivePoints = calculateSprintLeafPoints(existingSprintItems, projectSettings);
               const committedPoints = targetSprintDef.committed_points ?? (targetSprintDef as any).metadata?.committed_points ?? 0;
               const remainingCapacity = Math.max(0, committedPoints - currentActivePoints);
               const requiredEjection = err.required_ejection_points || Math.max(1, enteringPoints - remainingCapacity);
@@ -3021,7 +3027,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const children = items.filter((it) => it.parent_id === id);
       if (children.length === 0) {
         const item = items.find((it) => it.id === id);
-        return Number(item?.metadata?.story_points ?? item?.metadata?.points ?? item?.metadata?.estimate ?? 0) || 0;
+        return item ? getItemWorkMetric(item, getItemProjectSettings(item)) : 0;
       }
       let sum = 0;
       for (const c of children) {
@@ -3036,7 +3042,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     });
     return map;
-  }, [items, childCountMap]);
+  }, [items, childCountMap, getItemProjectSettings]);
 
   // Board columns data
   const displayedStatuses = useMemo(() => {
@@ -3170,6 +3176,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             isReadOnly={isReadOnly}
             isCollapsed={isLhnCollapsed}
             onToggleCollapse={() => setIsLhnCollapsed((prev) => !prev)}
+            projectSettings={projectSettings}
             onScopeFilter={(scope) => {
               if (scope.sprintName !== undefined) {
                 if (!scope.sprintName) {
@@ -3613,6 +3620,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           sprintName={guardrailBarrierData.sprintName}
           requiredEjectionPoints={guardrailBarrierData.requiredEjectionPoints}
           availableUnstartedItems={guardrailBarrierData.availableUnstartedItems}
+          metricKey={getWorkMetricConfig(projectSettings).field_key}
+          unit={getWorkMetricConfig(projectSettings).unit_label || 'pts'}
         />
       )}
 

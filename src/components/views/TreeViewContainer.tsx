@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { TreeNode } from '@/components/TreeNode';
@@ -280,6 +280,8 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
                 isDraggingItemId={treeDraggedItemId}
                 onDragStartNode={(e, item) => !isReadOnly && setTreeDraggedItemId(item.id)}
                 onDragEndNode={() => setTreeDraggedItemId(null)}
+                unit={getWorkMetricConfig(getItemProjectSettings(rootNode) || projectSettings).unit_label || 'pts'}
+                projectSettings={getItemProjectSettings(rootNode) || projectSettings}
               />
             ))
           )}
