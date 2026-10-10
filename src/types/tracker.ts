@@ -237,3 +237,14 @@ export interface NotificationPreferences {
   notify_on_status_change: boolean;
 }
 
+/** Row from tracker.work_item_comments */
+export interface WorkItemComment {
+  id: string;
+  item_id: string;
+  author_id?: string | null;
+  author_name: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
