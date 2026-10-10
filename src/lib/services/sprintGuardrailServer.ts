@@ -151,11 +151,19 @@ export async function validateSprintIntake(
     projectSettings?.sprint_settings?.metrics ||
     options?.rules;
 
+  const metricKey =
+    projectSettings?.work_metric_config?.field_key ||
+    projectSettings?.work_unit_field ||
+    options?.metricKey;
+
   return validateSprintIntakePure({
     sprint: sprintData,
     currentSprintItems,
     incomingItem,
-    options,
+    options: {
+      ...options,
+      metricKey,
+    },
     rules: effectiveRules,
   });
 }

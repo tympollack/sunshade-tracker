@@ -281,6 +281,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
                 onDragStartNode={(e, item) => !isReadOnly && setTreeDraggedItemId(item.id)}
                 onDragEndNode={() => setTreeDraggedItemId(null)}
                 unit={getWorkMetricConfig(getItemProjectSettings(rootNode) || projectSettings).unit_label || 'pts'}
+                projectSettings={getItemProjectSettings(rootNode) || projectSettings}
               />
             ))
           )}

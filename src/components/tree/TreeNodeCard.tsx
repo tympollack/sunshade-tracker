@@ -10,7 +10,7 @@ import {
   Plus,
   User,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, StatusDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, StatusDefinition, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { DualPointBadge } from '@/components/DualPointBadge';
@@ -52,6 +52,8 @@ interface TreeNodeCardProps {
   onUpdateStatus?: (itemId: string, newStatus: string) => Promise<void> | void;
   onCreateChild?: (parentId: string, title: string, itemType: string) => Promise<void> | void;
   unit?: string;
+  projectSettings?: ProjectSettings;
+  metricKey?: string;
 }
 
 export function TreeNodeCard({
@@ -85,6 +87,8 @@ export function TreeNodeCard({
   onUpdateStatus,
   onCreateChild,
   unit = 'pts',
+  projectSettings,
+  metricKey: propMetricKey,
 }: TreeNodeCardProps) {
   return (
     <div
@@ -261,10 +265,12 @@ export function TreeNodeCard({
                   : (item.children && item.children.length > 0)
                   ? item.children.length
                   : (item.descendantCount ?? 0);
-              const rawIntrinsic =
-                item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+              const configuredKey = propMetricKey || (projectSettings ? getWorkMetricConfig(projectSettings).field_key : undefined);
+              const rawIntrinsic = configuredKey
+                ? (item.metadata?.[configuredKey] ?? (configuredKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
+                : (item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate);
               const intrinsicPoints =
-                rawIntrinsic !== undefined ? Number(rawIntrinsic) : undefined;
+                rawIntrinsic !== undefined && !isNaN(Number(rawIntrinsic)) ? Number(rawIntrinsic) : undefined;
 
               if (pointsRollup !== undefined || pointMode !== undefined) {
                 const effectiveRollup =

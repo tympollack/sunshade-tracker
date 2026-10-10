@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel } from '@/types/tracker';
+import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel, ProjectSettings } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { TreeNodeCard } from '@/components/tree/TreeNodeCard';
 import { TreeNodeBranchRails, TreeNodeBranchConnector } from '@/components/tree/TreeNodeBranchRails';
@@ -42,6 +42,8 @@ export interface TreeNodeProps {
   isLastChild?: boolean;
   ancestorRails?: boolean[];
   unit?: string;
+  projectSettings?: ProjectSettings;
+  metricKey?: string;
 }
 
 export const INDENT_STEP = 20;
@@ -99,6 +101,8 @@ export function TreeNode({
   isLastChild = false,
   ancestorRails = [],
   unit = 'pts',
+  projectSettings,
+  metricKey,
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
@@ -316,6 +320,8 @@ export function TreeNode({
             onUpdateStatus={onUpdateStatus}
             onCreateChild={onCreateChild}
             unit={unit}
+            projectSettings={projectSettings}
+            metricKey={metricKey}
           />
         </div>
 
@@ -386,6 +392,8 @@ export function TreeNode({
                 onDragStartNode={onDragStartNode}
                 onDragEndNode={onDragEndNode}
                 unit={unit}
+                projectSettings={projectSettings}
+                metricKey={metricKey}
               />
             );
           })}

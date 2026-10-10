@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, XCircle } from 'lucide-react';
 
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { buildTree, isDescendantOf, getDescendantIds, isEffectivelyUnparented } from '@/lib/tree';
 import { calculateOrderIndex, validateHierarchyNesting, DEFAULT_ORDER_STEP } from '@/lib/fractional-index';
 import { getHierarchyLevelColor, getDefaultLevelHex } from '@/lib/hierarchy-colors';
@@ -1273,11 +1273,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           (it) => !targetIdSet.has(it.id) && (it.metadata?.sprint === newSprint || it.metadata?.sprint_id === targetSprintDef.id)
         );
 
+        const metricConfig = getWorkMetricConfig(projectSettings);
         const incomingItemForValidation = {
           ...item,
           metadata: {
             ...item.metadata,
             story_points: enteringPoints,
+            [metricConfig.field_key]: enteringPoints,
           },
         };
 
@@ -1289,6 +1291,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             currentSprintItems: existingSprintItems,
             incomingItem: incomingItemForValidation,
             rules: metricRules,
+            options: {
+              metricKey: metricConfig.field_key,
+            },
           });
         } catch (err: any) {
           if (err instanceof SprintGuardrailError || err.code) {
@@ -3022,7 +3027,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       const children = items.filter((it) => it.parent_id === id);
       if (children.length === 0) {
         const item = items.find((it) => it.id === id);
-        return item ? getItemWorkMetric(item, projectSettings) : 0;
+        return item ? getItemWorkMetric(item, getItemProjectSettings(item)) : 0;
       }
       let sum = 0;
       for (const c of children) {
@@ -3037,7 +3042,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     });
     return map;
-  }, [items, childCountMap, projectSettings]);
+  }, [items, childCountMap, getItemProjectSettings]);
 
   // Board columns data
   const displayedStatuses = useMemo(() => {
@@ -3615,6 +3620,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           sprintName={guardrailBarrierData.sprintName}
           requiredEjectionPoints={guardrailBarrierData.requiredEjectionPoints}
           availableUnstartedItems={guardrailBarrierData.availableUnstartedItems}
+          metricKey={getWorkMetricConfig(projectSettings).field_key}
+          unit={getWorkMetricConfig(projectSettings).unit_label || 'pts'}
         />
       )}
 

@@ -29,6 +29,8 @@ export interface SprintGuardrailModalProps {
   requiredEjectionPoints: number;
   availableUnstartedItems: WorkItem[];
   isSubmitting?: boolean;
+  metricKey?: string;
+  unit?: string;
 }
 
 /**
@@ -46,6 +48,8 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
   requiredEjectionPoints,
   availableUnstartedItems = [],
   isSubmitting = false,
+  metricKey,
+  unit = 'pts',
 }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -57,14 +61,12 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
 
   // Extract numeric points for incoming item
   const incomingPoints = useMemo(() => {
-    const p =
-      incomingItem.metadata?.story_points ??
-      incomingItem.story_points ??
-      incomingItem.metadata?.points ??
-      0;
+    const p = metricKey
+      ? (incomingItem.metadata?.[metricKey] ?? (incomingItem as any)[metricKey] ?? (metricKey === 'story_points' ? (incomingItem.metadata?.points ?? incomingItem.metadata?.estimate) : undefined))
+      : (incomingItem.metadata?.story_points ?? incomingItem.story_points ?? incomingItem.metadata?.points ?? 0);
     const num = Number(p);
     return isNaN(num) || num < 0 ? 0 : num;
-  }, [incomingItem]);
+  }, [incomingItem, metricKey]);
 
   // Filter candidate items to exclusively unstarted items
   const eligibleItems = useMemo(() => {
@@ -75,12 +77,15 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
   const selectedPoints = useMemo(() => {
     return eligibleItems.reduce((acc, it) => {
       if (selectedIds.has(it.id)) {
-        const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0);
+        const raw = metricKey
+          ? (it.metadata?.[metricKey] ?? (metricKey === 'story_points' ? (it.metadata?.points ?? it.metadata?.estimate) : undefined))
+          : (it.metadata?.story_points ?? it.metadata?.points ?? 0);
+        const p = Number(raw);
         return acc + (isNaN(p) || p < 0 ? 0 : p);
       }
       return acc;
     }, 0);
-  }, [eligibleItems, selectedIds]);
+  }, [eligibleItems, selectedIds, metricKey]);
 
   const remainingNeeded = Math.max(0, requiredEjectionPoints - selectedPoints);
   const isSwapSatisfied = selectedPoints >= requiredEjectionPoints;
@@ -174,7 +179,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
             </div>
             <div className="shrink-0 text-right">
               <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono text-xs font-bold">
-                {incomingPoints} pts
+                {incomingPoints} {unit}
               </span>
             </div>
           </div>
@@ -184,7 +189,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
             <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800">
               <span className="text-[10px] text-slate-400 block uppercase">Required</span>
               <span className="text-base font-bold text-red-400" data-testid="points-required">
-                {requiredEjectionPoints} pts
+                {requiredEjectionPoints} {unit}
               </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800">
@@ -195,7 +200,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
                 }`}
                 data-testid="points-selected"
               >
-                {selectedPoints} pts
+                {selectedPoints} {unit}
               </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800">
@@ -206,7 +211,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
                 }`}
                 data-testid="points-deficit"
               >
-                {remainingNeeded} pts
+                {remainingNeeded} {unit}
               </span>
             </div>
           </div>
@@ -228,7 +233,10 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
             ) : (
               <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
                 {eligibleItems.map((item) => {
-                  const pts = Number(item.metadata?.story_points ?? item.metadata?.points ?? 0);
+                  const raw = metricKey
+                    ? (item.metadata?.[metricKey] ?? (metricKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
+                    : (item.metadata?.story_points ?? item.metadata?.points ?? 0);
+                  const pts = Number(raw) || 0;
                   const isChecked = selectedIds.has(item.id);
                   return (
                     <div
@@ -256,7 +264,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
                         </div>
                       </div>
                       <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300 font-mono text-[11px] shrink-0 font-bold">
-                        {pts} pts
+                        {pts} {unit}
                       </span>
                     </div>
                   );

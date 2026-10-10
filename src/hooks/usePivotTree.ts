@@ -414,7 +414,7 @@ export function usePivotTree({
         };
       });
     }
-  }, [items, projects, sprints, pivotMode, scopedProjectSlug]);
+  }, [items, projects, sprints, pivotMode, scopedProjectSlug, projectSettings]);
 
   const selectScope = useCallback(
     (scope: TreeFilterScope) => {

@@ -42,7 +42,31 @@ export function ProjectSchemaEditor({
     const seenKeys = new Set(defaultPresets.map((p) => p.key));
     const result = [...defaultPresets];
 
+    const nonNumericStandardFields = new Set([
+      'priority',
+      'tags',
+      'status',
+      'assignee',
+      'title',
+      'description',
+      'sprint',
+      'sprint_id',
+      'assignees',
+      'color',
+      'item_type',
+    ]);
+
     (settings.custom_metadata_fields || []).forEach((f) => {
+      // Skip non-numeric fields if type is specified
+      if (
+        f.type &&
+        !['number', 'integer', 'float', 'numeric'].includes(f.type.toLowerCase())
+      ) {
+        return;
+      }
+      if (nonNumericStandardFields.has(f.key.toLowerCase())) {
+        return;
+      }
       if (!seenKeys.has(f.key)) {
         seenKeys.add(f.key);
         result.push({
@@ -54,6 +78,9 @@ export function ProjectSchemaEditor({
     });
 
     (settings.custom_fields || []).forEach((key) => {
+      if (nonNumericStandardFields.has(key.toLowerCase())) {
+        return;
+      }
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         result.push({
