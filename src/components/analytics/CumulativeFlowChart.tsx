@@ -24,6 +24,30 @@ const STATUS_LAYERS: StatusLayer[] = [
   { key: 'unplanned', label: 'Unplanned Scope', color: '#f59e0b', fillOpacity: 0.8 },
 ];
 
+/**
+ * Dynamically calculates adaptive tick interval for X-axis labels
+ * to chunk multi-day and multi-week ranges into clean, readable increments.
+ *
+ * @param totalPoints Total number of data points along the date axis
+ * @param maxTicks Maximum recommended tick labels to display without crowding
+ * @returns Step interval (e.g. 1, 2, 3, 5, 7, 14, 21, 30)
+ */
+export function calculateAdaptiveTickInterval(totalPoints: number, maxTicks: number = 8): number {
+  if (totalPoints <= maxTicks) return 1;
+
+  // Natural calendar chunk increments (in days):
+  // 1d, 2d, 3d, 5d, 7d (1 week), 14d (2 weeks), 21d (3 weeks), 30d (~1 month)
+  const candidateIntervals = [1, 2, 3, 5, 7, 14, 21, 30];
+
+  for (const interval of candidateIntervals) {
+    if (Math.ceil(totalPoints / interval) <= maxTicks) {
+      return interval;
+    }
+  }
+
+  return Math.max(1, Math.ceil(totalPoints / maxTicks));
+}
+
 export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -51,9 +75,10 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
   // Dimensions & Coordinate Scaling
   const svgWidth = 800;
   const svgHeight = 360;
-  const padding = { top: 35, right: 30, bottom: 50, left: 55 };
+  const padding = { top: 35, right: 30, bottom: 65, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
+  const tickInterval = calculateAdaptiveTickInterval(data.length);
 
   // Calculate totals and maximum ceiling
   const totals = data.map(
@@ -164,22 +189,34 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
 
           {/* Date Axis Labels */}
           {data.map((d, i) => {
+            if (i % tickInterval !== 0) return null;
             const x = getX(i);
+            const y = svgHeight - padding.bottom + 14;
             const dateLabel = d.date.includes('-')
               ? d.date.split('-').slice(1).join('/')
               : d.date;
             return (
-              <text
-                key={i}
-                x={x}
-                y={svgHeight - padding.bottom + 20}
-                textAnchor="middle"
-                fill="#94a3b8"
-                fontSize="11"
-                fontFamily="sans-serif"
-              >
-                {dateLabel}
-              </text>
+              <g key={`x-tick-${i}`}>
+                <line
+                  x1={x}
+                  y1={svgHeight - padding.bottom}
+                  x2={x}
+                  y2={svgHeight - padding.bottom + 4}
+                  stroke="#475569"
+                  strokeWidth="1"
+                />
+                <text
+                  x={x}
+                  y={y}
+                  transform={`rotate(-45 ${x} ${y})`}
+                  textAnchor="end"
+                  fill="#94a3b8"
+                  fontSize="11"
+                  fontFamily="sans-serif"
+                >
+                  {dateLabel}
+                </text>
+              </g>
             );
           })}
 
