@@ -69,6 +69,34 @@ describe('TASK-TRK-TITLE-TRUNCATION - Single-line text boundaries and badge wrap
     const rollupBadge = screen.getByTestId('tree-node-rollup-points-badge');
     expect(rollupBadge).toHaveClass('whitespace-nowrap shrink-0');
   });
+
+  it('prevents badge breakout on long item types with auto-flex layout, shrink-0, and whitespace-nowrap (TASK-TRK-TREE-BADGE-OVERFLOW)', () => {
+    const item: WorkItemNode = {
+      ...mockItem({
+        id: 'deliverable-node',
+        title: 'Long deliverable title that should not collide with badge',
+        external_ref_id: 'TRK-202',
+        item_type: 'deliverable',
+      }),
+      depth: 0,
+      children: [],
+    };
+
+    render(<TreeNode item={item} />);
+
+    const badge = screen.getByTestId('level-badge-deliverable');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('deliverable');
+    // Enforces shrink-0 and whitespace-nowrap, without fixed w-14 constraint
+    expect(badge).toHaveClass('shrink-0 whitespace-nowrap uppercase');
+    expect(badge).not.toHaveClass('w-14');
+
+    const titleEl = screen.getByText('Long deliverable title that should not collide with badge');
+    expect(titleEl).toHaveClass('truncate min-w-0 flex-1');
+
+    const leftZone = screen.getByTestId('tree-node-left-zone-deliverable-node');
+    expect(leftZone).toHaveClass('flex items-center min-w-0 flex-1 overflow-hidden');
+  });
 });
 
 describe('TASK-TRK-TREE-LEVEL-FORMATTING - Indentation steps, guide rails, and level hierarchy styling', () => {

@@ -132,7 +132,7 @@ export function TreeNodeCard({
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 min-w-0 w-full">
         {/* Left side: Drag Grip, Level Badge, Deviations, Title, Ref ID, Lock, Subtasks */}
         <div
-          className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
+          className="flex items-center gap-2 md:gap-2.5 min-w-0 flex-1 overflow-hidden w-full md:w-auto"
           data-testid={`tree-node-left-zone-${item.id}`}
         >
           {!nodeIsImmutable && (
@@ -142,7 +142,7 @@ export function TreeNodeCard({
           {/* Level Badge */}
           <span
             data-testid={`level-badge-${item.item_type}`}
-            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))} w-14 shrink-0 text-center uppercase`}
+            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev))} shrink-0 text-center uppercase whitespace-nowrap`}
           >
             {item.item_type}
           </span>

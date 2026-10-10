@@ -58,20 +58,20 @@ export function sanitizeTitle(title: string): string {
 
 export function getLevelBadgeClasses(itemType: string, isUnmapped: boolean): string {
   if (isUnmapped) {
-    return 'bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase px-2 py-0.5 rounded shrink-0';
+    return 'bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
   }
   const type = (itemType || '').toLowerCase();
   switch (type) {
     case 'epic':
-      return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded shrink-0';
+      return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
     case 'story':
-      return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-2 py-0.5 rounded shrink-0';
+      return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
     case 'task':
-      return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0';
+      return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
     case 'subtask':
-      return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded shrink-0';
+      return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
     default:
-      return 'bg-slate-800 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0';
+      return 'bg-slate-800 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
   }
 }
 

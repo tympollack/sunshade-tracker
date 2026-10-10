@@ -108,7 +108,7 @@ export const DualPointBadge: React.FC<DualPointBadgeProps> = ({
           className={`text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 border border-slate-700/60 shrink-0 whitespace-nowrap select-none ${className}`}
           title={`Intrinsic Estimate: ${intrinsic} ${unit}`}
         >
-          {intrinsic} ${unit}
+          {intrinsic} {unit}
         </span>
       );
     }
