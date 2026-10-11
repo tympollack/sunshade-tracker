@@ -178,10 +178,17 @@ export function TreeNode({
     };
   }, []);
 
-  const effectiveStatuses = getItemStatuses ? getItemStatuses(item) : statuses;
+  const itemStatuses = getItemStatuses?.(item);
+  const effectiveStatuses =
+    (itemStatuses && itemStatuses.length > 0 ? itemStatuses : undefined) ||
+    statuses ||
+    [];
+
+  const itemHierarchy = getItemHierarchy?.(item);
   const effectiveHierarchy =
-    getItemHierarchy?.(item) ||
-    (hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy) ||
+    (itemHierarchy && itemHierarchy.length > 0 ? itemHierarchy : undefined) ||
+    (hierarchy && hierarchy.length > 0 ? hierarchy : undefined) ||
+    projectSettings?.hierarchy ||
     [];
 
   const statusColor = getStatusColor ? getStatusColor(item.status) : null;

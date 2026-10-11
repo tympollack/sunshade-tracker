@@ -147,8 +147,9 @@ export function TreeNodeCard({
           {/* Level Badge */}
           <span
             data-testid={`level-badge-${item.item_type}`}
+            title={item.item_type}
             style={getLevelBadgeStyle(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)}
-            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)} shrink-0 text-center uppercase whitespace-nowrap`}
+            className={`${getLevelBadgeClasses(item.item_type, Boolean(unmappedLevelDev), effectiveHierarchy)} shrink-0 text-center uppercase whitespace-nowrap max-w-[130px] sm:max-w-[160px] truncate`}
           >
             {item.item_type}
           </span>

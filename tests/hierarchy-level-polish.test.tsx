@@ -406,4 +406,53 @@ describe('TASK-TRK-DYNAMIC-HIERARCHY-PALETTE - Dynamic color token mapping deriv
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveClass('bg-emerald-950/60 text-emerald-300');
   });
+
+  it('Review Comment 1: clamps ultra-long type badge width with max-w and tooltip title so titles remain visible', () => {
+    const longType = 'multi_project_release_deliverable';
+    const item: WorkItemNode = {
+      ...mockItem({
+        id: 'long-badge-node',
+        title: 'Title that must not be hidden by long badge',
+        item_type: longType,
+      }),
+      depth: 0,
+      children: [],
+    };
+
+    render(<TreeNode item={item} />);
+
+    const badge = screen.getByTestId(`level-badge-${longType}`);
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute('title', longType);
+    expect(badge).toHaveClass('max-w-[130px] sm:max-w-[160px] truncate');
+
+    const titleEl = screen.getByText('Title that must not be hidden by long badge');
+    expect(titleEl).toBeInTheDocument();
+    expect(titleEl).toHaveClass('truncate min-w-0 flex-1');
+  });
+
+  it('Review Comment 2: falls back to projectSettings.hierarchy when getItemHierarchy returns empty array', () => {
+    const item: WorkItemNode = {
+      ...mockItem({
+        id: 'callback-fallback-node',
+        title: 'Fallback Item',
+        item_type: 'deliverable',
+      }),
+      depth: 0,
+      children: [],
+    };
+
+    render(
+      <TreeNode
+        item={item}
+        getItemHierarchy={() => []}
+        projectSettings={{ hierarchy: dynamicHierarchy } as any}
+      />
+    );
+
+    const badge = screen.getByTestId('level-badge-deliverable');
+    expect(badge).toBeInTheDocument();
+    // Resolves deliverable to emerald tier from projectSettings despite empty callback result
+    expect(badge).toHaveClass('bg-emerald-950/60 text-emerald-300');
+  });
 });

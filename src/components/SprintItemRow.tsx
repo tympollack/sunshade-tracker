@@ -131,7 +131,8 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
         {/* Level Badge */}
         <span
-          className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 whitespace-nowrap ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+          title={item.item_type}
+          className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 whitespace-nowrap max-w-[130px] sm:max-w-[160px] truncate ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
         >
           {item.item_type}
         </span>
