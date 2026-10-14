@@ -603,11 +603,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return res;
   }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels, treeSelectedAssignees]);
 
+  const getItemProjectSettings = useCallback((item: WorkItem | null | undefined): ProjectSettings => {
+    return getEffectiveItemProjectSettings(item, allProjects, projectSettings, isAllProjects);
+  }, [isAllProjects, allProjects, projectSettings]);
+
   const treeItems = useMemo(
-    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator, projectSettings),
-    [treeFilteredItems, treeSortComparator, projectSettings]
+    () => buildTree(treeFilteredItems, null, 0, new Set(), treeSortComparator, getItemProjectSettings),
+    [treeFilteredItems, treeSortComparator, getItemProjectSettings]
   );
-  const allTreeItems = useMemo(() => buildTree(items, null, 0, new Set(), undefined, projectSettings), [items, projectSettings]);
+  const allTreeItems = useMemo(
+    () => buildTree(items, null, 0, new Set(), undefined, getItemProjectSettings),
+    [items, getItemProjectSettings]
+  );
 
   const filterSprintItems = useCallback(
     (itemsList: WorkItem[]) => {
@@ -817,10 +824,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
     return projectSettings;
   }, [editingItem, allProjects, projectSettings]);
-
-  const getItemProjectSettings = useCallback((item: WorkItem | null | undefined): ProjectSettings => {
-    return getEffectiveItemProjectSettings(item, allProjects, projectSettings, isAllProjects);
-  }, [isAllProjects, allProjects, projectSettings]);
 
   const getItemHierarchy = useCallback((item: WorkItem): HierarchyLevel[] => {
     return getItemProjectSettings(item).hierarchy || projectSettings.hierarchy;
@@ -3270,6 +3273,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   availableSprintDefs={availableSprintDefs}
                   items={items}
                   projectSettings={projectSettings}
+                  getItemProjectSettings={getItemProjectSettings}
                   pointMode={pointMode}
                   handlePointModeChange={handlePointModeChange}
                   boardHeightMode={boardHeight}

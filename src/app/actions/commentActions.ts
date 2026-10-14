@@ -2,7 +2,7 @@
 
 import { createServerClient } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/db';
-import type { WorkItemComment } from '@/types/tracker';
+import { type WorkItemComment, MAX_COMMENT_LENGTH } from '@/types/tracker';
 
 export interface CommentActionResult<T = WorkItemComment> {
   success: boolean;
@@ -32,6 +32,8 @@ async function verifyWorkItemAccess(
   allowed: boolean;
   item?: any;
   user?: any;
+  tenant?: any;
+  membership?: any;
   error?: string;
 }> {
   if (!itemId || typeof itemId !== 'string') {
@@ -88,7 +90,7 @@ async function verifyWorkItemAccess(
 
     // Direct tenant owner has write permissions
     if (tenant?.owner_id === user.id) {
-      return { allowed: true, item, user };
+      return { allowed: true, item, user, tenant, membership: { role: 'owner' } };
     }
 
     // Check membership and role
@@ -107,12 +109,12 @@ async function verifyWorkItemAccess(
       return { allowed: false, error: 'Forbidden: Viewer role cannot post comments' };
     }
 
-    return { allowed: true, item, user };
+    return { allowed: true, item, user, tenant, membership };
   }
 
   // 5. Read Operations (getItemComments, getCommentCount)
   if (isPublicWorkspace) {
-    return { allowed: true, item, user };
+    return { allowed: true, item, user, tenant };
   }
 
   if (!user) {
@@ -120,7 +122,7 @@ async function verifyWorkItemAccess(
   }
 
   if (tenant?.owner_id === user.id) {
-    return { allowed: true, item, user };
+    return { allowed: true, item, user, tenant, membership: { role: 'owner' } };
   }
 
   const { data: membership } = await supabaseAdmin
@@ -134,7 +136,7 @@ async function verifyWorkItemAccess(
     return { allowed: false, error: 'Forbidden: You do not have access to this workspace' };
   }
 
-  return { allowed: true, item, user };
+  return { allowed: true, item, user, tenant, membership };
 }
 
 /**
@@ -210,6 +212,9 @@ export async function addComment(
     if (!trimmedContent) {
       return { success: false, error: 'Comment content cannot be empty' };
     }
+    if (trimmedContent.length > MAX_COMMENT_LENGTH) {
+      return { success: false, error: `Comment cannot exceed ${MAX_COMMENT_LENGTH} characters` };
+    }
 
     const access = await verifyWorkItemAccess(itemId, true);
     if (!access.allowed) {
@@ -262,21 +267,7 @@ export async function deleteComment(commentId: string): Promise<{ success: boole
       return { success: false, error: 'Comment ID is required' };
     }
 
-    // 1. Authenticate caller
-    let user: any = null;
-    try {
-      const supabase = await createServerClient();
-      const { data: authData, error: authErr } = await supabase.auth.getUser();
-      if (!authErr && authData?.user) {
-        user = authData.user;
-      }
-    } catch {}
-
-    if (!user) {
-      return { success: false, error: 'Unauthorized: Session required to delete comments' };
-    }
-
-    // 2. Fetch comment to verify item ownership
+    // 1. Fetch comment to verify item ownership
     const { data: comment, error: commentErr } = await supabaseAdmin
       .from('work_item_comments')
       .select('id, author_id, item_id')
@@ -287,33 +278,31 @@ export async function deleteComment(commentId: string): Promise<{ success: boole
       return { success: false, error: 'Comment not found' };
     }
 
-    // 3. Allow deletion if caller is original author
-    if (comment.author_id === user.id) {
-      const { error: delErr } = await supabaseAdmin
-        .from('work_item_comments')
-        .delete()
-        .eq('id', commentId);
-
-      if (delErr) {
-        return { success: false, error: delErr.message };
-      }
-      return { success: true };
-    }
-
-    // 4. Otherwise, verify whether caller is tenant owner or admin
+    // 2. Authorize via target work item with requireWrite=true
+    // This rejects anonymous callers, read-only demo workspaces, and non-members/viewers
     const access = await verifyWorkItemAccess(comment.item_id, true);
     if (!access.allowed) {
+      return { success: false, error: access.error || 'Forbidden: Cannot delete comments in this workspace' };
+    }
+
+    const user = access.user;
+    const isAuthor = comment.author_id === user.id;
+    const isOwner = access.tenant?.owner_id === user.id || access.membership?.role === 'owner';
+    const isAdmin = access.membership?.role === 'admin';
+
+    // 3. Must be author, workspace owner, or workspace admin
+    if (!isAuthor && !isOwner && !isAdmin) {
       return { success: false, error: 'Forbidden: You do not have permission to delete this comment' };
     }
 
-    const { error } = await supabaseAdmin
+    const { error: delErr } = await supabaseAdmin
       .from('work_item_comments')
       .delete()
       .eq('id', commentId);
 
-    if (error) {
-      console.error('[commentActions] Error deleting comment:', error);
-      return { success: false, error: error.message };
+    if (delErr) {
+      console.error('[commentActions] Error deleting comment:', delErr);
+      return { success: false, error: delErr.message };
     }
 
     return { success: true };

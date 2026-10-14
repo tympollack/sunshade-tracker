@@ -76,7 +76,7 @@ export function getAdaptiveTickIndices(dataLength: number, maxTicks: number = 8)
     const distance = lastIdx - lastSelected;
     const minSpacingThreshold = Math.max(2, Math.ceil(interval / 2));
 
-    if (distance < minSpacingThreshold && indices.length > 1) {
+    if ((distance < minSpacingThreshold && indices.length > 1) || indices.length >= maxTicks) {
       indices[indices.length - 1] = lastIdx;
     } else {
       indices.push(lastIdx);

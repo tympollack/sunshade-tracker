@@ -344,11 +344,15 @@ export function WorkItemInspectorDrawer({
     [resolvedFields]
   );
   const [localMeta, setLocalMeta] = useState<Record<string, any>>({});
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const isSavingRef = useRef(false);
+  const pendingSavesRef = useRef(0);
+  const saveQueueRef = useRef<Promise<any>>(Promise.resolve());
   const latestMetadataRef = useRef<Record<string, any>>({});
+  const lastConfirmedItemRef = useRef<WorkItem | null>(null);
 
   useEffect(() => {
     if (item) {
+      lastConfirmedItemRef.current = item;
       setTitle(item.title || '');
       setDescription(item.description || '');
       setStatus(item.status || '');
@@ -395,26 +399,99 @@ export function WorkItemInspectorDrawer({
       ...(updates.metadata ? { metadata: { ...latestMetadataRef.current } } : {}),
     };
 
-    try {
-      setIsSaving(true);
-      setErrorMessage(null);
-      await onUpdateItem(item.id, payload);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to update field');
-      setTitle(item.title || '');
-      setDescription(item.description || '');
-      setStatus(item.status || '');
-      setAssignee(normalizeAssignee(item.assignee) || '');
-      const pts = item.metadata?.story_points ?? item.metadata?.points;
-      setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
-      setSprint(item.metadata?.sprint || '');
-      setParentId(item.parent_id || '');
-      const rollback = item.metadata ? { ...item.metadata } : {};
-      setLocalMeta(rollback);
-      latestMetadataRef.current = rollback;
-    } finally {
-      setIsSaving(false);
+    setIsSaving(true);
+    setErrorMessage(null);
+
+    const rollback = () => {
+      // Only reset local UI state if no subsequent saves are queued
+      if (pendingSavesRef.current <= 1) {
+        const confirmed = lastConfirmedItemRef.current || item;
+        setTitle(confirmed.title || '');
+        setDescription(confirmed.description || '');
+        setStatus(confirmed.status || '');
+        setAssignee(normalizeAssignee(confirmed.assignee) || '');
+        const pts = confirmed.metadata?.story_points ?? confirmed.metadata?.points;
+        setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
+        setSprint(confirmed.metadata?.sprint || '');
+        setParentId(confirmed.parent_id || '');
+        const prevMeta = confirmed.metadata ? { ...confirmed.metadata } : {};
+        setLocalMeta(prevMeta);
+        latestMetadataRef.current = prevMeta;
+      }
+    };
+
+    const recordSaveSuccess = () => {
+      const base = lastConfirmedItemRef.current || item;
+      lastConfirmedItemRef.current = {
+        ...base,
+        ...payload,
+        ...(payload.metadata
+          ? {
+              metadata: {
+                ...(base.metadata || {}),
+                ...payload.metadata,
+              },
+            }
+          : {}),
+      };
+    };
+
+    const doSave = (): Promise<void> | void => {
+      try {
+        const result = onUpdateItem(item.id, payload);
+
+        if (result && typeof (result as any).then === 'function') {
+          return (result as Promise<any>)
+            .then(() => {
+              recordSaveSuccess();
+            })
+            .catch((err: any) => {
+              setErrorMessage(err?.message || 'Failed to update field');
+              rollback();
+            })
+            .finally(() => {
+              pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+              if (pendingSavesRef.current === 0) {
+                setIsSaving(false);
+              }
+            });
+        } else {
+          recordSaveSuccess();
+          pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+          if (pendingSavesRef.current === 0) {
+            setIsSaving(false);
+          }
+        }
+      } catch (err: any) {
+        setErrorMessage(err?.message || 'Failed to update field');
+        rollback();
+        pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+        if (pendingSavesRef.current === 0) {
+          setIsSaving(false);
+        }
+      }
+    };
+
+    pendingSavesRef.current++;
+    setIsSaving(true);
+    setErrorMessage(null);
+
+    let currentExecution: Promise<any>;
+    if (pendingSavesRef.current === 1) {
+      const maybePromise = doSave();
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        currentExecution = maybePromise;
+        saveQueueRef.current = currentExecution;
+      } else {
+        currentExecution = Promise.resolve();
+        saveQueueRef.current = currentExecution;
+      }
+    } else {
+      currentExecution = saveQueueRef.current.then(doSave, doSave);
+      saveQueueRef.current = currentExecution;
     }
+
+    await currentExecution;
   };
 
   const handleStatusChange = (newStatus: string) => {

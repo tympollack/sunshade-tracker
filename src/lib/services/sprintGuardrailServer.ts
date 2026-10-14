@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/db';
 import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
 import {
   SprintScopeData,
   IntakeValidationOptions,
@@ -156,10 +157,82 @@ export async function validateSprintIntake(
     projectSettings?.work_unit_field ||
     options?.metricKey;
 
+  // 5. Calculate entering subtree leaf metric if incomingItem has active descendants
+  let validatedIncomingItem = incomingItem;
+  if (incomingItem?.id) {
+    const isItemInTargetSprint = (it: any) => {
+      if (!it) return false;
+      const sprintIdentifier = sprintData?.id || sprintData?.name;
+      const itSprint = it.metadata?.sprint || it.sprint_id || it.sprint;
+      if (sprintIdentifier && (itSprint === sprintData?.id || itSprint === sprintData?.name)) {
+        return true;
+      }
+      return (currentSprintItems || []).some(
+        (cs: any) =>
+          cs.id === it.id ||
+          Boolean(it.external_ref_id && cs.external_ref_id === it.external_ref_id)
+      );
+    };
+
+    const collectedDescendantIds = new Set<string>();
+    const allDescendants: any[] = [];
+
+    const collectDescendants = (parent: any) => {
+      const parentId = parent.id;
+      const parentExt = parent.external_ref_id;
+
+      for (const it of allItems || []) {
+        if (!it.id || collectedDescendantIds.has(it.id)) continue;
+        if (
+          it.id === incomingItem.id ||
+          Boolean(incomingItem.external_ref_id && it.external_ref_id === incomingItem.external_ref_id)
+        ) {
+          continue;
+        }
+
+        const matchesParent =
+          (parentId && it.parent_id === parentId) ||
+          Boolean(parentExt && it.parent_id === parentExt);
+
+        if (matchesParent) {
+          collectedDescendantIds.add(it.id);
+          allDescendants.push(it);
+          collectDescendants(it);
+        }
+      }
+    };
+
+    collectDescendants(incomingItem);
+
+    if (allDescendants.length > 0) {
+      // Exclude descendants already in the target sprint so capacity is not double-counted
+      const enteringDescendants = allDescendants.filter((d) => !isItemInTargetSprint(d));
+
+      let subtreeLeafPoints = 0;
+      if (enteringDescendants.length > 0) {
+        const enteringSubtree = [incomingItem, ...enteringDescendants];
+        subtreeLeafPoints = calculateSprintLeafPoints(enteringSubtree, metricKey || projectSettings);
+      } else {
+        // All child descendants already belong to the sprint; parent move adds 0 net points
+        subtreeLeafPoints = 0;
+      }
+
+      const effectiveKey = metricKey || 'story_points';
+      validatedIncomingItem = {
+        ...incomingItem,
+        metadata: {
+          ...(incomingItem.metadata || {}),
+          story_points: subtreeLeafPoints,
+          [effectiveKey]: subtreeLeafPoints,
+        },
+      };
+    }
+  }
+
   return validateSprintIntakePure({
     sprint: sprintData,
     currentSprintItems,
-    incomingItem,
+    incomingItem: validatedIncomingItem,
     options: {
       ...options,
       metricKey,
