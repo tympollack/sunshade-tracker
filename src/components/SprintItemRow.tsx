@@ -16,6 +16,7 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
+import { SprintStatusSelect } from '@/components/sprint/SprintStatusSelect';
 
 export interface SprintItemRowProps {
   item: WorkItem;
@@ -273,49 +274,22 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         </span>
 
         {/* Status Select with Hierarchy Color-Coding */}
-        {(() => {
-          const itemStatuses = getItemStatuses(item);
-          const currentStatusObj = itemStatuses.find((st: StatusDefinition) => st.id === item.status);
-          const statusColor = currentStatusObj?.color;
-
-          return (
-            <select
-              value={item.status}
-              onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
-              disabled={isImmutable}
-              className="text-xs rounded py-0.5 px-1.5 md:py-1 md:px-2 font-mono focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border max-w-[130px] md:max-w-none truncate"
-              style={
-                statusColor
-                  ? {
-                      backgroundColor: `${statusColor}20`,
-                      color: statusColor,
-                      border: `1px solid ${statusColor}40`,
-                    }
-                  : { backgroundColor: '#020617', color: '#cbd5e1', border: '1px solid #1e293b' }
-              }
-              title={isImmutable ? 'Item is locked in a closed sprint' : 'Change status'}
-              data-testid={`sprint-status-select-${item.id}`}
-            >
-              {itemStatuses.map((st: StatusDefinition) => (
-                <option
-                  key={st.id}
-                  value={st.id}
-                  style={{ backgroundColor: '#020617', color: '#cbd5e1' }}
-                >
-                  {st.label}
-                </option>
-              ))}
-            </select>
-          );
-        })()}
+        <SprintStatusSelect
+          itemId={item.id}
+          status={item.status}
+          statuses={getItemStatuses(item)}
+          onChange={onUpdateStatus}
+          disabled={isImmutable}
+        />
 
         {/* Move / Reassign Sprint Select */}
         <select
           value={currentSprintName || item.metadata?.sprint || '__none__'}
           onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
           disabled={isImmutable}
-          className="text-xs bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 md:py-1 md:px-2 text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] md:max-w-none truncate"
+          className="bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 text-xs md:py-1 md:px-3 md:text-sm text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] truncate"
           title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}
+          data-testid={`sprint-reassign-select-${item.id}`}
         >
           <option value="__none__">Backlog (Unassigned)</option>
           {availableSprints.map((s) => (

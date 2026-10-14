@@ -164,7 +164,8 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     // Status dropdown
     const statusSelect = screen.getByTestId(`sprint-status-select-${item.id}`);
     expect(statusSelect).toBeInTheDocument();
-    expect(statusSelect).toHaveClass('py-0.5 px-1.5 md:py-1 md:px-2');
+    expect(statusSelect).toHaveClass('py-0.5 px-1.5 text-xs');
+    expect(statusSelect).toHaveClass('md:py-1 md:px-3 md:text-sm');
 
     // Sprint dropdown
     const sprintSelect = screen.getByDisplayValue('Sprint 2026-Q4');
