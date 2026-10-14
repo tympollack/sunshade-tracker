@@ -197,4 +197,71 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     expect(screen.getByTestId('sprint-work-item-list')).toBeInTheDocument();
     expect(screen.getByTestId('sprint-item-row')).toBeInTheDocument();
   });
+
+  it('correctly calculates width and bounds for nested tree rows without clipping', () => {
+    const item = createItem();
+    render(
+      <SprintItemRow
+        item={item}
+        depth={2}
+        isSelected={false}
+        onToggleSelect={vi.fn()}
+        isImmutable={false}
+        onEditItem={vi.fn()}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+        isTreeMode={true}
+      />
+    );
+
+    const row = screen.getByTestId('sprint-item-row');
+    expect(row).toHaveStyle({
+      marginLeft: '48px',
+      width: 'calc(100% - 48px)',
+      maxWidth: 'calc(100% - 48px)',
+    });
+  });
+
+  it('displays macro intrinsic points on mobile when pointMode is macro', () => {
+    const item = createItem({ metadata: { story_points: 7 } });
+    render(
+      <SprintItemRow
+        item={item}
+        isSelected={false}
+        onToggleSelect={vi.fn()}
+        isImmutable={false}
+        onEditItem={vi.fn()}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+        isTreeMode={true}
+        childCount={3}
+        rollupPoints={21}
+        pointMode="macro"
+      />
+    );
+
+    const rollupBadge = screen.getByTestId('tree-rollup-points-badge');
+    expect(rollupBadge.textContent).toContain('7 pts');
+    expect(rollupBadge.textContent).toContain('7 pts intrinsic');
+  });
+
+  it('renders SprintWorkItemList in tree mode with hierarchy and rollup points', () => {
+    const parent = createItem({ id: 'parent-1', title: 'Parent Story', metadata: { story_points: 5 } });
+    const child = createItem({ id: 'child-1', parent_id: 'parent-1', title: 'Child Task', metadata: { story_points: 3 } });
+
+    render(
+      <SprintWorkItemList
+        items={[parent, child]}
+        isTreeMode={true}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+      />
+    );
+
+    expect(screen.getByTestId('sprint-work-item-list')).toBeInTheDocument();
+    const rows = screen.getAllByTestId('sprint-item-row');
+    expect(rows.length).toBe(2);
+    // Tree child count badge on parent
+    expect(screen.getByTestId('tree-child-count-badge')).toHaveTextContent('1 subtask');
+  });
 });

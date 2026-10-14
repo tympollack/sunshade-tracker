@@ -83,21 +83,29 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           ? 'bg-emerald-950/30 border-l-2 border-emerald-400'
           : 'hover:bg-slate-800/30'
       }`}
-      style={isTreeMode && depth > 0 ? { marginLeft: `${depth * 24}px` } : undefined}
+      style={
+        isTreeMode && depth > 0
+          ? {
+              marginLeft: `${depth * 24}px`,
+              width: `calc(100% - ${depth * 24}px)`,
+              maxWidth: `calc(100% - ${depth * 24}px)`,
+            }
+          : undefined
+      }
       data-testid="sprint-item-row"
     >
-      {/* Tree Branch Connector */}
-      {isTreeMode && depth > 0 && (
-        <div
-          data-testid="tree-branch-connector"
-          className="w-3.5 h-6 border-b-2 border-l-2 border-slate-700 -mt-3.5 rounded-bl-sm shrink-0"
-        />
-      )}
-
       {/* Primary Row (Tier 1 on mobile, left section on desktop) */}
       <div className="flex items-center justify-between w-full md:w-auto md:flex-1 min-w-0 gap-2">
-        {/* Left group: Checkbox, type badge, deviations, project, ref, github, title, lock, and desktop subtasks */}
-        <div className="flex items-center space-x-2.5 min-w-0 flex-1 overflow-hidden">
+        {/* Left group: Tree connector, Checkbox, type badge, deviations, project, ref, github, title, lock, and desktop subtasks */}
+        <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+          {/* Tree Branch Connector */}
+          {isTreeMode && depth > 0 && (
+            <div
+              data-testid="tree-branch-connector"
+              className="w-3.5 h-6 border-b-2 border-l-2 border-slate-700 -mt-3.5 rounded-bl-sm shrink-0"
+            />
+          )}
+
           {/* Selection Checkbox */}
           <button
             type="button"
@@ -171,7 +179,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {item.external_ref_id && (
             <CopyableRefId
               id={item.external_ref_id}
-              className="text-xs shrink-0 font-medium"
+              className="text-xs shrink-0 font-medium max-w-[90px] sm:max-w-none truncate"
             />
           )}
 
@@ -181,7 +189,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
           {/* Title */}
           <span
-            className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white min-w-0 flex-1"
+            className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white min-w-0 min-w-[60px] sm:min-w-[100px] flex-1"
             onClick={() => onEditItem(item)}
             title={item.title}
           >
@@ -251,7 +259,11 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
                 : `Rollup: ${rollupPoints} pts`
             }
           >
-            <span className="md:hidden">{rollupPoints} pts Σ</span>
+            <span className="md:hidden">
+              {pointMode === 'macro' && item.metadata?.story_points !== undefined
+                ? `${item.metadata.story_points} pts`
+                : `${rollupPoints} pts Σ`}
+            </span>
             <span className="hidden md:inline">
               {pointMode === 'macro' && item.metadata?.story_points !== undefined
                 ? `${item.metadata.story_points} pts intrinsic`
