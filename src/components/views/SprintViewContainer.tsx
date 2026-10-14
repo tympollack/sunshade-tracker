@@ -16,7 +16,7 @@ import {
   Square,
   Clock,
 } from 'lucide-react';
-import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
+import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
@@ -31,6 +31,7 @@ import {
   calculateSprintMacroPoints,
   getCompletedStatusSet,
   isItemCompleted,
+  getItemWorkMetric,
 } from '@/lib/sprint-utils';
 
 export interface SprintViewContainerProps {
@@ -123,6 +124,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     handleUpdateStatus,
     handleUpdateItemSprint,
   } = props;
+
+  const workMetric = getWorkMetricConfig(projectSettings);
 
   const completionSet = getCompletedStatusSet(projectSettings?.statuses);
 
@@ -304,8 +307,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
         {(visibleSprints.length === 0 ? (availableSprints.length === 0 ? ['Sprint 1'] : []) : visibleSprints).map((sprintName) => {
           const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
           const sprintItems = filterSprintItems(rawSprintItems);
-          const leafPoints = calculateSprintLeafPoints(sprintItems);
-          const macroPoints = calculateSprintMacroPoints(sprintItems);
+          const leafPoints = calculateSprintLeafPoints(sprintItems, projectSettings);
+          const macroPoints = calculateSprintMacroPoints(sprintItems, projectSettings);
           const effectivePoints = pointMode === 'macro' ? macroPoints : leafPoints;
           const totalPoints = effectivePoints;
           const completedItems = sprintItems.filter((it) =>
@@ -336,7 +339,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             const getSubtreePoints = (n: WorkItemNode): number => {
               const children = n.children || [];
               if (children.length === 0) {
-                return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                return getItemWorkMetric(n, projectSettings);
               }
               let sum = 0;
               for (const c of children) {
@@ -477,7 +480,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                     data-testid={`sprint-points-${sprintName}`}
                   >
                     {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
-                    {totalPoints > 0 ? ` · ${totalPoints} pts ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}` : ''}
+                    {totalPoints > 0 ? ` · ${totalPoints} ${workMetric.unit_label || 'pts'} ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}` : ''}
                   </span>
                 </div>
 
@@ -564,8 +567,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               String(it.metadata.sprint).trim() === ''
           );
           const backlogItems = filterSprintItems(rawBacklogItems);
-          const backlogLeafPoints = calculateSprintLeafPoints(backlogItems);
-          const backlogMacroPoints = calculateSprintMacroPoints(backlogItems);
+          const backlogLeafPoints = calculateSprintLeafPoints(backlogItems, projectSettings);
+          const backlogMacroPoints = calculateSprintMacroPoints(backlogItems, projectSettings);
           const effectiveBacklogPoints = pointMode === 'macro' ? backlogMacroPoints : backlogLeafPoints;
           const backlogPoints = effectiveBacklogPoints;
           const isBacklogCollapsed = collapsedSprints.has('__backlog__');
@@ -580,7 +583,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             const getSubtreePoints = (n: WorkItemNode): number => {
               const children = n.children || [];
               if (children.length === 0) {
-                return Number(n.metadata?.story_points ?? n.metadata?.points ?? n.metadata?.estimate ?? 0) || 0;
+                return getItemWorkMetric(n, projectSettings);
               }
               let sum = 0;
               for (const c of children) {
@@ -680,7 +683,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   >
                     {backlogItems.length} {backlogItems.length === 1 ? 'item' : 'items'}
                     {backlogPoints > 0
-                      ? ` · ${backlogPoints} pts ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}`
+                      ? ` · ${backlogPoints} ${workMetric.unit_label || 'pts'} ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}`
                       : ''}
                   </span>
                 </div>

@@ -163,7 +163,7 @@ describe('BUG-TRK-DROPDOWN-PORTAL-CLIP - Popover Portals & Escape from Navbar Ov
 });
 
 describe('BUG-TRK-TREE-TITLE-TRUNCATE-ALIGN - Strict Two-Zone Layout & Column Tabular Tracks', () => {
-  it('TreeNode Left Zone enforces chevron w-5, type badge w-14 shrink-0 uppercase, truncate min-w-0 title, and shrink-0 ref tag', () => {
+  it('TreeNode Left Zone enforces chevron w-5, auto-flex type badge shrink-0 uppercase, truncate min-w-0 title, and shrink-0 ref tag', () => {
     const item = createItem({ children: [createItem({ id: 'child-1' })] });
     render(
       <TreeNode
@@ -187,10 +187,11 @@ describe('BUG-TRK-TREE-TITLE-TRUNCATE-ALIGN - Strict Two-Zone Layout & Column Ta
 
     // Type badge
     const badge = within(leftZone).getByTestId('level-badge-story');
-    expect(badge).toHaveClass('w-14');
+    expect(badge).not.toHaveClass('w-14');
     expect(badge).toHaveClass('shrink-0');
     expect(badge).toHaveClass('text-center');
     expect(badge).toHaveClass('uppercase');
+    expect(badge).toHaveClass('whitespace-nowrap');
 
     // Title truncation
     const titleEl = within(leftZone).getByText(item.title);

@@ -12,7 +12,7 @@ import {
   User,
   Eye,
 } from 'lucide-react';
-import { WorkItem, HierarchyLevel, StatusDefinition, Project } from '@/types/tracker';
+import { WorkItem, HierarchyLevel, StatusDefinition, Project, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
@@ -45,6 +45,7 @@ export interface KanbanCardProps {
   itemHierarchy: HierarchyLevel[];
   allProjects?: any[];
   isAllProjects?: boolean;
+  projectSettings?: ProjectSettings;
   isCardImmutable?: boolean;
   isReadOnly?: boolean;
   isBeingDragged?: boolean;
@@ -73,6 +74,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   itemHierarchy,
   allProjects = [],
   isAllProjects = false,
+  projectSettings,
   isCardImmutable = false,
   isReadOnly = false,
   isBeingDragged = false,
@@ -104,8 +106,12 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       ? item.points_rollup
       : 0;
 
+  const workMetric = getWorkMetricConfig(projectSettings);
   const rawPoints =
-    item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+    item.metadata?.[workMetric.field_key] ??
+    (workMetric.field_key === 'story_points'
+      ? (item.metadata?.points ?? item.metadata?.estimate)
+      : undefined);
   const storyPoints = rawPoints !== undefined ? Number(rawPoints) : undefined;
 
   const statuses = getItemStatuses ? getItemStatuses(item) : [];
@@ -251,6 +257,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
               rollupPoints={effectiveRollupPoints}
               childCount={effectiveChildCount}
               pointMode={pointMode}
+              unit={workMetric.unit_label || 'pts'}
               className="shrink-0"
             />
 
@@ -471,6 +478,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
             rollupPoints={effectiveRollupPoints}
             childCount={effectiveChildCount}
             pointMode={pointMode}
+            unit={workMetric.unit_label || 'pts'}
             className="shrink-0"
           />
 

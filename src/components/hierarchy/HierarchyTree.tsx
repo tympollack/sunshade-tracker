@@ -34,6 +34,7 @@ export interface HierarchyTreeProps {
   deviations?: SchemaDeviation[];
   onOpenReconciliation?: (deviation?: SchemaDeviation) => void;
   className?: string;
+  unit?: string;
 }
 
 /**
@@ -63,6 +64,7 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
   deviations = [],
   onOpenReconciliation,
   className = '',
+  unit = 'pts',
 }) => {
   return (
     <div data-testid="hierarchy-tree-view" className={`space-y-4 ${className}`}>
@@ -130,6 +132,7 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
               deviations={deviations}
               onOpenReconciliation={onOpenReconciliation}
               isLastChild={index === tree.length - 1}
+              unit={unit}
             />
           ))
         )}

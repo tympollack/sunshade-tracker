@@ -22,6 +22,7 @@ export interface HistoricalSprint {
   ends_at?: string | null;
   end_date?: string | null;
   status?: string;
+  project_id?: string | null;
 }
 
 export interface WorkItemLifecycleData {
@@ -153,6 +154,7 @@ export interface SprintAnalyticsInput {
   items?: WorkItemLifecycleData[];
   rules?: MetricRules;
   now?: Date | string | number;
+  metricKey?: string;
 }
 
 export interface SprintHealthReport {
@@ -402,10 +404,12 @@ export function getSprintLeafItems(items: WorkItemLifecycleData[]): WorkItemLife
 }
 
 /**
- * Extracts story points from an item safely.
+ * Extracts work metric points from an item safely using optional configured metric key.
  */
-function getItemPoints(item: WorkItemLifecycleData): number {
-  const p = item.metadata?.story_points ?? item.story_points ?? item.points ?? item.metadata?.points ?? item.metadata?.estimate;
+function getItemPoints(item: WorkItemLifecycleData, metricKey?: string): number {
+  const p = metricKey
+    ? (item.metadata?.[metricKey] ?? (item as any)?.[metricKey] ?? (metricKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
+    : (item.metadata?.story_points ?? item.story_points ?? item.points ?? item.metadata?.points ?? item.metadata?.estimate);
   const num = Number(p);
   return isNaN(num) || num < 0 ? 0 : num;
 }
@@ -416,6 +420,10 @@ function getItemPoints(item: WorkItemLifecycleData): number {
 export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealthReport {
   const { sprint, historicalSprints = [], items = [], rules: rawRules, now } = input;
   const rules = resolveMetricRules(rawRules || sprint.metadata?.metric_rules || sprint.metadata?.sprint_metrics);
+  const metricKey =
+    input.metricKey ||
+    sprint.metadata?.work_metric_config?.field_key ||
+    sprint.metadata?.work_unit_field;
 
   const isActive = Boolean(
     sprint.is_active ||
@@ -448,7 +456,7 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
   );
 
   for (const it of pointItems) {
-    const pts = getItemPoints(it);
+    const pts = getItemPoints(it, metricKey);
     totalCurrentPoints += pts;
 
     const st = String(it.status || '').toLowerCase().trim();
@@ -542,6 +550,7 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
       completed_points: h.completed_points,
       committed_points: h.committed_points,
       ends_at: h.ends_at,
+      project_id: h.project_id,
     })),
     committedPoints: committed,
     currentSprintPoints: totalCurrentPoints,

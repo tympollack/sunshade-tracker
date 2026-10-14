@@ -1,4 +1,4 @@
-import { HierarchyLevel, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 
 export interface ProjectLike {
@@ -116,10 +116,16 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
   const finalHierarchy = mergeProjectHierarchy(projects);
 
   const mergedFields = new Set<string>();
+  const mergedCustomMetaFields: CustomMetadataFieldDefinition[] = [];
   const mergedSprints: any[] = [];
 
   projects.forEach((proj) => {
     (proj.settings?.custom_fields || []).forEach((f: string) => mergedFields.add(f));
+    (proj.settings?.custom_metadata_fields || []).forEach((cmf: CustomMetadataFieldDefinition) => {
+      if (!mergedCustomMetaFields.some((m) => m.key === cmf.key)) {
+        mergedCustomMetaFields.push(cmf);
+      }
+    });
     (proj.settings?.sprint_settings?.sprints || []).forEach((s: any) => {
       if (s.name && !mergedSprints.some((ms) => ms.name === s.name)) {
         mergedSprints.push(s);
@@ -128,16 +134,32 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
   });
 
   const firstGithubRepo = projects.find((p) => p.settings?.github_repo)?.settings?.github_repo;
+  
+  // Only set work_metric_config at portfolio level if all configured projects share the same metric key
+  const configuredMetrics = projects
+    .map((p) => p.settings?.work_metric_config)
+    .filter(Boolean);
+  const allAgree =
+    configuredMetrics.length > 0 &&
+    configuredMetrics.every((m) => m?.field_key === configuredMetrics[0]?.field_key);
+
+  const mergedWorkMetricConfig = allAgree ? configuredMetrics[0] : undefined;
+  const mergedWorkUnitField = allAgree
+    ? (projects.find((p) => p.settings?.work_unit_field)?.settings?.work_unit_field ?? mergedWorkMetricConfig?.field_key)
+    : undefined;
 
   return {
     schema_version: '1.0',
     statuses: finalStatuses,
     hierarchy: finalHierarchy,
     custom_fields: Array.from(mergedFields),
+    custom_metadata_fields: mergedCustomMetaFields,
     sprint_settings: {
       default_sprint: 'all',
       sprints: mergedSprints,
     },
+    ...(mergedWorkMetricConfig ? { work_metric_config: mergedWorkMetricConfig } : {}),
+    ...(mergedWorkUnitField ? { work_unit_field: mergedWorkUnitField } : {}),
     ...(firstGithubRepo ? { github_repo: firstGithubRepo } : {}),
   };
 }
@@ -154,9 +176,18 @@ export function getItemProjectSettings(
   if (!item || !isAllProjects) return defaultSettings;
   const proj = allProjects.find((p) => p.id === item.project_id || p.slug === item.project_id);
   if (proj && proj.settings) {
+    const effectiveMetricConfig = proj.settings.work_metric_config !== undefined
+      ? proj.settings.work_metric_config
+      : undefined;
+    const effectiveWorkUnitField = proj.settings.work_unit_field !== undefined
+      ? proj.settings.work_unit_field
+      : undefined;
+
     return {
       ...defaultSettings,
       ...proj.settings,
+      work_metric_config: effectiveMetricConfig,
+      work_unit_field: effectiveWorkUnitField,
       hierarchy: (proj.settings.hierarchy || []).map((h: any) => ({
         ...h,
         color: h.color || getDefaultLevelHex(h.level),

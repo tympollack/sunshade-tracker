@@ -80,6 +80,45 @@ export function validateProjectSettings(settings: any): ValidationResult {
     }
   }
 
+  // Validate work_metric_config if present
+  if ('work_metric_config' in settings && settings.work_metric_config !== null && settings.work_metric_config !== undefined) {
+    if (typeof settings.work_metric_config !== 'object' || Array.isArray(settings.work_metric_config)) {
+      errors.push({
+        path: 'work_metric_config',
+        message: 'work_metric_config must be an object',
+      });
+    } else {
+      if (!settings.work_metric_config.field_key || typeof settings.work_metric_config.field_key !== 'string') {
+        errors.push({
+          path: 'work_metric_config.field_key',
+          message: 'field_key is required and must be a non-empty string',
+        });
+      }
+      if ('label' in settings.work_metric_config && settings.work_metric_config.label !== undefined && typeof settings.work_metric_config.label !== 'string') {
+        errors.push({
+          path: 'work_metric_config.label',
+          message: 'label must be a string',
+        });
+      }
+      if ('unit_label' in settings.work_metric_config && settings.work_metric_config.unit_label !== undefined && typeof settings.work_metric_config.unit_label !== 'string') {
+        errors.push({
+          path: 'work_metric_config.unit_label',
+          message: 'unit_label must be a string',
+        });
+      }
+    }
+  }
+
+  // Validate work_unit_field if present
+  if ('work_unit_field' in settings && settings.work_unit_field !== null && settings.work_unit_field !== undefined) {
+    if (typeof settings.work_unit_field !== 'string') {
+      errors.push({
+        path: 'work_unit_field',
+        message: 'work_unit_field must be a string',
+      });
+    }
+  }
+
   // 1. Validate automations if present
   if ('automations' in settings && settings.automations !== null && settings.automations !== undefined) {
     if (!Array.isArray(settings.automations)) {

@@ -11,7 +11,7 @@ import {
   X,
   Plus,
 } from 'lucide-react';
-import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { WorkItem, SprintDefinition, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { usePivotTree, PivotMode, TreeFilterScope } from '@/hooks/usePivotTree';
 import { WorkspaceSwitcher, Workspace } from '@/components/WorkspaceSwitcher';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
@@ -34,6 +34,7 @@ export interface LeftHandNavTreeProps {
   tenantSlug: string;
   allWorkspaces?: WorkspaceItem[];
   currentProjectSlug?: string;
+  projectSettings?: ProjectSettings;
   onArchiveProject?: () => void;
   isReadOnly?: boolean;
   isCollapsed?: boolean;
@@ -52,6 +53,7 @@ export function LeftHandNavTree({
   tenantSlug,
   allWorkspaces,
   currentProjectSlug,
+  projectSettings,
   onArchiveProject,
   isReadOnly = false,
   isCollapsed = false,
@@ -79,6 +81,7 @@ export function LeftHandNavTree({
     sprints,
     tenantSlug,
     scopedProjectSlug: currentProjectSlug,
+    projectSettings,
     onScopeFilter,
   });
 
@@ -455,6 +458,7 @@ export function LeftHandNavTree({
                   onSelectItem={onSelectItem}
                   onSelectSprint={onSelectSprint}
                   expandedNodes={expandedNodes}
+                  unit={getWorkMetricConfig(projectSettings).unit_label || 'pts'}
                 />
               ))
             )}

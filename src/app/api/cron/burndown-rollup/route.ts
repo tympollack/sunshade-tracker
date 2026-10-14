@@ -129,8 +129,8 @@ export async function POST(req: NextRequest) {
           (item: any) => !isItemCompleted(item.status, completedStatusSet)
         );
 
-        // Aggregate remaining points exclusively across leaf items to prevent parent-child double-counting
-        const remainingPoints = calculateSprintLeafPoints(uncompletedSprintItems as any);
+        // Aggregate remaining points exclusively across leaf items using project configured metric
+        const remainingPoints = calculateSprintLeafPoints(uncompletedSprintItems as any, project.settings);
 
         // Aggregate completed items in the last 24h from sprint_events
         const actorAttribution: Record<string, number> = {};

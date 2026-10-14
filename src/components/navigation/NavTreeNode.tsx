@@ -15,6 +15,7 @@ export interface NavTreeNodeProps {
   onSelectItem?: (item: WorkItem) => void;
   onSelectSprint?: (sprintName: string) => void;
   expandedNodes: Set<string>;
+  unit?: string;
 }
 
 export function NavTreeNode({
@@ -27,6 +28,7 @@ export function NavTreeNode({
   onSelectItem,
   onSelectSprint,
   expandedNodes,
+  unit = 'pts',
 }: NavTreeNodeProps) {
   const hasChildren = node.children && node.children.length > 0;
 
@@ -171,9 +173,9 @@ export function NavTreeNode({
         {node.rollupPoints > 0 && (
           <span
             className="text-[10px] font-medium text-emerald-400/90 bg-emerald-950/40 px-1 py-0.2 rounded border border-emerald-800/40 shrink-0 font-mono"
-            title={`${node.rollupPoints} story points`}
+            title={`${node.rollupPoints} ${unit}`}
           >
-            {node.rollupPoints} pts
+            {node.rollupPoints} {unit}
           </span>
         )}
 
@@ -216,6 +218,7 @@ export function NavTreeNode({
               onSelectItem={onSelectItem}
               onSelectSprint={onSelectSprint}
               expandedNodes={expandedNodes}
+              unit={unit}
             />
           ))}
         </div>

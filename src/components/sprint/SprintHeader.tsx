@@ -2,7 +2,15 @@
 
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Clock, Layers, Network } from 'lucide-react';
-import { WorkItem, SprintDefinition, StatusDefinition } from '@/types/tracker';
+import {
+  WorkItem,
+  SprintDefinition,
+  StatusDefinition,
+  ProjectSettings,
+  WorkMetricConfig,
+  getWorkMetricConfig,
+  DEFAULT_WORK_METRIC_CONFIG,
+} from '@/types/tracker';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import {
   calculateSprintLeafPoints,
@@ -19,6 +27,8 @@ export interface SprintHeaderProps {
   pointMode?: 'macro' | 'granular';
   sprintDef?: SprintDefinition;
   statuses?: StatusDefinition[];
+  projectSettings?: ProjectSettings;
+  workMetricConfig?: WorkMetricConfig;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   isAllSelected?: boolean;
@@ -46,6 +56,8 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   pointMode = 'granular',
   sprintDef,
   statuses,
+  projectSettings,
+  workMetricConfig,
   isCollapsed = false,
   onToggleCollapse,
   isAllSelected = false,
@@ -62,8 +74,11 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
     onProgressPopoverOpenChange?.(open);
   };
 
-  const leafPoints = calculateSprintLeafPoints(items);
-  const macroPoints = calculateSprintMacroPoints(items);
+  const metricConfig =
+    workMetricConfig ||
+    (projectSettings ? getWorkMetricConfig(projectSettings) : DEFAULT_WORK_METRIC_CONFIG);
+  const leafPoints = calculateSprintLeafPoints(items, metricConfig.field_key);
+  const macroPoints = calculateSprintMacroPoints(items, metricConfig.field_key);
 
   // Dynamic status schema resolution
   const effectiveStatuses = useMemo(() => {
@@ -124,11 +139,12 @@ export const SprintHeader: React.FC<SprintHeaderProps> = ({
   const badge = getSprintStatusBadge(sprintDef?.status);
 
   // Derive points display string
+  const unitSuffix = metricConfig.unit_label || 'pts';
   const displayPoints = pointMode === 'macro' ? macroPoints : leafPoints;
   const pointsLabel =
     pointMode === 'macro'
-      ? `${displayPoints} pts roadmap capacity`
-      : `${displayPoints} pts true burn`;
+      ? `${displayPoints} ${unitSuffix} roadmap capacity`
+      : `${displayPoints} ${unitSuffix} true burn`;
 
   return (
     <div

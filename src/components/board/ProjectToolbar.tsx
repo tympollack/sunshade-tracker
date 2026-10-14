@@ -10,7 +10,8 @@ import {
   Columns,
   Rows,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings } from '@/types/tracker';
+import { WorkItem, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
+import { getItemWorkMetric } from '@/lib/sprint-utils';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 
@@ -58,6 +59,9 @@ export function ProjectToolbar({
   onOrientationChange,
 }: ProjectToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const metricConfig = getWorkMetricConfig(projectSettings);
+  const unitLabel = metricConfig.unit_label || 'pts';
 
   const statusesCount = projectSettings?.statuses?.length || 0;
   const hierarchyCount = projectSettings?.hierarchy?.length || 0;
@@ -241,12 +245,11 @@ export function ProjectToolbar({
                 {availableSprints.map((s) => {
                   const count = items.filter((it) => it.metadata?.sprint === s).length;
                   const pts = items.filter((it) => it.metadata?.sprint === s).reduce((acc, it) => {
-                    const p = Number(it.metadata?.story_points ?? it.metadata?.points ?? it.metadata?.estimate);
-                    return acc + (isNaN(p) ? 0 : p);
+                    return acc + getItemWorkMetric(it, metricConfig.field_key);
                   }, 0);
                   return (
                     <option key={s} value={s} className="bg-slate-900 text-slate-200">
-                      {s} ({count} {count === 1 ? 'item' : 'items'}{pts > 0 ? ` · ${pts} pts` : ''})
+                      {s} ({count} {count === 1 ? 'item' : 'items'}{pts > 0 ? ` · ${pts} ${unitLabel}` : ''})
                     </option>
                   );
                 })}

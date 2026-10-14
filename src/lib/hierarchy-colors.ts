@@ -85,9 +85,10 @@ export function getHierarchyLevelColor(
 
   // Fallback by standard naming convention if not in hierarchy
   const lower = type.toLowerCase();
-  if (lower.includes('project') || lower.includes('initiative')) return LEVEL_COLOR_PALETTE[1];
+  if (lower.includes('project') || lower.includes('initiative') || lower.includes('campaign')) return LEVEL_COLOR_PALETTE[1];
   if (lower.includes('epic') || lower.includes('milestone')) return LEVEL_COLOR_PALETTE[1];
-  if (lower.includes('story') || lower.includes('feature')) return LEVEL_COLOR_PALETTE[2];
+  if (lower.includes('story') || lower.includes('feature') || lower.includes('sequence')) return LEVEL_COLOR_PALETTE[2];
+  if (lower.includes('deliverable')) return LEVEL_COLOR_PALETTE[3];
   if (lower.includes('task') || lower.includes('subtask')) return LEVEL_COLOR_PALETTE[3];
   if (lower.includes('bug') || lower.includes('defect')) return LEVEL_COLOR_PALETTE[5];
 

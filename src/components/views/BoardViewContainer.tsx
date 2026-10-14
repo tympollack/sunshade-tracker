@@ -89,6 +89,7 @@ export interface BoardViewContainerProps {
   availableSprintDefs?: SprintDefinition[];
   boardOrientation?: 'columns' | 'stack';
   onOrientationChange?: (mode: 'columns' | 'stack') => void;
+  getItemProjectSettings?: (item: WorkItem) => ProjectSettings;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -155,6 +156,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     handleDropOnColEnd,
     unmappedItems = [],
     draggedItem,
+    getItemProjectSettings,
   } = props;
 
   const [internalOrientation, setInternalOrientation] = React.useState<'columns' | 'stack'>(() => {
@@ -494,7 +496,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                         const isBeingDragged = draggedItemId === item.id;
                         const isDragTarget =
                           dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
-                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs);
+                        const itemProjectSettings = getItemProjectSettings ? getItemProjectSettings(item) : projectSettings;
+                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs);
 
                         return (
                           <div key={item.id} className="relative">
@@ -508,6 +511,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                               childCount={childCountMap.get(item.id) || 0}
                               rollupPoints={pointsRollupMap.get(item.id) || 0}
                               pointMode={pointMode}
+                              projectSettings={itemProjectSettings}
                               itemHierarchy={itemHierarchy}
                               allProjects={allProjects}
                               isAllProjects={isAllProjects}
@@ -554,25 +558,29 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
               </div>
 
               <div className="board-column-scroll p-3 space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0 custom-scrollbar">
-                {unmappedItems.map((item) => (
-                  <KanbanCard
-                    key={item.id}
-                    item={item}
-                    childCount={childCountMap.get(item.id) || 0}
-                    rollupPoints={pointsRollupMap.get(item.id) || 0}
-                    pointMode={pointMode}
-                    itemHierarchy={getItemHierarchy(item)}
-                    allProjects={allProjects}
-                    isAllProjects={isAllProjects}
-                    isCardImmutable={isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs)}
-                    isReadOnly={isReadOnly}
-                    onEditItem={setEditingItem}
-                    onDeleteItem={setDeleteConfirmItem}
-                    onUpdateStatus={handleUpdateStatus}
-                    onUpdateType={handleUpdateType}
-                    getItemStatuses={getItemStatuses}
-                  />
-                ))}
+                {unmappedItems.map((item) => {
+                  const itemProjectSettings = getItemProjectSettings ? getItemProjectSettings(item) : projectSettings;
+                  return (
+                    <KanbanCard
+                      key={item.id}
+                      item={item}
+                      childCount={childCountMap.get(item.id) || 0}
+                      rollupPoints={pointsRollupMap.get(item.id) || 0}
+                      pointMode={pointMode}
+                      projectSettings={itemProjectSettings}
+                      itemHierarchy={getItemHierarchy(item)}
+                      allProjects={allProjects}
+                      isAllProjects={isAllProjects}
+                      isCardImmutable={isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs)}
+                      isReadOnly={isReadOnly}
+                      onEditItem={setEditingItem}
+                      onDeleteItem={setDeleteConfirmItem}
+                      onUpdateStatus={handleUpdateStatus}
+                      onUpdateType={handleUpdateType}
+                      getItemStatuses={getItemStatuses}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
