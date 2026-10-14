@@ -13,7 +13,7 @@ import {
 import { WorkItem, WorkItemNode, StatusDefinition, HierarchyLevel, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
-import { DualPointBadge } from '@/components/DualPointBadge';
+import { PointBadge } from '@/components/common/PointBadge';
 import { getLevelBadgeClasses, getLevelBadgeStyle } from '@/components/TreeNode';
 
 interface ValidChildType {
@@ -289,7 +289,7 @@ export function TreeNodeCard({
 
                 return (
                   <span data-testid="tree-node-rollup-points-badge" className="whitespace-nowrap shrink-0">
-                    <DualPointBadge
+                    <PointBadge
                       storyPoints={intrinsicPoints}
                       rollupPoints={effectiveRollup}
                       childCount={childCount}

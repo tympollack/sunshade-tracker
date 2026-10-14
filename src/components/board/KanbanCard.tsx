@@ -17,7 +17,7 @@ import { CopyableRefId } from '@/components/CopyableRefId';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
-import { DualPointBadge } from '@/components/DualPointBadge';
+import { PointBadge } from '@/components/common/PointBadge';
 import { SpYieldBadge } from '@/components/board/SpYieldBadge';
 
 function formatCardTimestamp(dateString?: string): string | null {
@@ -252,12 +252,13 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
 
           <div className="flex items-center space-x-1 shrink-0 ml-auto">
             {/* Dual Point Badge */}
-            <DualPointBadge
+            <PointBadge
               storyPoints={storyPoints}
               rollupPoints={effectiveRollupPoints}
               childCount={effectiveChildCount}
               pointMode={pointMode}
               unit={workMetric.unit_label || 'pts'}
+              compact={true}
               className="shrink-0"
             />
 
@@ -473,7 +474,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
           )}
 
           {/* Dual Point Badge */}
-          <DualPointBadge
+          <PointBadge
             storyPoints={storyPoints}
             rollupPoints={effectiveRollupPoints}
             childCount={effectiveChildCount}
