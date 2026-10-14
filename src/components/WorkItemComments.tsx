@@ -599,6 +599,7 @@ export function WorkItemComments({
             <textarea
               ref={textareaRef}
               rows={3}
+              maxLength={5000}
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}
               onKeyDown={handleKeyDown}

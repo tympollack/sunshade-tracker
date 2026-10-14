@@ -295,3 +295,6 @@ export interface WorkItemComment {
   updated_at: string;
 }
 
+/** Maximum character length allowed for a single comment */
+export const MAX_COMMENT_LENGTH = 5000;
+

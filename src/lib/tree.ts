@@ -3,14 +3,22 @@ import { getItemWorkMetric } from '@/lib/sprint-utils';
 
 export type { WorkItemNode };
 
+export type WorkMetricResolver =
+  | string
+  | ProjectSettings
+  | ((item: WorkItem) => ProjectSettings | string | null | undefined)
+  | null;
+
 /**
  * Computes recursive subtree metrics (descendantCount and rollupPoints) for each node.
  */
 function computeSubtreeMetrics(
   node: WorkItemNode,
-  metricKeyOrSettings?: string | ProjectSettings | null
+  metricKeyOrSettings?: WorkMetricResolver
 ): { descendantCount: number; rollupPoints: number } {
-  const ownPoints = getItemWorkMetric(node, metricKeyOrSettings);
+  const resolvedSettings =
+    typeof metricKeyOrSettings === 'function' ? metricKeyOrSettings(node) : metricKeyOrSettings;
+  const ownPoints = getItemWorkMetric(node, resolvedSettings);
   let descendantCount = 0;
   let childRollupSum = 0;
   const children = node.children || [];
@@ -60,7 +68,7 @@ export function buildTree(
   depth = 0,
   visited = new Set<string>(),
   sortFn?: (a: WorkItem, b: WorkItem) => number,
-  metricKeyOrSettings?: string | ProjectSettings | null
+  metricKeyOrSettings?: WorkMetricResolver
 ): WorkItemNode[] {
   const parentItem = parentId
     ? items.find((p) => p.id === parentId || (p.external_ref_id && p.external_ref_id === parentId))

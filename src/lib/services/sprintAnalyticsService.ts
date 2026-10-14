@@ -22,6 +22,7 @@ export interface HistoricalSprint {
   ends_at?: string | null;
   end_date?: string | null;
   status?: string;
+  project_id?: string | null;
 }
 
 export interface WorkItemLifecycleData {
@@ -549,6 +550,7 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
       completed_points: h.completed_points,
       committed_points: h.committed_points,
       ends_at: h.ends_at,
+      project_id: h.project_id,
     })),
     committedPoints: committed,
     currentSprintPoints: totalCurrentPoints,

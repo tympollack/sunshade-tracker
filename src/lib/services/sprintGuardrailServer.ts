@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/db';
 import { WorkItem, SprintDefinition } from '@/types/tracker';
+import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
 import {
   SprintScopeData,
   IntakeValidationOptions,
@@ -156,10 +157,44 @@ export async function validateSprintIntake(
     projectSettings?.work_unit_field ||
     options?.metricKey;
 
+  // 5. Calculate entering subtree leaf metric if incomingItem has active descendants
+  let validatedIncomingItem = incomingItem;
+  if (incomingItem?.id) {
+    const getDescendants = (parentId: string, visited = new Set<string>()): any[] => {
+      if (visited.has(parentId)) return [];
+      visited.add(parentId);
+      const children = (allItems || []).filter(
+        (it: any) =>
+          it.parent_id === parentId ||
+          Boolean(incomingItem.external_ref_id && it.parent_id === incomingItem.external_ref_id)
+      );
+      let desc: any[] = [...children];
+      for (const ch of children) {
+        desc = desc.concat(getDescendants(ch.id, visited));
+      }
+      return desc;
+    };
+
+    const incomingDescendants = getDescendants(incomingItem.id);
+    if (incomingDescendants.length > 0) {
+      const enteringSubtree = [incomingItem, ...incomingDescendants];
+      const subtreeLeafPoints = calculateSprintLeafPoints(enteringSubtree, metricKey || projectSettings);
+      const effectiveKey = metricKey || 'story_points';
+      validatedIncomingItem = {
+        ...incomingItem,
+        metadata: {
+          ...(incomingItem.metadata || {}),
+          story_points: subtreeLeafPoints,
+          [effectiveKey]: subtreeLeafPoints,
+        },
+      };
+    }
+  }
+
   return validateSprintIntakePure({
     sprint: sprintData,
     currentSprintItems,
-    incomingItem,
+    incomingItem: validatedIncomingItem,
     options: {
       ...options,
       metricKey,

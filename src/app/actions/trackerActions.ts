@@ -756,7 +756,26 @@ export async function atomicSprintSwapAction(params: {
       ejectedItems = ejects;
     }
 
-    // 4. Validate through sprintGuardrailService
+    // 4. Gather project items for hierarchical descendant resolution
+    const { data: projectItems } = await service
+      .from('work_items')
+      .select('id, parent_id, metadata')
+      .eq('project_id', incomingItem.project_id)
+      .eq('tenant_id', tenant.id);
+
+    const allProjectItems = projectItems || [];
+    const getDescendants = (parentId: string): string[] => {
+      const children = allProjectItems.filter((it: any) => it.parent_id === parentId);
+      let desc: string[] = [];
+      for (const ch of children) {
+        desc.push(ch.id);
+        desc = desc.concat(getDescendants(ch.id));
+      }
+      return desc;
+    };
+    const incomingDescendantIds = getDescendants(incomingItemId);
+
+    // 5. Validate through sprintGuardrailService
     // Prevent callers from passing options.rules to bypass server governance
     const safeOptions = options ? { ...options } : undefined;
     if (safeOptions) {
@@ -786,25 +805,6 @@ export async function atomicSprintSwapAction(params: {
     }
 
     const nowIso = new Date().toISOString();
-
-    // 5. Gather project items for hierarchical descendant resolution
-    const { data: projectItems } = await service
-      .from('work_items')
-      .select('id, parent_id, metadata')
-      .eq('project_id', incomingItem.project_id)
-      .eq('tenant_id', tenant.id);
-
-    const allProjectItems = projectItems || [];
-    const getDescendants = (parentId: string): string[] => {
-      const children = allProjectItems.filter((it: any) => it.parent_id === parentId);
-      let desc: string[] = [];
-      for (const ch of children) {
-        desc.push(ch.id);
-        desc = desc.concat(getDescendants(ch.id));
-      }
-      return desc;
-    };
-    const incomingDescendantIds = getDescendants(incomingItemId);
 
     // 6. Database updates: assign incoming item and descendants to sprint
     const incomingMeta = {

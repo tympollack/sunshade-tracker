@@ -68,6 +68,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [commentsCount, setCommentsCount] = useState(0);
   const lastFetchedItemIdRef = useRef<string | null>(null);
+  const commentCountReqVersionRef = useRef(0);
 
   // Background scroll lock and outside-hover isolation (TRK-18)
   useModalScrollLock(Boolean(isOpen && item));
@@ -111,10 +112,11 @@ export function WorkItemModal(props: WorkItemModalProps) {
   };
 
   const fetchCommentCount = async (itemId: string) => {
+    const version = ++commentCountReqVersionRef.current;
     try {
       const res = await getCommentCount(itemId);
       if (res.success && typeof res.count === 'number') {
-        if (lastFetchedItemIdRef.current === itemId) {
+        if (lastFetchedItemIdRef.current === itemId && commentCountReqVersionRef.current === version) {
           setCommentsCount(res.count);
         }
       }
@@ -126,10 +128,12 @@ export function WorkItemModal(props: WorkItemModalProps) {
   useEffect(() => {
     if (item?.id) {
       setActiveTab(initialTab);
+      commentCountReqVersionRef.current++;
       setCommentsCount(0);
       fetchAuditLogs(item.id);
       fetchCommentCount(item.id);
     } else {
+      commentCountReqVersionRef.current++;
       setAuditLogs([]);
       setCommentsCount(0);
     }
@@ -226,6 +230,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
               currentUser={props.currentUser}
               isReadOnly={isReadOnly || form.isLocked}
               onCommentCountChange={(count) => {
+                commentCountReqVersionRef.current++;
                 if (lastFetchedItemIdRef.current === item.id) {
                   setCommentsCount(count);
                 }

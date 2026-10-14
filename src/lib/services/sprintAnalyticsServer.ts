@@ -161,6 +161,7 @@ export async function getSprintHealthReport(
           completed_points: (s as any).completed_points ? Number((s as any).completed_points) : 0,
           committed_points: Number(s.committed_points) || 0,
           ends_at: s.ends_at,
+          project_id: s.project_id || null,
         });
       }
     }
@@ -170,7 +171,7 @@ export async function getSprintHealthReport(
 
   // Supplement from project settings if fewer than velocityWindow found
   if (historicalSprints.length < velocityWindow) {
-    const candidateSettingsSprints: SprintDefinition[] = [];
+    const candidateSettingsSprints: (SprintDefinition & { project_id?: string })[] = [];
     const relevantProjects = targetProjectId
       ? projectList.filter((p: any) => p.id === targetProjectId)
       : projectList;
@@ -186,7 +187,7 @@ export async function getSprintHealthReport(
           sEndTime <= targetEndTime &&
           !historicalSprints.some((h) => h.id === s.id || h.name === s.name)
         ) {
-          candidateSettingsSprints.push(s);
+          candidateSettingsSprints.push({ ...s, project_id: p.id });
         }
       }
     }
@@ -206,6 +207,7 @@ export async function getSprintHealthReport(
         completed_points: (s as any).completed_points ?? 0,
         committed_points: (s as any).committed_points ?? 0,
         ends_at: (s as any).ends_at || s.end_date,
+        project_id: s.project_id || null,
       });
     }
   }
