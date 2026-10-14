@@ -759,21 +759,42 @@ export async function atomicSprintSwapAction(params: {
     // 4. Gather project items for hierarchical descendant resolution
     const { data: projectItems } = await service
       .from('work_items')
-      .select('id, parent_id, metadata')
+      .select('id, parent_id, metadata, external_ref_id')
       .eq('project_id', incomingItem.project_id)
       .eq('tenant_id', tenant.id);
 
     const allProjectItems = projectItems || [];
-    const getDescendants = (parentId: string): string[] => {
-      const children = allProjectItems.filter((it: any) => it.parent_id === parentId);
-      let desc: string[] = [];
-      for (const ch of children) {
-        desc.push(ch.id);
-        desc = desc.concat(getDescendants(ch.id));
-      }
-      return desc;
+
+    const getDescendantIds = (root: any): string[] => {
+      const rootId = typeof root === 'string' ? root : root?.id;
+      const rootItem = typeof root === 'string' ? allProjectItems.find((it: any) => it.id === root) : root;
+      const rootExt = rootItem?.external_ref_id;
+
+      const visited = new Set<string>();
+      const result: string[] = [];
+
+      const collect = (currId?: string, currExt?: string) => {
+        for (const it of allProjectItems) {
+          if (!it.id || visited.has(it.id)) continue;
+          if (it.id === rootId || (rootExt && it.external_ref_id === rootExt)) continue;
+
+          const matches =
+            (currId && it.parent_id === currId) ||
+            Boolean(currExt && it.parent_id === currExt);
+
+          if (matches) {
+            visited.add(it.id);
+            result.push(it.id);
+            collect(it.id, it.external_ref_id);
+          }
+        }
+      };
+
+      collect(rootId, rootExt);
+      return result;
     };
-    const incomingDescendantIds = getDescendants(incomingItemId);
+
+    const incomingDescendantIds = getDescendantIds(incomingItem);
 
     // 5. Validate through sprintGuardrailService
     // Prevent callers from passing options.rules to bypass server governance
@@ -863,7 +884,7 @@ export async function atomicSprintSwapAction(params: {
       const allEjectTargetIds = new Set<string>();
       for (const ej of ejectedItems) {
         allEjectTargetIds.add(ej.id);
-        const children = getDescendants(ej.id);
+        const children = getDescendantIds(ej);
         for (const cid of children) {
           allEjectTargetIds.add(cid);
         }

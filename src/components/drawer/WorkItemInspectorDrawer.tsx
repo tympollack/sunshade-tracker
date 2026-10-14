@@ -348,9 +348,11 @@ export function WorkItemInspectorDrawer({
   const pendingSavesRef = useRef(0);
   const saveQueueRef = useRef<Promise<any>>(Promise.resolve());
   const latestMetadataRef = useRef<Record<string, any>>({});
+  const lastConfirmedItemRef = useRef<WorkItem | null>(null);
 
   useEffect(() => {
     if (item) {
+      lastConfirmedItemRef.current = item;
       setTitle(item.title || '');
       setDescription(item.description || '');
       setStatus(item.status || '');
@@ -401,28 +403,48 @@ export function WorkItemInspectorDrawer({
     setErrorMessage(null);
 
     const rollback = () => {
-      setTitle(item.title || '');
-      setDescription(item.description || '');
-      setStatus(item.status || '');
-      setAssignee(normalizeAssignee(item.assignee) || '');
-      const pts = item.metadata?.story_points ?? item.metadata?.points;
-      setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
-      setSprint(item.metadata?.sprint || '');
-      setParentId(item.parent_id || '');
-      const prevMeta = item.metadata ? { ...item.metadata } : {};
-      setLocalMeta(prevMeta);
-      latestMetadataRef.current = prevMeta;
+      // Only reset local UI state if no subsequent saves are queued
+      if (pendingSavesRef.current <= 1) {
+        const confirmed = lastConfirmedItemRef.current || item;
+        setTitle(confirmed.title || '');
+        setDescription(confirmed.description || '');
+        setStatus(confirmed.status || '');
+        setAssignee(normalizeAssignee(confirmed.assignee) || '');
+        const pts = confirmed.metadata?.story_points ?? confirmed.metadata?.points;
+        setPoints(pts !== undefined && pts !== null ? Number(pts) : '');
+        setSprint(confirmed.metadata?.sprint || '');
+        setParentId(confirmed.parent_id || '');
+        const prevMeta = confirmed.metadata ? { ...confirmed.metadata } : {};
+        setLocalMeta(prevMeta);
+        latestMetadataRef.current = prevMeta;
+      }
+    };
+
+    const recordSaveSuccess = () => {
+      const base = lastConfirmedItemRef.current || item;
+      lastConfirmedItemRef.current = {
+        ...base,
+        ...payload,
+        ...(payload.metadata
+          ? {
+              metadata: {
+                ...(base.metadata || {}),
+                ...payload.metadata,
+              },
+            }
+          : {}),
+      };
     };
 
     const doSave = (): Promise<void> | void => {
       try {
-        const result = onUpdateItem(item.id, {
-          ...payload,
-          ...(payload.metadata ? { metadata: { ...latestMetadataRef.current } } : {}),
-        });
+        const result = onUpdateItem(item.id, payload);
 
         if (result && typeof (result as any).then === 'function') {
           return (result as Promise<any>)
+            .then(() => {
+              recordSaveSuccess();
+            })
             .catch((err: any) => {
               setErrorMessage(err?.message || 'Failed to update field');
               rollback();
@@ -434,6 +456,7 @@ export function WorkItemInspectorDrawer({
               }
             });
         } else {
+          recordSaveSuccess();
           pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
           if (pendingSavesRef.current === 0) {
             setIsSaving(false);

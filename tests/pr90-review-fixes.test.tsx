@@ -342,4 +342,201 @@ describe('PR #90 Devin Review Fixes Verification', () => {
       expect(res.historicalSprints?.[0]?.project_id).toBe('proj-alpha');
     });
   });
+
+  describe('Sprint Intake Subtree & Deduplication Guardrails (PR-91 Bugs 1 & 2)', () => {
+    it('Bug 1: Deduplicates child referencing external_ref_id so intake is not doubled', async () => {
+      const { validateSprintIntake } = await import('@/lib/services/sprintGuardrailServer');
+
+      const incomingParent = {
+        id: 'parent-uuid',
+        external_ref_id: 'EPIC-100',
+        project_id: 'proj-1',
+        title: 'Epic 100',
+        item_type: 'epic',
+        metadata: { story_points: 0 },
+      } as unknown as WorkItem;
+
+      const leafChild = {
+        id: 'child-uuid',
+        external_ref_id: 'TASK-101',
+        parent_id: 'EPIC-100',
+        project_id: 'proj-1',
+        title: 'Task 101',
+        item_type: 'task',
+        metadata: { story_points: 5 },
+      } as unknown as WorkItem;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 't-1', slug: 'demo' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sprints') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'sprint-active-id',
+                      name: 'Sprint Active',
+                      status: 'active',
+                      is_active: true,
+                      committed_points: 10,
+                      project_id: 'proj-1',
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'proj-1',
+                    settings: {
+                      sprint_metrics: { enforce_zero_sum: true },
+                      work_metric_config: { field_key: 'story_points' },
+                    },
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  is: vi.fn().mockReturnValue({
+                    data: [incomingParent, leafChild],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn() };
+      });
+
+      const result = await validateSprintIntake('demo', 'Sprint Active', incomingParent);
+      expect(result.valid).toBe(true);
+      expect(result.required_ejection_points).toBe(0);
+    });
+
+    it('Bug 2: Excludes already-assigned child so capacity-neutral parent move succeeds', async () => {
+      const { validateSprintIntake } = await import('@/lib/services/sprintGuardrailServer');
+
+      const incomingParent = {
+        id: 'parent-uuid',
+        external_ref_id: 'EPIC-200',
+        project_id: 'proj-1',
+        title: 'Epic 200',
+        item_type: 'epic',
+        metadata: { story_points: 0 },
+      } as unknown as WorkItem;
+
+      const assignedChild = {
+        id: 'child-assigned-uuid',
+        external_ref_id: 'TASK-201',
+        parent_id: 'parent-uuid',
+        project_id: 'proj-1',
+        title: 'Task 201',
+        item_type: 'task',
+        metadata: { story_points: 8, sprint: 'Sprint Active' },
+      } as unknown as WorkItem;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 't-1', slug: 'demo' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sprints') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'sprint-active-id',
+                      name: 'Sprint Active',
+                      status: 'active',
+                      is_active: true,
+                      committed_points: 8,
+                      project_id: 'proj-1',
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'proj-1',
+                    settings: {
+                      sprint_metrics: { enforce_zero_sum: true },
+                      work_metric_config: { field_key: 'story_points' },
+                    },
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  is: vi.fn().mockReturnValue({
+                    data: [incomingParent, assignedChild],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn() };
+      });
+
+      // Capacity is 8. Existing items in sprint = 8 points.
+      // Moving parent (whose only child is already in the sprint) adds 0 new leaf points,
+      // so capacity-neutral move should be valid with 0 ejection required.
+      const result = await validateSprintIntake('demo', 'Sprint Active', incomingParent);
+      expect(result.valid).toBe(true);
+      expect(result.required_ejection_points).toBe(0);
+    });
+  });
 });

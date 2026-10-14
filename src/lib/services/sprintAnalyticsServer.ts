@@ -235,6 +235,7 @@ export async function getSprintHealthReport(
       const sprintItems = itemList.filter(
         (it) =>
           (!targetProjectId || !it.project_id || it.project_id === targetProjectId) &&
+          (!h.project_id || !it.project_id || it.project_id === h.project_id) &&
           (it.metadata?.sprint === h.name || it.metadata?.sprint_id === h.id)
       );
       const completedItems = sprintItems.filter((it) => {
