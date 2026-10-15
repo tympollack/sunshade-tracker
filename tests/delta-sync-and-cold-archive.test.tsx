@@ -120,6 +120,22 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
       expect(result).toHaveLength(3);
       expect(result.map((i) => i.id)).toEqual(['task-active', 'task-recent-done', 'task-cold-done']);
     });
+
+    it('mergeColdArchive updates existing items with newer data from cold items', () => {
+      const current = [
+        { ...activeItem, title: 'Old Title' },
+        completedRecentItem,
+      ];
+      const cold = [
+        { ...activeItem, title: 'Updated Newer Title' },
+        coldArchivedItem,
+      ];
+
+      const result = mergeColdArchive(current, cold);
+      expect(result).toHaveLength(3);
+      expect(result.find((i) => i.id === 'task-active')?.title).toBe('Updated Newer Title');
+      expect(result.find((i) => i.id === 'task-cold-done')).toBeDefined();
+    });
   });
 
   describe('useProjectItems Hook', () => {
@@ -158,7 +174,7 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/v1/items?tenant_slug=sunshade&project_id=proj-1',
-        { credentials: 'include' }
+        { credentials: 'include', headers: { 'x-tenant-slug': 'sunshade' } }
       );
       expect(result.current.items).toHaveLength(2);
       expect(result.current.coldCount).toBe(5);
@@ -208,7 +224,7 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
 
       expect(mockFetch).toHaveBeenLastCalledWith(
         '/api/v1/items?tenant_slug=sunshade&project_id=proj-1&include_cold_archive=true',
-        { credentials: 'include' }
+        { credentials: 'include', headers: { 'x-tenant-slug': 'sunshade' } }
       );
       expect(result.current.items).toHaveLength(2);
       expect(result.current.coldCount).toBe(0);
@@ -255,7 +271,10 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining(`updated_since=${encodeURIComponent(serverLatestAt)}`),
         expect.objectContaining({
-          headers: { 'If-Modified-Since': serverLatestAt },
+          headers: {
+            'If-Modified-Since': serverLatestAt,
+            'x-tenant-slug': 'sunshade',
+          },
         })
       );
       // State remains identical

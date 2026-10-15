@@ -59,9 +59,11 @@ export function mergeColdArchive(
   currentItems: WorkItem[],
   coldItems: WorkItem[]
 ): WorkItem[] {
-  const currentMap = new Map(currentItems.map((i) => [i.id, i]));
-  const newCold = coldItems.filter((i) => !currentMap.has(i.id));
-  return [...currentItems, ...newCold];
+  const coldMap = new Map(coldItems.map((i) => [i.id, i]));
+  const updated = currentItems.map((i) => coldMap.get(i.id) || i);
+  const currentIdSet = new Set(currentItems.map((i) => i.id));
+  const newlyAdded = coldItems.filter((i) => !currentIdSet.has(i.id));
+  return [...updated, ...newlyAdded];
 }
 
 export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjectItemsResult {
@@ -116,7 +118,9 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
 
       try {
         const url = buildBaseUrl(false);
-        const res = await fetch(url, { credentials: 'include' });
+        const headers: Record<string, string> = {};
+        if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+        const res = await fetch(url, { credentials: 'include', headers });
         if (res.ok) {
           const data = await res.json();
           setItems(data.items || []);
@@ -138,13 +142,15 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
         setIsRefreshing(false);
       }
     },
-    [buildBaseUrl]
+    [buildBaseUrl, tenantSlug]
   );
 
   const loadColdArchive = useCallback(async () => {
     try {
       const url = buildBaseUrl(true);
-      const res = await fetch(url, { credentials: 'include' });
+      const headers: Record<string, string> = {};
+      if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+      const res = await fetch(url, { credentials: 'include', headers });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.items)) {
@@ -159,7 +165,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
     } catch {
       // Gracefully ignore load errors
     }
-  }, [buildBaseUrl]);
+  }, [buildBaseUrl, tenantSlug]);
 
   const pollDelta = useCallback(async () => {
     if (!lastSyncedAtRef.current || isFetchingRef.current) return;
@@ -169,11 +175,14 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
       const syncedAt = lastSyncedAtRef.current;
       const url = buildBaseUrl(false, syncedAt);
 
+      const headers: Record<string, string> = {
+        'If-Modified-Since': syncedAt,
+      };
+      if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+
       const res = await fetch(url, {
         credentials: 'include',
-        headers: {
-          'If-Modified-Since': syncedAt,
-        },
+        headers,
       });
 
       // HTTP 304 Not Modified: zero state updates
@@ -196,7 +205,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
     } finally {
       isFetchingRef.current = false;
     }
-  }, [buildBaseUrl]);
+  }, [buildBaseUrl, tenantSlug]);
 
   // Initial load
   useEffect(() => {
