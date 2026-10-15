@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { BurndownDataPoint } from '@/components/analytics/BurndownChart';
+import { calculateSprintLeafPoints, getCompletedStatusSet, isItemCompleted } from '@/lib/sprint-utils';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -114,6 +115,89 @@ export async function GET(
         hasScopeCreep: remaining > committed,
       };
     });
+
+    // If snapshots are empty, compute live trajectory from sprint items so the chart renders immediately
+    if (burndownData.length === 0 && sprintId) {
+      try {
+        const { data: projDetail } = await supabaseAdmin
+          .from('projects')
+          .select('settings')
+          .eq('id', project.id)
+          .maybeSingle();
+
+        const { data: dbSprint } = await supabaseAdmin
+          .from('sprints')
+          .select('*')
+          .eq('tenant_id', authCtx.tenant.id)
+          .eq('project_id', project.id)
+          .or(`id.eq.${sprintId},name.eq.${sprintId}`)
+          .maybeSingle();
+
+        const settingsSprint = projDetail?.settings?.sprint_settings?.sprints?.find(
+          (s: any) => s.id === sprintId || s.name === sprintId
+        );
+
+        const sprintRecord = dbSprint || settingsSprint;
+        const now = new Date();
+        const startStr = sprintRecord?.started_at || sprintRecord?.start_date || new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+        const endStr = sprintRecord?.ends_at || sprintRecord?.end_date || now.toISOString();
+        const startDate = new Date(startStr);
+        const endDate = new Date(endStr);
+
+        const { data: rawItems } = await supabaseAdmin
+          .from('work_items')
+          .select('id, parent_id, status, metadata, updated_at, created_at, assignee')
+          .eq('tenant_id', authCtx.tenant.id)
+          .eq('project_id', project.id)
+          .is('deleted_at', null);
+
+        const sprintItems = (rawItems || []).filter(
+          (it: any) =>
+            it.metadata?.sprint === sprintId ||
+            it.metadata?.sprint === sprintRecord?.name ||
+            it.metadata?.sprint_id === sprintId
+        );
+
+        if (sprintItems.length > 0) {
+          const totalPoints = calculateSprintLeafPoints(sprintItems as any, projDetail?.settings);
+          const completionSet = getCompletedStatusSet(projDetail?.settings?.statuses);
+
+          const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const totalDays = Math.max(1, Math.round((endDate.getTime() - startDay.getTime()) / (24 * 60 * 60 * 1000)));
+          const daysCount = Math.max(1, Math.min(90, Math.round((today.getTime() - startDay.getTime()) / (24 * 60 * 60 * 1000)) + 1));
+          let prevActual: number | null = null;
+
+          for (let d = 0; d < daysCount; d++) {
+            const currentDay = new Date(startDay.getTime() + d * 24 * 60 * 60 * 1000);
+            const currentDayEnd = new Date(currentDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+            const dateStr = currentDay.toISOString().split('T')[0];
+
+            const completedSoFar = sprintItems.filter((it: any) => {
+              if (!isItemCompleted(it.status, completionSet)) return false;
+              const completedTime = it.updated_at ? new Date(it.updated_at).getTime() : 0;
+              return completedTime <= currentDayEnd.getTime();
+            });
+
+            const completedPts = calculateSprintLeafPoints(completedSoFar as any, projDetail?.settings);
+            const actualRemaining = Math.max(0, totalPoints - completedPts);
+            const idealRemaining = Math.max(0, Math.round(totalPoints * (1 - d / totalDays)));
+            const dailyVelocity = prevActual !== null ? Math.max(0, prevActual - actualRemaining) : undefined;
+            prevActual = actualRemaining;
+
+            burndownData.push({
+              date: dateStr,
+              idealRemaining,
+              actualRemaining,
+              dailyVelocity,
+              hasScopeCreep: actualRemaining > totalPoints,
+            });
+          }
+        }
+      } catch {
+        // Fallback gracefully to empty array
+      }
+    }
 
     return NextResponse.json({
       project_id: project.id,
