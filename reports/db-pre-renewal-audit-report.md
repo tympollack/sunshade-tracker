@@ -1,21 +1,21 @@
 # Database Pre-Renewal Resource & Security Audit Report
 **Project Ref:** `rweehbzsflhhtwjrjnvy`  
-**Generated At:** 2026-10-15T01:36:53.478Z  
-**Status:** **CLEAN**  
+**Generated At:** 2026-10-15T02:15:58.793Z  
+**Status:** **UNVERIFIED**  
 
 ## Executive Summary
-- **Total Storage Utilized:** 35.00 MB (Ceiling: 500 MB, Warning Threshold: 350.00 MB)
+- **Storage Measurement:** UNVERIFIED (Requires SUPABASE_SERVICE_ROLE_KEY) (Ceiling: 500 MB, Warning Threshold: 350.00 MB)
 - **Missing RLS Violations:** 0
 - **Unindexed Foreign Keys:** 0
-- **Connection Pool Health:** Stable (Transaction Mode)
+- **Connection Pool Status:** Unverified (Offline)
 
 ## Advisor & Metric Findings
 | Category | Check | Status | Details |
 | :--- | :--- | :--- | :--- |
-| `storage` | Storage Utilization Guardrail | **PASSED** | Evaluated storage utilization baseline: < 50MB (Target headroom > 450MB before 500MB cap) |
-| `security_rls` | Row Level Security (RLS) Coverage Across App Schemas | **PASSED** | All tables in tracker, cozy, valerie, patchwork, and hub have RLS enabled with explicit tenant and owner policies |
+| `storage` | Database Storage Capacity Measurement | **UNVERIFIED** | Live measurement unverified: SUPABASE_SERVICE_ROLE_KEY not supplied. Current disk usage cannot be confirmed. |
+| `connection_pool` | Live Connection Pool Health | **UNVERIFIED** | Live pool unverified: SUPABASE_SERVICE_ROLE_KEY not supplied. |
+| `security_rls` | Row Level Security (RLS) Policy Coverage Across App Schemas | **PASSED** | All tables in tracker, cozy, valerie, patchwork, and hub have RLS enabled with explicit tenant and owner policies |
 | `index_health` | Foreign Key & Relationship Index Health | **PASSED** | Foreign key columns across tracker.work_items, comments, and tenant memberships are backed by indexes |
-| `connection_pool` | Supavisor Connection Saturation & Pooler Health | **PASSED** | Connection pooler configuration enforces transaction mode with zero idle saturation |
 
 ## Remediation Status
-No critical security advisor violations or table bloat detected. Database is certified pre-flight for billing renewal.
+Report generated in offline mode. Live storage capacity remains unverified until SUPABASE_SERVICE_ROLE_KEY is supplied.

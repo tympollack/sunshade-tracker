@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "generate:assets": "node scripts/generate-assets.mjs",
     "verify:mcp": "node --experimental-strip-types scripts/verify-supabase-mcp.ts",
+    "verify:mcp:synthetic": "node --experimental-strip-types scripts/verify-supabase-mcp.ts --synthetic",
     "audit:db": "node --experimental-strip-types scripts/audit-db-pre-renewal.ts",
     "verify:context": "node --experimental-strip-types scripts/verify-context-trim.ts"
   },
