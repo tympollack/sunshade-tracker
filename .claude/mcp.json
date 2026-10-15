@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp?project_ref=${SUPABASE_PROJECT_REF}",
+      "headers": {
+        "Authorization": "Bearer ${SUPABASE_PERSONAL_ACCESS_TOKEN}"
+      }
+    },
+    "supabase-local": {
+      "url": "http://localhost:54321/mcp"
+    }
+  }
+}

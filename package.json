@@ -15,7 +15,8 @@
     "test:dom": "vitest run --project dom",
     "test:changed": "vitest run --changed",
     "test:watch": "vitest",
-    "generate:assets": "node scripts/generate-assets.mjs"
+    "generate:assets": "node scripts/generate-assets.mjs",
+    "verify:mcp": "node --experimental-strip-types scripts/verify-supabase-mcp.ts"
   },
   "dependencies": {
     "@digitalcanopy/supabase": "^0.1.0",
