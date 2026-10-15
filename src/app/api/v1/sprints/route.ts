@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticate } from '@/lib/auth-guard';
+import { supabaseAdmin } from '@/lib/db';
 import { SprintRelationalService, CreateSprintInput, validateSprintInput } from '@/lib/services/sprintRelationalService';
 
 /**
@@ -14,7 +15,22 @@ export async function GET(req: NextRequest) {
     const { tenant } = auth.context;
     const { searchParams } = new URL(req.url);
 
-    const projectId = searchParams.get('project_id') || undefined;
+    let projectId = searchParams.get('project_id') || undefined;
+    const projectSlug = searchParams.get('project_slug') || undefined;
+
+    if (!projectId && projectSlug) {
+      try {
+        const { data: proj } = await supabaseAdmin
+          .from('projects')
+          .select('id')
+          .eq('tenant_id', tenant.id)
+          .eq('slug', projectSlug)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (proj) projectId = proj.id;
+      } catch {}
+    }
+
     const status = searchParams.get('status') || undefined;
     const isActiveParam = searchParams.get('is_active');
     const isActive = isActiveParam !== null ? isActiveParam === 'true' : undefined;

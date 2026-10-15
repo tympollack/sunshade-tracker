@@ -127,6 +127,45 @@ export class SprintRelationalService {
         return { data: null, error: error.message };
       }
 
+      if ((!data || data.length === 0) && options?.projectId) {
+        // Backfill legacy JSON project settings sprints into tracker.sprints table
+        try {
+          const { data: proj } = await supabaseAdmin
+            .from('projects')
+            .select('settings')
+            .eq('id', options.projectId)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+
+          const legacySprints = proj?.settings?.sprint_settings?.sprints;
+          if (Array.isArray(legacySprints) && legacySprints.length > 0) {
+            const toInsert = legacySprints.map((s: any) => ({
+              tenant_id: tenantId,
+              project_id: options.projectId,
+              name: s.name,
+              goal: s.goal || null,
+              status: s.status || (s.is_active ? 'active' : 'planned'),
+              is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+              started_at: s.started_at || s.start_date || (s.is_active ? new Date().toISOString() : null),
+              ends_at: s.ends_at || s.end_date || null,
+              committed_points: Number(s.committed_points) || 0,
+              metadata: s.metadata || {},
+            }));
+
+            const { data: inserted } = await supabaseAdmin
+              .from('sprints')
+              .insert(toInsert)
+              .select('*');
+
+            if (inserted && inserted.length > 0) {
+              return { data: inserted as RelationalSprintRecord[], error: null };
+            }
+          }
+        } catch {
+          // Gracefully continue if backfill fails
+        }
+      }
+
       return { data: (data as RelationalSprintRecord[]) || [], error: null };
     } catch (err: any) {
       return { data: null, error: err.message || 'Failed to list sprints' };

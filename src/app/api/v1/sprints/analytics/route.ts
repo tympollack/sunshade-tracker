@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
 
         if (projectIdOrSlug) {
           const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectIdOrSlug);
-          if (isUuid) {
+          if (isUuid && typeof sprintQuery.eq === 'function') {
             sprintQuery = sprintQuery.eq('project_id', projectIdOrSlug);
           }
         }
