@@ -724,7 +724,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
       if (s.name) {
         const existing = map.get(s.name);
-        map.set(s.name, existing ? { ...existing, ...s } : s);
+        const mergedMetadata = {
+          ...(existing?.metadata || {}),
+          ...(s.metadata || {}),
+          ...(existing?.metadata?.summary ? { summary: existing.metadata.summary } : {}),
+        };
+        map.set(s.name, existing ? { ...existing, ...s, metadata: mergedMetadata } : s);
       }
     });
 
@@ -1000,6 +1005,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
                 is_current: Boolean(s.is_active || s.status === 'active'),
                 committed_points: s.committed_points || 0,
+                metadata: s.metadata || undefined,
               }));
               setDbSprints(mappedDbSprints);
             }
@@ -1039,6 +1045,39 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setIsLoadingColdArchive(false);
     }
   }, [apiFetch, isAllProjects, projectSlug, tenantSlug, isLoadingColdArchive]);
+
+  const handleLazyLoadSprint = useCallback(
+    async (sprintIdentifier: string) => {
+      try {
+        let targetProjectSlug = projectSlug;
+        if (isAllProjects) {
+          const targetDef = availableSprintDefs.find(
+            (s) => s.id === sprintIdentifier || s.name === sprintIdentifier
+          );
+          if (targetDef?.project_id) {
+            const matchedProj = allProjects.find((p) => p.id === targetDef.project_id);
+            if (matchedProj?.slug) {
+              targetProjectSlug = matchedProj.slug;
+            }
+          }
+        }
+
+        const url = isAllProjects && targetProjectSlug === projectSlug
+          ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`
+          : `/api/v1/items?project_slug=${targetProjectSlug}&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`;
+        const res = await apiFetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.items)) {
+            setItems((prev) => mergeColdArchive(prev, data.items));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to lazy load sprint items:', err);
+      }
+    },
+    [apiFetch, isAllProjects, projectSlug, tenantSlug, availableSprintDefs, allProjects]
+  );
 
   const pollDelta = useCallback(async () => {
     if (!lastSyncedAtRef.current || isPollingDeltaRef.current) return;
@@ -3510,6 +3549,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   allProjects={allProjects}
                   handleUpdateStatus={handleUpdateStatus}
                   handleUpdateItemSprint={handleUpdateItemSprint}
+                  onLazyLoadSprint={handleLazyLoadSprint}
                 />
               )}
 

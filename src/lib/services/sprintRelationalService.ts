@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/db';
-import { SprintDefinition } from '@/types/tracker';
+import { SprintDefinition, HistoricalSprintSummary } from '@/types/tracker';
 
 export interface CreateSprintInput {
   name: string;
@@ -98,6 +98,82 @@ export function validateSprintInput(
 
 export class SprintRelationalService {
   /**
+   * Compute and freeze historical sprint summary into metadata.summary for completed sprints.
+   */
+  static async computeHistoricalSprintSummary(
+    tenantId: string,
+    sprint: {
+      id: string;
+      name: string;
+      project_id?: string | null;
+      committed_points?: number;
+      ends_at?: string | null;
+      updated_at?: string | null;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<HistoricalSprintSummary> {
+    try {
+      let itemsQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('id, status, metadata, project_id')
+        .eq('tenant_id', tenantId);
+
+      if (typeof itemsQuery.is === 'function') {
+        itemsQuery = itemsQuery.is('deleted_at', null);
+      }
+      if (sprint.project_id && typeof itemsQuery.eq === 'function') {
+        itemsQuery = itemsQuery.eq('project_id', sprint.project_id);
+      }
+
+      const { data: sprintWorkItems } = await itemsQuery;
+      const matchingItems = (sprintWorkItems || []).filter(
+        (it: any) =>
+          it.metadata?.sprint === sprint.name ||
+          it.metadata?.sprint_id === sprint.id
+      );
+
+      const totalTasks = matchingItems.length;
+      const completedStatuses = new Set(['complete', 'completed', 'done', 'closed']);
+      const completedTasks = matchingItems.filter((it: any) =>
+        completedStatuses.has((it.status || '').toLowerCase().trim())
+      ).length;
+
+      const committedPoints =
+        (sprint.committed_points && sprint.committed_points > 0)
+          ? sprint.committed_points
+          : matchingItems.reduce((sum: number, it: any) => {
+              const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
+              return sum + pts;
+            }, 0);
+
+      const completedPoints = matchingItems
+        .filter((it: any) => completedStatuses.has((it.status || '').toLowerCase().trim()))
+        .reduce((sum: number, it: any) => {
+          const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
+          return sum + pts;
+        }, 0);
+
+      return {
+        total_tasks: totalTasks,
+        completed_tasks: completedTasks,
+        committed_points: committedPoints,
+        completed_points: completedPoints,
+        velocity: completedPoints,
+        closed_at: sprint.ends_at || sprint.updated_at || new Date().toISOString(),
+      };
+    } catch {
+      return {
+        total_tasks: 0,
+        completed_tasks: 0,
+        committed_points: sprint.committed_points || 0,
+        completed_points: 0,
+        velocity: 0,
+        closed_at: sprint.ends_at || new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
    * List sprints for a given tenant, with optional project and status filters.
    */
   static async listSprints(
@@ -122,12 +198,84 @@ export class SprintRelationalService {
 
       query = query.order('created_at', { ascending: false });
 
-      const { data, error } = await query;
+      let { data, error } = await query;
       if (error) {
         return { data: null, error: error.message };
       }
 
-      return { data: (data as RelationalSprintRecord[]) || [], error: null };
+      if ((!data || data.length === 0) && options?.projectId) {
+        // Backfill legacy JSON project settings sprints into tracker.sprints table ONLY if
+        // the project has zero relational sprints in the database (prevents filtered reads from duplicating sprints)
+        try {
+          const { data: existingAny } = await supabaseAdmin
+            .from('sprints')
+            .select('id')
+            .eq('tenant_id', tenantId)
+            .eq('project_id', options.projectId)
+            .limit(1);
+
+          if (!existingAny || existingAny.length === 0) {
+            const { data: proj } = await supabaseAdmin
+              .from('projects')
+              .select('settings')
+              .eq('id', options.projectId)
+              .eq('tenant_id', tenantId)
+              .maybeSingle();
+
+            const legacySprints = proj?.settings?.sprint_settings?.sprints;
+            if (Array.isArray(legacySprints) && legacySprints.length > 0) {
+              const toInsert = legacySprints.map((s: any) => ({
+                tenant_id: tenantId,
+                project_id: options.projectId,
+                name: s.name,
+                goal: s.goal || null,
+                status: s.status || (s.is_active ? 'active' : 'planned'),
+                is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+                started_at: s.started_at || s.start_date || (s.is_active ? new Date().toISOString() : null),
+                ends_at: s.ends_at || s.end_date || null,
+                committed_points: Number(s.committed_points) || 0,
+                metadata: s.metadata || {},
+              }));
+
+              await supabaseAdmin
+                .from('sprints')
+                .insert(toInsert);
+
+              // Re-run original query with caller's filter options
+              let refetchQuery = supabaseAdmin
+                .from('sprints')
+                .select('*')
+                .eq('tenant_id', tenantId);
+
+              if (options?.projectId) {
+                refetchQuery = refetchQuery.eq('project_id', options.projectId);
+              }
+              if (options?.status) {
+                refetchQuery = refetchQuery.eq('status', options.status);
+              }
+              if (options?.isActive !== undefined) {
+                refetchQuery = refetchQuery.eq('is_active', options.isActive);
+              }
+              refetchQuery = refetchQuery.order('created_at', { ascending: false });
+
+              const { data: refetchedData } = await refetchQuery;
+              data = refetchedData || [];
+            }
+          }
+        } catch {
+          // Gracefully continue if backfill fails
+        }
+      }
+
+      const sprintRecords = ((data || []) as RelationalSprintRecord[]);
+      for (const record of sprintRecords) {
+        if (record.status === 'completed' && !record.metadata?.summary) {
+          const summary = await this.computeHistoricalSprintSummary(tenantId, record);
+          record.metadata = { ...(record.metadata || {}), summary };
+        }
+      }
+
+      return { data: sprintRecords, error: null };
     } catch (err: any) {
       return { data: null, error: err.message || 'Failed to list sprints' };
     }
@@ -155,7 +303,13 @@ export class SprintRelationalService {
         return { data: null, error: 'Sprint not found' };
       }
 
-      return { data: data as RelationalSprintRecord, error: null };
+      const sprintRecord = data as RelationalSprintRecord;
+      if (sprintRecord.status === 'completed' && !sprintRecord.metadata?.summary) {
+        const summary = await this.computeHistoricalSprintSummary(tenantId, sprintRecord);
+        sprintRecord.metadata = { ...(sprintRecord.metadata || {}), summary };
+      }
+
+      return { data: sprintRecord, error: null };
     } catch (err: any) {
       return { data: null, error: err.message || 'Failed to get sprint' };
     }
@@ -325,6 +479,25 @@ export class SprintRelationalService {
         } else if (updates.status === 'completed' || updates.status === 'planned' || updates.status === 'unplanned') {
           if (updates.is_active === undefined) {
             updatePayload.is_active = false;
+          }
+          if (updates.status === 'completed') {
+            if (!currentSprint.ends_at && !updates.ends_at) {
+              updatePayload.ends_at = new Date().toISOString();
+            }
+            // Freeze historical sprint aggregates into metadata.summary
+            const summary = await this.computeHistoricalSprintSummary(tenantId, {
+              id: currentSprint.id,
+              name: updates.name ? updates.name.trim() : currentSprint.name,
+              project_id: currentSprint.project_id,
+              committed_points: updates.committed_points !== undefined ? updates.committed_points : currentSprint.committed_points,
+              ends_at: updatePayload.ends_at || currentSprint.ends_at,
+              metadata: updates.metadata !== undefined ? updates.metadata : currentSprint.metadata,
+            });
+            const baseMeta = updates.metadata !== undefined ? updates.metadata : (currentSprint.metadata || {});
+            updatePayload.metadata = {
+              ...baseMeta,
+              summary,
+            };
           }
         }
       }

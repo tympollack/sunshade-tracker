@@ -57,14 +57,17 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       const mergedOptions: SprintOption[] = [];
 
       // 1. Fetch from project settings
+      let currentProjectId: string | undefined;
       const res = await fetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
       if (res.ok) {
-        const projects = await res.json();
-        const currentProject = (projects || []).find(
+        const data = await res.json();
+        const projectList: any[] = Array.isArray(data) ? data : data?.projects || [];
+        const currentProject = projectList.find(
           (p: any) => p.slug === projectSlug || p.id === projectSlug
         );
 
         if (currentProject) {
+          currentProjectId = currentProject.id;
           const projectSprints: any[] = currentProject.settings?.sprint_settings?.sprints || [];
           for (const s of projectSprints) {
             mergedOptions.push({
@@ -77,7 +80,33 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         }
       }
 
-      // 2. Supplement/merge from sprint analytics route (which queries DB sprints)
+      // 2. Fetch canonical relational sprints from tracker.sprints table
+      try {
+        const queryParam = currentProjectId
+          ? `project_id=${encodeURIComponent(currentProjectId)}`
+          : `project_slug=${encodeURIComponent(projectSlug)}`;
+        const sprintsRes = await fetch(`/api/v1/sprints?tenant_slug=${tenantSlug}&${queryParam}`);
+        if (sprintsRes.ok) {
+          const sData = await sprintsRes.json();
+          for (const s of sData.sprints || []) {
+            const exists = mergedOptions.some(
+              (opt) => opt.id === s.id || opt.name === s.name
+            );
+            if (!exists) {
+              mergedOptions.push({
+                id: s.id || s.name,
+                name: s.name,
+                is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+                status: s.status,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Analytics] Fetching from relational sprints route skipped:', err);
+      }
+
+      // 3. Supplement/merge from sprint analytics route (which queries DB sprints)
       try {
         const sprintListRes = await fetch(
           `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}`
@@ -104,14 +133,19 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       }
 
       setSprints(mergedOptions);
-      const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
-      if (active && !selectedSprintId) {
-        setSelectedSprintId(active.id);
+      if (mergedOptions.length > 0) {
+        setSelectedSprintId((prev) => {
+          if (prev && mergedOptions.some((s) => s.id === prev || s.name === prev)) {
+            return prev;
+          }
+          const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
+          return active.id;
+        });
       }
     } catch (err) {
       console.error('[Analytics] Failed to fetch project sprints:', err);
     }
-  }, [tenantSlug, projectSlug, selectedSprintId]);
+  }, [tenantSlug, projectSlug]);
 
   // Fetch telemetry endpoints
   const fetchTelemetry = useCallback(async () => {
