@@ -488,4 +488,380 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     expect(json.item.order_index).toBe(2500.0);
     expect(capturedPayload.order_index).toBe(2500.0);
   });
+
+  it('should return 304 Not Modified when If-Modified-Since is >= MAX(updated_at)', async () => {
+    const latestTouchTime = '2026-10-15T02:00:00.000Z';
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        const queryBuilder: any = {
+          select: vi.fn(() => queryBuilder),
+          eq: vi.fn(() => queryBuilder),
+          order: vi.fn(() => queryBuilder),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: latestTouchTime }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: latestTouchTime }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio', {
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'If-Modified-Since': new Date(latestTouchTime).toUTCString(),
+      },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(304);
+    expect(res.headers.get('Last-Modified')).toBe(new Date(latestTouchTime).toUTCString());
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache');
+  });
+
+  it('should return delta payload with updated items and deleted_ids when updated_since is provided', async () => {
+    const syncTime = '2026-10-15T01:00:00.000Z';
+    const deltaRows = [
+      {
+        id: 'task-1',
+        title: 'Updated Task',
+        status: 'in_progress',
+        updated_at: '2026-10-15T01:30:00.000Z',
+        deleted_at: null,
+      },
+      {
+        id: 'task-deleted',
+        title: 'Deleted Task',
+        status: 'not_started',
+        updated_at: '2026-10-15T01:45:00.000Z',
+        deleted_at: '2026-10-15T01:45:00.000Z',
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          gt: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: deltaRows, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: '2026-10-15T01:45:00.000Z' }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: '2026-10-15T01:45:00.000Z' }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest(`http://localhost:3000/api/v1/items?project_slug=portfolio&updated_since=${syncTime}`, {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.is_delta).toBe(true);
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0].id).toBe('task-1');
+    expect(json.deleted_ids).toEqual(['task-deleted']);
+    expect(json.latest_at).toBe('2026-10-15T01:45:00.000Z');
+    expect(res.headers.get('Last-Modified')).toBe(new Date('2026-10-15T01:45:00.000Z').toUTCString());
+    expect(res.headers.get('Cache-Control')).toBe('private, no-cache');
+  });
+
+  it('should exclude cold completed items older than 14 days unless include_cold_archive=true', async () => {
+    const recentDate = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(); // 2 days ago
+    const coldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(); // 20 days ago
+
+    const itemsWithCold = [
+      {
+        id: 'task-active',
+        status: 'in_progress',
+        updated_at: coldDate,
+        deleted_at: null,
+      },
+      {
+        id: 'task-recent-done',
+        status: 'complete',
+        updated_at: recentDate,
+        deleted_at: null,
+      },
+      {
+        id: 'task-cold-done',
+        status: 'complete',
+        updated_at: coldDate,
+        deleted_at: null,
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: itemsWithCold, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: recentDate }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: recentDate }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    // 1. Without include_cold_archive: task-cold-done is filtered out
+    const reqDefault = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio', {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+    const resDefault = await getItemsHandler(reqDefault);
+    expect(resDefault.status).toBe(200);
+    const jsonDefault = await resDefault.json();
+    expect(jsonDefault.items).toHaveLength(2);
+    expect(jsonDefault.items.map((i: any) => i.id)).toEqual(['task-active', 'task-recent-done']);
+    expect(jsonDefault.cold_count).toBe(1);
+
+    // 2. With include_cold_archive=true: all items returned including cold task
+    const reqCold = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio&include_cold_archive=true', {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+    const resCold = await getItemsHandler(reqCold);
+    expect(resCold.status).toBe(200);
+    const jsonCold = await resCold.json();
+    expect(jsonCold.items).toHaveLength(3);
+    expect(jsonCold.cold_count).toBe(0);
+  });
+
+  it('should invalidate cache (return 200 instead of 304) when project schema is updated after item touch', async () => {
+    const itemTouchTime = '2026-10-15T01:00:00.000Z';
+    const projectSchemaTouchTime = '2026-10-15T02:00:00.000Z';
+    const clientCachedTime = '2026-10-15T01:30:00.000Z'; // between item touch and schema touch
+
+    const projectWithNewerTouch = {
+      ...mockProject,
+      updated_at: projectSchemaTouchTime,
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: projectWithNewerTouch, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: sampleItems, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: itemTouchTime }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: itemTouchTime }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio', {
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'If-Modified-Since': new Date(clientCachedTime).toUTCString(),
+      },
+    });
+
+    const res = await getItemsHandler(req);
+    // Since project.updated_at (02:00) > clientCachedTime (01:30), response must NOT be 304
+    expect(res.status).toBe(200);
+  });
+
+  it('should retain older completed items in main list if associated with an active sprint by name', async () => {
+    const coldDate = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(); // 25 days ago
+    const projectWithActiveSprint = {
+      ...mockProject,
+      settings: {
+        ...mockProject.settings,
+        sprint_settings: {
+          sprints: [
+            { id: 'sprint-uuid-1', name: 'Sprint Oct 2026', status: 'active', is_active: true },
+          ],
+        },
+      },
+    };
+
+    const items = [
+      {
+        id: 'task-active-sprint-cold',
+        status: 'complete',
+        updated_at: coldDate,
+        deleted_at: null,
+        metadata: { sprint: 'Sprint Oct 2026' }, // Matches by sprint NAME
+      },
+      {
+        id: 'task-cold-regular',
+        status: 'complete',
+        updated_at: coldDate,
+        deleted_at: null,
+        metadata: { sprint: 'Sprint Sep 2026' }, // Inactive sprint
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: projectWithActiveSprint, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: items, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: coldDate }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: coldDate }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio', {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // task-active-sprint-cold is kept because it belongs to active sprint 'Sprint Oct 2026'
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0].id).toBe('task-active-sprint-cold');
+    expect(json.cold_count).toBe(1); // task-cold-regular was partitioned
+  });
 });
