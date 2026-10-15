@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/db';
-import { SprintDefinition } from '@/types/tracker';
+import { SprintDefinition, HistoricalSprintSummary } from '@/types/tracker';
 
 export interface CreateSprintInput {
   name: string;
@@ -98,6 +98,82 @@ export function validateSprintInput(
 
 export class SprintRelationalService {
   /**
+   * Compute and freeze historical sprint summary into metadata.summary for completed sprints.
+   */
+  static async computeHistoricalSprintSummary(
+    tenantId: string,
+    sprint: {
+      id: string;
+      name: string;
+      project_id?: string | null;
+      committed_points?: number;
+      ends_at?: string | null;
+      updated_at?: string | null;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<HistoricalSprintSummary> {
+    try {
+      let itemsQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('id, status, metadata, project_id')
+        .eq('tenant_id', tenantId);
+
+      if (typeof itemsQuery.is === 'function') {
+        itemsQuery = itemsQuery.is('deleted_at', null);
+      }
+      if (sprint.project_id && typeof itemsQuery.eq === 'function') {
+        itemsQuery = itemsQuery.eq('project_id', sprint.project_id);
+      }
+
+      const { data: sprintWorkItems } = await itemsQuery;
+      const matchingItems = (sprintWorkItems || []).filter(
+        (it: any) =>
+          it.metadata?.sprint === sprint.name ||
+          it.metadata?.sprint_id === sprint.id
+      );
+
+      const totalTasks = matchingItems.length;
+      const completedStatuses = new Set(['complete', 'completed', 'done', 'closed']);
+      const completedTasks = matchingItems.filter((it: any) =>
+        completedStatuses.has((it.status || '').toLowerCase().trim())
+      ).length;
+
+      const committedPoints =
+        (sprint.committed_points && sprint.committed_points > 0)
+          ? sprint.committed_points
+          : matchingItems.reduce((sum: number, it: any) => {
+              const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
+              return sum + pts;
+            }, 0);
+
+      const completedPoints = matchingItems
+        .filter((it: any) => completedStatuses.has((it.status || '').toLowerCase().trim()))
+        .reduce((sum: number, it: any) => {
+          const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
+          return sum + pts;
+        }, 0);
+
+      return {
+        total_tasks: totalTasks,
+        completed_tasks: completedTasks,
+        committed_points: committedPoints,
+        completed_points: completedPoints,
+        velocity: completedPoints,
+        closed_at: sprint.ends_at || sprint.updated_at || new Date().toISOString(),
+      };
+    } catch {
+      return {
+        total_tasks: 0,
+        completed_tasks: 0,
+        committed_points: sprint.committed_points || 0,
+        completed_points: 0,
+        velocity: 0,
+        closed_at: sprint.ends_at || new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
    * List sprints for a given tenant, with optional project and status filters.
    */
   static async listSprints(
@@ -166,7 +242,15 @@ export class SprintRelationalService {
         }
       }
 
-      return { data: (data as RelationalSprintRecord[]) || [], error: null };
+      const sprintRecords = ((data || []) as RelationalSprintRecord[]);
+      for (const record of sprintRecords) {
+        if (record.status === 'completed' && !record.metadata?.summary) {
+          const summary = await this.computeHistoricalSprintSummary(tenantId, record);
+          record.metadata = { ...(record.metadata || {}), summary };
+        }
+      }
+
+      return { data: sprintRecords, error: null };
     } catch (err: any) {
       return { data: null, error: err.message || 'Failed to list sprints' };
     }
@@ -194,7 +278,13 @@ export class SprintRelationalService {
         return { data: null, error: 'Sprint not found' };
       }
 
-      return { data: data as RelationalSprintRecord, error: null };
+      const sprintRecord = data as RelationalSprintRecord;
+      if (sprintRecord.status === 'completed' && !sprintRecord.metadata?.summary) {
+        const summary = await this.computeHistoricalSprintSummary(tenantId, sprintRecord);
+        sprintRecord.metadata = { ...(sprintRecord.metadata || {}), summary };
+      }
+
+      return { data: sprintRecord, error: null };
     } catch (err: any) {
       return { data: null, error: err.message || 'Failed to get sprint' };
     }
@@ -364,6 +454,25 @@ export class SprintRelationalService {
         } else if (updates.status === 'completed' || updates.status === 'planned' || updates.status === 'unplanned') {
           if (updates.is_active === undefined) {
             updatePayload.is_active = false;
+          }
+          if (updates.status === 'completed') {
+            if (!currentSprint.ends_at && !updates.ends_at) {
+              updatePayload.ends_at = new Date().toISOString();
+            }
+            // Freeze historical sprint aggregates into metadata.summary
+            const summary = await this.computeHistoricalSprintSummary(tenantId, {
+              id: currentSprint.id,
+              name: updates.name ? updates.name.trim() : currentSprint.name,
+              project_id: currentSprint.project_id,
+              committed_points: updates.committed_points !== undefined ? updates.committed_points : currentSprint.committed_points,
+              ends_at: updatePayload.ends_at || currentSprint.ends_at,
+              metadata: updates.metadata !== undefined ? updates.metadata : currentSprint.metadata,
+            });
+            const baseMeta = updates.metadata !== undefined ? updates.metadata : (currentSprint.metadata || {});
+            updatePayload.metadata = {
+              ...baseMeta,
+              summary,
+            };
           }
         }
       }

@@ -13,6 +13,16 @@ export interface StatusDefinition {
   order: number;
 }
 
+export interface HistoricalSprintSummary {
+  total_tasks: number;
+  completed_tasks: number;
+  committed_points: number;
+  completed_points: number;
+  velocity: number;
+  closed_at: string;
+  [key: string]: any;
+}
+
 export interface SprintDefinition {
   id: string;
   project_id?: string | null;
@@ -26,6 +36,7 @@ export interface SprintDefinition {
   is_current?: boolean;
   is_active?: boolean;
   committed_points?: number;
+  metadata?: Record<string, any>;
 }
 
 export interface MetricRules {

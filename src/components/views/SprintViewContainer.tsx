@@ -77,6 +77,7 @@ export interface SprintViewContainerProps {
   handleUpdateStatus: (itemId: string, newStatus: string) => Promise<void> | void;
   handleUpdateItemSprint: (itemId: string, sprintName: string | null) => Promise<void> | void;
   availableSprintDefs?: SprintDefinition[];
+  onLazyLoadSprint?: (sprintIdentifier: string) => Promise<void>;
 }
 
 export function SprintViewContainer(props: SprintViewContainerProps) {
@@ -123,7 +124,42 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     allProjects,
     handleUpdateStatus,
     handleUpdateItemSprint,
+    onLazyLoadSprint,
   } = props;
+
+  const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
+
+  const handleLazyLoadSprint = async (sprintIdentifier: string) => {
+    if (!onLazyLoadSprint || loadingSprints.has(sprintIdentifier)) return;
+    setLoadingSprints((prev) => new Set(prev).add(sprintIdentifier));
+    try {
+      await onLazyLoadSprint(sprintIdentifier);
+    } finally {
+      setLoadingSprints((prev) => {
+        const next = new Set(prev);
+        next.delete(sprintIdentifier);
+        return next;
+      });
+    }
+  };
+
+  const handleToggleSprintCollapse = (name: string) => {
+    const isCurrentlyCollapsed = collapsedSprints.has(name);
+    toggleSprintCollapse(name);
+    if (isCurrentlyCollapsed && onLazyLoadSprint) {
+      const def =
+        availableSprintDefs.find((s: any) => s.name === name || s.id === name) ||
+        projectSettings.sprint_settings?.sprints?.find((s: any) => s.name === name || s.id === name);
+      if (def?.status === 'completed') {
+        const hasItems = items.some(
+          (it) => it.metadata?.sprint === name || it.metadata?.sprint_id === name || (def && it.metadata?.sprint_id === def.id)
+        );
+        if (!hasItems) {
+          handleLazyLoadSprint(def.id || name);
+        }
+      }
+    }
+  };
 
   const workMetric = getWorkMetricConfig(projectSettings);
 
@@ -305,27 +341,42 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           </div>
         )}
         {(visibleSprints.length === 0 ? (availableSprints.length === 0 ? ['Sprint 1'] : []) : visibleSprints).map((sprintName) => {
-          const rawSprintItems = items.filter((it) => it.metadata?.sprint === sprintName);
-          const sprintItems = filterSprintItems(rawSprintItems);
-          const leafPoints = calculateSprintLeafPoints(sprintItems, projectSettings);
-          const macroPoints = calculateSprintMacroPoints(sprintItems, projectSettings);
-          const effectivePoints = pointMode === 'macro' ? macroPoints : leafPoints;
-          const totalPoints = effectivePoints;
-          const completedItems = sprintItems.filter((it) =>
-            isItemCompleted(it.status, completionSet)
-          );
           const sprintDef =
             availableSprintDefs.find((s: any) => s.name === sprintName || s.id === sprintName) ||
             projectSettings.sprint_settings?.sprints?.find(
               (s: any) => s.name === sprintName || s.id === sprintName
             );
+          const rawSprintItems = items.filter(
+            (it) =>
+              it.metadata?.sprint === sprintName ||
+              it.metadata?.sprint_id === sprintName ||
+              (sprintDef && it.metadata?.sprint_id === sprintDef.id)
+          );
+          const sprintItems = filterSprintItems(rawSprintItems);
           const isCompletedSprint = sprintDef?.status === 'completed';
-          const progressPct =
-            sprintItems.length > 0
-              ? Math.round((completedItems.length / sprintItems.length) * 100)
-              : isCompletedSprint
-              ? 100
-              : 0;
+          const summary = sprintDef?.metadata?.summary;
+          const isUsingFrozenSummary = sprintItems.length === 0 && Boolean(summary);
+
+          const leafPoints = calculateSprintLeafPoints(sprintItems, projectSettings);
+          const macroPoints = calculateSprintMacroPoints(sprintItems, projectSettings);
+          const calculatedPoints = pointMode === 'macro' ? macroPoints : leafPoints;
+          const totalPoints = isUsingFrozenSummary
+            ? (pointMode === 'macro' ? (summary.committed_macro_points ?? summary.committed_points) : summary.committed_points) || 0
+            : calculatedPoints;
+          const displayItemsCount = isUsingFrozenSummary
+            ? (summary.total_tasks || 0)
+            : sprintItems.length;
+
+          const completedItems = sprintItems.filter((it) =>
+            isItemCompleted(it.status, completionSet)
+          );
+          const progressPct = isUsingFrozenSummary
+            ? (summary.total_tasks > 0 ? Math.round((summary.completed_tasks / summary.total_tasks) * 100) : 100)
+            : sprintItems.length > 0
+            ? Math.round((completedItems.length / sprintItems.length) * 100)
+            : isCompletedSprint
+            ? 100
+            : 0;
           const isCurrent = sprintDef?.is_current ?? (availableSprints[0] === sprintName);
           const isCollapsed = collapsedSprints.has(sprintName);
           const allSprintSelected =
@@ -404,7 +455,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                 <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <button
                     type="button"
-                    onClick={() => toggleSprintCollapse(sprintName)}
+                    onClick={() => handleToggleSprintCollapse(sprintName)}
                     className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors cursor-pointer"
                     data-testid={`collapse-toggle-${sprintName}`}
                     aria-label={isCollapsed ? `Expand ${sprintName}` : `Collapse ${sprintName}`}
@@ -476,25 +527,42 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   )}
 
                   <span
-                    className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium"
+                    className="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 font-mono font-medium flex items-center space-x-1"
                     data-testid={`sprint-points-${sprintName}`}
                   >
-                    {sprintItems.length} {sprintItems.length === 1 ? 'item' : 'items'}
-                    {totalPoints > 0 ? ` · ${totalPoints} ${workMetric.unit_label || 'pts'} ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}` : ''}
+                    <span>
+                      {displayItemsCount} {displayItemsCount === 1 ? 'item' : 'items'}
+                      {totalPoints > 0 ? ` · ${totalPoints} ${workMetric.unit_label || 'pts'} ${pointMode === 'macro' ? 'roadmap capacity' : 'true burn'}` : ''}
+                    </span>
+                    {isUsingFrozenSummary && (
+                      <span className="text-[10px] text-purple-400 font-sans ml-1" data-testid={`sprint-frozen-badge-${sprintName}`}>
+                        (Frozen)
+                      </span>
+                    )}
                   </span>
                 </div>
 
                 <div className="flex items-center">
                   {(() => {
-                    const segs = projectSettings.statuses
-                      .map((st) => {
-                        const count = sprintItems.filter(
-                          (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
-                        ).length;
-                        const pct = sprintItems.length > 0 ? Math.round((count / sprintItems.length) * 100) : 0;
-                        return { id: st.id, label: st.label, color: st.color, count, pct };
-                      })
-                      .filter((s) => s.count > 0);
+                    const segs = isUsingFrozenSummary
+                      ? [
+                          {
+                            id: 'completed',
+                            label: 'Completed',
+                            color: '#a855f7',
+                            count: summary.completed_tasks,
+                            pct: progressPct,
+                          },
+                        ]
+                      : projectSettings.statuses
+                          .map((st) => {
+                            const count = sprintItems.filter(
+                              (it) => (it.status || '').toLowerCase().trim() === st.id.toLowerCase()
+                            ).length;
+                            const pct = sprintItems.length > 0 ? Math.round((count / sprintItems.length) * 100) : 0;
+                            return { id: st.id, label: st.label, color: st.color, count, pct };
+                          })
+                          .filter((s) => s.count > 0);
 
                     return (
                       <SprintProgressBar
@@ -515,9 +583,35 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               {!isCollapsed && (
                 <div className="divide-y divide-slate-800/50">
                   {sprintItems.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-500 italic">
-                      No stories or tasks in {sprintName}. Allocate backlog items below.
-                    </div>
+                    isUsingFrozenSummary ? (
+                      <div
+                        className="p-6 text-center text-xs text-slate-400 flex flex-col items-center justify-center space-y-2.5"
+                        data-testid={`sprint-lazy-card-${sprintName}`}
+                      >
+                        <span className="text-slate-400">
+                          Historical sprint items are cold-partitioned for page responsiveness.
+                        </span>
+                        {onLazyLoadSprint && (
+                          <button
+                            type="button"
+                            onClick={() => handleLazyLoadSprint(sprintDef?.id || sprintName)}
+                            disabled={loadingSprints.has(sprintDef?.id || sprintName)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-medium text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                            data-testid={`lazy-load-btn-${sprintName}`}
+                          >
+                            {loadingSprints.has(sprintDef?.id || sprintName) ? (
+                              <span>Loading items...</span>
+                            ) : (
+                              <span>Load {summary.total_tasks} Work Items</span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-6 text-center text-xs text-slate-500 italic">
+                        No stories or tasks in {sprintName}. Allocate backlog items below.
+                      </div>
+                    )
                   ) : sprintViewMode === 'tree' ? (
                     buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node) => renderSprintTreeNode(node))
                   ) : (

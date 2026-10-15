@@ -1040,6 +1040,26 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   }, [apiFetch, isAllProjects, projectSlug, tenantSlug, isLoadingColdArchive]);
 
+  const handleLazyLoadSprint = useCallback(
+    async (sprintIdentifier: string) => {
+      try {
+        const url = isAllProjects
+          ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`
+          : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`;
+        const res = await apiFetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.items)) {
+            setItems((prev) => mergeColdArchive(prev, data.items));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to lazy load sprint items:', err);
+      }
+    },
+    [apiFetch, isAllProjects, projectSlug, tenantSlug]
+  );
+
   const pollDelta = useCallback(async () => {
     if (!lastSyncedAtRef.current || isPollingDeltaRef.current) return;
     isPollingDeltaRef.current = true;
@@ -3510,6 +3530,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   allProjects={allProjects}
                   handleUpdateStatus={handleUpdateStatus}
                   handleUpdateItemSprint={handleUpdateItemSprint}
+                  onLazyLoadSprint={handleLazyLoadSprint}
                 />
               )}
 

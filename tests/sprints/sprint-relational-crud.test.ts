@@ -170,6 +170,92 @@ describe('TASK-TRK-SPRINT-RELATIONAL-CRUD-API: Relational tracker.sprints API & 
         expect.objectContaining({ metadata: { sprint: 'Sprint New Name' } })
       );
     });
+
+    it('freezes historical sprint summary into metadata.summary when sprint status transitions to completed', async () => {
+      const activeSprint = {
+        id: sprintId,
+        tenant_id: tenantId,
+        project_id: 'proj-1',
+        name: 'Sprint 2026-Q3',
+        status: 'active',
+        is_active: true,
+        committed_points: 20,
+        metadata: {},
+      };
+
+      const mockWorkItems = [
+        { id: 'item-1', status: 'complete', metadata: { sprint: 'Sprint 2026-Q3', story_points: 8 } },
+        { id: 'item-2', status: 'complete', metadata: { sprint_id: sprintId, story_points: 5 } },
+        { id: 'item-3', status: 'in_progress', metadata: { sprint: 'Sprint 2026-Q3', story_points: 7 } },
+      ];
+
+      // Mock getSprintById
+      const mockMaybeSingle = vi.fn().mockResolvedValue({ data: activeSprint, error: null });
+      const mockSelectById = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: mockMaybeSingle,
+          }),
+        }),
+      });
+
+      // Mock work_items query
+      const mockItemsIs = vi.fn().mockResolvedValue({ data: mockWorkItems, error: null });
+      const mockItemsEqProj = vi.fn().mockReturnValue({ is: mockItemsIs });
+      const mockItemsEqTenant = vi.fn().mockReturnValue({ eq: mockItemsEqProj, is: mockItemsIs });
+      const mockItemsSelect = vi.fn().mockReturnValue({ eq: mockItemsEqTenant });
+
+      // Mock sprint update
+      let capturedUpdatePayload: any = null;
+      const mockSingleUpdate = vi.fn().mockImplementation(() => {
+        return Promise.resolve({
+          data: { ...activeSprint, ...capturedUpdatePayload },
+          error: null,
+        });
+      });
+      const mockUpdate = vi.fn().mockImplementation((payload) => {
+        capturedUpdatePayload = payload;
+        return {
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: mockSingleUpdate,
+              }),
+            }),
+          }),
+        };
+      });
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'sprints') {
+          return {
+            select: mockSelectById,
+            update: mockUpdate,
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: mockItemsSelect,
+          };
+        }
+        return {};
+      });
+
+      const res = await SprintRelationalService.updateSprint(tenantId, sprintId, {
+        status: 'completed',
+      });
+
+      expect(res.error).toBeNull();
+      expect(capturedUpdatePayload.status).toBe('completed');
+      expect(capturedUpdatePayload.is_active).toBe(false);
+      expect(capturedUpdatePayload.metadata?.summary).toBeDefined();
+      expect(capturedUpdatePayload.metadata.summary.total_tasks).toBe(3);
+      expect(capturedUpdatePayload.metadata.summary.completed_tasks).toBe(2);
+      expect(capturedUpdatePayload.metadata.summary.committed_points).toBe(20);
+      expect(capturedUpdatePayload.metadata.summary.completed_points).toBe(13); // 8 + 5
+      expect(capturedUpdatePayload.metadata.summary.velocity).toBe(13);
+      expect(capturedUpdatePayload.metadata.summary.closed_at).toBeDefined();
+    });
   });
 
   describe('API Routes: /api/v1/sprints and /api/v1/sprints/[sprintId]', () => {
