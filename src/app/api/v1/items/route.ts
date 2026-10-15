@@ -16,6 +16,46 @@ import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-genera
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
 
+/**
+ * Automatically pages through Supabase PostgREST queries in 1000-row chunks
+ * to bypass the default 1000-row ceiling. Falls back to direct awaiting if .range()
+ * is not supported (e.g. in unit test mock environments).
+ */
+async function fetchAllRows<T = any>(queryBuilder: any): Promise<{ data: T[]; error: any }> {
+  if (!queryBuilder) {
+    return { data: [], error: null };
+  }
+
+  if (typeof queryBuilder.range !== 'function') {
+    const res = await queryBuilder;
+    if (res?.error) return { data: [], error: res.error };
+    return { data: (res?.data || []) as T[], error: null };
+  }
+
+  const CHUNK_SIZE = 1000;
+  let allData: T[] = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const chunkQuery = queryBuilder.range(from, from + CHUNK_SIZE - 1);
+    const { data, error } = await chunkQuery;
+    if (error) {
+      return { data: allData, error };
+    }
+    if (!data || data.length === 0) {
+      break;
+    }
+    allData.push(...data);
+    if (data.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+    }
+  }
+
+  return { data: allData, error: null };
+}
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -33,6 +73,9 @@ export async function GET(req: NextRequest) {
   const typeFilter = searchParams.get('item_type');
   const updatedSince = searchParams.get('updated_since');
   const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const sprintIdParam = searchParams.get('sprint_id');
+  const sprintParam = searchParams.get('sprint');
+  const targetSprint = sprintIdParam || sprintParam;
   const ifModifiedSince = req.headers.get('if-modified-since');
 
   // 1a. Bulk Items by IDs lookup
@@ -173,7 +216,7 @@ export async function GET(req: NextRequest) {
         deltaQuery = deltaQuery.order('order_index', { ascending: true });
       }
 
-      const { data: rawDeltaRows, error: deltaErr } = await deltaQuery;
+      const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
       if (deltaErr) {
         return NextResponse.json({ error: deltaErr.message }, { status: 500 });
       }
@@ -208,19 +251,66 @@ export async function GET(req: NextRequest) {
     if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
     if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
 
-    const { data: rawItems, error: itemsErr } = await itemsQuery;
+    const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
     if (itemsErr) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
     const allPortfolioItems = (rawItems || []) as WorkItem[];
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+
+    // Cadence-aware cold partitioning: Active sprint tasks are never cold.
+    // Tasks completed within the active sprint lifecycle or workspace cadence are retained.
+    const activeSprints = new Set<string>();
+    let earliestActiveSprintStartMs: number | null = null;
+
+    try {
+      let sprintQuery: any = supabaseAdmin
+        .from('sprints')
+        .select('id, name, started_at, created_at, status, is_active')
+        .eq('tenant_id', authCtx.tenant.id);
+
+      if (typeof sprintQuery.or === 'function') {
+        sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+      }
+
+      const { data: activeSprintRows } = await sprintQuery;
+      if (activeSprintRows && Array.isArray(activeSprintRows)) {
+        activeSprintRows.forEach((s: any) => {
+          if (s.id) activeSprints.add(s.id);
+          if (s.name) activeSprints.add(s.name);
+          const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+          if (!isNaN(sTime)) {
+            if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+              earliestActiveSprintStartMs = sTime;
+            }
+          }
+        });
+      }
+    } catch {
+      // Non-fatal, fallback to default cadence
+    }
+
+    const defaultNonSprintPortfolioCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const DEFAULT_PORTFOLIO_CADENCE_MS = 90 * 24 * 60 * 60 * 1000;
+    const portfolioCadenceCutoffMs = earliestActiveSprintStartMs !== null
+      ? earliestActiveSprintStartMs
+      : activeSprints.size > 0
+      ? Date.now() - DEFAULT_PORTFOLIO_CADENCE_MS
+      : defaultNonSprintPortfolioCutoffMs;
+
     let items = allPortfolioItems;
     let coldCount = 0;
     if (!includeColdArchive) {
       items = allPortfolioItems.filter((it) => {
         if (it.status !== 'complete') return true;
-        return new Date(it.updated_at) >= fourteenDaysAgo;
+        const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
+        if (sprint) {
+          // If assigned to a sprint, only active sprint items remain in initial memory;
+          // non-active historical sprints are cold-partitioned for on-demand lazy loading.
+          return activeSprints.has(sprint);
+        }
+        const updatedMs = new Date(it.updated_at).getTime();
+        return !isNaN(updatedMs) && updatedMs >= portfolioCadenceCutoffMs;
       });
       coldCount = allPortfolioItems.length - items.length;
     }
@@ -407,7 +497,7 @@ export async function GET(req: NextRequest) {
       deltaQuery = deltaQuery.order('order_index', { ascending: true });
     }
 
-    const { data: rawDeltaRows, error: deltaErr } = await deltaQuery;
+    const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
     if (deltaErr) {
       return NextResponse.json({ error: deltaErr.message }, { status: 500 });
     }
@@ -445,32 +535,97 @@ export async function GET(req: NextRequest) {
   if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
   if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
 
-  const { data: rawItems, error: itemsErr } = await itemsQuery;
+  const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
 
   if (itemsErr) {
     return NextResponse.json({ error: itemsErr.message }, { status: 500 });
   }
 
-  const allItems = (rawItems || []) as WorkItem[];
+  let allItems = (rawItems || []) as WorkItem[];
 
-  // Partition cold archive (completed > 14 days and not in active sprint)
-  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
+  const isTargetingSprint = Boolean(targetSprint);
+  if (isTargetingSprint) {
+    allItems = allItems.filter(
+      (it) => it.metadata?.sprint === targetSprint || it.metadata?.sprint_id === targetSprint
+    );
+  }
+
+  // Sprint lifecycle-aware cold partitioning:
+  // Active sprint tasks are never cold. Tasks completed within the active sprint lifecycle
+  // or project cadence are retained; older completed items from closed sprints are cold-partitioned.
   const activeSprints = new Set<string>();
+  let earliestActiveSprintStartMs: number | null = null;
+
+  try {
+    let sprintQuery: any = supabaseAdmin
+      .from('sprints')
+      .select('id, name, started_at, created_at, status, is_active')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('project_id', project.id);
+
+    if (typeof sprintQuery.or === 'function') {
+      sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+    }
+
+    const { data: relationalSprints } = await sprintQuery;
+    if (relationalSprints && Array.isArray(relationalSprints)) {
+      relationalSprints.forEach((s: any) => {
+        if (s.status === 'active' || s.is_active) {
+          if (s.id) activeSprints.add(s.id);
+          if (s.name) activeSprints.add(s.name);
+          const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+          if (!isNaN(sTime)) {
+            if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+              earliestActiveSprintStartMs = sTime;
+            }
+          }
+        }
+      });
+    }
+  } catch {
+    // Non-fatal, fallback to project settings
+  }
+
+  // Fallback to project settings sprint definitions
   (project?.settings?.sprint_settings?.sprints || []).forEach((s: any) => {
     if (s.status === 'active' || s.is_active || s.is_current) {
       if (s.id) activeSprints.add(s.id);
       if (s.name) activeSprints.add(s.name);
+      const sDate = s.started_at || s.start_date;
+      if (sDate) {
+        const sTime = new Date(sDate).getTime();
+        if (!isNaN(sTime)) {
+          if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+            earliestActiveSprintStartMs = sTime;
+          }
+        }
+      }
     }
   });
 
+  // Default cadence: 90 days (quarterly sprint lifecycle) or configured sprint cadence
+  const defaultNonSprintProjectCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const projectCadenceDays = Number(project?.settings?.sprint_settings?.cadence_days) || 90;
+  const projectCadenceCutoffMs = earliestActiveSprintStartMs !== null
+    ? earliestActiveSprintStartMs
+    : activeSprints.size > 0
+    ? Date.now() - projectCadenceDays * 24 * 60 * 60 * 1000
+    : defaultNonSprintProjectCutoffMs;
+
   let items = allItems;
   let coldCount = 0;
-  if (!includeColdArchive) {
+  if (!includeColdArchive && !isTargetingSprint) {
     items = allItems.filter((it) => {
       if (it.status !== 'complete') return true;
       const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
-      if (sprint && activeSprints.has(sprint)) return true;
-      return new Date(it.updated_at) >= fourteenDaysAgo;
+      if (sprint) {
+        // If assigned to a sprint, only active sprint items remain in initial memory;
+        // non-active historical sprints are cold-partitioned for on-demand lazy loading.
+        return activeSprints.has(sprint);
+      }
+      const updatedMs = new Date(it.updated_at).getTime();
+      return !isNaN(updatedMs) && updatedMs >= projectCadenceCutoffMs;
     });
     coldCount = allItems.length - items.length;
   }
