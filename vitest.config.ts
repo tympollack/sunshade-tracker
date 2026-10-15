@@ -2,18 +2,22 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
-export default defineConfig({
+const sharedConfig = {
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      'react-native': 'react-native-web',
+    },
+  },
+};
+
+export default defineConfig({
+  ...sharedConfig,
   test: {
     projects: [
       {
-        plugins: [react()],
-        resolve: {
-          alias: {
-            '@': path.resolve(__dirname, './src'),
-            'react-native': 'react-native-web',
-          },
-        },
+        ...sharedConfig,
         test: {
           name: 'unit',
           include: ['tests/**/*.test.ts'],
@@ -23,13 +27,7 @@ export default defineConfig({
         },
       },
       {
-        plugins: [react()],
-        resolve: {
-          alias: {
-            '@': path.resolve(__dirname, './src'),
-            'react-native': 'react-native-web',
-          },
-        },
+        ...sharedConfig,
         test: {
           name: 'dom',
           include: ['tests/**/*.test.tsx'],
@@ -39,11 +37,5 @@ export default defineConfig({
         },
       },
     ],
-  },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      'react-native': 'react-native-web',
-    },
   },
 });
