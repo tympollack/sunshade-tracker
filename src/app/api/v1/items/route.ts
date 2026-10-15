@@ -31,6 +31,9 @@ export async function GET(req: NextRequest) {
   const format = searchParams.get('format') || 'flat'; // 'flat' | 'tree' | 'board'
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
+  const updatedSince = searchParams.get('updated_since');
+  const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const ifModifiedSince = req.headers.get('if-modified-since');
 
   // 1a. Bulk Items by IDs lookup
   if (idsParam) {
@@ -92,6 +95,89 @@ export async function GET(req: NextRequest) {
   }
 
   if (isPortfolio) {
+    // Fast HTTP 304 Evaluation & Latest Touch query for portfolio
+    let touchQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('updated_at')
+      .eq('tenant_id', authCtx.tenant.id);
+
+    if (typeof touchQuery.order === 'function') {
+      touchQuery = touchQuery.order('updated_at', { ascending: false });
+    }
+    if (typeof touchQuery.limit === 'function') {
+      touchQuery = touchQuery.limit(1);
+    }
+
+    let touchData: any = null;
+    if (typeof touchQuery.maybeSingle === 'function') {
+      const res = await touchQuery.maybeSingle();
+      touchData = res?.data;
+    } else if (typeof touchQuery.single === 'function') {
+      const res = await touchQuery.single().catch(() => ({ data: null }));
+      touchData = res?.data;
+    } else if (typeof touchQuery.then === 'function') {
+      const res = await touchQuery.catch(() => ({ data: null }));
+      touchData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+    }
+
+    const latestTouchStr = touchData?.updated_at || new Date().toISOString();
+    const latestTouch = new Date(latestTouchStr);
+
+    const responseHeaders: Record<string, string> = {
+      'Last-Modified': latestTouch.toUTCString(),
+      'Cache-Control': 'private, no-cache',
+    };
+
+    if (ifModifiedSince) {
+      const imsDate = new Date(ifModifiedSince);
+      if (!isNaN(imsDate.getTime())) {
+        const imsSec = Math.floor(imsDate.getTime() / 1000);
+        const touchSec = Math.floor(latestTouch.getTime() / 1000);
+        if (imsSec >= touchSec || imsDate >= latestTouch) {
+          return new Response(null, {
+            status: 304,
+            headers: responseHeaders,
+          });
+        }
+      }
+    }
+
+    if (updatedSince) {
+      let deltaQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('tenant_id', authCtx.tenant.id);
+
+      if (typeof deltaQuery.gt === 'function') {
+        deltaQuery = deltaQuery.gt('updated_at', updatedSince);
+      }
+      if (typeof deltaQuery.order === 'function') {
+        deltaQuery = deltaQuery.order('order_index', { ascending: true });
+      }
+
+      const { data: rawDeltaRows, error: deltaErr } = await deltaQuery;
+      if (deltaErr) {
+        return NextResponse.json({ error: deltaErr.message }, { status: 500 });
+      }
+
+      const allRows = (rawDeltaRows || []) as WorkItem[];
+      const items = allRows.filter((r) => !r.deleted_at);
+      const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          items,
+          deleted_ids,
+          latest_at: latestTouch.toISOString(),
+          is_delta: true,
+          count: items.length,
+        },
+        { headers: responseHeaders }
+      );
+    }
+
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
       .select('*')
@@ -128,13 +214,19 @@ export async function GET(req: NextRequest) {
         }
       });
 
-      return NextResponse.json({
-        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-        all_projects: true,
-        format: 'tree',
-        count: items.length,
-        tree: roots,
-      });
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          format: 'tree',
+          count: items.length,
+          tree: roots,
+          deleted_ids: [],
+          latest_at: latestTouch.toISOString(),
+          is_delta: false,
+        },
+        { headers: responseHeaders }
+      );
     }
 
     if (format === 'board') {
@@ -158,21 +250,33 @@ export async function GET(req: NextRequest) {
         items: items.filter((i) => i.status === st.id),
       }));
 
-      return NextResponse.json({
-        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-        all_projects: true,
-        format: 'board',
-        columns,
-      });
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          format: 'board',
+          columns,
+          deleted_ids: [],
+          latest_at: latestTouch.toISOString(),
+          is_delta: false,
+        },
+        { headers: responseHeaders }
+      );
     }
 
-    return NextResponse.json({
-      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-      all_projects: true,
-      format: 'flat',
-      count: items.length,
-      items,
-    });
+    return NextResponse.json(
+      {
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'flat',
+        count: items.length,
+        items,
+        deleted_ids: [],
+        latest_at: latestTouch.toISOString(),
+        is_delta: false,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   if (!projectSlug && !projectIdParam) {
@@ -185,7 +289,7 @@ export async function GET(req: NextRequest) {
   // Resolve project (active only — not soft-deleted)
   let projectQuery: any = supabaseAdmin
     .from('projects')
-    .select('id, slug, name, settings')
+    .select('id, slug, name, settings, updated_at')
     .eq('tenant_id', authCtx.tenant.id);
 
   if (typeof projectQuery.is === 'function') {
@@ -202,6 +306,91 @@ export async function GET(req: NextRequest) {
 
   if (projErr || !project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+  }
+
+  // Fast HTTP 304 Evaluation & Latest Touch query
+  let touchQuery: any = supabaseAdmin
+    .from('work_items')
+    .select('updated_at')
+    .eq('tenant_id', authCtx.tenant.id)
+    .eq('project_id', project.id);
+
+  if (typeof touchQuery.order === 'function') {
+    touchQuery = touchQuery.order('updated_at', { ascending: false });
+  }
+  if (typeof touchQuery.limit === 'function') {
+    touchQuery = touchQuery.limit(1);
+  }
+
+  let touchData: any = null;
+  if (typeof touchQuery.maybeSingle === 'function') {
+    const res = await touchQuery.maybeSingle();
+    touchData = res?.data;
+  } else if (typeof touchQuery.single === 'function') {
+    const res = await touchQuery.single().catch(() => ({ data: null }));
+    touchData = res?.data;
+  } else if (typeof touchQuery.then === 'function') {
+    const res = await touchQuery.catch(() => ({ data: null }));
+    touchData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+  }
+
+  const latestTouchStr = touchData?.updated_at || project.updated_at || new Date().toISOString();
+  const latestTouch = new Date(latestTouchStr);
+
+  const responseHeaders: Record<string, string> = {
+    'Last-Modified': latestTouch.toUTCString(),
+    'Cache-Control': 'private, no-cache',
+  };
+
+  if (ifModifiedSince) {
+    const imsDate = new Date(ifModifiedSince);
+    if (!isNaN(imsDate.getTime())) {
+      const imsSec = Math.floor(imsDate.getTime() / 1000);
+      const touchSec = Math.floor(latestTouch.getTime() / 1000);
+      if (imsSec >= touchSec || imsDate >= latestTouch) {
+        return new Response(null, {
+          status: 304,
+          headers: responseHeaders,
+        });
+      }
+    }
+  }
+
+  // Incremental Delta Logic
+  if (updatedSince) {
+    let deltaQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('project_id', project.id);
+
+    if (typeof deltaQuery.gt === 'function') {
+      deltaQuery = deltaQuery.gt('updated_at', updatedSince);
+    }
+    if (typeof deltaQuery.order === 'function') {
+      deltaQuery = deltaQuery.order('order_index', { ascending: true });
+    }
+
+    const { data: rawDeltaRows, error: deltaErr } = await deltaQuery;
+    if (deltaErr) {
+      return NextResponse.json({ error: deltaErr.message }, { status: 500 });
+    }
+
+    const allRows = (rawDeltaRows || []) as WorkItem[];
+    const items = allRows.filter((r) => !r.deleted_at);
+    const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        items,
+        deleted_ids,
+        latest_at: latestTouch.toISOString(),
+        is_delta: true,
+        count: items.length,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   // Query active work items (exclude soft-deleted)
@@ -226,7 +415,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: itemsErr.message }, { status: 500 });
   }
 
-  const items = (rawItems || []) as WorkItem[];
+  const allItems = (rawItems || []) as WorkItem[];
+
+  // Partition cold archive (completed > 14 days and not in active sprint)
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  const activeSprints = new Set(
+    (project?.settings?.sprint_settings?.sprints || [])
+      .filter((s: any) => s.status === 'active' || s.is_active || s.is_current)
+      .map((s: any) => s.id || s.name)
+  );
+
+  let items = allItems;
+  let coldCount = 0;
+  if (!includeColdArchive) {
+    items = allItems.filter((it) => {
+      if (it.status !== 'complete') return true;
+      const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
+      if (sprint && activeSprints.has(sprint)) return true;
+      return new Date(it.updated_at) >= fourteenDaysAgo;
+    });
+    coldCount = allItems.length - items.length;
+  }
 
   if (format === 'tree') {
     // Build nested tree
@@ -246,12 +455,19 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({
-      project: { id: project.id, slug: project.slug, name: project.name },
-      format: 'tree',
-      count: items.length,
-      tree: roots,
-    });
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        format: 'tree',
+        count: items.length,
+        tree: roots,
+        deleted_ids: [],
+        latest_at: latestTouch.toISOString(),
+        is_delta: false,
+        cold_count: coldCount,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   if (format === 'board') {
@@ -261,19 +477,33 @@ export async function GET(req: NextRequest) {
       items: items.filter(i => i.status === st.id),
     }));
 
-    return NextResponse.json({
-      project: { id: project.id, slug: project.slug, name: project.name },
-      format: 'board',
-      columns: board,
-    });
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        format: 'board',
+        columns: board,
+        deleted_ids: [],
+        latest_at: latestTouch.toISOString(),
+        is_delta: false,
+        cold_count: coldCount,
+      },
+      { headers: responseHeaders }
+    );
   }
 
-  return NextResponse.json({
-    project: { id: project.id, slug: project.slug, name: project.name },
-    format: 'flat',
-    count: items.length,
-    items,
-  });
+  return NextResponse.json(
+    {
+      project: { id: project.id, slug: project.slug, name: project.name },
+      format: 'flat',
+      count: items.length,
+      items,
+      deleted_ids: [],
+      latest_at: latestTouch.toISOString(),
+      is_delta: false,
+      cold_count: coldCount,
+    },
+    { headers: responseHeaders }
+  );
 }
 
 export async function POST(req: NextRequest) {
