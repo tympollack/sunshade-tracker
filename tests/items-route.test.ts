@@ -1011,4 +1011,276 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     expect(json.items[0].id).toBe('task-target-sprint-done');
     expect(json.cold_count).toBe(0);
   });
+
+  it('should resolve name-only sprint items when queried by sprint UUID', async () => {
+    const sprintDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const sprintUuid = '123e4567-e89b-12d3-a456-426614174000';
+    const items = [
+      {
+        id: 'task-named-sprint',
+        status: 'complete',
+        updated_at: sprintDate,
+        deleted_at: null,
+        metadata: { sprint: 'Sprint 2026-Q3' },
+      },
+      {
+        id: 'task-other-sprint',
+        status: 'complete',
+        updated_at: sprintDate,
+        deleted_at: null,
+        metadata: { sprint: 'Sprint 2026-Q2' },
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'sprints') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                or: vi.fn().mockResolvedValue({
+                  data: [{ id: sprintUuid, name: 'Sprint 2026-Q3' }],
+                  error: null,
+                }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: items, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: sprintDate }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: sprintDate }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest(`http://localhost:3000/api/v1/items?project_slug=portfolio&sprint_id=${sprintUuid}`, {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0].id).toBe('task-named-sprint');
+    expect(json.cold_count).toBe(0);
+  });
+
+  it('should cold partition items with custom completed status from closed sprints', async () => {
+    const oldDate = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString(); // 120 days ago
+    const customProject = {
+      ...mockProject,
+      settings: {
+        ...mockProject.settings,
+        statuses: [
+          { id: 'todo', label: 'To Do', is_completed: false },
+          { id: 'done', label: 'Done', is_completed: true },
+        ],
+      },
+    };
+
+    const items = [
+      {
+        id: 'task-done-old',
+        status: 'done',
+        updated_at: oldDate,
+        deleted_at: null,
+        metadata: { sprint: 'Closed Sprint' },
+      },
+      {
+        id: 'task-active',
+        status: 'todo',
+        updated_at: oldDate,
+        deleted_at: null,
+        metadata: { sprint: 'Closed Sprint' },
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: customProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'sprints') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                or: vi.fn().mockResolvedValue({ data: [], error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: items, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: oldDate }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: oldDate }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?project_slug=portfolio', {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    // Incomplete item remains, custom completed item 'done' from closed sprint is cold-partitioned
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0].id).toBe('task-active');
+    expect(json.cold_count).toBe(1);
+  });
+
+  it('should filter items by sprint_id in portfolio mode without returning entire archive', async () => {
+    const sprintDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const items = [
+      {
+        id: 'portfolio-task-target',
+        status: 'complete',
+        updated_at: sprintDate,
+        deleted_at: null,
+        metadata: { sprint_id: 'sprint-q3' },
+      },
+      {
+        id: 'portfolio-task-other',
+        status: 'complete',
+        updated_at: sprintDate,
+        deleted_at: null,
+        metadata: { sprint_id: 'sprint-q2' },
+      },
+    ];
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn().mockResolvedValue({ data: [mockProject], error: null }),
+              limit: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: sprintDate } }),
+              }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'sprints') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              or: vi.fn().mockResolvedValue({ data: [{ id: 'sprint-q3', name: 'Q3' }], error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let isTouchQuery = false;
+        const queryBuilder: any = {
+          select: vi.fn((fields: string) => {
+            if (fields === 'updated_at') isTouchQuery = true;
+            return queryBuilder;
+          }),
+          eq: vi.fn(() => queryBuilder),
+          is: vi.fn(() => queryBuilder),
+          order: vi.fn(() => {
+            if (isTouchQuery) return queryBuilder;
+            return Promise.resolve({ data: items, error: null });
+          }),
+          limit: vi.fn(() => queryBuilder),
+          single: vi.fn().mockResolvedValue({ data: { updated_at: sprintDate }, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: { updated_at: sprintDate }, error: null }),
+        };
+        return queryBuilder as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items?all_projects=true&sprint_id=sprint-q3&include_cold_archive=true', {
+      headers: { Authorization: 'Bearer tk_live_sunshade_master_key' },
+    });
+
+    const res = await getItemsHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0].id).toBe('portfolio-task-target');
+  });
 });

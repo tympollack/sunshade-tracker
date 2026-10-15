@@ -13,7 +13,11 @@ import {
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
 import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
-import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import {
+  isItemImmutableDueToCompletedSprint,
+  getCompletedStatusSet,
+  isItemCompleted,
+} from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
 
 /**
@@ -55,6 +59,62 @@ async function fetchAllRows<T = any>(queryBuilder: any): Promise<{ data: T[]; er
   }
 
   return { data: allData, error: null };
+}
+
+/**
+ * Resolves a sprint target string (either UUID or name) to a Set of matching
+ * identifiers across relational tracker.sprints and project settings.
+ */
+async function resolveSprintIdentifiers(
+  tenantId: string,
+  targetSprint: string,
+  projectId?: string,
+  projectSettings?: any
+): Promise<Set<string>> {
+  const ids = new Set<string>([targetSprint]);
+  try {
+    const sprintTable = supabaseAdmin.from('sprints');
+    if (sprintTable && typeof sprintTable.select === 'function') {
+      let query: any = sprintTable.select('id, name').eq('tenant_id', tenantId);
+      if (projectId && typeof query.eq === 'function') {
+        query = query.eq('project_id', projectId);
+      }
+      if (typeof query.or === 'function') {
+        query = query.or(`id.eq.${targetSprint},name.eq.${targetSprint}`);
+      }
+      const res = await query;
+      if (Array.isArray(res?.data)) {
+        res.data.forEach((r: any) => {
+          if (r.id) ids.add(String(r.id));
+          if (r.name) ids.add(String(r.name));
+        });
+      }
+    }
+  } catch {
+    // Non-fatal, check project settings sprints
+  }
+
+  // Check project settings sprint definitions
+  const settingsSprints = projectSettings?.sprint_settings?.sprints;
+  if (Array.isArray(settingsSprints)) {
+    settingsSprints.forEach((s: any) => {
+      if (s.id === targetSprint || s.name === targetSprint) {
+        if (s.id) ids.add(String(s.id));
+        if (s.name) ids.add(String(s.name));
+      }
+    });
+  }
+
+  return ids;
+}
+
+function isItemInTargetSprint(it: WorkItem, targetSet: Set<string>): boolean {
+  const sprintName = it.metadata?.sprint;
+  const sprintId = it.metadata?.sprint_id;
+  return Boolean(
+    (sprintName && targetSet.has(sprintName)) ||
+    (sprintId && targetSet.has(sprintId))
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -256,7 +316,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    const allPortfolioItems = (rawItems || []) as WorkItem[];
+    let allPortfolioItems = (rawItems || []) as WorkItem[];
+
+    // If a specific sprint is requested (e.g. for on-demand lazy loading in portfolio view), resolve and filter directly
+    const isTargetingSprint = Boolean(targetSprint);
+    let targetSprintSet = new Set<string>();
+    if (isTargetingSprint) {
+      targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!);
+      allPortfolioItems = allPortfolioItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
+    }
+
+    // Build project completion sets for workspace projects to support custom completion statuses
+    const projectCompletionMap = new Map<string, Set<string>>();
+    try {
+      const projTable = supabaseAdmin.from('projects');
+      if (projTable && typeof projTable.select === 'function') {
+        let projsQuery: any = projTable.select('id, settings').eq('tenant_id', authCtx.tenant.id);
+        if (typeof projsQuery.is === 'function') {
+          projsQuery = projsQuery.is('deleted_at', null);
+        }
+        const { data: tenantProjects } = await projsQuery;
+        if (Array.isArray(tenantProjects)) {
+          tenantProjects.forEach((p: any) => {
+            projectCompletionMap.set(p.id, getCompletedStatusSet(p.settings?.statuses));
+          });
+        }
+      }
+    } catch {
+      // Non-fatal, fallback to default completed statuses
+    }
+
+    const isCompletedPortfolioItem = (it: WorkItem): boolean => {
+      const completionSet = it.project_id ? projectCompletionMap.get(it.project_id) : undefined;
+      return isItemCompleted(it.status, completionSet);
+    };
 
     // Cadence-aware cold partitioning: Active sprint tasks are never cold.
     // Tasks completed within the active sprint lifecycle or workspace cadence are retained.
@@ -264,27 +357,29 @@ export async function GET(req: NextRequest) {
     let earliestActiveSprintStartMs: number | null = null;
 
     try {
-      let sprintQuery: any = supabaseAdmin
-        .from('sprints')
-        .select('id, name, started_at, created_at, status, is_active')
-        .eq('tenant_id', authCtx.tenant.id);
+      const sprintTable = supabaseAdmin.from('sprints');
+      if (sprintTable && typeof sprintTable.select === 'function') {
+        let sprintQuery: any = sprintTable
+          .select('id, name, started_at, created_at, status, is_active')
+          .eq('tenant_id', authCtx.tenant.id);
 
-      if (typeof sprintQuery.or === 'function') {
-        sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
-      }
+        if (typeof sprintQuery.or === 'function') {
+          sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+        }
 
-      const { data: activeSprintRows } = await sprintQuery;
-      if (activeSprintRows && Array.isArray(activeSprintRows)) {
-        activeSprintRows.forEach((s: any) => {
-          if (s.id) activeSprints.add(s.id);
-          if (s.name) activeSprints.add(s.name);
-          const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
-          if (!isNaN(sTime)) {
-            if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
-              earliestActiveSprintStartMs = sTime;
+        const { data: activeSprintRows } = await sprintQuery;
+        if (activeSprintRows && Array.isArray(activeSprintRows)) {
+          activeSprintRows.forEach((s: any) => {
+            if (s.id) activeSprints.add(s.id);
+            if (s.name) activeSprints.add(s.name);
+            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+            if (!isNaN(sTime)) {
+              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+                earliestActiveSprintStartMs = sTime;
+              }
             }
-          }
-        });
+          });
+        }
       }
     } catch {
       // Non-fatal, fallback to default cadence
@@ -300,9 +395,9 @@ export async function GET(req: NextRequest) {
 
     let items = allPortfolioItems;
     let coldCount = 0;
-    if (!includeColdArchive) {
+    if (!includeColdArchive && !isTargetingSprint) {
       items = allPortfolioItems.filter((it) => {
-        if (it.status !== 'complete') return true;
+        if (!isCompletedPortfolioItem(it)) return true;
         const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
         if (sprint) {
           // If assigned to a sprint, only active sprint items remain in initial memory;
@@ -545,10 +640,10 @@ export async function GET(req: NextRequest) {
 
   // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
   const isTargetingSprint = Boolean(targetSprint);
+  let targetSprintSet = new Set<string>();
   if (isTargetingSprint) {
-    allItems = allItems.filter(
-      (it) => it.metadata?.sprint === targetSprint || it.metadata?.sprint_id === targetSprint
-    );
+    targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!, project.id, project.settings);
+    allItems = allItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
   }
 
   // Sprint lifecycle-aware cold partitioning:
@@ -558,30 +653,32 @@ export async function GET(req: NextRequest) {
   let earliestActiveSprintStartMs: number | null = null;
 
   try {
-    let sprintQuery: any = supabaseAdmin
-      .from('sprints')
-      .select('id, name, started_at, created_at, status, is_active')
-      .eq('tenant_id', authCtx.tenant.id)
-      .eq('project_id', project.id);
+    const sprintTable = supabaseAdmin.from('sprints');
+    if (sprintTable && typeof sprintTable.select === 'function') {
+      let sprintQuery: any = sprintTable
+        .select('id, name, started_at, created_at, status, is_active')
+        .eq('tenant_id', authCtx.tenant.id)
+        .eq('project_id', project.id);
 
-    if (typeof sprintQuery.or === 'function') {
-      sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
-    }
+      if (typeof sprintQuery.or === 'function') {
+        sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+      }
 
-    const { data: relationalSprints } = await sprintQuery;
-    if (relationalSprints && Array.isArray(relationalSprints)) {
-      relationalSprints.forEach((s: any) => {
-        if (s.status === 'active' || s.is_active) {
-          if (s.id) activeSprints.add(s.id);
-          if (s.name) activeSprints.add(s.name);
-          const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
-          if (!isNaN(sTime)) {
-            if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
-              earliestActiveSprintStartMs = sTime;
+      const { data: relationalSprints } = await sprintQuery;
+      if (relationalSprints && Array.isArray(relationalSprints)) {
+        relationalSprints.forEach((s: any) => {
+          if (s.status === 'active' || s.is_active) {
+            if (s.id) activeSprints.add(s.id);
+            if (s.name) activeSprints.add(s.name);
+            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+            if (!isNaN(sTime)) {
+              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+                earliestActiveSprintStartMs = sTime;
+              }
             }
           }
-        }
-      });
+        });
+      }
     }
   } catch {
     // Non-fatal, fallback to project settings
@@ -613,11 +710,13 @@ export async function GET(req: NextRequest) {
     ? Date.now() - projectCadenceDays * 24 * 60 * 60 * 1000
     : defaultNonSprintProjectCutoffMs;
 
+  const projectCompletedStatuses = getCompletedStatusSet(project?.settings?.statuses);
+
   let items = allItems;
   let coldCount = 0;
   if (!includeColdArchive && !isTargetingSprint) {
     items = allItems.filter((it) => {
-      if (it.status !== 'complete') return true;
+      if (!isItemCompleted(it.status, projectCompletedStatuses)) return true;
       const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
       if (sprint) {
         // If assigned to a sprint, only active sprint items remain in initial memory;

@@ -256,6 +256,49 @@ describe('TASK-TRK-SPRINT-RELATIONAL-CRUD-API: Relational tracker.sprints API & 
       expect(capturedUpdatePayload.metadata.summary.velocity).toBe(13);
       expect(capturedUpdatePayload.metadata.summary.closed_at).toBeDefined();
     });
+
+    it('does not trigger backfill on filtered listSprints when relational sprints already exist for the project', async () => {
+      const mockInsert = vi.fn();
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'sprints') {
+          return {
+            select: vi.fn((fields: string) => {
+              if (fields === 'id') {
+                // Return an existing sprint indicating relational sprints exist
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockResolvedValue({ data: [{ id: 'existing-sprint-id' }], error: null }),
+                    }),
+                  }),
+                };
+              }
+              // Main query returns empty (e.g. no completed sprints match)
+              return {
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockReturnValue({
+                      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              };
+            }),
+            insert: mockInsert,
+          };
+        }
+        return {};
+      });
+
+      const res = await SprintRelationalService.listSprints(tenantId, {
+        projectId: 'proj-1',
+        status: 'completed',
+      });
+
+      expect(res.error).toBeNull();
+      expect(res.data).toEqual([]);
+      expect(mockInsert).not.toHaveBeenCalled();
+    });
   });
 
   describe('API Routes: /api/v1/sprints and /api/v1/sprints/[sprintId]', () => {

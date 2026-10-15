@@ -198,43 +198,68 @@ export class SprintRelationalService {
 
       query = query.order('created_at', { ascending: false });
 
-      const { data, error } = await query;
+      let { data, error } = await query;
       if (error) {
         return { data: null, error: error.message };
       }
 
       if ((!data || data.length === 0) && options?.projectId) {
-        // Backfill legacy JSON project settings sprints into tracker.sprints table
+        // Backfill legacy JSON project settings sprints into tracker.sprints table ONLY if
+        // the project has zero relational sprints in the database (prevents filtered reads from duplicating sprints)
         try {
-          const { data: proj } = await supabaseAdmin
-            .from('projects')
-            .select('settings')
-            .eq('id', options.projectId)
+          const { data: existingAny } = await supabaseAdmin
+            .from('sprints')
+            .select('id')
             .eq('tenant_id', tenantId)
-            .maybeSingle();
+            .eq('project_id', options.projectId)
+            .limit(1);
 
-          const legacySprints = proj?.settings?.sprint_settings?.sprints;
-          if (Array.isArray(legacySprints) && legacySprints.length > 0) {
-            const toInsert = legacySprints.map((s: any) => ({
-              tenant_id: tenantId,
-              project_id: options.projectId,
-              name: s.name,
-              goal: s.goal || null,
-              status: s.status || (s.is_active ? 'active' : 'planned'),
-              is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
-              started_at: s.started_at || s.start_date || (s.is_active ? new Date().toISOString() : null),
-              ends_at: s.ends_at || s.end_date || null,
-              committed_points: Number(s.committed_points) || 0,
-              metadata: s.metadata || {},
-            }));
+          if (!existingAny || existingAny.length === 0) {
+            const { data: proj } = await supabaseAdmin
+              .from('projects')
+              .select('settings')
+              .eq('id', options.projectId)
+              .eq('tenant_id', tenantId)
+              .maybeSingle();
 
-            const { data: inserted } = await supabaseAdmin
-              .from('sprints')
-              .insert(toInsert)
-              .select('*');
+            const legacySprints = proj?.settings?.sprint_settings?.sprints;
+            if (Array.isArray(legacySprints) && legacySprints.length > 0) {
+              const toInsert = legacySprints.map((s: any) => ({
+                tenant_id: tenantId,
+                project_id: options.projectId,
+                name: s.name,
+                goal: s.goal || null,
+                status: s.status || (s.is_active ? 'active' : 'planned'),
+                is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
+                started_at: s.started_at || s.start_date || (s.is_active ? new Date().toISOString() : null),
+                ends_at: s.ends_at || s.end_date || null,
+                committed_points: Number(s.committed_points) || 0,
+                metadata: s.metadata || {},
+              }));
 
-            if (inserted && inserted.length > 0) {
-              return { data: inserted as RelationalSprintRecord[], error: null };
+              await supabaseAdmin
+                .from('sprints')
+                .insert(toInsert);
+
+              // Re-run original query with caller's filter options
+              let refetchQuery = supabaseAdmin
+                .from('sprints')
+                .select('*')
+                .eq('tenant_id', tenantId);
+
+              if (options?.projectId) {
+                refetchQuery = refetchQuery.eq('project_id', options.projectId);
+              }
+              if (options?.status) {
+                refetchQuery = refetchQuery.eq('status', options.status);
+              }
+              if (options?.isActive !== undefined) {
+                refetchQuery = refetchQuery.eq('is_active', options.isActive);
+              }
+              refetchQuery = refetchQuery.order('created_at', { ascending: false });
+
+              const { data: refetchedData } = await refetchQuery;
+              data = refetchedData || [];
             }
           }
         } catch {
