@@ -90,6 +90,9 @@ export interface BoardViewContainerProps {
   boardOrientation?: 'columns' | 'stack';
   onOrientationChange?: (mode: 'columns' | 'stack') => void;
   getItemProjectSettings?: (item: WorkItem) => ProjectSettings;
+  coldCount?: number;
+  isLoadingColdArchive?: boolean;
+  onLoadColdArchive?: () => Promise<void> | void;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -157,6 +160,9 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     unmappedItems = [],
     draggedItem,
     getItemProjectSettings,
+    coldCount = 0,
+    isLoadingColdArchive = false,
+    onLoadColdArchive,
   } = props;
 
   const [internalOrientation, setInternalOrientation] = React.useState<'columns' | 'stack'>(() => {
@@ -430,6 +436,32 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                     )}
                   </div>
                 </div>
+
+                {/* Cold Archive Partition Banner (TASK-TRK-COLD-ARCHIVE-PARTITION) */}
+                {(col.id === 'complete' || col.label?.toLowerCase() === 'complete') && coldCount > 0 && !isCollapsedUp && (
+                  <div
+                    data-testid="cold-archive-banner"
+                    className="mx-3 my-2 px-3 py-2 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 shrink-0"
+                  >
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      Showing recent (last 14d)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onLoadColdArchive?.();
+                      }}
+                      disabled={isLoadingColdArchive}
+                      data-testid="load-older-completed-btn"
+                      className="text-[11px] text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap disabled:opacity-50 transition-colors underline cursor-pointer"
+                    >
+                      {isLoadingColdArchive
+                        ? 'Loading older tasks...'
+                        : `Load older completed tasks (${coldCount} items)`}
+                    </button>
+                  </div>
+                )}
 
                 {/* Inline Quick Add Input */}
                 {quickAddColId === col.id && !isReadOnly && (
