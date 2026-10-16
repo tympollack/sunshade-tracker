@@ -37,20 +37,19 @@ export class ProjectViewErrorBoundary extends Component<
     console.error('ProjectViewErrorBoundary caught a schema rendering exception:', error, errorInfo);
   }
 
-  handleReset = () => {
-    this.setState({ hasError: false, error: null });
+  handleReset = async () => {
     if (this.props.onResetToDefault) {
       try {
-        const res = this.props.onResetToDefault();
-        if (res && typeof (res as any).catch === 'function') {
-          (res as Promise<void>).catch((err) => {
-            console.error('Failed to reset project schema to default:', err);
-          });
-        }
+        await this.props.onResetToDefault();
       } catch (err) {
         console.error('Failed to reset project schema to default:', err);
       }
     }
+    this.setState({ hasError: false, error: null });
+  };
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
   };
 
   render() {
@@ -71,7 +70,7 @@ export class ProjectViewErrorBoundary extends Component<
               </h3>
               <p className="text-xs text-slate-300 leading-relaxed">
                 A schema hydration or structure mismatch prevented this view from rendering cleanly.
-                You can restore the project schema to SunShade baseline defaults with 1 click.
+                You can retry rendering the view or restore the project schema to SunShade baseline defaults.
               </p>
             </div>
           </div>
@@ -83,6 +82,14 @@ export class ProjectViewErrorBoundary extends Component<
           )}
 
           <div className="flex items-center space-x-3 pt-2">
+            <button
+              type="button"
+              data-testid="retry-view-btn"
+              onClick={this.handleRetry}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition-all border border-slate-700 active:scale-95"
+            >
+              <span>Retry View</span>
+            </button>
             <button
               type="button"
               data-testid="reset-schema-to-default-btn"

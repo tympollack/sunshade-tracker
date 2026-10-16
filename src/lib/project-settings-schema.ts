@@ -12,7 +12,7 @@ export const HierarchyLevelSchema = z.object({
   level: z
     .number({ required_error: 'Level is required' })
     .int('Level must be an integer')
-    .min(1, 'Level must be >= 1'),
+    .min(0, 'Level must be >= 0'),
   allowed_parents: z.array(z.string(), {
     required_error: 'allowed_parents must be an array of string types',
   }),
@@ -76,18 +76,19 @@ export const ProjectSettingsSchema = z
       .array(CustomFieldSchema, {
         invalid_type_error: 'custom_fields must be an array',
       })
+      .nullable()
       .optional()
       .default([]),
-    custom_metadata_fields: z.array(z.any()).optional(),
-    work_metric_config: WorkMetricConfigSchema.optional(),
-    work_unit_field: z.string().optional(),
-    sprint_settings: z.record(z.any()).optional(),
-    sprint_metrics: z.record(z.any()).optional(),
-    metric_rules: z.record(z.any()).optional(),
+    custom_metadata_fields: z.array(z.any()).nullable().optional(),
+    work_metric_config: WorkMetricConfigSchema.nullable().optional(),
+    work_unit_field: z.string().nullable().optional(),
+    sprint_settings: z.record(z.any()).nullable().optional(),
+    sprint_metrics: z.record(z.any()).nullable().optional(),
+    metric_rules: z.record(z.any()).nullable().optional(),
     github_repo: z.string().nullable().optional(),
     repository_url: z.string().nullable().optional(),
-    automations: z.array(z.any()).optional(),
-    templates: z.any().optional(),
+    automations: z.array(z.any()).nullable().optional(),
+    templates: z.any().nullable().optional(),
   })
   .passthrough();
 
@@ -153,7 +154,7 @@ export function lintProjectSettings(settings: unknown): {
     seenHierarchy.add(h.type);
 
     (h.allowed_parents || []).forEach((parentType) => {
-      if (!validHierarchyTypes.has(parentType)) {
+      if (parentType !== 'none' && parentType !== '' && !validHierarchyTypes.has(parentType)) {
         errors.push({
           path: `hierarchy[${idx}].allowed_parents`,
           message: `Referenced parent type "${parentType}" does not exist in hierarchy`,

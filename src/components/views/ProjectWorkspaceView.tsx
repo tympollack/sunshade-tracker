@@ -1167,10 +1167,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   };
 
   const handleResetSchemaToDefault = useCallback(async () => {
+    setProjectSettings(DEFAULT_PROJECT_SETTINGS);
     try {
       await handleSaveSchema(DEFAULT_PROJECT_SETTINGS);
-    } catch {
-      setProjectSettings(DEFAULT_PROJECT_SETTINGS);
+    } catch (err) {
+      console.error('Failed to persist reset default schema:', err);
     }
   }, [handleSaveSchema]);
 
@@ -3558,7 +3559,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   onLazyLoadSprint={handleLazyLoadSprint}
                 />
               )}
-              </ProjectViewErrorBoundary>
 
               {activeTab === 'spark' && (
                 <SparkViewContainer
@@ -3616,6 +3616,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   }
                 />
               )}
+              </ProjectViewErrorBoundary>
             </div>
           </div>
         }

@@ -86,6 +86,33 @@ describe('FEAT-TRK-SCHEMA-EDITOR-LINTER: Client-side Zod Validation & Schema Lin
       ).toBe(true);
     });
 
+    it('accepts root-parent sentinels "none" and "" in allowed_parents', () => {
+      const rootSentinels: ProjectSettings = {
+        ...validSettings,
+        hierarchy: [
+          { type: 'project', label: 'Project', level: 0, allowed_parents: ['none'] },
+          { type: 'epic', label: 'Epic', level: 1, allowed_parents: [''] },
+        ],
+      };
+      const result = lintProjectSettings(rootSentinels);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('accepts null for optional settings fields like sprint_metrics and work_metric_config', () => {
+      const nullableSettings = {
+        ...validSettings,
+        sprint_metrics: null,
+        work_metric_config: null,
+        work_unit_field: null,
+        github_repo: null,
+        automations: null,
+      };
+      const result = lintProjectSettings(nullableSettings);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
     it('rejects duplicate status IDs', () => {
       const duplicateStatuses: ProjectSettings = {
         ...validSettings,

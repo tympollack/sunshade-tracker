@@ -62,7 +62,7 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
             : type.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
 
         const level =
-          typeof h.level === 'number' && !isNaN(h.level) && h.level > 0
+          typeof h.level === 'number' && !isNaN(h.level) && h.level >= 0
             ? Math.floor(h.level)
             : idx + 1;
 
@@ -122,7 +122,7 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
         const is_completed =
           typeof s.is_completed === 'boolean'
             ? s.is_completed
-            : id === 'complete' || id === 'done' || id === 'closed';
+            : id === 'complete' || id === 'done' || id === 'closed' || id === 'published';
 
         return {
           id,
@@ -136,40 +136,6 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
 
   if (normalizedStatuses.length === 0) {
     normalizedStatuses = baseClone.statuses;
-  }
-
-  // 4. Baseline Status Guard: ensure 'not_started' and 'complete' exist
-  const hasNotStarted = normalizedStatuses.some(
-    (s) => s.id.toLowerCase() === 'not_started'
-  );
-  if (!hasNotStarted) {
-    const minOrder = normalizedStatuses.reduce(
-      (min, s) => (s.order < min ? s.order : min),
-      normalizedStatuses[0]?.order ?? 1
-    );
-    normalizedStatuses.unshift({
-      id: 'not_started',
-      label: 'Not Started',
-      color: '#94a3b8',
-      order: Math.max(1, minOrder - 1),
-    });
-  }
-
-  const hasComplete = normalizedStatuses.some(
-    (s) => s.id.toLowerCase() === 'complete' || s.is_completed
-  );
-  if (!hasComplete) {
-    const maxOrder = normalizedStatuses.reduce(
-      (max, s) => (s.order > max ? s.order : max),
-      normalizedStatuses[0]?.order ?? 1
-    );
-    normalizedStatuses.push({
-      id: 'complete',
-      label: 'Complete',
-      color: '#22c55e',
-      order: maxOrder + 1,
-      is_completed: true,
-    });
   }
 
   // 5. Custom Fields
