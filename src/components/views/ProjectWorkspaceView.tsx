@@ -38,6 +38,7 @@ import {
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 import { bulkReassignProjects } from '@/app/actions/trackerActions';
 import { saveModalItem } from '@/lib/save-modal-item';
+import { parseResilientJson } from '@/lib/jsonSanitizer';
 import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation } from '@/lib/sync-channel';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -2944,13 +2945,20 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return () => window.removeEventListener('keydown', handleSearchKeyDown);
   }, []);
 
-  const handleRunSparkIngest = async () => {
+  const handleRunSparkIngest = async (preParsedPayload?: any) => {
     if (isReadOnly) return;
     setIsIngesting(true);
     setIngestResponse(null);
     setLastIngestedItemIds(null);
     try {
-      const parsed = JSON.parse(sparkPayload);
+      let parsed = preParsedPayload;
+      if (!parsed) {
+        const parseResult = parseResilientJson(sparkPayload);
+        if (!parseResult.success) {
+          throw new Error(parseResult.error || 'Failed to parse JSON payload');
+        }
+        parsed = parseResult.data;
+      }
       if (sparkOverrideProject) {
         parsed.override_project_slug = sparkOverrideProject;
       }
@@ -3574,11 +3582,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   isIngesting={isIngesting}
                   handleRunSparkIngest={handleRunSparkIngest}
                   ingestResponse={ingestResponse}
+                  setIngestResponse={setIngestResponse}
                   ingestedAffectedItemCount={ingestedAffectedItemCount}
                   onOpenReconciliation={() => {
                     setFocusedDeviationId(null);
                     setIsReconciliationModalOpen(true);
                   }}
+                  onRefresh={fetchData}
                 />
               )}
 
