@@ -12,10 +12,23 @@ import {
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { ProjectSettingsSchema, lintProjectSettings } from '@/lib/project-settings-schema';
+import {
+  isLateInflowEnforced,
+  disableLateInflowCaps,
+  enableLateInflowCaps,
+  getEffectiveLateInflowRules,
+} from '@/lib/governance/sprint-rules';
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
 
-export { ProjectSettingsSchema, lintProjectSettings };
+export {
+  ProjectSettingsSchema,
+  lintProjectSettings,
+  isLateInflowEnforced,
+  disableLateInflowCaps,
+  enableLateInflowCaps,
+  getEffectiveLateInflowRules,
+};
 
 export interface ProjectSchemaEditorProps {
   settings: ProjectSettings;

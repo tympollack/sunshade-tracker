@@ -100,6 +100,59 @@ describe('TASK-TRK-GOVERNANCE-METRICS-FORM: SprintGovernanceForm', () => {
       expect.objectContaining({ lock_estimates: false, lock_estimates_in_active_sprint: false })
     );
   });
+
+  it('toggles Enforce Late Inflow & Runway Caps to null when disabled and restores when enabled', () => {
+    const handleChange = vi.fn();
+    render(<SprintGovernanceForm metrics={baseSettings.sprint_metrics} onChange={handleChange} />);
+
+    expect(screen.getByText('Enforce Late Inflow & Runway Caps')).toBeDefined();
+    const inflowSwitch = screen.getByRole('switch', { name: /toggle enforce late inflow & runway caps/i });
+    expect(inflowSwitch.getAttribute('aria-checked')).toBe('true');
+
+    // Toggle off -> sets late_inflow_cap: null and runway_cutoff: null
+    fireEvent.click(inflowSwitch);
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        late_inflow_cap: null,
+        runway_cutoff: null,
+        late_runway_max_points: null,
+        late_runway_threshold: null,
+        enforce_late_inflow_caps: false,
+      })
+    );
+  });
+
+  it('disables Runway Cutoff and Late Inflow Cap inputs when late inflow enforcement is disabled', () => {
+    const disabledMetrics = {
+      ...baseSettings.sprint_metrics,
+      late_inflow_cap: null,
+      runway_cutoff: null,
+      late_runway_max_points: null,
+      late_runway_threshold: null,
+      enforce_late_inflow_caps: false,
+    };
+    const handleChange = vi.fn();
+    render(<SprintGovernanceForm metrics={disabledMetrics} onChange={handleChange} />);
+
+    const inflowSwitch = screen.getByRole('switch', { name: /toggle enforce late inflow & runway caps/i });
+    expect(inflowSwitch.getAttribute('aria-checked')).toBe('false');
+
+    const lateCapInput = screen.getByLabelText('Late Inflow Cap') as HTMLInputElement;
+    expect(lateCapInput.disabled).toBe(true);
+
+    const runwaySlider = screen.getByLabelText('Runway Cutoff Slider') as HTMLInputElement;
+    expect(runwaySlider.disabled).toBe(true);
+
+    // Toggle back on
+    fireEvent.click(inflowSwitch);
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        late_inflow_cap: 2,
+        runway_cutoff: 0.6,
+        enforce_late_inflow_caps: true,
+      })
+    );
+  });
 });
 
 describe('TASK-TRK-TAXONOMY-TAG-EDITORS: TaxonomyConfigEditor', () => {

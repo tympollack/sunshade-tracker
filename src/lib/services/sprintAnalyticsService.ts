@@ -46,6 +46,9 @@ export const DEFAULT_METRIC_RULES: Required<MetricRules> = {
   reliability_warning_threshold: 70,
   late_runway_threshold: 0.60,
   late_runway_max_points: 2,
+  late_inflow_cap: 2,
+  runway_cutoff: 0.60,
+  enforce_late_inflow_caps: true,
   feature_story_types: ['story', 'feature'],
   allowed_late_types: ['chore', 'task', 'debt', 'documentation', 'doc', 'test', 'bug'],
   enforce_zero_sum: true,
@@ -92,15 +95,38 @@ export function resolveMetricRules(settingsOrObject?: any): Required<MetricRules
     if (typeof rawRules.reliability_warning_threshold === 'number') {
       resolved.reliability_warning_threshold = rawRules.reliability_warning_threshold;
     }
-    if (
+    if (rawRules.late_runway_threshold === null || rawRules.runway_cutoff === null) {
+      resolved.late_runway_threshold = null;
+      resolved.runway_cutoff = null;
+    } else if (
       typeof rawRules.late_runway_threshold === 'number' &&
       rawRules.late_runway_threshold >= 0 &&
       rawRules.late_runway_threshold <= 1
     ) {
       resolved.late_runway_threshold = rawRules.late_runway_threshold;
+      resolved.runway_cutoff = rawRules.late_runway_threshold;
+    } else if (
+      typeof rawRules.runway_cutoff === 'number' &&
+      rawRules.runway_cutoff >= 0 &&
+      rawRules.runway_cutoff <= 1
+    ) {
+      resolved.late_runway_threshold = rawRules.runway_cutoff;
+      resolved.runway_cutoff = rawRules.runway_cutoff;
     }
-    if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
+
+    if (rawRules.late_runway_max_points === null || rawRules.late_inflow_cap === null) {
+      resolved.late_runway_max_points = null;
+      resolved.late_inflow_cap = null;
+    } else if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
       resolved.late_runway_max_points = rawRules.late_runway_max_points;
+      resolved.late_inflow_cap = rawRules.late_runway_max_points;
+    } else if (typeof rawRules.late_inflow_cap === 'number' && rawRules.late_inflow_cap >= 0) {
+      resolved.late_runway_max_points = rawRules.late_inflow_cap;
+      resolved.late_inflow_cap = rawRules.late_inflow_cap;
+    }
+
+    if (typeof rawRules.enforce_late_inflow_caps === 'boolean') {
+      resolved.enforce_late_inflow_caps = rawRules.enforce_late_inflow_caps;
     }
     if (Array.isArray(rawRules.feature_story_types)) {
       resolved.feature_story_types = rawRules.feature_story_types.map((s: any) => String(s).toLowerCase().trim());
@@ -180,8 +206,8 @@ export interface SprintHealthReport {
   wipAgeDays: number;
   runwayElapsedRatio: number;
   runwayLocked: boolean;
-  runwayCutoffRatio: number;
-  runwayMaxPoints: number;
+  runwayCutoffRatio: number | null;
+  runwayMaxPoints: number | null;
   capacityRemaining: number;
   velocityTrend: 'increasing' | 'stable' | 'decreasing';
   rules: Required<MetricRules>;
@@ -532,7 +558,11 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     }
   }
 
-  const runwayLocked = isActive && runwayElapsedRatio > rules.late_runway_threshold;
+  const isRunwayEnforced =
+    rules.late_runway_threshold !== null &&
+    rules.late_inflow_cap !== null &&
+    rules.enforce_late_inflow_caps !== false;
+  const runwayLocked = isActive && isRunwayEnforced && runwayElapsedRatio > (rules.late_runway_threshold ?? 1.0);
   const capacityRemaining = Math.max(0, committed - totalCurrentPoints);
 
   return {
