@@ -129,16 +129,16 @@ export async function runPreRenewalDbAudit(options?: { strict?: boolean }): Prom
   metrics.push({
     category: 'security_rls',
     name: 'Row Level Security (RLS) Policy Coverage Across App Schemas',
-    status: 'passed',
-    details: 'All tables in tracker, cozy, valerie, patchwork, and hub have RLS enabled with explicit tenant and owner policies',
+    status: 'unverified',
+    details: 'Live RLS policy inspection unverified without direct PostgreSQL information_schema query access',
     metricValue: missingRls,
   });
 
   metrics.push({
     category: 'index_health',
     name: 'Foreign Key & Relationship Index Health',
-    status: 'passed',
-    details: 'Foreign key columns across tracker.work_items, comments, and tenant memberships are backed by indexes',
+    status: 'unverified',
+    details: 'Foreign key index inspection unverified without direct PostgreSQL pg_index catalog query access',
     metricValue: unindexedFks,
   });
 
@@ -184,8 +184,8 @@ export async function runPreRenewalDbAudit(options?: { strict?: boolean }): Prom
     ``,
     `## Executive Summary`,
     `- **Storage Measurement:** ${report.summary.storageMeasured ? report.summary.totalDatabasePretty : 'UNVERIFIED (Requires SUPABASE_SERVICE_ROLE_KEY)'} (Ceiling: 500 MB, Warning Threshold: ${report.summary.warningThresholdPretty})`,
-    `- **Missing RLS Violations:** ${report.summary.missingRlsCount}`,
-    `- **Unindexed Foreign Keys:** ${report.summary.unindexedForeignKeysCount}`,
+    `- **Missing RLS Violations:** ${metrics.find((m) => m.category === 'security_rls')?.status === 'unverified' ? 'UNVERIFIED (Requires direct PostgreSQL catalog query access)' : report.summary.missingRlsCount}`,
+    `- **Unindexed Foreign Keys:** ${metrics.find((m) => m.category === 'index_health')?.status === 'unverified' ? 'UNVERIFIED (Requires direct PostgreSQL pg_index catalog query access)' : report.summary.unindexedForeignKeysCount}`,
     `- **Connection Pool Status:** ${report.summary.activeConnectionsCount ? 'Active & Responsive' : 'Unverified (Offline)'}`,
     ``,
     `## Advisor & Metric Findings`,

@@ -151,10 +151,12 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
         availableSprintDefs.find((s: any) => s.name === name || s.id === name) ||
         projectSettings.sprint_settings?.sprints?.find((s: any) => s.name === name || s.id === name);
       if (def?.status === 'completed') {
-        const hasItems = items.some(
+        const loadedCount = items.filter(
           (it) => it.metadata?.sprint === name || it.metadata?.sprint_id === name || (def && it.metadata?.sprint_id === def.id)
-        );
-        if (!hasItems) {
+        ).length;
+        const totalTasks = def.metadata?.summary?.total_tasks;
+        const hasUnloaded = totalTasks !== undefined ? loadedCount < totalTasks : loadedCount === 0;
+        if (hasUnloaded) {
           handleLazyLoadSprint(def.id || name);
         }
       }
@@ -355,7 +357,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const sprintItems = filterSprintItems(rawSprintItems);
           const isCompletedSprint = sprintDef?.status === 'completed';
           const summary = sprintDef?.metadata?.summary;
-          const isUsingFrozenSummary = sprintItems.length === 0 && Boolean(summary);
+          const hasUnloadedTasks = Boolean(isCompletedSprint && summary && summary.total_tasks > rawSprintItems.length);
+          const isUsingFrozenSummary = (rawSprintItems.length === 0 || hasUnloadedTasks) && Boolean(summary);
 
           const leafPoints = calculateSprintLeafPoints(sprintItems, projectSettings);
           const macroPoints = calculateSprintMacroPoints(sprintItems, projectSettings);
@@ -645,6 +648,29 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         />
                       );
                     })
+                  )}
+                  {hasUnloadedTasks && sprintItems.length > 0 && onLazyLoadSprint && (
+                    <div
+                      className="p-3.5 bg-slate-900/60 border-t border-slate-800/80 text-center text-xs text-slate-400 flex flex-wrap items-center justify-between gap-2 px-6"
+                      data-testid={`sprint-partial-lazy-banner-${sprintName}`}
+                    >
+                      <span className="text-slate-400">
+                        Showing {sprintItems.length} active work items ({summary.total_tasks - rawSprintItems.length} completed items archived).
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleLazyLoadSprint(sprintDef?.id || sprintName)}
+                        disabled={loadingSprints.has(sprintDef?.id || sprintName)}
+                        className="px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-medium text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                        data-testid={`lazy-load-btn-${sprintName}`}
+                      >
+                        {loadingSprints.has(sprintDef?.id || sprintName) ? (
+                          <span>Loading items...</span>
+                        ) : (
+                          <span>Load {summary.total_tasks - rawSprintItems.length} Archived Items</span>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

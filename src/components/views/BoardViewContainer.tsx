@@ -19,7 +19,7 @@ import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect'
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
-import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
 
 export interface BoardViewContainerProps {
   hiddenBoardItems: WorkItem[];
@@ -188,6 +188,21 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
       }
     }
   };
+
+  const completionSet = React.useMemo(() => {
+    return getCompletedStatusSet(props.projectSettings?.statuses);
+  }, [props.projectSettings?.statuses]);
+
+  const targetColdColId = React.useMemo(() => {
+    const found = displayedStatuses.find(
+      (c) =>
+        completionSet.has(c.id.toLowerCase().trim()) ||
+        c.id === 'complete' ||
+        c.label?.toLowerCase() === 'complete' ||
+        Boolean(c.is_completed)
+    );
+    return found ? found.id : displayedStatuses[displayedStatuses.length - 1]?.id;
+  }, [displayedStatuses, completionSet]);
 
   return (
     <div className="space-y-4">
@@ -438,7 +453,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 </div>
 
                 {/* Cold Archive Partition Banner (TASK-TRK-COLD-ARCHIVE-PARTITION) */}
-                {(col.id === 'complete' || col.label?.toLowerCase() === 'complete') && coldCount > 0 && !isCollapsedUp && (
+                {col.id === targetColdColId && coldCount > 0 && !isCollapsedUp && (
                   <div
                     data-testid="cold-archive-banner"
                     className="mx-3 my-2 px-3 py-2 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 shrink-0"

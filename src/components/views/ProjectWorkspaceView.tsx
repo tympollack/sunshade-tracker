@@ -811,6 +811,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setDismissedBoardDeviationBanner(false);
     lastSprintInitializedProjectRef.current = null;
     hasLoadedColdArchiveRef.current = false;
+    lastSyncedAtRef.current = null;
   }, [projectSlug]);
 
   // Drag & Drop

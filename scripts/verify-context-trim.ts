@@ -21,7 +21,11 @@ export function auditWorkspaceContextTokens(): {
   const root = process.cwd();
   const ruleFiles = [
     path.join(root, '.antigravityrules'),
-    path.join(process.env.USERPROFILE || 'C:\\Users\\Tymz', '.gemini', 'GEMINI.md'),
+    path.join(root, '.cursorrules'),
+    path.join(root, '.windsurfrules'),
+    ...(process.env.USERPROFILE || process.env.HOME
+      ? [path.join(process.env.USERPROFILE || process.env.HOME || '', '.gemini', 'GEMINI.md')]
+      : []),
   ];
 
   const results: { path: string; bytes: number; estimatedTokens: number }[] = [];

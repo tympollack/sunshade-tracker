@@ -80,7 +80,14 @@ async function resolveSprintIdentifiers(
         query = query.eq('project_id', projectId);
       }
       if (typeof query.or === 'function') {
-        query = query.or(`id.eq.${targetSprint},name.eq.${targetSprint}`);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetSprint);
+        if (isUuid) {
+          query = query.or(`id.eq.${targetSprint},name.eq."${targetSprint.replace(/"/g, '\\"')}"`);
+        } else {
+          // Double-quote PostgREST string literal to allow punctuated names (e.g. "Sprint (Q4)") while escaping internal quotes
+          const escaped = targetSprint.replace(/"/g, '\\"');
+          query = query.or(`id.eq."${escaped}",name.eq."${escaped}"`);
+        }
       }
       const res = await query;
       if (Array.isArray(res?.data)) {
@@ -240,16 +247,118 @@ export async function GET(req: NextRequest) {
     const itemMs = touchData?.updated_at ? new Date(touchData.updated_at).getTime() : 0;
     const maxPortfolioTouchMs = Math.max(projMs, itemMs);
     const latestTouch = maxPortfolioTouchMs > 0 ? new Date(maxPortfolioTouchMs) : new Date();
+    const latestPortfolioItemAt = itemMs > 0 ? new Date(itemMs).toISOString() : new Date().toISOString();
 
     const responseHeaders: Record<string, string> = {
       'Last-Modified': latestTouch.toUTCString(),
       'Cache-Control': 'private, no-cache',
     };
 
+    // Build project completion sets for workspace projects to support custom completion statuses
+    const projectCompletionMap = new Map<string, Set<string>>();
+    const activeSprintsByProject = new Map<string, Set<string>>();
+    let earliestActiveSprintStartMs: number | null = null;
+
+    try {
+      const projTable = supabaseAdmin.from('projects');
+      if (projTable && typeof projTable.select === 'function') {
+        let projsQuery: any = projTable.select('id, settings').eq('tenant_id', authCtx.tenant.id);
+        if (typeof projsQuery.is === 'function') {
+          projsQuery = projsQuery.is('deleted_at', null);
+        }
+        const { data: tenantProjects } = await projsQuery;
+        if (Array.isArray(tenantProjects)) {
+          tenantProjects.forEach((p: any) => {
+            projectCompletionMap.set(p.id, getCompletedStatusSet(p.settings?.statuses));
+            const settingsSprints = p.settings?.sprint_settings?.sprints;
+            if (Array.isArray(settingsSprints)) {
+              const projSet = activeSprintsByProject.get(p.id) || new Set<string>();
+              settingsSprints.forEach((s: any) => {
+                if (s.status === 'active' || s.is_active || s.is_current) {
+                  if (s.id) projSet.add(String(s.id));
+                  if (s.name) projSet.add(String(s.name));
+                }
+              });
+              activeSprintsByProject.set(p.id, projSet);
+            }
+          });
+        }
+      }
+    } catch {
+      // Non-fatal, fallback to default completed statuses
+    }
+
+    try {
+      const sprintTable = supabaseAdmin.from('sprints');
+      if (sprintTable && typeof sprintTable.select === 'function') {
+        let sprintQuery: any = sprintTable
+          .select('id, name, project_id, started_at, created_at, status, is_active')
+          .eq('tenant_id', authCtx.tenant.id);
+
+        if (typeof sprintQuery.or === 'function') {
+          sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+        }
+
+        const { data: activeSprintRows } = await sprintQuery;
+        if (activeSprintRows && Array.isArray(activeSprintRows)) {
+          activeSprintRows.forEach((s: any) => {
+            if (s.project_id) {
+              const projSet = activeSprintsByProject.get(s.project_id) || new Set<string>();
+              if (s.id) projSet.add(String(s.id));
+              if (s.name) projSet.add(String(s.name));
+              activeSprintsByProject.set(s.project_id, projSet);
+            }
+            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+            if (!isNaN(sTime)) {
+              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+                earliestActiveSprintStartMs = sTime;
+              }
+            }
+          });
+        }
+      }
+    } catch {
+      // Non-fatal, fallback to default cadence
+    }
+
+    const defaultNonSprintPortfolioCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const DEFAULT_PORTFOLIO_CADENCE_MS = 90 * 24 * 60 * 60 * 1000;
+    let totalActiveSprintsCount = 0;
+    activeSprintsByProject.forEach((set) => {
+      totalActiveSprintsCount += set.size;
+    });
+    const portfolioCadenceCutoffMs = earliestActiveSprintStartMs !== null
+      ? earliestActiveSprintStartMs
+      : totalActiveSprintsCount > 0
+      ? Date.now() - DEFAULT_PORTFOLIO_CADENCE_MS
+      : defaultNonSprintPortfolioCutoffMs;
+
+    const isPortfolioItemCold = (it: WorkItem): boolean => {
+      const completionSet = it.project_id ? projectCompletionMap.get(it.project_id) : undefined;
+      if (!isItemCompleted(it.status, completionSet)) return false;
+
+      const sprintName = it.metadata?.sprint;
+      const sprintId = it.metadata?.sprint_id;
+      if (sprintName || sprintId) {
+        const activeSet = it.project_id ? activeSprintsByProject.get(it.project_id) : undefined;
+        const isActive = Boolean(
+          activeSet && (
+            (sprintName && activeSet.has(sprintName)) ||
+            (sprintId && activeSet.has(sprintId))
+          )
+        );
+        return !isActive;
+      }
+
+      const updatedMs = new Date(it.updated_at).getTime();
+      return isNaN(updatedMs) || updatedMs < portfolioCadenceCutoffMs;
+    };
+
     const clientTimestamp = updatedSince || ifModifiedSince;
     if (clientTimestamp) {
       const clientTime = new Date(clientTimestamp).getTime();
-      if (!isNaN(clientTime) && latestTouch.getTime() <= clientTime) {
+      const compareTime = updatedSince ? itemMs : maxPortfolioTouchMs;
+      if (!isNaN(clientTime) && compareTime <= clientTime && compareTime > 0) {
         return new Response(null, {
           status: 304,
           headers: responseHeaders,
@@ -282,8 +391,29 @@ export async function GET(req: NextRequest) {
       }
 
       const allRows = (rawDeltaRows || []) as WorkItem[];
-      const items = allRows.filter((r) => !r.deleted_at);
       const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+      let items: WorkItem[] = [];
+
+      if (!includeColdArchive) {
+        allRows.forEach((r) => {
+          if (r.deleted_at) return;
+          if (isPortfolioItemCold(r)) {
+            deleted_ids.push(r.id);
+          } else {
+            items.push(r);
+          }
+        });
+      } else {
+        items = allRows.filter((r) => !r.deleted_at);
+      }
+
+      const latestDeltaMs = Math.max(
+        itemMs,
+        allRows.length > 0
+          ? Math.max(...allRows.map((r) => new Date(r.updated_at).getTime()).filter((t) => !isNaN(t)))
+          : 0
+      );
+      const deltaCursor = latestDeltaMs > 0 ? new Date(latestDeltaMs).toISOString() : updatedSince || latestPortfolioItemAt;
 
       return NextResponse.json(
         {
@@ -291,7 +421,7 @@ export async function GET(req: NextRequest) {
           all_projects: true,
           items,
           deleted_ids,
-          latest_at: latestTouch.toISOString(),
+          latest_at: deltaCursor,
           is_delta: true,
           count: items.length,
         },
@@ -326,87 +456,10 @@ export async function GET(req: NextRequest) {
       allPortfolioItems = allPortfolioItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
     }
 
-    // Build project completion sets for workspace projects to support custom completion statuses
-    const projectCompletionMap = new Map<string, Set<string>>();
-    try {
-      const projTable = supabaseAdmin.from('projects');
-      if (projTable && typeof projTable.select === 'function') {
-        let projsQuery: any = projTable.select('id, settings').eq('tenant_id', authCtx.tenant.id);
-        if (typeof projsQuery.is === 'function') {
-          projsQuery = projsQuery.is('deleted_at', null);
-        }
-        const { data: tenantProjects } = await projsQuery;
-        if (Array.isArray(tenantProjects)) {
-          tenantProjects.forEach((p: any) => {
-            projectCompletionMap.set(p.id, getCompletedStatusSet(p.settings?.statuses));
-          });
-        }
-      }
-    } catch {
-      // Non-fatal, fallback to default completed statuses
-    }
-
-    const isCompletedPortfolioItem = (it: WorkItem): boolean => {
-      const completionSet = it.project_id ? projectCompletionMap.get(it.project_id) : undefined;
-      return isItemCompleted(it.status, completionSet);
-    };
-
-    // Cadence-aware cold partitioning: Active sprint tasks are never cold.
-    // Tasks completed within the active sprint lifecycle or workspace cadence are retained.
-    const activeSprints = new Set<string>();
-    let earliestActiveSprintStartMs: number | null = null;
-
-    try {
-      const sprintTable = supabaseAdmin.from('sprints');
-      if (sprintTable && typeof sprintTable.select === 'function') {
-        let sprintQuery: any = sprintTable
-          .select('id, name, started_at, created_at, status, is_active')
-          .eq('tenant_id', authCtx.tenant.id);
-
-        if (typeof sprintQuery.or === 'function') {
-          sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
-        }
-
-        const { data: activeSprintRows } = await sprintQuery;
-        if (activeSprintRows && Array.isArray(activeSprintRows)) {
-          activeSprintRows.forEach((s: any) => {
-            if (s.id) activeSprints.add(s.id);
-            if (s.name) activeSprints.add(s.name);
-            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
-            if (!isNaN(sTime)) {
-              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
-                earliestActiveSprintStartMs = sTime;
-              }
-            }
-          });
-        }
-      }
-    } catch {
-      // Non-fatal, fallback to default cadence
-    }
-
-    const defaultNonSprintPortfolioCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    const DEFAULT_PORTFOLIO_CADENCE_MS = 90 * 24 * 60 * 60 * 1000;
-    const portfolioCadenceCutoffMs = earliestActiveSprintStartMs !== null
-      ? earliestActiveSprintStartMs
-      : activeSprints.size > 0
-      ? Date.now() - DEFAULT_PORTFOLIO_CADENCE_MS
-      : defaultNonSprintPortfolioCutoffMs;
-
     let items = allPortfolioItems;
     let coldCount = 0;
     if (!includeColdArchive && !isTargetingSprint) {
-      items = allPortfolioItems.filter((it) => {
-        if (!isCompletedPortfolioItem(it)) return true;
-        const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
-        if (sprint) {
-          // If assigned to a sprint, only active sprint items remain in initial memory;
-          // non-active historical sprints are cold-partitioned for on-demand lazy loading.
-          return activeSprints.has(sprint);
-        }
-        const updatedMs = new Date(it.updated_at).getTime();
-        return !isNaN(updatedMs) && updatedMs >= portfolioCadenceCutoffMs;
-      });
+      items = allPortfolioItems.filter((it) => !isPortfolioItemCold(it));
       coldCount = allPortfolioItems.length - items.length;
     }
 
@@ -435,7 +488,7 @@ export async function GET(req: NextRequest) {
           count: items.length,
           tree: roots,
           deleted_ids: [],
-          latest_at: latestTouch.toISOString(),
+          latest_at: latestPortfolioItemAt,
           is_delta: false,
           cold_count: coldCount,
         },
@@ -471,7 +524,7 @@ export async function GET(req: NextRequest) {
           format: 'board',
           columns,
           deleted_ids: [],
-          latest_at: latestTouch.toISOString(),
+          latest_at: latestPortfolioItemAt,
           is_delta: false,
           cold_count: coldCount,
         },
@@ -487,7 +540,7 @@ export async function GET(req: NextRequest) {
         count: items.length,
         items,
         deleted_ids: [],
-        latest_at: latestTouch.toISOString(),
+        latest_at: latestPortfolioItemAt,
         is_delta: false,
         cold_count: coldCount,
       },
@@ -554,97 +607,12 @@ export async function GET(req: NextRequest) {
   const itemUpdatedAt = touchData?.updated_at ? new Date(touchData.updated_at).getTime() : 0;
   const maxTouchMs = Math.max(projectUpdatedAt, itemUpdatedAt);
   const latestTouch = maxTouchMs > 0 ? new Date(maxTouchMs) : new Date();
+  const latestItemAt = itemUpdatedAt > 0 ? new Date(itemUpdatedAt).toISOString() : new Date().toISOString();
 
   const responseHeaders: Record<string, string> = {
     'Last-Modified': latestTouch.toUTCString(),
     'Cache-Control': 'private, no-cache',
   };
-
-  const clientTimestamp = updatedSince || ifModifiedSince;
-  if (clientTimestamp) {
-    const clientTime = new Date(clientTimestamp).getTime();
-    if (!isNaN(clientTime) && latestTouch.getTime() <= clientTime) {
-      return new Response(null, {
-        status: 304,
-        headers: responseHeaders,
-      });
-    }
-  }
-
-  // Incremental Delta Logic
-  if (updatedSince) {
-    let deltaQuery: any = supabaseAdmin
-      .from('work_items')
-      .select('*')
-      .eq('tenant_id', authCtx.tenant.id)
-      .eq('project_id', project.id);
-
-    if (typeof deltaQuery.gt === 'function') {
-      deltaQuery = deltaQuery.gt('updated_at', updatedSince);
-    }
-    if (statusFilter && typeof deltaQuery.eq === 'function') {
-      deltaQuery = deltaQuery.eq('status', statusFilter);
-    }
-    if (typeFilter && typeof deltaQuery.eq === 'function') {
-      deltaQuery = deltaQuery.eq('item_type', typeFilter);
-    }
-    if (typeof deltaQuery.order === 'function') {
-      deltaQuery = deltaQuery.order('order_index', { ascending: true });
-    }
-
-    const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
-    if (deltaErr) {
-      return NextResponse.json({ error: deltaErr.message }, { status: 500 });
-    }
-
-    const allRows = (rawDeltaRows || []) as WorkItem[];
-    const items = allRows.filter((r) => !r.deleted_at);
-    const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
-
-    return NextResponse.json(
-      {
-        project: { id: project.id, slug: project.slug, name: project.name },
-        items,
-        deleted_ids,
-        latest_at: latestTouch.toISOString(),
-        is_delta: true,
-        count: items.length,
-      },
-      { headers: responseHeaders }
-    );
-  }
-
-  // Query active work items (exclude soft-deleted)
-  let itemsQuery: any = supabaseAdmin
-    .from('work_items')
-    .select('*')
-    .eq('tenant_id', authCtx.tenant.id)
-    .eq('project_id', project.id);
-
-  if (typeof itemsQuery.is === 'function') {
-    itemsQuery = itemsQuery.is('deleted_at', null);
-  }
-
-  itemsQuery = itemsQuery.order('order_index', { ascending: true });
-
-  if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
-  if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
-
-  const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
-
-  if (itemsErr) {
-    return NextResponse.json({ error: itemsErr.message }, { status: 500 });
-  }
-
-  let allItems = (rawItems || []) as WorkItem[];
-
-  // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
-  const isTargetingSprint = Boolean(targetSprint);
-  let targetSprintSet = new Set<string>();
-  if (isTargetingSprint) {
-    targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!, project.id, project.settings);
-    allItems = allItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
-  }
 
   // Sprint lifecycle-aware cold partitioning:
   // Active sprint tasks are never cold. Tasks completed within the active sprint lifecycle
@@ -712,20 +680,133 @@ export async function GET(req: NextRequest) {
 
   const projectCompletedStatuses = getCompletedStatusSet(project?.settings?.statuses);
 
+  const isProjectItemCold = (it: WorkItem): boolean => {
+    if (!isItemCompleted(it.status, projectCompletedStatuses)) return false;
+    const sprintName = it.metadata?.sprint;
+    const sprintId = it.metadata?.sprint_id;
+    if (sprintName || sprintId) {
+      const isActive = Boolean(
+        (sprintName && activeSprints.has(sprintName)) ||
+        (sprintId && activeSprints.has(sprintId))
+      );
+      return !isActive;
+    }
+    const updatedMs = new Date(it.updated_at).getTime();
+    return isNaN(updatedMs) || updatedMs < projectCadenceCutoffMs;
+  };
+
+  const clientTimestamp = updatedSince || ifModifiedSince;
+  if (clientTimestamp) {
+    const clientTime = new Date(clientTimestamp).getTime();
+    const compareTime = updatedSince ? itemUpdatedAt : maxTouchMs;
+    if (!isNaN(clientTime) && compareTime <= clientTime && compareTime > 0) {
+      return new Response(null, {
+        status: 304,
+        headers: responseHeaders,
+      });
+    }
+  }
+
+  // Incremental Delta Logic
+  if (updatedSince) {
+    let deltaQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('project_id', project.id);
+
+    if (typeof deltaQuery.gt === 'function') {
+      deltaQuery = deltaQuery.gt('updated_at', updatedSince);
+    }
+    if (statusFilter && typeof deltaQuery.eq === 'function') {
+      deltaQuery = deltaQuery.eq('status', statusFilter);
+    }
+    if (typeFilter && typeof deltaQuery.eq === 'function') {
+      deltaQuery = deltaQuery.eq('item_type', typeFilter);
+    }
+    if (typeof deltaQuery.order === 'function') {
+      deltaQuery = deltaQuery.order('order_index', { ascending: true });
+    }
+
+    const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
+    if (deltaErr) {
+      return NextResponse.json({ error: deltaErr.message }, { status: 500 });
+    }
+
+    const allRows = (rawDeltaRows || []) as WorkItem[];
+    const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+    let items: WorkItem[] = [];
+
+    if (!includeColdArchive) {
+      allRows.forEach((r) => {
+        if (r.deleted_at) return;
+        if (isProjectItemCold(r)) {
+          deleted_ids.push(r.id);
+        } else {
+          items.push(r);
+        }
+      });
+    } else {
+      items = allRows.filter((r) => !r.deleted_at);
+    }
+
+    const latestDeltaMs = Math.max(
+      itemUpdatedAt,
+      allRows.length > 0
+        ? Math.max(...allRows.map((r) => new Date(r.updated_at).getTime()).filter((t) => !isNaN(t)))
+        : 0
+    );
+    const deltaCursor = latestDeltaMs > 0 ? new Date(latestDeltaMs).toISOString() : updatedSince || latestItemAt;
+
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        items,
+        deleted_ids,
+        latest_at: deltaCursor,
+        is_delta: true,
+        count: items.length,
+      },
+      { headers: responseHeaders }
+    );
+  }
+
+  // Query active work items (exclude soft-deleted)
+  let itemsQuery: any = supabaseAdmin
+    .from('work_items')
+    .select('*')
+    .eq('tenant_id', authCtx.tenant.id)
+    .eq('project_id', project.id);
+
+  if (typeof itemsQuery.is === 'function') {
+    itemsQuery = itemsQuery.is('deleted_at', null);
+  }
+
+  itemsQuery = itemsQuery.order('order_index', { ascending: true });
+
+  if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
+  if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
+
+  const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
+
+  if (itemsErr) {
+    return NextResponse.json({ error: itemsErr.message }, { status: 500 });
+  }
+
+  let allItems = (rawItems || []) as WorkItem[];
+
+  // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
+  const isTargetingSprint = Boolean(targetSprint);
+  let targetSprintSet = new Set<string>();
+  if (isTargetingSprint) {
+    targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!, project.id, project.settings);
+    allItems = allItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
+  }
+
   let items = allItems;
   let coldCount = 0;
   if (!includeColdArchive && !isTargetingSprint) {
-    items = allItems.filter((it) => {
-      if (!isItemCompleted(it.status, projectCompletedStatuses)) return true;
-      const sprint = it.metadata?.sprint || it.metadata?.sprint_id;
-      if (sprint) {
-        // If assigned to a sprint, only active sprint items remain in initial memory;
-        // non-active historical sprints are cold-partitioned for on-demand lazy loading.
-        return activeSprints.has(sprint);
-      }
-      const updatedMs = new Date(it.updated_at).getTime();
-      return !isNaN(updatedMs) && updatedMs >= projectCadenceCutoffMs;
-    });
+    items = allItems.filter((it) => !isProjectItemCold(it));
     coldCount = allItems.length - items.length;
   }
 
@@ -754,7 +835,7 @@ export async function GET(req: NextRequest) {
         count: items.length,
         tree: roots,
         deleted_ids: [],
-        latest_at: latestTouch.toISOString(),
+        latest_at: latestItemAt,
         is_delta: false,
         cold_count: coldCount,
       },
@@ -775,7 +856,7 @@ export async function GET(req: NextRequest) {
         format: 'board',
         columns: board,
         deleted_ids: [],
-        latest_at: latestTouch.toISOString(),
+        latest_at: latestItemAt,
         is_delta: false,
         cold_count: coldCount,
       },
@@ -790,7 +871,7 @@ export async function GET(req: NextRequest) {
       count: items.length,
       items,
       deleted_ids: [],
-      latest_at: latestTouch.toISOString(),
+      latest_at: latestItemAt,
       is_delta: false,
       cold_count: coldCount,
     },

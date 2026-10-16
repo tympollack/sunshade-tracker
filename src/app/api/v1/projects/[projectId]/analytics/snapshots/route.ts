@@ -125,13 +125,28 @@ export async function GET(
           .eq('id', project.id)
           .maybeSingle();
 
-        const { data: dbSprint } = await supabaseAdmin
-          .from('sprints')
-          .select('*')
-          .eq('tenant_id', authCtx.tenant.id)
-          .eq('project_id', project.id)
-          .or(`id.eq.${sprintId},name.eq.${sprintId}`)
-          .maybeSingle();
+        let dbSprint: any = null;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintId);
+        if (isUuid) {
+          const res = await supabaseAdmin
+            .from('sprints')
+            .select('*')
+            .eq('tenant_id', authCtx.tenant.id)
+            .eq('project_id', project.id)
+            .eq('id', sprintId)
+            .maybeSingle();
+          dbSprint = res?.data;
+        }
+        if (!dbSprint) {
+          const res = await supabaseAdmin
+            .from('sprints')
+            .select('*')
+            .eq('tenant_id', authCtx.tenant.id)
+            .eq('project_id', project.id)
+            .eq('name', sprintId)
+            .maybeSingle();
+          dbSprint = res?.data;
+        }
 
         const settingsSprint = projDetail?.settings?.sprint_settings?.sprints?.find(
           (s: any) => s.id === sprintId || s.name === sprintId
@@ -162,6 +177,37 @@ export async function GET(
           const totalPoints = calculateSprintLeafPoints(sprintItems as any, projDetail?.settings);
           const completionSet = getCompletedStatusSet(projDetail?.settings?.statuses);
 
+          // Build a map of verified completion timestamps from audit logs or metadata
+          const itemCompletedTimeMap = new Map<string, number>();
+          try {
+            const completedIds = sprintItems
+              .filter((it: any) => isItemCompleted(it.status, completionSet))
+              .map((it: any) => it.id);
+
+            if (completedIds.length > 0) {
+              const { data: statusLogs } = await supabaseAdmin
+                .from('audit_logs')
+                .select('entity_id, changed_fields, created_at')
+                .eq('tenant_id', authCtx.tenant.id)
+                .eq('entity_type', 'work_item')
+                .in('entity_id', completedIds)
+                .order('created_at', { ascending: true });
+
+              if (Array.isArray(statusLogs)) {
+                statusLogs.forEach((log: any) => {
+                  const newStatus = log.changed_fields?.status;
+                  if (newStatus && isItemCompleted(newStatus, completionSet)) {
+                    if (!itemCompletedTimeMap.has(log.entity_id)) {
+                      itemCompletedTimeMap.set(log.entity_id, new Date(log.created_at).getTime());
+                    }
+                  }
+                });
+              }
+            }
+          } catch {
+            // Non-fatal, fallback to metadata/updated_at
+          }
+
           const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
           const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
           const totalDays = Math.max(1, Math.round((endDate.getTime() - startDay.getTime()) / (24 * 60 * 60 * 1000)));
@@ -175,7 +221,9 @@ export async function GET(
 
             const completedSoFar = sprintItems.filter((it: any) => {
               if (!isItemCompleted(it.status, completionSet)) return false;
-              const completedTime = it.updated_at ? new Date(it.updated_at).getTime() : 0;
+              const auditedTime = itemCompletedTimeMap.get(it.id);
+              const fallbackTimeStr = it.metadata?.completed_at || it.metadata?.closed_at || it.closed_at || it.updated_at;
+              const completedTime = auditedTime || (fallbackTimeStr ? new Date(fallbackTimeStr).getTime() : 0);
               return completedTime <= currentDayEnd.getTime();
             });
 
