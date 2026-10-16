@@ -62,16 +62,16 @@ export const ProjectSettingsSchema = z
     schema_version: z.string().optional().default('1.0'),
     hierarchy: z
       .array(HierarchyLevelSchema, {
-        required_error: 'hierarchy is required',
         invalid_type_error: 'hierarchy must be an array of level definitions',
       })
-      .min(1, 'hierarchy array cannot be empty'),
+      .min(1, 'hierarchy array cannot be empty')
+      .optional(),
     statuses: z
       .array(StatusDefinitionSchema, {
-        required_error: 'statuses is required',
         invalid_type_error: 'statuses must be an array of status definitions',
       })
-      .min(1, 'statuses array cannot be empty'),
+      .min(1, 'statuses array cannot be empty')
+      .optional(),
     custom_fields: z
       .array(CustomFieldSchema, {
         invalid_type_error: 'custom_fields must be an array',
@@ -139,11 +139,11 @@ export function lintProjectSettings(settings: unknown): {
 
   const data = result.data;
   const errors: SchemaLintError[] = [];
-  const validHierarchyTypes = new Set(data.hierarchy.map((h) => h.type));
+  const validHierarchyTypes = new Set((data.hierarchy || []).map((h) => h.type));
 
   // 1. Check duplicate hierarchy types & allowed_parents validity
   const seenHierarchy = new Set<string>();
-  data.hierarchy.forEach((h, idx) => {
+  (data.hierarchy || []).forEach((h, idx) => {
     if (seenHierarchy.has(h.type)) {
       errors.push({
         path: `hierarchy[${idx}].type`,
@@ -164,7 +164,7 @@ export function lintProjectSettings(settings: unknown): {
 
   // 2. Check duplicate status IDs
   const seenStatuses = new Set<string>();
-  data.statuses.forEach((s, idx) => {
+  (data.statuses || []).forEach((s, idx) => {
     if (seenStatuses.has(s.id)) {
       errors.push({
         path: `statuses[${idx}].id`,
