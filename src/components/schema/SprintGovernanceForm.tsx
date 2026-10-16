@@ -1,9 +1,14 @@
 'use client';
 
 import React from 'react';
-import { Shield, Zap, Lock, Unlock, HelpCircle, Minus, Plus } from 'lucide-react';
+import { Shield, Zap, Lock, Unlock, HelpCircle, Minus, Plus, Clock } from 'lucide-react';
 import { MetricRules } from '@/types/tracker';
 import { DEFAULT_METRIC_RULES, resolveMetricRules } from '@/lib/services/sprintAnalyticsService';
+import {
+  isLateInflowEnforced,
+  disableLateInflowCaps,
+  enableLateInflowCaps,
+} from '@/lib/governance/sprint-rules';
 
 export interface SprintGovernanceFormProps {
   metrics?: MetricRules;
@@ -16,23 +21,33 @@ export function SprintGovernanceForm({
   onChange,
   readOnly = false,
 }: SprintGovernanceFormProps) {
+  const isLateInflow = isLateInflowEnforced(metrics);
+
   // Merge incoming metrics with default fallback values
   const velocityWindow = Math.min(
     10,
     Math.max(1, typeof metrics?.velocity_window === 'number' ? metrics.velocity_window : DEFAULT_METRIC_RULES.velocity_window)
   );
 
-  const rawRunway = typeof metrics?.late_runway_threshold === 'number'
-    ? metrics.late_runway_threshold
-    : DEFAULT_METRIC_RULES.late_runway_threshold;
+  const rawRunway =
+    typeof metrics?.runway_cutoff === 'number'
+      ? metrics.runway_cutoff
+      : typeof metrics?.late_runway_threshold === 'number'
+      ? metrics.late_runway_threshold
+      : typeof (metrics as any)?._prev_runway_cutoff === 'number'
+      ? (metrics as any)._prev_runway_cutoff
+      : (DEFAULT_METRIC_RULES.late_runway_threshold ?? 0.60);
   const runwayPercent = Math.min(100, Math.max(10, Math.round(rawRunway <= 1 ? rawRunway * 100 : rawRunway)));
 
-  const lateCapPoints = Math.max(
-    0,
-    typeof metrics?.late_runway_max_points === 'number'
+  const rawLateCap =
+    typeof metrics?.late_inflow_cap === 'number'
+      ? metrics.late_inflow_cap
+      : typeof metrics?.late_runway_max_points === 'number'
       ? metrics.late_runway_max_points
-      : DEFAULT_METRIC_RULES.late_runway_max_points
-  );
+      : typeof (metrics as any)?._prev_late_inflow_cap === 'number'
+      ? (metrics as any)._prev_late_inflow_cap
+      : (DEFAULT_METRIC_RULES.late_runway_max_points ?? 2);
+  const lateCapPoints = Math.max(0, rawLateCap ?? 2);
 
   const healthyThreshold = Math.min(
     100,
@@ -73,12 +88,21 @@ export function SprintGovernanceForm({
 
   const setRunwayPercent = (val: number) => {
     const clamped = Math.min(100, Math.max(10, Math.round(val)));
-    handleUpdate({ late_runway_threshold: Number((clamped / 100).toFixed(2)) });
+    const decimal = Number((clamped / 100).toFixed(2));
+    handleUpdate({
+      late_runway_threshold: decimal,
+      runway_cutoff: decimal,
+      _prev_runway_cutoff: decimal,
+    });
   };
 
   const setLateCap = (val: number) => {
     const clamped = Math.max(0, isNaN(val) ? 0 : Math.round(val));
-    handleUpdate({ late_runway_max_points: clamped });
+    handleUpdate({
+      late_runway_max_points: clamped,
+      late_inflow_cap: clamped,
+      _prev_late_inflow_cap: clamped,
+    });
   };
 
   const setHealthyThreshold = (val: number) => {
@@ -96,6 +120,15 @@ export function SprintGovernanceForm({
       lock_estimates: nextVal,
       lock_estimates_in_active_sprint: nextVal,
     });
+  };
+
+  const toggleLateInflow = () => {
+    if (readOnly) return;
+    if (isLateInflow) {
+      handleUpdate(disableLateInflowCaps(metrics));
+    } else {
+      handleUpdate(enableLateInflowCaps(metrics));
+    }
   };
 
   return (
@@ -170,7 +203,7 @@ export function SprintGovernanceForm({
         </div>
 
         {/* 2. Runway Percentage Slider / Input */}
-        <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col justify-between space-y-3">
+        <div className={`p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col justify-between space-y-3 ${!isLateInflow ? 'opacity-60' : ''}`}>
           <div>
             <div className="flex items-center justify-between text-xs font-medium text-slate-300">
               <label htmlFor="input-runway-percent" className="flex items-center gap-1.5 cursor-pointer">
@@ -179,7 +212,9 @@ export function SprintGovernanceForm({
                   <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
                 </span>
               </label>
-              <span className="text-[11px] font-mono text-amber-400 font-semibold">{runwayPercent}%</span>
+              <span className="text-[11px] font-mono text-amber-400 font-semibold">
+                {isLateInflow ? `${runwayPercent}%` : 'Disabled'}
+              </span>
             </div>
             <p className="text-[11px] text-slate-500 mt-1">Sprint elapsed ratio before late-inflow limits trigger.</p>
           </div>
@@ -192,7 +227,7 @@ export function SprintGovernanceForm({
               max={100}
               step={5}
               value={runwayPercent}
-              disabled={readOnly}
+              disabled={readOnly || !isLateInflow}
               onChange={(e) => setRunwayPercent(parseInt(e.target.value, 10))}
               aria-label="Runway Cutoff Slider"
               className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500 disabled:opacity-50"
@@ -205,10 +240,10 @@ export function SprintGovernanceForm({
                 min={10}
                 max={100}
                 value={runwayPercent}
-                disabled={readOnly}
+                disabled={readOnly || !isLateInflow}
                 onChange={(e) => setRunwayPercent(parseInt(e.target.value, 10) || 10)}
                 aria-label="Runway Cutoff Percentage"
-                className="w-14 text-center py-0.5 bg-slate-950 border border-slate-700 rounded text-amber-300 text-xs font-mono font-bold focus:outline-none focus:border-amber-500"
+                className="w-14 text-center py-0.5 bg-slate-950 border border-slate-700 rounded text-amber-300 text-xs font-mono font-bold focus:outline-none focus:border-amber-500 disabled:opacity-50"
               />
               <span>100%</span>
             </div>
@@ -216,7 +251,7 @@ export function SprintGovernanceForm({
         </div>
 
         {/* 3. Late Cap Points Input */}
-        <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col justify-between space-y-3">
+        <div className={`p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col justify-between space-y-3 ${!isLateInflow ? 'opacity-60' : ''}`}>
           <div>
             <div className="flex items-center justify-between text-xs font-medium text-slate-300">
               <label htmlFor="input-late-cap" className="flex items-center gap-1.5 cursor-pointer">
@@ -225,7 +260,9 @@ export function SprintGovernanceForm({
                   <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
                 </span>
               </label>
-              <span className="text-[11px] font-mono text-amber-300 font-semibold">{lateCapPoints} pts</span>
+              <span className="text-[11px] font-mono text-amber-300 font-semibold">
+                {isLateInflow ? `${lateCapPoints} pts` : 'Disabled'}
+              </span>
             </div>
             <p className="text-[11px] text-slate-500 mt-1">Maximum points allowed on late items without rejection.</p>
           </div>
@@ -234,7 +271,7 @@ export function SprintGovernanceForm({
             <button
               type="button"
               aria-label="Decrease late inflow cap"
-              disabled={readOnly || lateCapPoints <= 0}
+              disabled={readOnly || !isLateInflow || lateCapPoints <= 0}
               onClick={() => setLateCap(lateCapPoints - 1)}
               className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700/60 transition-colors"
             >
@@ -245,14 +282,15 @@ export function SprintGovernanceForm({
               type="number"
               min={0}
               value={lateCapPoints}
-              disabled={readOnly}
+              disabled={readOnly || !isLateInflow}
               onChange={(e) => setLateCap(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              aria-label="Late Inflow Cap"
               className="w-full text-center py-1 bg-slate-950 border border-slate-700 rounded-md text-amber-300 text-xs font-mono font-bold focus:outline-none focus:border-amber-500 disabled:opacity-50"
             />
             <button
               type="button"
               aria-label="Increase late inflow cap"
-              disabled={readOnly}
+              disabled={readOnly || !isLateInflow}
               onClick={() => setLateCap(lateCapPoints + 1)}
               className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700/60 transition-colors"
             >
@@ -308,8 +346,8 @@ export function SprintGovernanceForm({
         </div>
       </div>
 
-      {/* Toggles: Zero-Sum Enforcement & Estimate Locking */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+      {/* Toggles: Zero-Sum Enforcement, Estimate Locking, and Late Inflow & Runway Caps */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
         {/* enforce_zero_sum toggle */}
         <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-4">
           <div className="space-y-1">
@@ -391,6 +429,47 @@ export function SprintGovernanceForm({
               aria-hidden="true"
               className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
                 isLockedEstimates ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Enforce Late Inflow & Runway Caps toggle */}
+        <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Clock className={`w-4 h-4 ${isLateInflow ? 'text-amber-400' : 'text-slate-500'}`} />
+              <span className="text-xs font-semibold text-slate-200">Enforce Late Inflow & Runway Caps</span>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold ${
+                  isLateInflow
+                    ? 'bg-amber-950/60 text-amber-300 border border-amber-800/40'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {isLateInflow ? 'enabled' : 'disabled'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Restrict story point sizing and trigger rejection on items added late in active sprint runway.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isLateInflow}
+            aria-label="Toggle Enforce Late Inflow & Runway Caps"
+            disabled={readOnly}
+            onClick={toggleLateInflow}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 disabled:cursor-not-allowed ${
+              isLateInflow ? 'bg-amber-500' : 'bg-slate-700'
+            }`}
+          >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                isLateInflow ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
           </button>

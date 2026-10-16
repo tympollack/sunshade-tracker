@@ -205,6 +205,58 @@ describe('TASK-TRK-SCOPE-INVARIANTS: Sprint Scope Invariants & Guardrails', () =
         }).valid
       ).toBe(true);
     });
+
+    it('allows unrestricted feature story intake (> 2 points and 13 pt cap) when late_inflow_cap and runway_cutoff are null', () => {
+      // 85% elapsed (Oct 9 12:00:00Z)
+      const now = '2026-10-09T12:00:00Z';
+      const thirteenPointStory: Partial<WorkItem> = {
+        id: 'item-13pt',
+        item_type: 'story',
+        title: 'Large 13-pt Late Feature Story',
+        metadata: { story_points: 13 },
+      };
+
+      const res = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: [],
+        incomingItem: thirteenPointStory,
+        options: {
+          now,
+          rules: {
+            late_inflow_cap: null,
+            runway_cutoff: null,
+            late_runway_max_points: null,
+            late_runway_threshold: null,
+          },
+        },
+      });
+
+      expect(res.valid).toBe(true);
+    });
+
+    it('allows unrestricted feature story intake when enforce_late_inflow_caps is false', () => {
+      const now = '2026-10-10T12:00:00Z'; // 95% elapsed
+      const largeStory: Partial<WorkItem> = {
+        id: 'item-bypass',
+        item_type: 'story',
+        title: 'Bypassed Late Story',
+        metadata: { story_points: 21 },
+      };
+
+      const res = validateSprintIntakePure({
+        sprint: activeSprint,
+        currentSprintItems: [],
+        incomingItem: largeStory,
+        options: {
+          now,
+          rules: {
+            enforce_late_inflow_caps: false,
+          },
+        },
+      });
+
+      expect(res.valid).toBe(true);
+    });
   });
 
   describe('Guardrail 1: Strict Zero-Sum Swap API', () => {
