@@ -270,8 +270,9 @@ describe('STORY-TRK-INGEST-RESILIENCE: IngestionDialog & SparkViewContainer', ()
       const rawItem = sentBody.items[0];
       expect(rawItem.title).toBe('Brainstorm Notes: Q4 Architecture');
       expect(rawItem.description).toBe(rawNotes);
-      expect(rawItem.item_type).toBe('task');
-      expect(rawItem.status).toBe('not_started');
+      expect(rawItem.external_ref_id).toMatch(/^RAW-INGEST-[a-z0-9-]+$/i);
+      expect(rawItem.item_type).toBeUndefined();
+      expect(rawItem.status).toBeUndefined();
       expect(rawItem.metadata.source_type).toBe('raw_manual_ingest');
       expect(rawItem.metadata.raw_payload).toBe(rawNotes);
 
@@ -280,6 +281,79 @@ describe('STORY-TRK-INGEST-RESILIENCE: IngestionDialog & SparkViewContainer', ()
         'Pasted notes saved as a raw backlog item for manual triage.'
       );
       expect(onRefresh).toHaveBeenCalled();
+    });
+
+    it('routes raw ingestion through apiFetch and includes tenant headers and credentials', async () => {
+      const mockApiFetch = vi.fn().mockResolvedValue({
+        json: async () => ({
+          success: true,
+          items: [{ id: 'raw-2', title: 'Tenant scoped raw card' }],
+        }),
+      } as any);
+
+      render(
+        <IngestionDialog
+          {...defaultProps}
+          sparkPayload="Note for tenant B"
+          tenantSlug="tenant-b"
+          apiFetch={mockApiFetch}
+        />
+      );
+
+      const ingestAsIsBtn = screen.getByTestId('ingest-as-is-fallback-btn');
+      fireEvent.click(ingestAsIsBtn);
+
+      await waitFor(() => {
+        expect(mockApiFetch).toHaveBeenCalledWith(
+          '/api/v1/items/ingest',
+          expect.objectContaining({
+            method: 'POST',
+            credentials: 'include',
+            headers: expect.objectContaining({
+              'x-tenant-slug': 'tenant-b',
+            }),
+          })
+        );
+      });
+    });
+
+    it('editing payload in textarea clears error diagnostics and does not recreate stale error banner', async () => {
+      const setSparkPayload = vi.fn();
+      const setIngestResponse = vi.fn();
+
+      const { rerender } = render(
+        <IngestionDialog
+          {...defaultProps}
+          sparkPayload='{\n  "title": }'
+          ingestResponse={{ error: 'Unexpected token } in JSON at position 13' }}
+          setSparkPayload={setSparkPayload}
+          setIngestResponse={setIngestResponse}
+        />
+      );
+
+      // Error banner is initially visible
+      expect(screen.getByTestId('syntax-error-banner')).toBeInTheDocument();
+
+      // User types into the textarea
+      const textarea = screen.getByTestId('spark-payload-textarea');
+      fireEvent.change(textarea, { target: { value: '{\n  "title": "fixed" }' } });
+
+      expect(setSparkPayload).toHaveBeenCalledWith('{\n  "title": "fixed" }');
+      expect(setIngestResponse).toHaveBeenCalledWith(null);
+
+      // Re-render simulating parent state update where sparkPayload changed and ingestResponse was cleared to null
+      rerender(
+        <IngestionDialog
+          {...defaultProps}
+          sparkPayload='{\n  "title": "fixed" }'
+          ingestResponse={null}
+          setSparkPayload={setSparkPayload}
+          setIngestResponse={setIngestResponse}
+        />
+      );
+
+      // Stale syntax error banner should no longer be in the document
+      expect(screen.queryByTestId('syntax-error-banner')).not.toBeInTheDocument();
     });
 
     it('SparkViewContainer re-exports IngestionDialog and supports all features identically', () => {

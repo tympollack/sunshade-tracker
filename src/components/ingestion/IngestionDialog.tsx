@@ -17,6 +17,7 @@ import {
 import { WorkItem } from '@/types/tracker';
 import {
   sanitizeJsonString,
+  sanitizeJson5String,
   parseResilientJson,
   extractErrorDiagnostics,
   buildRawCardPayload,
@@ -33,6 +34,8 @@ export interface IngestionDialogProps {
   setSparkOverrideAssignee: (val: string) => void;
   allProjects: { id: string; slug: string; name: string }[];
   projectSlug: string;
+  tenantSlug?: string;
+  apiFetch?: (path: string, options?: RequestInit) => Promise<Response>;
   availableSprints: string[];
   projectSettings?: any;
   workspaceMembers: { full_name: string; email?: string }[];
@@ -59,6 +62,8 @@ export function IngestionDialog(props: IngestionDialogProps) {
     setSparkOverrideAssignee,
     allProjects,
     projectSlug,
+    tenantSlug,
+    apiFetch,
     availableSprints,
     projectSettings,
     workspaceMembers,
@@ -75,6 +80,10 @@ export function IngestionDialog(props: IngestionDialogProps) {
   } = props;
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sparkPayloadRef = useRef(sparkPayload);
+  useEffect(() => {
+    sparkPayloadRef.current = sparkPayload;
+  }, [sparkPayload]);
 
   // Error diagnostics & notifications
   const [syntaxDiagnostics, setSyntaxDiagnostics] = useState<IngestErrorDiagnostics | null>(null);
@@ -102,12 +111,12 @@ export function IngestionDialog(props: IngestionDialogProps) {
         msg.includes('escape') ||
         msg.includes('SyntaxError')
       ) {
-        setSyntaxDiagnostics(extractErrorDiagnostics(msg, sparkPayload));
+        setSyntaxDiagnostics(extractErrorDiagnostics(msg, sparkPayloadRef.current));
       }
-    } else if (ingestResponse?.success) {
+    } else if (ingestResponse?.success || ingestResponse === null) {
       setSyntaxDiagnostics(null);
     }
-  }, [ingestResponse, sparkPayload]);
+  }, [ingestResponse]);
 
   // TRK-15: Exclude completed, closed, or locked sprints from override dropdown
   const selectableSprints = useMemo(() => {
@@ -132,7 +141,7 @@ export function IngestionDialog(props: IngestionDialogProps) {
   // Handle manual "Auto-Fix Escapes" button click
   const handleAutoFixEscapes = () => {
     if (isReadOnly) return;
-    const sanitized = sanitizeJsonString(sparkPayload);
+    const sanitized = sanitizeJson5String(sparkPayload);
     if (sanitized !== sparkPayload) {
       setSparkPayload(sanitized);
       setToast({ message: 'Auto-corrected unescaped characters', type: 'success' });
@@ -205,9 +214,16 @@ export function IngestionDialog(props: IngestionDialogProps) {
         overrideAssignee: sparkOverrideAssignee || undefined,
       });
 
-      const res = await fetch('/api/v1/items/ingest', {
+      const fetchFn = apiFetch || fetch;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (tenantSlug) {
+        headers['x-tenant-slug'] = tenantSlug;
+      }
+
+      const res = await fetchFn('/api/v1/items/ingest', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -461,6 +477,9 @@ export function IngestionDialog(props: IngestionDialogProps) {
               setSparkPayload(e.target.value);
               if (syntaxDiagnostics) {
                 setSyntaxDiagnostics(null);
+              }
+              if (setIngestResponse) {
+                setIngestResponse(null);
               }
             }
           }}

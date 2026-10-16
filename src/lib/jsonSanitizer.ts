@@ -86,6 +86,109 @@ export function sanitizeJsonString(raw: string): string {
 }
 
 /**
+ * Normalizes smart quotes and invalid JSON5 escapes.
+ * Preserves all valid JSON5 escape sequences (\', \", \\, \/, \b, \f, \n, \r, \t, \v, \0, \xHH, \uHHHH, line continuations)
+ * and escapes backslashes before characters that would otherwise be silently swallowed by JSON5 (e.g. \w, \s, \d, \P, \U).
+ */
+export function sanitizeJson5String(raw: string): string {
+  if (typeof raw !== 'string') return '';
+
+  // 1. Normalize smart quotes (curly double quotes and single quotes)
+  const quoteNormalized = raw
+    .replace(/[\u201C\u201D\u201E\u201F\u00AB\u00BB]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+
+  // 2. Normalize invalid JSON5 escape sequences
+  let result = '';
+  let i = 0;
+  const len = quoteNormalized.length;
+
+  while (i < len) {
+    const char = quoteNormalized[i];
+    if (char === '\\') {
+      if (i + 1 >= len) {
+        // Trailing backslash at end of string
+        result += '\\\\';
+        i++;
+        continue;
+      }
+
+      const next = quoteNormalized[i + 1];
+
+      // Check valid single-character JSON5 escapes: ", ', \, /, b, f, n, r, t, v
+      if (
+        next === '"' ||
+        next === "'" ||
+        next === '\\' ||
+        next === '/' ||
+        next === 'b' ||
+        next === 'f' ||
+        next === 'n' ||
+        next === 'r' ||
+        next === 't' ||
+        next === 'v'
+      ) {
+        result += '\\' + next;
+        i += 2;
+        continue;
+      }
+
+      // Check \0 (null character, must not be followed by a digit)
+      if (next === '0') {
+        const nextNext = i + 2 < len ? quoteNormalized[i + 2] : '';
+        if (!/^[0-9]$/.test(nextNext)) {
+          result += '\\0';
+          i += 2;
+          continue;
+        }
+      }
+
+      // Check \xXX (2 hex digits)
+      if (next === 'x') {
+        const hex = quoteNormalized.slice(i + 2, i + 4);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+          result += '\\x' + hex;
+          i += 4;
+          continue;
+        }
+      }
+
+      // Check \uXXXX (4 hex digits)
+      if (next === 'u') {
+        const hex = quoteNormalized.slice(i + 2, i + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += '\\u' + hex;
+          i += 6;
+          continue;
+        }
+      }
+
+      // Check line continuation: \ followed by \r\n, \n, or \r
+      if (next === '\r' && i + 2 < len && quoteNormalized[i + 2] === '\n') {
+        result += '\\\r\n';
+        i += 3;
+        continue;
+      }
+      if (next === '\n' || next === '\r') {
+        result += '\\' + next;
+        i += 2;
+        continue;
+      }
+
+      // Invalid escape character in JSON5 (e.g. \w, \s, \d, \P, \U, \$):
+      // escape the backslash so JSON5 doesn't silently consume it
+      result += '\\\\';
+      i++;
+    } else {
+      result += char;
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Computes character offset (0-indexed) from 1-indexed line and column numbers.
  */
 export function computePositionFromLineCol(text: string, line: number, col: number): number {
@@ -260,22 +363,24 @@ export function parseResilientJson<T = any>(raw: string): ResilientParseResult<T
     }
   }
 
-  // Tier 3: JSON5 relaxed parsing
+  // Tier 3: JSON5 relaxed parsing on sanitized JSON5 input
+  // Runs before raw JSON5 to prevent JSON5 from silently dropping unescaped backslashes (\w, \s, etc.)
+  const sanitized5 = sanitizeJson5String(raw);
+  if (sanitized5 !== raw) {
+    try {
+      const data = JSON5.parse(sanitized5);
+      return { success: true, data, method: 'json5_sanitized', sanitizedText: sanitized5 };
+    } catch {
+      // Continue to Tier 4
+    }
+  }
+
+  // Tier 4: JSON5 relaxed parsing on raw input
   try {
     const data = JSON5.parse(raw);
     return { success: true, data, method: 'json5' };
   } catch (err: any) {
     if (!firstError) firstError = err;
-  }
-
-  // Tier 4: JSON5 relaxed parsing on sanitized input
-  if (sanitized !== raw) {
-    try {
-      const data = JSON5.parse(sanitized);
-      return { success: true, data, method: 'json5_sanitized', sanitizedText: sanitized };
-    } catch {
-      // Abort
-    }
   }
 
   // All tiers failed - extract diagnostics from initial error
@@ -299,6 +404,8 @@ export function extractRawTitle(input: string): string {
 
 /**
  * Generates single-item payload for 'Ingest as Raw Card' fallback.
+ * Uses a collision-resistant UUID and omits item_type/status so the ingest endpoint
+ * can apply the destination project's schema defaults.
  */
 export function buildRawCardPayload(
   rawInput: string,
@@ -311,7 +418,11 @@ export function buildRawCardPayload(
 ) {
   const targetSlug = overrides?.overrideProject || projectSlug;
   const title = extractRawTitle(rawInput);
-  const externalRefId = `RAW-INGEST-${Date.now()}`;
+  const uuid =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const externalRefId = `RAW-INGEST-${uuid}`;
 
   const body: any = {
     project_slug: targetSlug,
@@ -320,8 +431,6 @@ export function buildRawCardPayload(
         external_ref_id: externalRefId,
         title,
         description: rawInput,
-        item_type: 'task',
-        status: 'not_started',
         metadata: {
           source_type: 'raw_manual_ingest',
           raw_payload: rawInput,

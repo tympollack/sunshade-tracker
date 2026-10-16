@@ -114,6 +114,27 @@ describe('TASK-TRK-INGEST-ESCAPE-NORMALIZER: jsonSanitizer utility', () => {
       expect(result.data.project_slug).toBe('demo-proj');
     });
 
+    it('preserves regex and path backslashes in JSON5 single-quoted payloads without corruption', () => {
+      const input = `{
+        project_slug: 'demo',
+        items: [{ title: 'Test', description: '\\w+\\s+\\d+' }],
+      }`;
+      const result = parseResilientJson(input);
+      expect(result.success).toBe(true);
+      expect(result.data.items[0].description).toBe('\\w+\\s+\\d+');
+    });
+
+    it('preserves valid JSON5 escapes (newline, single quote) alongside backslashes', () => {
+      const input = `{
+        project_slug: 'demo',
+        items: [{ title: 'It\\'s a test', description: 'Line 1\\nLine 2 with \\w+' }],
+      }`;
+      const result = parseResilientJson(input);
+      expect(result.success).toBe(true);
+      expect(result.data.items[0].title).toBe("It's a test");
+      expect(result.data.items[0].description).toBe("Line 1\nLine 2 with \\w+");
+    });
+
     it('returns diagnostics when all tiers fail on unstructured text', () => {
       const input = 'Here are my meeting notes:\n- item 1\n- item 2';
       const result = parseResilientJson(input);
@@ -189,7 +210,7 @@ describe('TASK-TRK-INGEST-ESCAPE-NORMALIZER: jsonSanitizer utility', () => {
       expect(extractRawTitle(longLine)).toBe('A'.repeat(80));
     });
 
-    it('buildRawCardPayload creates a valid single-task ingest payload with metadata.raw_payload', () => {
+    it('buildRawCardPayload creates a valid single-task ingest payload with metadata.raw_payload and schema defaults', () => {
       const rawText = 'Meeting notes: investigate bug in ingestion modal';
       const payload = buildRawCardPayload(rawText, 'tracker-web', {
         overrideProject: 'tracker-core',
@@ -204,13 +225,20 @@ describe('TASK-TRK-INGEST-ESCAPE-NORMALIZER: jsonSanitizer utility', () => {
       expect(payload.items).toHaveLength(1);
 
       const item = payload.items[0];
-      expect(item.external_ref_id).toMatch(/^RAW-INGEST-\d+$/);
+      expect(item.external_ref_id).toMatch(/^RAW-INGEST-[a-z0-9-]+$/i);
       expect(item.title).toBe('Meeting notes: investigate bug in ingestion modal');
       expect(item.description).toBe(rawText);
-      expect(item.item_type).toBe('task');
-      expect(item.status).toBe('not_started');
+      // item_type and status omitted so project schema defaults are respected
+      expect(item.item_type).toBeUndefined();
+      expect(item.status).toBeUndefined();
       expect(item.metadata.source_type).toBe('raw_manual_ingest');
       expect(item.metadata.raw_payload).toBe(rawText);
+    });
+
+    it('generates collision-resistant external_ref_id across consecutive invocations', () => {
+      const p1 = buildRawCardPayload('Note 1', 'core-app');
+      const p2 = buildRawCardPayload('Note 2', 'core-app');
+      expect(p1.items[0].external_ref_id).not.toBe(p2.items[0].external_ref_id);
     });
   });
 });

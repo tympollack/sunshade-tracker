@@ -3565,6 +3565,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               {activeTab === 'spark' && (
                 <SparkViewContainer
                   isReadOnly={isReadOnly}
+                  tenantSlug={tenantSlug}
+                  apiFetch={apiFetch}
                   sparkOverrideProject={sparkOverrideProject}
                   setSparkOverrideProject={setSparkOverrideProject}
                   sparkOverrideSprint={sparkOverrideSprint}
