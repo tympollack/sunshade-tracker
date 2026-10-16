@@ -14,12 +14,26 @@ async function processBulkUpdate(req: NextRequest) {
         ? { ...body, ids: body.ids || body.item_ids }
         : body;
 
-    const governanceBypass = Boolean(
+    const requestedGovernanceBypass = Boolean(
       payload?.governance_bypass ||
       payload?.updates?.governance_bypass ||
       payload?.metadata?.governance_bypass ||
       req.headers.get('x-governance-bypass') === 'true'
     );
+
+    const isCallerAdmin =
+      authCtx.role === 'owner' ||
+      authCtx.role === 'admin' ||
+      (!authCtx.userId && authCtx.role === null);
+
+    if (requestedGovernanceBypass && !isCallerAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Only workspace admins and owners can bypass sprint governance' },
+        { status: 403 }
+      );
+    }
+
+    const governanceBypass = isCallerAdmin && requestedGovernanceBypass;
 
     const effectivePayload =
       governanceBypass && typeof payload === 'object' && !Array.isArray(payload)

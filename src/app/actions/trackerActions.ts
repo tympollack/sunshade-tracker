@@ -983,10 +983,10 @@ export async function adminBulkMoveSprintAction(params: {
 
     const service = supabaseAdmin;
 
-    // 2. Validate membership in tenant
+    // 2. Validate membership and role in tenant
     const { data: tenant } = await service
       .from('tenants')
-      .select('id, slug')
+      .select('id, slug, owner_id')
       .eq('slug', tenantSlug)
       .is('deleted_at', null)
       .maybeSingle();
@@ -995,20 +995,56 @@ export async function adminBulkMoveSprintAction(params: {
       return { success: false, error: `Tenant "${tenantSlug}" not found` };
     }
 
-    // 3. Resolve sprint definition if moving to a sprint
+    const isOwner = tenant.owner_id === user.id;
+    const { data: membership } = await service
+      .from('tenant_members')
+      .select('role')
+      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!isOwner && !membership) {
+      return {
+        success: false,
+        error: `Forbidden: You do not have access to workspace "${tenantSlug}".`,
+      };
+    }
+
+    const userRole = isOwner ? 'owner' : (membership?.role || null);
+    if (governanceBypass && userRole !== 'owner' && userRole !== 'admin') {
+      return {
+        success: false,
+        error: 'Forbidden: Only workspace admins and owners can perform administrative sprint moves with governance bypass.',
+      };
+    }
+
+    // 3. Resolve sprint definition if moving to a sprint safely without .or() injection
     let resolvedSprintId: string | null = sprintId || null;
     let resolvedSprintName: string | null = sprintName || null;
 
     if (sprintName && sprintName !== '__none__' && sprintName.trim() !== '') {
-      const { data: sRow } = await service
+      const trimmedName = sprintName.trim();
+      let { data: sRow } = await service
         .from('sprints')
         .select('id, name, is_active, status')
         .eq('tenant_id', tenant.id)
-        .or(`name.eq."${sprintName}",id.eq."${sprintName}"`)
+        .eq('name', trimmedName)
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!sRow && uuidPattern.test(trimmedName)) {
+        const { data: sById } = await service
+          .from('sprints')
+          .select('id, name, is_active, status')
+          .eq('tenant_id', tenant.id)
+          .eq('id', trimmedName)
+          .is('deleted_at', null)
+          .maybeSingle();
+        sRow = sById;
+      }
 
       if (sRow) {
         resolvedSprintId = sRow.id;

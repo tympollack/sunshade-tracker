@@ -233,5 +233,59 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         })
       );
     });
+
+    it('rejects unprivileged member from bypassing governance in /api/v1/items/bulk with 403 status', async () => {
+      vi.mocked(authGuard.authenticate).mockResolvedValue({
+        errorResponse: null,
+        context: {
+          ...mockAuthContext,
+          role: 'member',
+        } as any,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-governance-bypass': 'true',
+        },
+        body: JSON.stringify({
+          ids: ['item-1'],
+          updates: { sprint_id: 'sprint-active-uuid-1' },
+        }),
+      });
+
+      const res = await bulkPATCH(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
+    });
+  });
+
+  describe('Security & Role Guardrails', () => {
+    it('rejects unprivileged member from bypassing governance in /api/v1/items/bulk-update with 403 status', async () => {
+      vi.mocked(authGuard.authenticate).mockResolvedValue({
+        errorResponse: null,
+        context: {
+          ...mockAuthContext,
+          role: 'member',
+        } as any,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: ['item-1'],
+          updates: { sprint_id: 'sprint-active-uuid-1' },
+          governance_bypass: true,
+        }),
+      });
+
+      const res = await bulkUpdatePOST(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
+    });
   });
 });

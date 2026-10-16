@@ -1181,11 +1181,25 @@ export async function PATCH(req: NextRequest) {
     if (description !== undefined) updateFields.description = description;
     if (assignee !== undefined) updateFields.assignee = assignee;
 
-    const isGovernanceBypassed = Boolean(
+    const requestedGovernanceBypass = Boolean(
       body?.governance_bypass ||
       (metadata && typeof metadata === 'object' && metadata?.governance_bypass) ||
       req.headers.get('x-governance-bypass') === 'true'
     );
+
+    const isCallerAdmin =
+      authCtx.role === 'owner' ||
+      authCtx.role === 'admin' ||
+      (!authCtx.userId && authCtx.role === null);
+
+    if (requestedGovernanceBypass && !isCallerAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Only workspace admins and owners can bypass sprint governance' },
+        { status: 403 }
+      );
+    }
+
+    const isGovernanceBypassed = isCallerAdmin && requestedGovernanceBypass;
     let resolvedMetadata: any = undefined;
 
     if (metadata !== undefined) {
