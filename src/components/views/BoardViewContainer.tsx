@@ -453,7 +453,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 </div>
 
                 {/* Cold Archive Partition Banner (TASK-TRK-COLD-ARCHIVE-PARTITION) */}
-                {(col.id === targetColdColId || col.id === 'complete' || col.label?.toLowerCase() === 'complete') && coldCount > 0 && !isCollapsedUp && (
+                {col.id === targetColdColId && coldCount > 0 && !isCollapsedUp && (
                   <div
                     data-testid="cold-archive-banner"
                     className="mx-3 my-2 px-3 py-2 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 shrink-0"

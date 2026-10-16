@@ -357,8 +357,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const sprintItems = filterSprintItems(rawSprintItems);
           const isCompletedSprint = sprintDef?.status === 'completed';
           const summary = sprintDef?.metadata?.summary;
-          const hasUnloadedTasks = Boolean(isCompletedSprint && summary && summary.total_tasks > sprintItems.length);
-          const isUsingFrozenSummary = (sprintItems.length === 0 || hasUnloadedTasks) && Boolean(summary);
+          const hasUnloadedTasks = Boolean(isCompletedSprint && summary && summary.total_tasks > rawSprintItems.length);
+          const isUsingFrozenSummary = (rawSprintItems.length === 0 || hasUnloadedTasks) && Boolean(summary);
 
           const leafPoints = calculateSprintLeafPoints(sprintItems, projectSettings);
           const macroPoints = calculateSprintMacroPoints(sprintItems, projectSettings);
@@ -655,7 +655,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       data-testid={`sprint-partial-lazy-banner-${sprintName}`}
                     >
                       <span className="text-slate-400">
-                        Showing {sprintItems.length} active work items ({summary.total_tasks - sprintItems.length} completed items archived).
+                        Showing {sprintItems.length} active work items ({summary.total_tasks - rawSprintItems.length} completed items archived).
                       </span>
                       <button
                         type="button"
@@ -667,7 +667,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         {loadingSprints.has(sprintDef?.id || sprintName) ? (
                           <span>Loading items...</span>
                         ) : (
-                          <span>Load {summary.total_tasks - sprintItems.length} Archived Items</span>
+                          <span>Load {summary.total_tasks - rawSprintItems.length} Archived Items</span>
                         )}
                       </button>
                     </div>

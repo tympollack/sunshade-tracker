@@ -80,9 +80,14 @@ async function resolveSprintIdentifiers(
         query = query.eq('project_id', projectId);
       }
       if (typeof query.or === 'function') {
-        // Sanitize target to prevent PostgREST filter injection (, and () and " delimiters)
-        const safeTarget = targetSprint.replace(/[",()]/g, '');
-        query = query.or(`id.eq.${safeTarget},name.eq.${safeTarget}`);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetSprint);
+        if (isUuid) {
+          query = query.or(`id.eq.${targetSprint},name.eq."${targetSprint.replace(/"/g, '\\"')}"`);
+        } else {
+          // Double-quote PostgREST string literal to allow punctuated names (e.g. "Sprint (Q4)") while escaping internal quotes
+          const escaped = targetSprint.replace(/"/g, '\\"');
+          query = query.or(`id.eq."${escaped}",name.eq."${escaped}"`);
+        }
       }
       const res = await query;
       if (Array.isArray(res?.data)) {
