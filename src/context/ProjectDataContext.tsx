@@ -30,3 +30,8 @@ export function useProjectData(): UseProjectItemsResult {
 }
 
 export { ProjectDataContext };
+export {
+  useProjectSettings,
+  normalizeProjectSettings,
+  DEFAULT_PROJECT_SETTINGS,
+} from '@/hooks/useProjectSettings';

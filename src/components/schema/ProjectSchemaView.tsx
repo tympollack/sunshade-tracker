@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Sliders,
   ListTree,
@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { ProjectSettings, WorkItem } from '@/types/tracker';
+import { lintProjectSettings, SchemaLintError } from '@/lib/project-settings-schema';
 import { ProjectSchemaEditor } from './ProjectSchemaEditor';
 import { JsonTreeNode } from './JsonTreeNode';
 
@@ -173,6 +174,27 @@ export function ProjectSchemaView({
     setSyntaxToast(null);
   };
 
+  // Memoized syntax parse & lint evaluation
+  const { currentParsed, syntaxError } = useMemo(() => {
+    if (mode === 'raw') {
+      try {
+        const parsed = JSON.parse(rawText);
+        return { currentParsed: parsed, syntaxError: null };
+      } catch (err: any) {
+        return { currentParsed: null, syntaxError: err.message || 'Invalid JSON syntax' };
+      }
+    }
+    return { currentParsed: draftData, syntaxError: null };
+  }, [mode, rawText, draftData]);
+
+  const lintErrors = useMemo<SchemaLintError[]>(() => {
+    if (mode === 'raw' && syntaxError) {
+      return [];
+    }
+    const target = mode === 'raw' ? currentParsed : draftData;
+    return lintProjectSettings(target).errors;
+  }, [mode, syntaxError, currentParsed, draftData]);
+
   // Save schema handler
   const handleSave = async () => {
     let payloadToSave = draftData;
@@ -194,6 +216,15 @@ export function ProjectSchemaView({
       setSyntaxToast(null);
     }
 
+    const validation = lintProjectSettings(payloadToSave);
+    if (!validation.valid) {
+      setSaveSuccess(false);
+      const firstErr = validation.errors[0];
+      const msg = `Cannot save schema: ${firstErr.path}: ${firstErr.message}`;
+      setSaveError(msg);
+      return;
+    }
+
     try {
       await onSave(payloadToSave);
       const savedFormatted = JSON.stringify(payloadToSave, null, 2);
@@ -209,7 +240,8 @@ export function ProjectSchemaView({
     }
   };
 
-  const isRawInvalid = mode === 'raw' && rawError !== null;
+  const isRawInvalid = mode === 'raw' && (rawError !== null || syntaxError !== null);
+  const isSaveDisabled = isSaving || isRawInvalid || lintErrors.length > 0;
 
   return (
     <div className="rounded-xl bg-slate-950 border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
@@ -323,7 +355,7 @@ export function ProjectSchemaView({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={isSaving || isRawInvalid}
+                disabled={isSaveDisabled}
                 className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-50"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -333,6 +365,36 @@ export function ProjectSchemaView({
           )}
         </div>
       </div>
+
+      {/* High-Contrast Schema Validation Banner */}
+      {lintErrors.length > 0 && (
+        <div
+          role="alert"
+          data-testid="schema-validation-banner"
+          className="px-4 py-3 bg-red-950/95 border-b border-red-700 text-xs text-red-200 shadow-lg animate-in slide-in-from-top-1"
+        >
+          <div className="flex items-start space-x-2.5">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-1.5 flex-1">
+              <div className="font-semibold text-red-100 flex items-center justify-between">
+                <span>Schema Validation Errors ({lintErrors.length})</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-red-300/80 bg-red-900/50 px-2 py-0.5 rounded border border-red-700/50">
+                  Fix errors to save schema
+                </span>
+              </div>
+              <ul className="space-y-1 font-mono text-[11px] max-h-36 overflow-y-auto pr-1">
+                {lintErrors.map((err, idx) => (
+                  <li key={idx} className="flex items-start space-x-1.5 text-red-300">
+                    <span className="text-red-400 select-none">•</span>
+                    <span className="font-bold text-red-200">{err.path}:</span>
+                    <span>{err.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save Error Banner (Visible in all view modes) */}
       {saveError && (
@@ -385,6 +447,7 @@ export function ProjectSchemaView({
             onChange={handleFormChange}
             activeItems={activeItems}
             readOnly={readOnly}
+            hideValidationBanner={true}
           />
         )}
 
