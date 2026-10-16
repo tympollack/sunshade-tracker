@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/db';
 import { SprintDefinition, HistoricalSprintSummary } from '@/types/tracker';
+import { calculateSprintLeafPoints, getCompletedStatusSet, isItemCompleted } from '@/lib/sprint-utils';
 
 export interface CreateSprintInput {
   name: string;
@@ -132,26 +133,36 @@ export class SprintRelationalService {
           it.metadata?.sprint_id === sprint.id
       );
 
+      let projectSettings: any = null;
+      if (sprint.project_id) {
+        try {
+          const { data: proj } = await supabaseAdmin
+            .from('projects')
+            .select('settings')
+            .eq('id', sprint.project_id)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+          projectSettings = proj?.settings;
+        } catch {
+          // Fallback to default schema if projects query fails
+        }
+      }
+
+      const completedStatusSet = getCompletedStatusSet(projectSettings?.statuses);
       const totalTasks = matchingItems.length;
-      const completedStatuses = new Set(['complete', 'completed', 'done', 'closed']);
       const completedTasks = matchingItems.filter((it: any) =>
-        completedStatuses.has((it.status || '').toLowerCase().trim())
+        isItemCompleted(it.status, completedStatusSet)
       ).length;
 
       const committedPoints =
         (sprint.committed_points && sprint.committed_points > 0)
           ? sprint.committed_points
-          : matchingItems.reduce((sum: number, it: any) => {
-              const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
-              return sum + pts;
-            }, 0);
+          : calculateSprintLeafPoints(matchingItems as any, projectSettings);
 
-      const completedPoints = matchingItems
-        .filter((it: any) => completedStatuses.has((it.status || '').toLowerCase().trim()))
-        .reduce((sum: number, it: any) => {
-          const pts = Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) || 0;
-          return sum + pts;
-        }, 0);
+      const completedItems = matchingItems.filter((it: any) =>
+        isItemCompleted(it.status, completedStatusSet)
+      );
+      const completedPoints = calculateSprintLeafPoints(completedItems as any, projectSettings);
 
       return {
         total_tasks: totalTasks,
@@ -225,6 +236,7 @@ export class SprintRelationalService {
             const legacySprints = proj?.settings?.sprint_settings?.sprints;
             if (Array.isArray(legacySprints) && legacySprints.length > 0) {
               const toInsert = legacySprints.map((s: any) => ({
+                ...(s.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.id) ? { id: s.id } : {}),
                 tenant_id: tenantId,
                 project_id: options.projectId,
                 name: s.name,
@@ -237,9 +249,12 @@ export class SprintRelationalService {
                 metadata: s.metadata || {},
               }));
 
-              await supabaseAdmin
-                .from('sprints')
-                .insert(toInsert);
+              const sprintTable = supabaseAdmin.from('sprints');
+              if (typeof sprintTable.upsert === 'function') {
+                await sprintTable.upsert(toInsert, { ignoreDuplicates: true });
+              } else {
+                await sprintTable.insert(toInsert);
+              }
 
               // Re-run original query with caller's filter options
               let refetchQuery = supabaseAdmin

@@ -129,16 +129,16 @@ export async function runPreRenewalDbAudit(options?: { strict?: boolean }): Prom
   metrics.push({
     category: 'security_rls',
     name: 'Row Level Security (RLS) Policy Coverage Across App Schemas',
-    status: 'passed',
-    details: 'All tables in tracker, cozy, valerie, patchwork, and hub have RLS enabled with explicit tenant and owner policies',
+    status: 'unverified',
+    details: 'Live RLS policy inspection unverified without direct PostgreSQL information_schema query access',
     metricValue: missingRls,
   });
 
   metrics.push({
     category: 'index_health',
     name: 'Foreign Key & Relationship Index Health',
-    status: 'passed',
-    details: 'Foreign key columns across tracker.work_items, comments, and tenant memberships are backed by indexes',
+    status: 'unverified',
+    details: 'Foreign key index inspection unverified without direct PostgreSQL pg_index catalog query access',
     metricValue: unindexedFks,
   });
 

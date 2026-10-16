@@ -11,6 +11,7 @@ export interface StatusDefinition {
   label: string;
   color: string;
   order: number;
+  is_completed?: boolean;
 }
 
 export interface HistoricalSprintSummary {
