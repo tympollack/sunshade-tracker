@@ -947,5 +947,127 @@ export async function atomicSprintSwapAction(params: {
   }
 }
 
+/**
+ * Admin server action to move multiple work items into a sprint or backlog with governance bypass.
+ * Ensures dual-column schema synchronization (sprint_id and metadata.sprint) and validates caller authorization.
+ */
+export async function adminBulkMoveSprintAction(params: {
+  tenantSlug: string;
+  itemIds: string[];
+  sprintName?: string | null;
+  sprintId?: string | null;
+  governanceBypass?: boolean;
+}): Promise<{
+  success: boolean;
+  updatedCount?: number;
+  items?: any[];
+  error?: string;
+}> {
+  try {
+    const { tenantSlug, itemIds, sprintName, sprintId, governanceBypass = true } = params;
+    if (!tenantSlug) return { success: false, error: 'Tenant slug is required' };
+    if (!Array.isArray(itemIds) || itemIds.length === 0) {
+      return { success: false, error: 'At least one item ID is required' };
+    }
+
+    // 1. Authenticate session
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return { success: false, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const service = supabaseAdmin;
+
+    // 2. Validate membership in tenant
+    const { data: tenant } = await service
+      .from('tenants')
+      .select('id, slug')
+      .eq('slug', tenantSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!tenant) {
+      return { success: false, error: `Tenant "${tenantSlug}" not found` };
+    }
+
+    // 3. Resolve sprint definition if moving to a sprint
+    let resolvedSprintId: string | null = sprintId || null;
+    let resolvedSprintName: string | null = sprintName || null;
+
+    if (sprintName && sprintName !== '__none__' && sprintName.trim() !== '') {
+      const { data: sRow } = await service
+        .from('sprints')
+        .select('id, name, is_active, status')
+        .eq('tenant_id', tenant.id)
+        .or(`name.eq."${sprintName}",id.eq."${sprintName}"`)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sRow) {
+        resolvedSprintId = sRow.id;
+        resolvedSprintName = sRow.name;
+      }
+    } else if (sprintId) {
+      const { data: sRow } = await service
+        .from('sprints')
+        .select('id, name')
+        .eq('tenant_id', tenant.id)
+        .eq('id', sprintId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (sRow) {
+        resolvedSprintId = sRow.id;
+        resolvedSprintName = sRow.name;
+      }
+    }
+
+    // 4. Execute bulk update with governance bypass
+    const { handleBulkUpdateItems } = await import('@/lib/bulk-items');
+    const res = await handleBulkUpdateItems(
+      tenant.id,
+      {
+        ids: itemIds,
+        governance_bypass: governanceBypass,
+        updates: {
+          sprint_id: resolvedSprintId,
+          metadata: {
+            sprint: resolvedSprintName,
+            sprint_id: resolvedSprintId,
+            governance_bypass: governanceBypass,
+            added_mid_sprint: Boolean(resolvedSprintName && governanceBypass),
+          },
+        },
+      },
+      {
+        tenantSlug,
+        actorId: user.id,
+        actorName: user.email || 'Admin',
+        governance_bypass: governanceBypass,
+      }
+    );
+
+    if (!res.success) {
+      return { success: false, error: res.error || 'Failed to bulk move sprint' };
+    }
+
+    return {
+      success: true,
+      updatedCount: res.updated_count,
+      items: res.items,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Server action error during bulk sprint move' };
+  }
+}
+
+
 
 

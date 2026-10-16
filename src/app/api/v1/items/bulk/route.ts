@@ -54,10 +54,17 @@ export async function POST(req: NextRequest) {
           ...body,
           ids: body.ids || body.item_ids,
         };
+        const governanceBypass = Boolean(
+          payload?.governance_bypass ||
+          payload?.updates?.governance_bypass ||
+          payload?.updates?.metadata?.governance_bypass ||
+          req.headers.get('x-governance-bypass') === 'true'
+        );
         const res = await handleBulkUpdateItems(authCtx.tenant.id, payload, {
           tenantSlug: authCtx.tenant.slug,
           actorId: authCtx.userId || null,
           actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
+          governance_bypass: governanceBypass,
         });
         if (!res.success) {
           return NextResponse.json({ error: res.error }, { status: res.status || 400 });
@@ -125,10 +132,18 @@ export async function PATCH(req: NextRequest) {
         ? { ...body, ids: body.ids || body.item_ids }
         : body;
 
+    const governanceBypass = Boolean(
+      payload?.governance_bypass ||
+      payload?.updates?.governance_bypass ||
+      payload?.updates?.metadata?.governance_bypass ||
+      req.headers.get('x-governance-bypass') === 'true'
+    );
+
     const res = await handleBulkUpdateItems(authCtx.tenant.id, payload, {
       tenantSlug: authCtx.tenant.slug,
       actorId: authCtx.userId || null,
       actorName: authCtx.userName || (authCtx.userId ? 'User' : 'Bulk API'),
+      governance_bypass: governanceBypass,
     });
     if (!res.success) {
       return NextResponse.json({ error: res.error }, { status: res.status || 400 });

@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import fs from 'fs';
 import path from 'path';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
+import { FloatingPlanningBar } from '@/components/sprint/FloatingPlanningBar';
 import {
   reconcileSprintMetadata,
   isMovingIntoActiveSprint,
@@ -578,6 +579,295 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     });
   });
 
+  describe('FloatingPlanningBar UI Integration', () => {
+    it('renders floating planning bar container and delegates actions to toolbar', () => {
+      const onMove = vi.fn();
+      render(
+        <FloatingPlanningBar
+          selectedCount={5}
+          availableSprints={['Sprint 1 (Active)', 'Sprint 2 (Planned)']}
+          statuses={[]}
+          onMoveToSprint={onMove}
+          onSetStatus={vi.fn()}
+          onAssignMember={vi.fn()}
+          onAdjustPoints={vi.fn()}
+          onDeleteSelected={vi.fn()}
+          onClearSelection={vi.fn()}
+          isApplying={false}
+        />
+      );
+
+      const barContainer = screen.getByTestId('floating-planning-bar');
+      expect(barContainer).toBeInTheDocument();
+      expect(screen.getByText('5 items selected')).toBeInTheDocument();
+
+      const moveSelect = screen.getByTitle('Move selected items to a sprint or backlog');
+      fireEvent.change(moveSelect, { target: { value: 'Sprint 1 (Active)' } });
+      expect(onMove).toHaveBeenCalledWith('Sprint 1 (Active)');
+    });
+  });
+
+  describe('Dual-Column Sprint Batch Move & Governance Exemption (BUG-TRK-SPRINT-MOVE-DB-REJECT)', () => {
+    const tenantId = '00000000-0000-0000-0000-000000000000';
+    const projectId = 'proj-123';
+
+    it('successfully moves 5 items with story points into an active sprint with dual-column sync when governance_bypass is true', async () => {
+      const pointValues = [1, 2, 3, 5, 8];
+      const mockItems = pointValues.map((pts, idx) => ({
+        id: `item-${idx + 1}`,
+        tenant_id: tenantId,
+        project_id: projectId,
+        title: `Backlog Item ${idx + 1} (${pts} pts)`,
+        item_type: 'story',
+        status: 'not_started',
+        order_index: (idx + 1) * 1000,
+        sprint_id: null,
+        metadata: { story_points: pts },
+      }));
+
+      const capturedUpdates: Record<string, any> = {};
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockImplementation(() => ({
+              data: mockItems,
+              error: null,
+            })),
+            update: vi.fn().mockImplementation((fields) => {
+              return {
+                eq: vi.fn().mockImplementation((col, val) => {
+                  if (col === 'id') {
+                    capturedUpdates[val] = fields;
+                  }
+                  return {
+                    eq: vi.fn().mockReturnThis(),
+                    select: vi.fn().mockReturnThis(),
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: val,
+                        ...fields,
+                      },
+                      error: null,
+                    }),
+                  };
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          ids: mockItems.map((i) => i.id),
+          updates: {
+            sprint_id: 'sprint-active-uuid-1',
+            metadata: {
+              sprint: 'Sprint 1 (Active)',
+            },
+          },
+        },
+        { governance_bypass: true }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.updated_count).toBe(5);
+
+      // Verify dual-column schema synchronization for all 5 items
+      for (const item of mockItems) {
+        const update = capturedUpdates[item.id];
+        expect(update).toBeDefined();
+        // Relational foreign key column
+        expect(update.sprint_id).toBe('sprint-active-uuid-1');
+        // JSONB metadata synchronization
+        expect(update.metadata.sprint).toBe('Sprint 1 (Active)');
+        expect(update.metadata.sprint_id).toBe('sprint-active-uuid-1');
+        // Governance bypass flags
+        expect(update.metadata.governance_bypass).toBe(true);
+        expect(update.metadata.added_mid_sprint).toBe(true);
+        // Story points preserved
+        expect(update.metadata.story_points).toBe(item.metadata.story_points);
+      }
+    });
+
+    it('successfully moves heterogeneous items (Modality B) into active sprint with dual-column writes and governance bypass', async () => {
+      const mockItemA = {
+        id: 'item-het-1',
+        tenant_id: tenantId,
+        project_id: projectId,
+        title: 'Het Item 1',
+        item_type: 'story',
+        status: 'not_started',
+        order_index: 1000,
+        metadata: { story_points: 5 },
+      };
+      const mockItemB = {
+        id: 'item-het-2',
+        tenant_id: tenantId,
+        project_id: projectId,
+        title: 'Het Item 2',
+        item_type: 'task',
+        status: 'not_started',
+        order_index: 2000,
+        metadata: { story_points: 3 },
+      };
+
+      const capturedUpdates: Record<string, any> = {};
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockImplementation(() => ({
+              data: [mockItemA, mockItemB],
+              error: null,
+            })),
+            update: vi.fn().mockImplementation((fields) => {
+              return {
+                eq: vi.fn().mockImplementation((col, val) => {
+                  if (col === 'id') {
+                    capturedUpdates[val] = fields;
+                  }
+                  return {
+                    eq: vi.fn().mockReturnThis(),
+                    select: vi.fn().mockReturnThis(),
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: val, ...fields },
+                      error: null,
+                    }),
+                  };
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          items: [
+            {
+              id: 'item-het-1',
+              sprint_id: 'sprint-active-uuid-1',
+              metadata: { sprint: 'Sprint 1 (Active)' },
+            },
+            {
+              id: 'item-het-2',
+              sprint_id: 'sprint-active-uuid-1',
+              metadata: { sprint: 'Sprint 1 (Active)' },
+            },
+          ],
+        },
+        { governance_bypass: true }
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.updated_count).toBe(2);
+      expect(capturedUpdates['item-het-1'].sprint_id).toBe('sprint-active-uuid-1');
+      expect(capturedUpdates['item-het-1'].metadata.sprint).toBe('Sprint 1 (Active)');
+      expect(capturedUpdates['item-het-2'].sprint_id).toBe('sprint-active-uuid-1');
+      expect(capturedUpdates['item-het-2'].metadata.sprint).toBe('Sprint 1 (Active)');
+    });
+
+    it('surfaces exact database rejection message when PostgreSQL triggers or RLS reject the update', async () => {
+      const mockItem = {
+        id: 'item-rejected',
+        tenant_id: tenantId,
+        project_id: projectId,
+        title: 'Item Rejected By DB Trigger',
+        item_type: 'story',
+        status: 'not_started',
+        order_index: 1000,
+        metadata: { story_points: 13 },
+      };
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockImplementation(() => ({
+              data: [mockItem],
+              error: null,
+            })),
+            update: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockReturnThis(),
+              select: vi.fn().mockReturnThis(),
+              single: vi.fn().mockResolvedValue({
+                data: null,
+                error: {
+                  message: 'new row for relation "work_items" violates check constraint "trg_enforce_sprint_governance"',
+                  code: '23514',
+                },
+              }),
+            })),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          ids: ['item-rejected'],
+          updates: {
+            sprint_id: 'sprint-active-uuid-1',
+            metadata: { sprint: 'Sprint 1 (Active)' },
+          },
+        },
+        { governance_bypass: true }
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(400);
+      expect(res.error).toContain('violates check constraint "trg_enforce_sprint_governance"');
+    });
+  });
+
   describe('PostgreSQL Migration Script Integrity', () => {
     it('verifies 20261007114700_tracker_fix_sprint_move_db_reject.sql exists and hardens active sprint trigger', () => {
       const migrationFile = path.resolve(
@@ -597,6 +887,27 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(sql).toContain("NEW.metadata - 'sprint_id'");
       expect(sql).toContain('added_mid_sprint');
       expect(sql).toContain('trg_prevent_point_drift_on_active_sprint_update');
+    });
+
+    it('verifies 20261016191500_tracker_sprint_batch_move_dual_column_and_governance_bypass.sql adds dual-column sprint_id and governance triggers', () => {
+      const migrationFile = path.resolve(
+        process.cwd(),
+        '../sunshade-db-platform/supabase/migrations/20261016191500_tracker_sprint_batch_move_dual_column_and_governance_bypass.sql'
+      );
+
+      // In isolated CI or Docker checkouts without sibling repositories, gracefully pass
+      if (!fs.existsSync(migrationFile)) {
+        return;
+      }
+
+      const sql = fs.readFileSync(migrationFile, 'utf8');
+
+      expect(sql).toContain('sprint_id UUID REFERENCES tracker.sprints(id)');
+      expect(sql).toContain('CREATE INDEX IF NOT EXISTS idx_tracker_work_items_sprint_id');
+      expect(sql).toContain('trg_enforce_sprint_governance');
+      expect(sql).toContain('governance_bypass');
+      expect(sql).toContain('prevent_point_drift_on_active_sprint');
+      expect(sql).toContain('atomic_sprint_batch_move');
     });
   });
 });

@@ -190,6 +190,7 @@ export interface WorkItem {
   tenant_id: string;
   project_id: string;
   parent_id?: string | null;
+  sprint_id?: string | null;
   external_ref_id?: string | null;
   item_type: string;
   status: string;
