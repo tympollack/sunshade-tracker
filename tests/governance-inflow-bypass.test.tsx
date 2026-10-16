@@ -68,10 +68,42 @@ describe('FEAT-TRK-GOVERNANCE-INFLOW-BYPASS: Late Inflow & Runway Governance Byp
           enforce_late_inflow_caps: false,
         })
       ).toBe(false);
+
+      // Metadata bypass lookup (Comment 4)
+      expect(
+        isLateInflowEnforced({
+          metadata: {
+            metric_rules: {
+              enforce_late_inflow_caps: false,
+              late_inflow_cap: null,
+              runway_cutoff: null,
+            },
+          },
+        })
+      ).toBe(false);
+
+      expect(
+        isLateInflowEnforced({
+          metadata: {
+            sprint_metrics: {
+              late_inflow_cap: null,
+              runway_cutoff: null,
+            },
+          },
+        })
+      ).toBe(false);
     });
 
-    it('disableLateInflowCaps sets late_inflow_cap and runway_cutoff to null', () => {
-      const disabled = disableLateInflowCaps(mockBaseSettings.sprint_metrics);
+    it('disableLateInflowCaps sets late_inflow_cap and runway_cutoff to null while preserving custom values (Comment 2)', () => {
+      const customMetrics = {
+        ...mockBaseSettings.sprint_metrics,
+        late_inflow_cap: 5,
+        runway_cutoff: 0.80,
+        late_runway_max_points: 5,
+        late_runway_threshold: 0.80,
+      };
+
+      const disabled = disableLateInflowCaps(customMetrics);
       expect(disabled.late_inflow_cap).toBeNull();
       expect(disabled.runway_cutoff).toBeNull();
       expect(disabled.late_runway_max_points).toBeNull();
@@ -81,32 +113,45 @@ describe('FEAT-TRK-GOVERNANCE-INFLOW-BYPASS: Late Inflow & Runway Governance Byp
       expect(disabled.velocity_window).toBe(3);
       expect(disabled.enforce_zero_sum).toBe(true);
       expect(disabled.lock_estimates_in_active_sprint).toBe(true);
-    });
 
-    it('enableLateInflowCaps restores numeric thresholds', () => {
-      const disabled = disableLateInflowCaps(mockBaseSettings.sprint_metrics);
-      const reEnabled = enableLateInflowCaps(disabled, 13, 0.60);
-
-      expect(reEnabled.late_inflow_cap).toBe(13);
-      expect(reEnabled.runway_cutoff).toBe(0.60);
-      expect(reEnabled.late_runway_max_points).toBe(13);
-      expect(reEnabled.late_runway_threshold).toBe(0.60);
+      // Turning back on restores the custom 5 pts and 80% rather than reset to defaults (Comment 2)
+      const reEnabled = enableLateInflowCaps(disabled);
+      expect(reEnabled.late_inflow_cap).toBe(5);
+      expect(reEnabled.runway_cutoff).toBe(0.80);
+      expect(reEnabled.late_runway_max_points).toBe(5);
+      expect(reEnabled.late_runway_threshold).toBe(0.80);
       expect(reEnabled.enforce_late_inflow_caps).toBe(true);
     });
 
-    it('getEffectiveLateInflowRules returns config object with bypass status', () => {
-      const activeRules = getEffectiveLateInflowRules(mockBaseSettings.sprint_metrics);
-      expect(activeRules.enforced).toBe(true);
-      expect(activeRules.late_inflow_cap).toBe(2);
-      expect(activeRules.runway_cutoff).toBe(0.60);
+    it('prioritizes new aliases over legacy keys when limits disagree (Comment 3)', () => {
+      // With late_runway_max_points: 2 and late_inflow_cap: 13
+      const conflictingMetrics = {
+        late_runway_max_points: 2,
+        late_inflow_cap: 13,
+        late_runway_threshold: 0.60,
+        runway_cutoff: 0.75,
+      };
 
-      const bypassed = getEffectiveLateInflowRules({
-        late_inflow_cap: null,
-        runway_cutoff: null,
-      });
-      expect(bypassed.enforced).toBe(false);
-      expect(bypassed.late_inflow_cap).toBeNull();
-      expect(bypassed.runway_cutoff).toBeNull();
+      const effective = getEffectiveLateInflowRules(conflictingMetrics);
+      expect(effective.enforced).toBe(true);
+      expect(effective.late_inflow_cap).toBe(13);
+      expect(effective.runway_cutoff).toBe(0.75);
+    });
+
+    it('getEffectiveLateInflowRules handles metadata bypass correctly (Comment 4)', () => {
+      const bypassedMetadata = {
+        metadata: {
+          metric_rules: {
+            enforce_late_inflow_caps: false,
+            late_inflow_cap: null,
+            runway_cutoff: null,
+          },
+        },
+      };
+      const result = getEffectiveLateInflowRules(bypassedMetadata);
+      expect(result.enforced).toBe(false);
+      expect(result.late_inflow_cap).toBeNull();
+      expect(result.runway_cutoff).toBeNull();
     });
   });
 

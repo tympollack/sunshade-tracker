@@ -62,6 +62,26 @@ export const DEFAULT_METRIC_RULES: Required<MetricRules> = {
 };
 
 /**
+/**
+ * Extracts raw metric rules from various supported project settings or metadata locations.
+ */
+export function extractRawMetricRules(settingsOrObject?: any): any {
+  if (!settingsOrObject || typeof settingsOrObject !== 'object') {
+    return settingsOrObject;
+  }
+  return (
+    settingsOrObject.sprint_metrics ||
+    settingsOrObject.metric_rules ||
+    settingsOrObject.sprint_settings?.metric_rules ||
+    settingsOrObject.sprint_settings?.metrics ||
+    settingsOrObject.sprint_settings?.sprint_metrics ||
+    settingsOrObject.metadata?.metric_rules ||
+    settingsOrObject.metadata?.sprint_metrics ||
+    settingsOrObject
+  );
+}
+
+/**
  * Resolves effective metric rules by merging provided or stored JSON settings
  * with canonical task specification defaults.
  */
@@ -70,15 +90,8 @@ export function resolveMetricRules(settingsOrObject?: any): Required<MetricRules
     return { ...DEFAULT_METRIC_RULES };
   }
 
-  // Look for metric_rules or sprint_metrics in various supported JSON locations:
-  const rawRules: any =
-    settingsOrObject.sprint_metrics ||
-    settingsOrObject.metric_rules ||
-    settingsOrObject.sprint_settings?.metric_rules ||
-    settingsOrObject.sprint_settings?.metrics ||
-    settingsOrObject.metadata?.metric_rules ||
-    settingsOrObject.metadata?.sprint_metrics ||
-    settingsOrObject;
+  // Look for metric_rules or sprint_metrics across all supported locations
+  const rawRules: any = extractRawMetricRules(settingsOrObject);
 
   const resolved: Required<MetricRules> = { ...DEFAULT_METRIC_RULES };
 
@@ -99,30 +112,30 @@ export function resolveMetricRules(settingsOrObject?: any): Required<MetricRules
       resolved.late_runway_threshold = null;
       resolved.runway_cutoff = null;
     } else if (
-      typeof rawRules.late_runway_threshold === 'number' &&
-      rawRules.late_runway_threshold >= 0 &&
-      rawRules.late_runway_threshold <= 1
-    ) {
-      resolved.late_runway_threshold = rawRules.late_runway_threshold;
-      resolved.runway_cutoff = rawRules.late_runway_threshold;
-    } else if (
       typeof rawRules.runway_cutoff === 'number' &&
       rawRules.runway_cutoff >= 0 &&
       rawRules.runway_cutoff <= 1
     ) {
       resolved.late_runway_threshold = rawRules.runway_cutoff;
       resolved.runway_cutoff = rawRules.runway_cutoff;
+    } else if (
+      typeof rawRules.late_runway_threshold === 'number' &&
+      rawRules.late_runway_threshold >= 0 &&
+      rawRules.late_runway_threshold <= 1
+    ) {
+      resolved.late_runway_threshold = rawRules.late_runway_threshold;
+      resolved.runway_cutoff = rawRules.late_runway_threshold;
     }
 
     if (rawRules.late_runway_max_points === null || rawRules.late_inflow_cap === null) {
       resolved.late_runway_max_points = null;
       resolved.late_inflow_cap = null;
-    } else if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
-      resolved.late_runway_max_points = rawRules.late_runway_max_points;
-      resolved.late_inflow_cap = rawRules.late_runway_max_points;
     } else if (typeof rawRules.late_inflow_cap === 'number' && rawRules.late_inflow_cap >= 0) {
       resolved.late_runway_max_points = rawRules.late_inflow_cap;
       resolved.late_inflow_cap = rawRules.late_inflow_cap;
+    } else if (typeof rawRules.late_runway_max_points === 'number' && rawRules.late_runway_max_points >= 0) {
+      resolved.late_runway_max_points = rawRules.late_runway_max_points;
+      resolved.late_inflow_cap = rawRules.late_runway_max_points;
     }
 
     if (typeof rawRules.enforce_late_inflow_caps === 'boolean') {

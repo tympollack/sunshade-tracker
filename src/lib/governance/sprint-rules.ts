@@ -1,5 +1,9 @@
 import { MetricRules } from '@/types/tracker';
-import { resolveMetricRules, DEFAULT_METRIC_RULES } from '@/lib/services/sprintAnalyticsService';
+import {
+  resolveMetricRules,
+  extractRawMetricRules,
+  DEFAULT_METRIC_RULES,
+} from '@/lib/services/sprintAnalyticsService';
 
 export const DEFAULT_RUNWAY_CUTOFF = 0.60;
 export const DEFAULT_LATE_INFLOW_CAP = 2;
@@ -19,12 +23,11 @@ export function isLateInflowEnforced(metricsOrSettings?: any): boolean {
     return true;
   }
 
-  const rules: any =
-    metricsOrSettings.sprint_metrics ||
-    metricsOrSettings.metric_rules ||
-    metricsOrSettings.sprint_settings?.metric_rules ||
-    metricsOrSettings.sprint_settings?.metrics ||
-    metricsOrSettings;
+  // Consistent raw-rules extraction across settings, direct rules, or metadata
+  const rules: any = extractRawMetricRules(metricsOrSettings);
+  if (!rules || typeof rules !== 'object') {
+    return true;
+  }
 
   if (rules.enforce_late_inflow_caps === false) {
     return false;
@@ -43,9 +46,25 @@ export function isLateInflowEnforced(metricsOrSettings?: any): boolean {
 
 /**
  * Disables late inflow and runway caps by setting late_inflow_cap and runway_cutoff to null.
- * Also synchronizes legacy late_runway_max_points and late_runway_threshold to null.
+ * Also synchronizes legacy late_runway_max_points and late_runway_threshold to null,
+ * while preserving previous custom numbers in _prev_late_inflow_cap / _prev_runway_cutoff
+ * so custom values are not permanently lost across on/off toggle cycles.
  */
 export function disableLateInflowCaps(metrics?: MetricRules): MetricRules {
+  const currentCap =
+    typeof metrics?.late_inflow_cap === 'number'
+      ? metrics.late_inflow_cap
+      : typeof metrics?.late_runway_max_points === 'number'
+      ? metrics.late_runway_max_points
+      : (metrics as any)?._prev_late_inflow_cap;
+
+  const currentCutoff =
+    typeof metrics?.runway_cutoff === 'number'
+      ? metrics.runway_cutoff
+      : typeof metrics?.late_runway_threshold === 'number'
+      ? metrics.late_runway_threshold
+      : (metrics as any)?._prev_runway_cutoff;
+
   return {
     ...metrics,
     late_inflow_cap: null,
@@ -53,29 +72,55 @@ export function disableLateInflowCaps(metrics?: MetricRules): MetricRules {
     late_runway_max_points: null,
     late_runway_threshold: null,
     enforce_late_inflow_caps: false,
+    _prev_late_inflow_cap: typeof currentCap === 'number' ? currentCap : DEFAULT_LATE_INFLOW_CAP,
+    _prev_runway_cutoff: typeof currentCutoff === 'number' ? currentCutoff : DEFAULT_RUNWAY_CUTOFF,
   };
 }
 
 /**
- * Enables late inflow and runway caps with specified or default thresholds.
+ * Enables late inflow and runway caps with specified, previously preserved, or default thresholds.
  */
 export function enableLateInflowCaps(
   metrics?: MetricRules,
-  defaultCap: number = DEFAULT_LATE_INFLOW_CAP,
-  defaultCutoff: number = DEFAULT_RUNWAY_CUTOFF
+  defaultCap?: number,
+  defaultCutoff?: number
 ): MetricRules {
+  const restoredCap =
+    (typeof defaultCap === 'number' && defaultCap > 0 ? defaultCap : undefined) ??
+    (typeof (metrics as any)?._prev_late_inflow_cap === 'number'
+      ? (metrics as any)._prev_late_inflow_cap
+      : undefined) ??
+    (typeof metrics?.late_inflow_cap === 'number' ? metrics.late_inflow_cap : undefined) ??
+    (typeof metrics?.late_runway_max_points === 'number'
+      ? metrics.late_runway_max_points
+      : undefined) ??
+    DEFAULT_LATE_INFLOW_CAP;
+
+  const restoredCutoff =
+    (typeof defaultCutoff === 'number' && defaultCutoff > 0 ? defaultCutoff : undefined) ??
+    (typeof (metrics as any)?._prev_runway_cutoff === 'number'
+      ? (metrics as any)._prev_runway_cutoff
+      : undefined) ??
+    (typeof metrics?.runway_cutoff === 'number' ? metrics.runway_cutoff : undefined) ??
+    (typeof metrics?.late_runway_threshold === 'number'
+      ? metrics.late_runway_threshold
+      : undefined) ??
+    DEFAULT_RUNWAY_CUTOFF;
+
   return {
     ...metrics,
-    late_inflow_cap: defaultCap,
-    runway_cutoff: defaultCutoff,
-    late_runway_max_points: defaultCap,
-    late_runway_threshold: defaultCutoff,
+    late_inflow_cap: restoredCap,
+    runway_cutoff: restoredCutoff,
+    late_runway_max_points: restoredCap,
+    late_runway_threshold: restoredCutoff,
     enforce_late_inflow_caps: true,
   };
 }
 
 /**
  * Resolves the effective late inflow governance rules from project settings or metric rules.
+ * Uses consistent alias precedence (late_inflow_cap before late_runway_max_points;
+ * runway_cutoff before late_runway_threshold).
  */
 export function getEffectiveLateInflowRules(rulesOrSettings?: any): LateInflowGovernanceConfig {
   const enforced = isLateInflowEnforced(rulesOrSettings);

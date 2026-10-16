@@ -34,6 +34,8 @@ export function SprintGovernanceForm({
       ? metrics.runway_cutoff
       : typeof metrics?.late_runway_threshold === 'number'
       ? metrics.late_runway_threshold
+      : typeof (metrics as any)?._prev_runway_cutoff === 'number'
+      ? (metrics as any)._prev_runway_cutoff
       : (DEFAULT_METRIC_RULES.late_runway_threshold ?? 0.60);
   const runwayPercent = Math.min(100, Math.max(10, Math.round(rawRunway <= 1 ? rawRunway * 100 : rawRunway)));
 
@@ -42,6 +44,8 @@ export function SprintGovernanceForm({
       ? metrics.late_inflow_cap
       : typeof metrics?.late_runway_max_points === 'number'
       ? metrics.late_runway_max_points
+      : typeof (metrics as any)?._prev_late_inflow_cap === 'number'
+      ? (metrics as any)._prev_late_inflow_cap
       : (DEFAULT_METRIC_RULES.late_runway_max_points ?? 2);
   const lateCapPoints = Math.max(0, rawLateCap ?? 2);
 
@@ -88,6 +92,7 @@ export function SprintGovernanceForm({
     handleUpdate({
       late_runway_threshold: decimal,
       runway_cutoff: decimal,
+      _prev_runway_cutoff: decimal,
     });
   };
 
@@ -96,6 +101,7 @@ export function SprintGovernanceForm({
     handleUpdate({
       late_runway_max_points: clamped,
       late_inflow_cap: clamped,
+      _prev_late_inflow_cap: clamped,
     });
   };
 
@@ -121,13 +127,7 @@ export function SprintGovernanceForm({
     if (isLateInflow) {
       handleUpdate(disableLateInflowCaps(metrics));
     } else {
-      handleUpdate(
-        enableLateInflowCaps(
-          metrics,
-          lateCapPoints || 2,
-          Number((runwayPercent / 100).toFixed(2)) || 0.60
-        )
-      );
+      handleUpdate(enableLateInflowCaps(metrics));
     }
   };
 

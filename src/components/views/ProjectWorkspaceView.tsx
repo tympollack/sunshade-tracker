@@ -1417,7 +1417,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           },
         };
 
-        const metricRules = projectSettings?.sprint_settings?.metric_rules || projectSettings?.sprint_settings?.sprint_metrics;
+        const metricRules =
+          projectSettings?.sprint_metrics ||
+          projectSettings?.metric_rules ||
+          projectSettings?.sprint_settings?.metric_rules ||
+          projectSettings?.sprint_settings?.sprint_metrics ||
+          projectSettings?.sprint_settings?.metrics;
 
         try {
           validateSprintIntakePure({
