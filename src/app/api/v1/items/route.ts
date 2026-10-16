@@ -13,9 +13,116 @@ import {
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
 import { deriveProjectPrefix, generateNextSequentialRef } from '@/lib/ref-generator';
-import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
+import {
+  isItemImmutableDueToCompletedSprint,
+  getCompletedStatusSet,
+  isItemCompleted,
+} from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
 
+/**
+ * Automatically pages through Supabase PostgREST queries in 1000-row chunks
+ * to bypass the default 1000-row ceiling. Falls back to direct awaiting if .range()
+ * is not supported (e.g. in unit test mock environments).
+ */
+async function fetchAllRows<T = any>(queryBuilder: any): Promise<{ data: T[]; error: any }> {
+  if (!queryBuilder) {
+    return { data: [], error: null };
+  }
+
+  if (typeof queryBuilder.range !== 'function') {
+    const res = await queryBuilder;
+    if (res?.error) return { data: [], error: res.error };
+    return { data: (res?.data || []) as T[], error: null };
+  }
+
+  const CHUNK_SIZE = 1000;
+  let allData: T[] = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const chunkQuery = queryBuilder.range(from, from + CHUNK_SIZE - 1);
+    const { data, error } = await chunkQuery;
+    if (error) {
+      return { data: allData, error };
+    }
+    if (!data || data.length === 0) {
+      break;
+    }
+    allData.push(...data);
+    if (data.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+    }
+  }
+
+  return { data: allData, error: null };
+}
+
+/**
+ * Resolves a sprint target string (either UUID or name) to a Set of matching
+ * identifiers across relational tracker.sprints and project settings.
+ */
+async function resolveSprintIdentifiers(
+  tenantId: string,
+  targetSprint: string,
+  projectId?: string,
+  projectSettings?: any
+): Promise<Set<string>> {
+  const ids = new Set<string>([targetSprint]);
+  try {
+    const sprintTable = supabaseAdmin.from('sprints');
+    if (sprintTable && typeof sprintTable.select === 'function') {
+      let query: any = sprintTable.select('id, name').eq('tenant_id', tenantId);
+      if (projectId && typeof query.eq === 'function') {
+        query = query.eq('project_id', projectId);
+      }
+      if (typeof query.or === 'function') {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetSprint);
+        if (isUuid) {
+          query = query.or(`id.eq.${targetSprint},name.eq."${targetSprint.replace(/"/g, '\\"')}"`);
+        } else {
+          // Double-quote PostgREST string literal to allow punctuated names (e.g. "Sprint (Q4)") while escaping internal quotes
+          const escaped = targetSprint.replace(/"/g, '\\"');
+          query = query.or(`id.eq."${escaped}",name.eq."${escaped}"`);
+        }
+      }
+      const res = await query;
+      if (Array.isArray(res?.data)) {
+        res.data.forEach((r: any) => {
+          if (r.id) ids.add(String(r.id));
+          if (r.name) ids.add(String(r.name));
+        });
+      }
+    }
+  } catch {
+    // Non-fatal, check project settings sprints
+  }
+
+  // Check project settings sprint definitions
+  const settingsSprints = projectSettings?.sprint_settings?.sprints;
+  if (Array.isArray(settingsSprints)) {
+    settingsSprints.forEach((s: any) => {
+      if (s.id === targetSprint || s.name === targetSprint) {
+        if (s.id) ids.add(String(s.id));
+        if (s.name) ids.add(String(s.name));
+      }
+    });
+  }
+
+  return ids;
+}
+
+function isItemInTargetSprint(it: WorkItem, targetSet: Set<string>): boolean {
+  const sprintName = it.metadata?.sprint;
+  const sprintId = it.metadata?.sprint_id;
+  return Boolean(
+    (sprintName && targetSet.has(sprintName)) ||
+    (sprintId && targetSet.has(sprintId))
+  );
+}
 
 export async function GET(req: NextRequest) {
   const auth = await authenticate(req);
@@ -31,6 +138,12 @@ export async function GET(req: NextRequest) {
   const format = searchParams.get('format') || 'flat'; // 'flat' | 'tree' | 'board'
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
+  const updatedSince = searchParams.get('updated_since');
+  const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const sprintIdParam = searchParams.get('sprint_id');
+  const sprintParam = searchParams.get('sprint');
+  const targetSprint = sprintIdParam || sprintParam;
+  const ifModifiedSince = req.headers.get('if-modified-since');
 
   // 1a. Bulk Items by IDs lookup
   if (idsParam) {
@@ -92,6 +205,230 @@ export async function GET(req: NextRequest) {
   }
 
   if (isPortfolio) {
+    // Fast HTTP 304 Evaluation & Latest Touch query for portfolio
+    let touchQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('updated_at')
+      .eq('tenant_id', authCtx.tenant.id);
+
+    if (typeof touchQuery.order === 'function') {
+      touchQuery = touchQuery.order('updated_at', { ascending: false });
+    }
+    if (typeof touchQuery.limit === 'function') {
+      touchQuery = touchQuery.limit(1);
+    }
+
+    let touchData: any = null;
+    if (typeof touchQuery.maybeSingle === 'function') {
+      const res = await touchQuery.maybeSingle();
+      touchData = res?.data;
+    } else if (typeof touchQuery.single === 'function') {
+      const res = await touchQuery.single().catch(() => ({ data: null }));
+      touchData = res?.data;
+    } else if (typeof touchQuery.then === 'function') {
+      const res = await touchQuery.catch(() => ({ data: null }));
+      touchData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+    }
+
+    // Check projects updated_at as well for schema/status changes
+    let projTouchQuery: any = supabaseAdmin
+      .from('projects')
+      .select('updated_at')
+      .eq('tenant_id', authCtx.tenant.id);
+    if (typeof projTouchQuery.order === 'function') projTouchQuery = projTouchQuery.order('updated_at', { ascending: false });
+    if (typeof projTouchQuery.limit === 'function') projTouchQuery = projTouchQuery.limit(1);
+    const { data: projTouchData } = typeof projTouchQuery.maybeSingle === 'function'
+      ? await projTouchQuery.maybeSingle()
+      : typeof projTouchQuery.single === 'function'
+      ? await projTouchQuery.single().catch(() => ({ data: null }))
+      : { data: null };
+
+    const projMs = projTouchData?.updated_at ? new Date(projTouchData.updated_at).getTime() : 0;
+    const itemMs = touchData?.updated_at ? new Date(touchData.updated_at).getTime() : 0;
+    const maxPortfolioTouchMs = Math.max(projMs, itemMs);
+    const latestTouch = maxPortfolioTouchMs > 0 ? new Date(maxPortfolioTouchMs) : new Date();
+    const latestPortfolioItemAt = itemMs > 0 ? new Date(itemMs).toISOString() : new Date().toISOString();
+
+    const responseHeaders: Record<string, string> = {
+      'Last-Modified': latestTouch.toUTCString(),
+      'Cache-Control': 'private, no-cache',
+    };
+
+    // Build project completion sets for workspace projects to support custom completion statuses
+    const projectCompletionMap = new Map<string, Set<string>>();
+    const activeSprintsByProject = new Map<string, Set<string>>();
+    let earliestActiveSprintStartMs: number | null = null;
+
+    try {
+      const projTable = supabaseAdmin.from('projects');
+      if (projTable && typeof projTable.select === 'function') {
+        let projsQuery: any = projTable.select('id, settings').eq('tenant_id', authCtx.tenant.id);
+        if (typeof projsQuery.is === 'function') {
+          projsQuery = projsQuery.is('deleted_at', null);
+        }
+        const { data: tenantProjects } = await projsQuery;
+        if (Array.isArray(tenantProjects)) {
+          tenantProjects.forEach((p: any) => {
+            projectCompletionMap.set(p.id, getCompletedStatusSet(p.settings?.statuses));
+            const settingsSprints = p.settings?.sprint_settings?.sprints;
+            if (Array.isArray(settingsSprints)) {
+              const projSet = activeSprintsByProject.get(p.id) || new Set<string>();
+              settingsSprints.forEach((s: any) => {
+                if (s.status === 'active' || s.is_active || s.is_current) {
+                  if (s.id) projSet.add(String(s.id));
+                  if (s.name) projSet.add(String(s.name));
+                }
+              });
+              activeSprintsByProject.set(p.id, projSet);
+            }
+          });
+        }
+      }
+    } catch {
+      // Non-fatal, fallback to default completed statuses
+    }
+
+    try {
+      const sprintTable = supabaseAdmin.from('sprints');
+      if (sprintTable && typeof sprintTable.select === 'function') {
+        let sprintQuery: any = sprintTable
+          .select('id, name, project_id, started_at, created_at, status, is_active')
+          .eq('tenant_id', authCtx.tenant.id);
+
+        if (typeof sprintQuery.or === 'function') {
+          sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+        }
+
+        const { data: activeSprintRows } = await sprintQuery;
+        if (activeSprintRows && Array.isArray(activeSprintRows)) {
+          activeSprintRows.forEach((s: any) => {
+            if (s.project_id) {
+              const projSet = activeSprintsByProject.get(s.project_id) || new Set<string>();
+              if (s.id) projSet.add(String(s.id));
+              if (s.name) projSet.add(String(s.name));
+              activeSprintsByProject.set(s.project_id, projSet);
+            }
+            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+            if (!isNaN(sTime)) {
+              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+                earliestActiveSprintStartMs = sTime;
+              }
+            }
+          });
+        }
+      }
+    } catch {
+      // Non-fatal, fallback to default cadence
+    }
+
+    const defaultNonSprintPortfolioCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const DEFAULT_PORTFOLIO_CADENCE_MS = 90 * 24 * 60 * 60 * 1000;
+    let totalActiveSprintsCount = 0;
+    activeSprintsByProject.forEach((set) => {
+      totalActiveSprintsCount += set.size;
+    });
+    const portfolioCadenceCutoffMs = earliestActiveSprintStartMs !== null
+      ? earliestActiveSprintStartMs
+      : totalActiveSprintsCount > 0
+      ? Date.now() - DEFAULT_PORTFOLIO_CADENCE_MS
+      : defaultNonSprintPortfolioCutoffMs;
+
+    const isPortfolioItemCold = (it: WorkItem): boolean => {
+      const completionSet = it.project_id ? projectCompletionMap.get(it.project_id) : undefined;
+      if (!isItemCompleted(it.status, completionSet)) return false;
+
+      const sprintName = it.metadata?.sprint;
+      const sprintId = it.metadata?.sprint_id;
+      if (sprintName || sprintId) {
+        const activeSet = it.project_id ? activeSprintsByProject.get(it.project_id) : undefined;
+        const isActive = Boolean(
+          activeSet && (
+            (sprintName && activeSet.has(sprintName)) ||
+            (sprintId && activeSet.has(sprintId))
+          )
+        );
+        return !isActive;
+      }
+
+      const updatedMs = new Date(it.updated_at).getTime();
+      return isNaN(updatedMs) || updatedMs < portfolioCadenceCutoffMs;
+    };
+
+    const clientTimestamp = updatedSince || ifModifiedSince;
+    if (clientTimestamp) {
+      const clientTime = new Date(clientTimestamp).getTime();
+      const compareTime = updatedSince ? itemMs : maxPortfolioTouchMs;
+      if (!isNaN(clientTime) && compareTime <= clientTime && compareTime > 0) {
+        return new Response(null, {
+          status: 304,
+          headers: responseHeaders,
+        });
+      }
+    }
+
+    if (updatedSince) {
+      let deltaQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('tenant_id', authCtx.tenant.id);
+
+      if (typeof deltaQuery.gt === 'function') {
+        deltaQuery = deltaQuery.gt('updated_at', updatedSince);
+      }
+      if (statusFilter && typeof deltaQuery.eq === 'function') {
+        deltaQuery = deltaQuery.eq('status', statusFilter);
+      }
+      if (typeFilter && typeof deltaQuery.eq === 'function') {
+        deltaQuery = deltaQuery.eq('item_type', typeFilter);
+      }
+      if (typeof deltaQuery.order === 'function') {
+        deltaQuery = deltaQuery.order('order_index', { ascending: true });
+      }
+
+      const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
+      if (deltaErr) {
+        return NextResponse.json({ error: deltaErr.message }, { status: 500 });
+      }
+
+      const allRows = (rawDeltaRows || []) as WorkItem[];
+      const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+      let items: WorkItem[] = [];
+
+      if (!includeColdArchive) {
+        allRows.forEach((r) => {
+          if (r.deleted_at) return;
+          if (isPortfolioItemCold(r)) {
+            deleted_ids.push(r.id);
+          } else {
+            items.push(r);
+          }
+        });
+      } else {
+        items = allRows.filter((r) => !r.deleted_at);
+      }
+
+      const latestDeltaMs = Math.max(
+        itemMs,
+        allRows.length > 0
+          ? Math.max(...allRows.map((r) => new Date(r.updated_at).getTime()).filter((t) => !isNaN(t)))
+          : 0
+      );
+      const deltaCursor = latestDeltaMs > 0 ? new Date(latestDeltaMs).toISOString() : updatedSince || latestPortfolioItemAt;
+
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          items,
+          deleted_ids,
+          latest_at: deltaCursor,
+          is_delta: true,
+          count: items.length,
+        },
+        { headers: responseHeaders }
+      );
+    }
+
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
       .select('*')
@@ -104,12 +441,27 @@ export async function GET(req: NextRequest) {
     if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
     if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
 
-    const { data: rawItems, error: itemsErr } = await itemsQuery;
+    const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
     if (itemsErr) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    const items = (rawItems || []) as WorkItem[];
+    let allPortfolioItems = (rawItems || []) as WorkItem[];
+
+    // If a specific sprint is requested (e.g. for on-demand lazy loading in portfolio view), resolve and filter directly
+    const isTargetingSprint = Boolean(targetSprint);
+    let targetSprintSet = new Set<string>();
+    if (isTargetingSprint) {
+      targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!);
+      allPortfolioItems = allPortfolioItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
+    }
+
+    let items = allPortfolioItems;
+    let coldCount = 0;
+    if (!includeColdArchive && !isTargetingSprint) {
+      items = allPortfolioItems.filter((it) => !isPortfolioItemCold(it));
+      coldCount = allPortfolioItems.length - items.length;
+    }
 
     if (format === 'tree') {
       const itemMap = new Map<string, WorkItemWithChildren>();
@@ -128,13 +480,20 @@ export async function GET(req: NextRequest) {
         }
       });
 
-      return NextResponse.json({
-        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-        all_projects: true,
-        format: 'tree',
-        count: items.length,
-        tree: roots,
-      });
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          format: 'tree',
+          count: items.length,
+          tree: roots,
+          deleted_ids: [],
+          latest_at: latestPortfolioItemAt,
+          is_delta: false,
+          cold_count: coldCount,
+        },
+        { headers: responseHeaders }
+      );
     }
 
     if (format === 'board') {
@@ -158,21 +517,35 @@ export async function GET(req: NextRequest) {
         items: items.filter((i) => i.status === st.id),
       }));
 
-      return NextResponse.json({
-        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-        all_projects: true,
-        format: 'board',
-        columns,
-      });
+      return NextResponse.json(
+        {
+          workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+          all_projects: true,
+          format: 'board',
+          columns,
+          deleted_ids: [],
+          latest_at: latestPortfolioItemAt,
+          is_delta: false,
+          cold_count: coldCount,
+        },
+        { headers: responseHeaders }
+      );
     }
 
-    return NextResponse.json({
-      workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
-      all_projects: true,
-      format: 'flat',
-      count: items.length,
-      items,
-    });
+    return NextResponse.json(
+      {
+        workspace: { id: authCtx.tenant.id, slug: authCtx.tenant.slug, name: authCtx.tenant.name },
+        all_projects: true,
+        format: 'flat',
+        count: items.length,
+        items,
+        deleted_ids: [],
+        latest_at: latestPortfolioItemAt,
+        is_delta: false,
+        cold_count: coldCount,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   if (!projectSlug && !projectIdParam) {
@@ -185,7 +558,7 @@ export async function GET(req: NextRequest) {
   // Resolve project (active only — not soft-deleted)
   let projectQuery: any = supabaseAdmin
     .from('projects')
-    .select('id, slug, name, settings')
+    .select('id, slug, name, settings, updated_at')
     .eq('tenant_id', authCtx.tenant.id);
 
   if (typeof projectQuery.is === 'function') {
@@ -204,6 +577,200 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
 
+  // Fast HTTP 304 Evaluation & Latest Touch query
+  let touchQuery: any = supabaseAdmin
+    .from('work_items')
+    .select('updated_at')
+    .eq('tenant_id', authCtx.tenant.id)
+    .eq('project_id', project.id);
+
+  if (typeof touchQuery.order === 'function') {
+    touchQuery = touchQuery.order('updated_at', { ascending: false });
+  }
+  if (typeof touchQuery.limit === 'function') {
+    touchQuery = touchQuery.limit(1);
+  }
+
+  let touchData: any = null;
+  if (typeof touchQuery.maybeSingle === 'function') {
+    const res = await touchQuery.maybeSingle();
+    touchData = res?.data;
+  } else if (typeof touchQuery.single === 'function') {
+    const res = await touchQuery.single().catch(() => ({ data: null }));
+    touchData = res?.data;
+  } else if (typeof touchQuery.then === 'function') {
+    const res = await touchQuery.catch(() => ({ data: null }));
+    touchData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+  }
+
+  const projectUpdatedAt = project.updated_at ? new Date(project.updated_at).getTime() : 0;
+  const itemUpdatedAt = touchData?.updated_at ? new Date(touchData.updated_at).getTime() : 0;
+  const maxTouchMs = Math.max(projectUpdatedAt, itemUpdatedAt);
+  const latestTouch = maxTouchMs > 0 ? new Date(maxTouchMs) : new Date();
+  const latestItemAt = itemUpdatedAt > 0 ? new Date(itemUpdatedAt).toISOString() : new Date().toISOString();
+
+  const responseHeaders: Record<string, string> = {
+    'Last-Modified': latestTouch.toUTCString(),
+    'Cache-Control': 'private, no-cache',
+  };
+
+  // Sprint lifecycle-aware cold partitioning:
+  // Active sprint tasks are never cold. Tasks completed within the active sprint lifecycle
+  // or project cadence are retained; older completed items from closed sprints are cold-partitioned.
+  const activeSprints = new Set<string>();
+  let earliestActiveSprintStartMs: number | null = null;
+
+  try {
+    const sprintTable = supabaseAdmin.from('sprints');
+    if (sprintTable && typeof sprintTable.select === 'function') {
+      let sprintQuery: any = sprintTable
+        .select('id, name, started_at, created_at, status, is_active')
+        .eq('tenant_id', authCtx.tenant.id)
+        .eq('project_id', project.id);
+
+      if (typeof sprintQuery.or === 'function') {
+        sprintQuery = sprintQuery.or('status.eq.active,is_active.eq.true');
+      }
+
+      const { data: relationalSprints } = await sprintQuery;
+      if (relationalSprints && Array.isArray(relationalSprints)) {
+        relationalSprints.forEach((s: any) => {
+          if (s.status === 'active' || s.is_active) {
+            if (s.id) activeSprints.add(s.id);
+            if (s.name) activeSprints.add(s.name);
+            const sTime = s.started_at ? new Date(s.started_at).getTime() : new Date(s.created_at).getTime();
+            if (!isNaN(sTime)) {
+              if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+                earliestActiveSprintStartMs = sTime;
+              }
+            }
+          }
+        });
+      }
+    }
+  } catch {
+    // Non-fatal, fallback to project settings
+  }
+
+  // Fallback to project settings sprint definitions
+  (project?.settings?.sprint_settings?.sprints || []).forEach((s: any) => {
+    if (s.status === 'active' || s.is_active || s.is_current) {
+      if (s.id) activeSprints.add(s.id);
+      if (s.name) activeSprints.add(s.name);
+      const sDate = s.started_at || s.start_date;
+      if (sDate) {
+        const sTime = new Date(sDate).getTime();
+        if (!isNaN(sTime)) {
+          if (earliestActiveSprintStartMs === null || sTime < earliestActiveSprintStartMs) {
+            earliestActiveSprintStartMs = sTime;
+          }
+        }
+      }
+    }
+  });
+
+  // Default cadence: 90 days (quarterly sprint lifecycle) or configured sprint cadence
+  const defaultNonSprintProjectCutoffMs = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const projectCadenceDays = Number(project?.settings?.sprint_settings?.cadence_days) || 90;
+  const projectCadenceCutoffMs = earliestActiveSprintStartMs !== null
+    ? earliestActiveSprintStartMs
+    : activeSprints.size > 0
+    ? Date.now() - projectCadenceDays * 24 * 60 * 60 * 1000
+    : defaultNonSprintProjectCutoffMs;
+
+  const projectCompletedStatuses = getCompletedStatusSet(project?.settings?.statuses);
+
+  const isProjectItemCold = (it: WorkItem): boolean => {
+    if (!isItemCompleted(it.status, projectCompletedStatuses)) return false;
+    const sprintName = it.metadata?.sprint;
+    const sprintId = it.metadata?.sprint_id;
+    if (sprintName || sprintId) {
+      const isActive = Boolean(
+        (sprintName && activeSprints.has(sprintName)) ||
+        (sprintId && activeSprints.has(sprintId))
+      );
+      return !isActive;
+    }
+    const updatedMs = new Date(it.updated_at).getTime();
+    return isNaN(updatedMs) || updatedMs < projectCadenceCutoffMs;
+  };
+
+  const clientTimestamp = updatedSince || ifModifiedSince;
+  if (clientTimestamp) {
+    const clientTime = new Date(clientTimestamp).getTime();
+    const compareTime = updatedSince ? itemUpdatedAt : maxTouchMs;
+    if (!isNaN(clientTime) && compareTime <= clientTime && compareTime > 0) {
+      return new Response(null, {
+        status: 304,
+        headers: responseHeaders,
+      });
+    }
+  }
+
+  // Incremental Delta Logic
+  if (updatedSince) {
+    let deltaQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('*')
+      .eq('tenant_id', authCtx.tenant.id)
+      .eq('project_id', project.id);
+
+    if (typeof deltaQuery.gt === 'function') {
+      deltaQuery = deltaQuery.gt('updated_at', updatedSince);
+    }
+    if (statusFilter && typeof deltaQuery.eq === 'function') {
+      deltaQuery = deltaQuery.eq('status', statusFilter);
+    }
+    if (typeFilter && typeof deltaQuery.eq === 'function') {
+      deltaQuery = deltaQuery.eq('item_type', typeFilter);
+    }
+    if (typeof deltaQuery.order === 'function') {
+      deltaQuery = deltaQuery.order('order_index', { ascending: true });
+    }
+
+    const { data: rawDeltaRows, error: deltaErr } = await fetchAllRows<WorkItem>(deltaQuery);
+    if (deltaErr) {
+      return NextResponse.json({ error: deltaErr.message }, { status: 500 });
+    }
+
+    const allRows = (rawDeltaRows || []) as WorkItem[];
+    const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+    let items: WorkItem[] = [];
+
+    if (!includeColdArchive) {
+      allRows.forEach((r) => {
+        if (r.deleted_at) return;
+        if (isProjectItemCold(r)) {
+          deleted_ids.push(r.id);
+        } else {
+          items.push(r);
+        }
+      });
+    } else {
+      items = allRows.filter((r) => !r.deleted_at);
+    }
+
+    const latestDeltaMs = Math.max(
+      itemUpdatedAt,
+      allRows.length > 0
+        ? Math.max(...allRows.map((r) => new Date(r.updated_at).getTime()).filter((t) => !isNaN(t)))
+        : 0
+    );
+    const deltaCursor = latestDeltaMs > 0 ? new Date(latestDeltaMs).toISOString() : updatedSince || latestItemAt;
+
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        items,
+        deleted_ids,
+        latest_at: deltaCursor,
+        is_delta: true,
+        count: items.length,
+      },
+      { headers: responseHeaders }
+    );
+  }
+
   // Query active work items (exclude soft-deleted)
   let itemsQuery: any = supabaseAdmin
     .from('work_items')
@@ -220,13 +787,28 @@ export async function GET(req: NextRequest) {
   if (statusFilter) itemsQuery = itemsQuery.eq('status', statusFilter);
   if (typeFilter) itemsQuery = itemsQuery.eq('item_type', typeFilter);
 
-  const { data: rawItems, error: itemsErr } = await itemsQuery;
+  const { data: rawItems, error: itemsErr } = await fetchAllRows<WorkItem>(itemsQuery);
 
   if (itemsErr) {
     return NextResponse.json({ error: itemsErr.message }, { status: 500 });
   }
 
-  const items = (rawItems || []) as WorkItem[];
+  let allItems = (rawItems || []) as WorkItem[];
+
+  // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
+  const isTargetingSprint = Boolean(targetSprint);
+  let targetSprintSet = new Set<string>();
+  if (isTargetingSprint) {
+    targetSprintSet = await resolveSprintIdentifiers(authCtx.tenant.id, targetSprint!, project.id, project.settings);
+    allItems = allItems.filter((it) => isItemInTargetSprint(it, targetSprintSet));
+  }
+
+  let items = allItems;
+  let coldCount = 0;
+  if (!includeColdArchive && !isTargetingSprint) {
+    items = allItems.filter((it) => !isProjectItemCold(it));
+    coldCount = allItems.length - items.length;
+  }
 
   if (format === 'tree') {
     // Build nested tree
@@ -246,12 +828,19 @@ export async function GET(req: NextRequest) {
       }
     });
 
-    return NextResponse.json({
-      project: { id: project.id, slug: project.slug, name: project.name },
-      format: 'tree',
-      count: items.length,
-      tree: roots,
-    });
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        format: 'tree',
+        count: items.length,
+        tree: roots,
+        deleted_ids: [],
+        latest_at: latestItemAt,
+        is_delta: false,
+        cold_count: coldCount,
+      },
+      { headers: responseHeaders }
+    );
   }
 
   if (format === 'board') {
@@ -261,19 +850,33 @@ export async function GET(req: NextRequest) {
       items: items.filter(i => i.status === st.id),
     }));
 
-    return NextResponse.json({
-      project: { id: project.id, slug: project.slug, name: project.name },
-      format: 'board',
-      columns: board,
-    });
+    return NextResponse.json(
+      {
+        project: { id: project.id, slug: project.slug, name: project.name },
+        format: 'board',
+        columns: board,
+        deleted_ids: [],
+        latest_at: latestItemAt,
+        is_delta: false,
+        cold_count: coldCount,
+      },
+      { headers: responseHeaders }
+    );
   }
 
-  return NextResponse.json({
-    project: { id: project.id, slug: project.slug, name: project.name },
-    format: 'flat',
-    count: items.length,
-    items,
-  });
+  return NextResponse.json(
+    {
+      project: { id: project.id, slug: project.slug, name: project.name },
+      format: 'flat',
+      count: items.length,
+      items,
+      deleted_ids: [],
+      latest_at: latestItemAt,
+      is_delta: false,
+      cold_count: coldCount,
+    },
+    { headers: responseHeaders }
+  );
 }
 
 export async function POST(req: NextRequest) {

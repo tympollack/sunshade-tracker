@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { BurndownDataPoint } from '@/components/analytics/BurndownChart';
+import { calculateSprintLeafPoints, getCompletedStatusSet, isItemCompleted } from '@/lib/sprint-utils';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -114,6 +115,137 @@ export async function GET(
         hasScopeCreep: remaining > committed,
       };
     });
+
+    // If snapshots are empty, compute live trajectory from sprint items so the chart renders immediately
+    if (burndownData.length === 0 && sprintId) {
+      try {
+        const { data: projDetail } = await supabaseAdmin
+          .from('projects')
+          .select('settings')
+          .eq('id', project.id)
+          .maybeSingle();
+
+        let dbSprint: any = null;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintId);
+        if (isUuid) {
+          const res = await supabaseAdmin
+            .from('sprints')
+            .select('*')
+            .eq('tenant_id', authCtx.tenant.id)
+            .eq('project_id', project.id)
+            .eq('id', sprintId)
+            .maybeSingle();
+          dbSprint = res?.data;
+        }
+        if (!dbSprint) {
+          const res = await supabaseAdmin
+            .from('sprints')
+            .select('*')
+            .eq('tenant_id', authCtx.tenant.id)
+            .eq('project_id', project.id)
+            .eq('name', sprintId)
+            .maybeSingle();
+          dbSprint = res?.data;
+        }
+
+        const settingsSprint = projDetail?.settings?.sprint_settings?.sprints?.find(
+          (s: any) => s.id === sprintId || s.name === sprintId
+        );
+
+        const sprintRecord = dbSprint || settingsSprint;
+        const now = new Date();
+        const startStr = sprintRecord?.started_at || sprintRecord?.start_date || new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+        const endStr = sprintRecord?.ends_at || sprintRecord?.end_date || now.toISOString();
+        const startDate = new Date(startStr);
+        const endDate = new Date(endStr);
+
+        const { data: rawItems } = await supabaseAdmin
+          .from('work_items')
+          .select('id, parent_id, status, metadata, updated_at, created_at, assignee')
+          .eq('tenant_id', authCtx.tenant.id)
+          .eq('project_id', project.id)
+          .is('deleted_at', null);
+
+        const sprintItems = (rawItems || []).filter(
+          (it: any) =>
+            it.metadata?.sprint === sprintId ||
+            it.metadata?.sprint === sprintRecord?.name ||
+            it.metadata?.sprint_id === sprintId
+        );
+
+        if (sprintItems.length > 0) {
+          const totalPoints = calculateSprintLeafPoints(sprintItems as any, projDetail?.settings);
+          const completionSet = getCompletedStatusSet(projDetail?.settings?.statuses);
+
+          // Build a map of verified completion timestamps from audit logs or metadata
+          const itemCompletedTimeMap = new Map<string, number>();
+          try {
+            const completedIds = sprintItems
+              .filter((it: any) => isItemCompleted(it.status, completionSet))
+              .map((it: any) => it.id);
+
+            if (completedIds.length > 0) {
+              const { data: statusLogs } = await supabaseAdmin
+                .from('audit_logs')
+                .select('entity_id, changed_fields, created_at')
+                .eq('tenant_id', authCtx.tenant.id)
+                .eq('entity_type', 'work_item')
+                .in('entity_id', completedIds)
+                .order('created_at', { ascending: true });
+
+              if (Array.isArray(statusLogs)) {
+                statusLogs.forEach((log: any) => {
+                  const newStatus = log.changed_fields?.status;
+                  if (newStatus && isItemCompleted(newStatus, completionSet)) {
+                    if (!itemCompletedTimeMap.has(log.entity_id)) {
+                      itemCompletedTimeMap.set(log.entity_id, new Date(log.created_at).getTime());
+                    }
+                  }
+                });
+              }
+            }
+          } catch {
+            // Non-fatal, fallback to metadata/updated_at
+          }
+
+          const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const totalDays = Math.max(1, Math.round((endDate.getTime() - startDay.getTime()) / (24 * 60 * 60 * 1000)));
+          const daysCount = Math.max(1, Math.min(90, Math.round((today.getTime() - startDay.getTime()) / (24 * 60 * 60 * 1000)) + 1));
+          let prevActual: number | null = null;
+
+          for (let d = 0; d < daysCount; d++) {
+            const currentDay = new Date(startDay.getTime() + d * 24 * 60 * 60 * 1000);
+            const currentDayEnd = new Date(currentDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+            const dateStr = currentDay.toISOString().split('T')[0];
+
+            const completedSoFar = sprintItems.filter((it: any) => {
+              if (!isItemCompleted(it.status, completionSet)) return false;
+              const auditedTime = itemCompletedTimeMap.get(it.id);
+              const fallbackTimeStr = it.metadata?.completed_at || it.metadata?.closed_at || it.closed_at || it.updated_at;
+              const completedTime = auditedTime || (fallbackTimeStr ? new Date(fallbackTimeStr).getTime() : 0);
+              return completedTime <= currentDayEnd.getTime();
+            });
+
+            const completedPts = calculateSprintLeafPoints(completedSoFar as any, projDetail?.settings);
+            const actualRemaining = Math.max(0, totalPoints - completedPts);
+            const idealRemaining = Math.max(0, Math.round(totalPoints * (1 - d / totalDays)));
+            const dailyVelocity = prevActual !== null ? Math.max(0, prevActual - actualRemaining) : undefined;
+            prevActual = actualRemaining;
+
+            burndownData.push({
+              date: dateStr,
+              idealRemaining,
+              actualRemaining,
+              dailyVelocity,
+              hasScopeCreep: actualRemaining > totalPoints,
+            });
+          }
+        }
+      } catch {
+        // Fallback gracefully to empty array
+      }
+    }
 
     return NextResponse.json({
       project_id: project.id,

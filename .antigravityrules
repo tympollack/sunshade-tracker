@@ -1,0 +1,10 @@
+# SunShade Tracker Directives (.antigravityrules)
+
+## Architecture & Framework (Next.js 15 & React 19)
+- **App Router:** Route handlers in `src/app/api/`. UI components in `src/app/` & `src/components/` with `'use client'` for interactivity.
+- **Client/Server Boundary:** Never import server modules or service keys in client code; use API routes for privileged mutations.
+
+## Dynamic Schema & Quality Gates
+- **Dynamic Validation:** Validate work items against project schema definitions (`schema_version`); do not hardcode custom taxonomy on core interfaces.
+- **Pre-Flight Verification:** Code must pass `npx tsc --noEmit` and `npm test` with zero compiler or test failures.
+- **Responsive UI:** Ensure two-tier adaptive layout on narrow viewports without horizontal text overflow. Render clean empty states when collections are empty.

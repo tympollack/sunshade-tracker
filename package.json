@@ -11,8 +11,15 @@
     "typecheck": "tsc --noEmit",
     "lint:filesize": "node scripts/lint-filesize.mjs",
     "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:dom": "vitest run --project dom",
+    "test:changed": "vitest run --changed",
     "test:watch": "vitest",
-    "generate:assets": "node scripts/generate-assets.mjs"
+    "generate:assets": "node scripts/generate-assets.mjs",
+    "verify:mcp": "node --experimental-strip-types scripts/verify-supabase-mcp.ts",
+    "verify:mcp:synthetic": "node --experimental-strip-types scripts/verify-supabase-mcp.ts --synthetic",
+    "audit:db": "node --experimental-strip-types scripts/audit-db-pre-renewal.ts",
+    "verify:context": "node --experimental-strip-types scripts/verify-context-trim.ts"
   },
   "dependencies": {
     "@digitalcanopy/supabase": "^0.1.0",

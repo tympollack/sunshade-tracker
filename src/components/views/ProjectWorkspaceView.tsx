@@ -52,6 +52,7 @@ import {
   updateSprintAction,
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
+import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -86,6 +87,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, setItems] = useState<WorkItem[]>([]);
+  const [coldCount, setColdCount] = useState<number>(0);
+  const [isLoadingColdArchive, setIsLoadingColdArchive] = useState(false);
+  const lastSyncedAtRef = useRef<string | null>(null);
+  const isPollingDeltaRef = useRef(false);
+  const hasLoadedColdArchiveRef = useRef(false);
 
   const requestedItem = typeof searchParams?.item === 'string' ? searchParams.item : null;
   const {
@@ -718,7 +724,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
       if (s.name) {
         const existing = map.get(s.name);
-        map.set(s.name, existing ? { ...existing, ...s } : s);
+        const mergedMetadata = {
+          ...(existing?.metadata || {}),
+          ...(s.metadata || {}),
+          ...(existing?.metadata?.summary ? { summary: existing.metadata.summary } : {}),
+        };
+        map.set(s.name, existing ? { ...existing, ...s, metadata: mergedMetadata } : s);
       }
     });
 
@@ -799,6 +810,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setLoadedProjectSlug(null);
     setDismissedBoardDeviationBanner(false);
     lastSprintInitializedProjectRef.current = null;
+    hasLoadedColdArchiveRef.current = false;
+    lastSyncedAtRef.current = null;
   }, [projectSlug]);
 
   // Drag & Drop
@@ -951,13 +964,20 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
       }
 
+      const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true' : '';
       const itemsUrl = isAllProjects
-        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}`
-        : `/api/v1/items?project_slug=${projectSlug}`;
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}${coldQuery}`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}${coldQuery}`;
       const itemsRes = await apiFetch(itemsUrl);
       if (itemsRes.ok) {
         const iData = await itemsRes.json();
         setItems(iData.items || []);
+        if (iData.latest_at) {
+          lastSyncedAtRef.current = iData.latest_at;
+        }
+        if (typeof iData.cold_count === 'number') {
+          setColdCount(iData.cold_count);
+        }
       } else if (itemsRes.status === 401) {
         setFetchError('Session expired. Please sign in again.');
       } else {
@@ -986,6 +1006,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
                 is_current: Boolean(s.is_active || s.status === 'active'),
                 committed_points: s.committed_points || 0,
+                metadata: s.metadata || undefined,
               }));
               setDbSprints(mappedDbSprints);
             }
@@ -1001,6 +1022,118 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setIsRefreshing(false);
     }
   }, [apiFetch, tenantSlug, projectSlug, isAllProjects]);
+
+  const loadColdArchive = useCallback(async () => {
+    if (isLoadingColdArchive) return;
+    setIsLoadingColdArchive(true);
+    try {
+      const url = isAllProjects
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&include_cold_archive=true`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&include_cold_archive=true`;
+      const res = await apiFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.items)) {
+          setItems((prev) => mergeColdArchive(prev, data.items));
+          setColdCount(0);
+          hasLoadedColdArchiveRef.current = true;
+        }
+        if (data.latest_at) {
+          lastSyncedAtRef.current = data.latest_at;
+        }
+      }
+    } finally {
+      setIsLoadingColdArchive(false);
+    }
+  }, [apiFetch, isAllProjects, projectSlug, tenantSlug, isLoadingColdArchive]);
+
+  const handleLazyLoadSprint = useCallback(
+    async (sprintIdentifier: string) => {
+      try {
+        let targetProjectSlug = projectSlug;
+        if (isAllProjects) {
+          const targetDef = availableSprintDefs.find(
+            (s) => s.id === sprintIdentifier || s.name === sprintIdentifier
+          );
+          if (targetDef?.project_id) {
+            const matchedProj = allProjects.find((p) => p.id === targetDef.project_id);
+            if (matchedProj?.slug) {
+              targetProjectSlug = matchedProj.slug;
+            }
+          }
+        }
+
+        const url = isAllProjects && targetProjectSlug === projectSlug
+          ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`
+          : `/api/v1/items?project_slug=${targetProjectSlug}&tenant_slug=${tenantSlug}&sprint_id=${encodeURIComponent(sprintIdentifier)}&include_cold_archive=true`;
+        const res = await apiFetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.items)) {
+            setItems((prev) => mergeColdArchive(prev, data.items));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to lazy load sprint items:', err);
+      }
+    },
+    [apiFetch, isAllProjects, projectSlug, tenantSlug, availableSprintDefs, allProjects]
+  );
+
+  const pollDelta = useCallback(async () => {
+    if (!lastSyncedAtRef.current || isPollingDeltaRef.current) return;
+    isPollingDeltaRef.current = true;
+
+    try {
+      const syncedAt = lastSyncedAtRef.current;
+      const targetId = currentProjectId || allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
+      const url = isAllProjects
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&updated_since=${encodeURIComponent(syncedAt)}`
+        : targetId
+        ? `/api/v1/items?project_id=${targetId}&tenant_slug=${tenantSlug}&updated_since=${encodeURIComponent(syncedAt)}`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&updated_since=${encodeURIComponent(syncedAt)}`;
+
+      const res = await fetch(url, {
+        credentials: 'include',
+        headers: {
+          'If-Modified-Since': syncedAt,
+          'x-tenant-slug': tenantSlug,
+        },
+      });
+
+      if (res.status === 304) {
+        return;
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.is_delta) {
+          setItems((prev) => reconcileDelta(prev, data.items || [], data.deleted_ids || []));
+          if (data.latest_at) {
+            lastSyncedAtRef.current = data.latest_at;
+          }
+        }
+      }
+    } catch {
+      // Background poll silently ignores transient network errors
+    } finally {
+      isPollingDeltaRef.current = false;
+    }
+  }, [currentProjectId, isAllProjects, projectSlug, tenantSlug]);
+
+  useEffect(() => {
+    const interval = setInterval(pollDelta, 120000);
+
+    const onFocus = () => {
+      pollDelta();
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [pollDelta]);
 
   useTabSync({
     items, setItems, editingItem, setEditingItem, fetchData,
@@ -3316,6 +3449,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleDropOnColEnd={handleDropOnColEnd}
                   unmappedItems={unmappedItems}
                   draggedItem={draggedItem}
+                  coldCount={coldCount}
+                  isLoadingColdArchive={isLoadingColdArchive}
+                  onLoadColdArchive={loadColdArchive}
                 />
               )}
 
@@ -3414,6 +3550,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   allProjects={allProjects}
                   handleUpdateStatus={handleUpdateStatus}
                   handleUpdateItemSprint={handleUpdateItemSprint}
+                  onLazyLoadSprint={handleLazyLoadSprint}
                 />
               )}
 
