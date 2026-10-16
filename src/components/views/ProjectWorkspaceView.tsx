@@ -43,6 +43,8 @@ import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation } from '@/lib/sync-channel';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
+import { normalizeProjectSettings, DEFAULT_PROJECT_SETTINGS } from '@/hooks/useProjectSettings';
+import { ProjectViewErrorBoundary } from '@/components/schema/ProjectViewErrorBoundary';
 import { LeftHandNavTree } from '@/components/navigation/LeftHandNavTree';
 import { WorkItemInspectorDrawer } from '@/components/drawer/WorkItemInspectorDrawer';
 import { SprintInspectorDrawer } from '@/components/drawer/SprintInspectorDrawer';
@@ -381,22 +383,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [bulkToast, setBulkToast] = useState<string | null>(null);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
-  const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
-    schema_version: '1.0',
-    hierarchy: [
-      { type: 'project', label: 'Project', level: 1, allowed_parents: [], color: '#c084fc' },
-      { type: 'epic', label: 'Epic', level: 2, allowed_parents: ['project'], color: '#38bdf8' },
-      { type: 'story', label: 'Story', level: 3, allowed_parents: ['epic'], color: '#34d399' },
-      { type: 'task', label: 'Task', level: 4, allowed_parents: ['story', 'epic'], color: '#fbbf24' },
-    ],
-    statuses: [
-      { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
-      { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
-      { id: 'planned', label: 'Planned', color: '#a855f7', order: 3 },
-      { id: 'complete', label: 'Complete', color: '#22c55e', order: 4 },
-    ],
-    custom_fields: ['priority', 'complexity', 'timeline', 'commit_hash', 'source_type'],
-  });
+  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
   const [isSavingSchema, setIsSavingSchema] = useState(false);
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
@@ -555,34 +542,34 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const effectiveSelectedStatuses = useMemo(() => {
     if (selectedStatuses !== null) return selectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [selectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [selectedStatuses, projectSettings?.statuses]);
 
   const effectiveSelectedLevels = useMemo(() => {
     if (selectedLevels !== null) return selectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [selectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [selectedLevels, projectSettings?.hierarchy]);
 
   // Tree and Sprint Planning Multi-Select Effective Filters
   const effectiveTreeStatuses = useMemo(() => {
     if (treeSelectedStatuses !== null) return treeSelectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [treeSelectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [treeSelectedStatuses, projectSettings?.statuses]);
 
   const effectiveTreeLevels = useMemo(() => {
     if (treeSelectedLevels !== null) return treeSelectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [treeSelectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [treeSelectedLevels, projectSettings?.hierarchy]);
 
   const effectiveSprintStatuses = useMemo(() => {
     if (sprintSelectedStatuses !== null) return sprintSelectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [sprintSelectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [sprintSelectedStatuses, projectSettings?.statuses]);
 
   const effectiveSprintLevels = useMemo(() => {
     if (sprintSelectedLevels !== null) return sprintSelectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [sprintSelectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [sprintSelectedLevels, projectSettings?.hierarchy]);
 
   // Tree items filtered by selectedSprint, status, level, and assignee
   const treeFilteredItems = useMemo(() => {
@@ -920,7 +907,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
           setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
           const portfolioSettings = mergeProjectSettings(sData.projects);
-          setProjectSettings(portfolioSettings);
+          setProjectSettings(normalizeProjectSettings(portfolioSettings));
           setLoadedProjectSlug(projectSlug);
         } else if (!isAllProjects) {
           const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
@@ -930,26 +917,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             if (detailRes.ok) {
               const detail = await detailRes.json();
               if (detail.settings) {
-                const enrichedHierarchy = (detail.settings.hierarchy || []).map((h: any) => ({
+                const normalized = normalizeProjectSettings(detail.settings);
+                const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
                   ...h,
                   color: h.color || getDefaultLevelHex(h.level),
                 }));
                 const enrichedSettings: ProjectSettings = {
-                  ...detail.settings,
+                  ...normalized,
                   hierarchy: enrichedHierarchy,
                 };
                 setProjectSettings(enrichedSettings);
-                if (detail.settings.statuses?.length) {
+                if (enrichedSettings.statuses?.length) {
                   setSelectedStatuses((prev) => {
                     if (prev === null) return null;
-                    const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
+                    const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
                     return prev.filter((id) => validIds.has(id));
                   });
                 }
-                if (detail.settings.hierarchy?.length) {
+                if (enrichedSettings.hierarchy?.length) {
                   setSelectedLevels((prev) => {
                     if (prev === null) return null;
-                    const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
+                    const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
                     return prev.filter((t) => validTypes.has(t));
                   });
                 }
@@ -1165,7 +1153,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           prev.map((p) => (p.slug === targetSlug ? { ...p, settings: newSettings } : p))
         );
         if (!isAllProjects) {
-          setProjectSettings(newSettings);
+          setProjectSettings(normalizeProjectSettings(newSettings));
         } else {
           fetchData();
         }
@@ -1177,6 +1165,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setIsSavingSchema(false);
     }
   };
+
+  const handleResetSchemaToDefault = useCallback(async () => {
+    try {
+      await handleSaveSchema(DEFAULT_PROJECT_SETTINGS);
+    } catch {
+      setProjectSettings(DEFAULT_PROJECT_SETTINGS);
+    }
+  }, [handleSaveSchema]);
 
   useEffect(() => {
     fetchTenantInfo();
@@ -1896,13 +1892,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const handleSaveSprints = async (sprints: SprintDefinition[]) => {
     if (isReadOnly) return;
-    const newSettings: ProjectSettings = {
+    const newSettings: ProjectSettings = normalizeProjectSettings({
       ...projectSettings,
       sprint_settings: {
         ...projectSettings.sprint_settings,
         sprints,
       },
-    };
+    });
     setProjectSettings(newSettings);
     try {
       const res = await apiFetch(`/api/v1/projects/${projectSlug}/settings`, {
@@ -3389,7 +3385,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             )}
 
             <div className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
-              {activeTab === 'board' && (
+              <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>
+                {activeTab === 'board' && (
                 <BoardViewContainer
                   hiddenBoardItems={hiddenBoardItems}
                   dismissedBoardDeviationBanner={dismissedBoardDeviationBanner}
@@ -3561,6 +3558,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   onLazyLoadSprint={handleLazyLoadSprint}
                 />
               )}
+              </ProjectViewErrorBoundary>
 
               {activeTab === 'spark' && (
                 <SparkViewContainer
