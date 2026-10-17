@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Eye, GitBranch, ListFilter, Sliders, Gauge } from 'lucide-react';
+import { Eye, GitBranch, ListFilter, Sliders, Gauge, AlertCircle } from 'lucide-react';
 import {
   ProjectSettings,
   StatusDefinition,
@@ -11,14 +11,31 @@ import {
   getWorkMetricConfig,
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+import { ProjectSettingsSchema, lintProjectSettings } from '@/lib/project-settings-schema';
+import {
+  isLateInflowEnforced,
+  disableLateInflowCaps,
+  enableLateInflowCaps,
+  getEffectiveLateInflowRules,
+} from '@/lib/governance/sprint-rules';
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
+
+export {
+  ProjectSettingsSchema,
+  lintProjectSettings,
+  isLateInflowEnforced,
+  disableLateInflowCaps,
+  enableLateInflowCaps,
+  getEffectiveLateInflowRules,
+};
 
 export interface ProjectSchemaEditorProps {
   settings: ProjectSettings;
   onChange: (updatedSettings: ProjectSettings) => void;
   activeItems?: WorkItem[];
   readOnly?: boolean;
+  hideValidationBanner?: boolean;
 }
 
 export function ProjectSchemaEditor({
@@ -26,7 +43,9 @@ export function ProjectSchemaEditor({
   onChange,
   activeItems = [],
   readOnly = false,
+  hideValidationBanner = false,
 }: ProjectSchemaEditorProps) {
+  const lintResult = useMemo(() => lintProjectSettings(settings), [settings]);
   // Active work metric configuration
   const currentMetricConfig = useMemo(() => getWorkMetricConfig(settings), [settings]);
 
@@ -171,6 +190,27 @@ export function ProjectSchemaEditor({
 
   return (
     <div className="space-y-6">
+      {/* Schema Validation Banner (Visual Editor) */}
+      {!hideValidationBanner && !lintResult.valid && (
+        <div
+          role="alert"
+          data-testid="schema-validation-banner"
+          className="p-4 rounded-xl bg-red-950/90 border border-red-700 text-xs text-red-200 shadow-lg space-y-2 animate-in slide-in-from-top-1"
+        >
+          <div className="font-semibold text-red-100 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <span>Schema Validation Errors ({lintResult.errors.length})</span>
+          </div>
+          <ul className="space-y-1 font-mono text-[11px] max-h-36 overflow-y-auto pl-5 list-disc text-red-300">
+            {lintResult.errors.map((err, idx) => (
+              <li key={idx}>
+                <span className="font-bold text-red-200">{err.path}:</span> {err.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {readOnly && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 flex items-center space-x-2">
           <Eye className="w-4 h-4 text-amber-400 shrink-0" />

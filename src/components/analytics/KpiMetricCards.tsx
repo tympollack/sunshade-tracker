@@ -11,7 +11,11 @@ export interface KpiMetrics {
   scopeVolatility: number;
   remainingPoints: number;
   committedPoints?: number;
+  deliveredPoints?: number;
 }
+
+export { CommitmentCard } from './CommitmentCard';
+import { CommitmentCard } from './CommitmentCard';
 
 interface KpiMetricCardsProps {
   metrics: KpiMetrics;
@@ -39,19 +43,6 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
         ))}
       </div>
     );
-  }
-
-  // Say/Do Ratio color badge logic
-  const sayDo = metrics.sayDoRatio;
-  let sayDoBadgeColor = 'text-red-400 bg-red-950/60 border-red-800/50';
-  let SayDoIcon = AlertTriangle;
-
-  if (sayDo >= 85) {
-    sayDoBadgeColor = 'text-emerald-400 bg-emerald-950/60 border-emerald-800/50';
-    SayDoIcon = CheckCircle2;
-  } else if (sayDo >= 70) {
-    sayDoBadgeColor = 'text-amber-400 bg-amber-950/60 border-amber-800/50';
-    SayDoIcon = Clock;
   }
 
   // Volatility color logic
@@ -92,27 +83,12 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
       </div>
 
       {/* 2. Commitment Reliability (Say/Do Ratio) */}
-      <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
-        <div className="flex items-center justify-between text-slate-400 mb-2">
-          <span className="text-xs font-medium uppercase tracking-wider">Commitment (Say/Do)</span>
-          <div className="p-2 rounded-lg bg-purple-950/40 text-purple-400 border border-purple-800/40">
-            <Award className="w-4 h-4" />
-          </div>
-        </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-slate-100 font-mono tracking-tight">
-            {sayDo}%
-          </span>
-        </div>
-        <div className="mt-3">
-          <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${sayDoBadgeColor}`}
-          >
-            <SayDoIcon className="w-3 h-3" />
-            {sayDo >= 85 ? 'Predictable' : sayDo >= 70 ? 'Moderate Drift' : 'Scope Volatile'}
-          </span>
-        </div>
-      </div>
+      <CommitmentCard
+        committedPoints={metrics.committedPoints}
+        deliveredPoints={metrics.deliveredPoints}
+        sayDoRatio={metrics.sayDoRatio}
+        scopeVolatility={metrics.scopeVolatility}
+      />
 
       {/* 3. Scope Volatility */}
       <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">

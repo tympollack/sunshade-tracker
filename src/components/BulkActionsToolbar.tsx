@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { StatusDefinition } from '@/types/tracker';
 
-interface BulkActionsToolbarProps {
+export interface BulkActionsToolbarProps {
   selectedCount: number;
   availableSprints: string[];
   statuses: StatusDefinition[];

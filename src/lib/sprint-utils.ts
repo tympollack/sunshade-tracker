@@ -21,8 +21,16 @@ export function getCompletedStatusSet(statuses?: Array<{ id?: string; label?: st
     for (const s of statuses) {
       const id = String(s.id || '').toLowerCase().trim();
       const label = String(s.label || '').toLowerCase().trim();
-      if (s.is_completed || DEFAULT_COMPLETED_STATUS_IDS.has(id) || DEFAULT_COMPLETED_STATUS_IDS.has(label)) {
-        set.add(id);
+      if (s.is_completed === false) {
+        if (id) set.delete(id);
+        if (label) set.delete(label);
+      } else if (s.is_completed === true) {
+        if (id) set.add(id);
+        if (label) set.add(label);
+      } else if (s.is_completed === undefined) {
+        if (DEFAULT_COMPLETED_STATUS_IDS.has(id) || DEFAULT_COMPLETED_STATUS_IDS.has(label)) {
+          if (id) set.add(id);
+        }
       }
     }
   }

@@ -183,7 +183,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         }
 
         if (typeof sprintData.commitmentReliabilityPercent === 'number') {
-          reportedSayDo = sprintData.commitmentReliabilityPercent / 100;
+          reportedSayDo = sprintData.commitmentReliabilityPercent;
         }
 
         if (typeof sprintData.scopeCreepPercent === 'number') {
@@ -218,6 +218,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         scopeVolatility: volatility,
         remainingPoints: remainingPts,
         committedPoints: committedPts,
+        deliveredPoints: deliveredPts,
       });
 
       setChurnData({

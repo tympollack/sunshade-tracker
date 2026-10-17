@@ -53,16 +53,44 @@ export function validateProjectSettings(settings: any): ValidationResult {
           message: 'velocity_window must be a positive integer >= 1',
         });
       }
-      if ('late_runway_threshold' in sm && (typeof sm.late_runway_threshold !== 'number' || sm.late_runway_threshold < 0 || sm.late_runway_threshold > 1)) {
+      if (
+        'late_runway_threshold' in sm &&
+        sm.late_runway_threshold !== null &&
+        (typeof sm.late_runway_threshold !== 'number' || sm.late_runway_threshold < 0 || sm.late_runway_threshold > 1)
+      ) {
         errors.push({
           path: 'sprint_metrics.late_runway_threshold',
-          message: 'late_runway_threshold must be a decimal between 0 and 1 (e.g. 0.60)',
+          message: 'late_runway_threshold must be a decimal between 0 and 1 (e.g. 0.60) or null',
         });
       }
-      if ('late_runway_max_points' in sm && (typeof sm.late_runway_max_points !== 'number' || sm.late_runway_max_points < 0)) {
+      if (
+        'runway_cutoff' in sm &&
+        sm.runway_cutoff !== null &&
+        (typeof sm.runway_cutoff !== 'number' || sm.runway_cutoff < 0 || sm.runway_cutoff > 1)
+      ) {
+        errors.push({
+          path: 'sprint_metrics.runway_cutoff',
+          message: 'runway_cutoff must be a decimal between 0 and 1 (e.g. 0.60) or null',
+        });
+      }
+      if (
+        'late_runway_max_points' in sm &&
+        sm.late_runway_max_points !== null &&
+        (typeof sm.late_runway_max_points !== 'number' || sm.late_runway_max_points < 0)
+      ) {
         errors.push({
           path: 'sprint_metrics.late_runway_max_points',
-          message: 'late_runway_max_points must be a non-negative number',
+          message: 'late_runway_max_points must be a non-negative number or null',
+        });
+      }
+      if (
+        'late_inflow_cap' in sm &&
+        sm.late_inflow_cap !== null &&
+        (typeof sm.late_inflow_cap !== 'number' || sm.late_inflow_cap < 0)
+      ) {
+        errors.push({
+          path: 'sprint_metrics.late_inflow_cap',
+          message: 'late_inflow_cap must be a non-negative number or null',
         });
       }
       if ('reliability_healthy_threshold' in sm && (typeof sm.reliability_healthy_threshold !== 'number' || sm.reliability_healthy_threshold < 0 || sm.reliability_healthy_threshold > 100)) {

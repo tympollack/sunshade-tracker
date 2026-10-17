@@ -19,11 +19,13 @@ import {
   TrendingUp,
   AlertTriangle,
   Flame,
+  GitCompare,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
 import { SprintHealthReport } from '@/lib/services/sprintAnalyticsService';
 import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
+import { SprintDiffModal } from '@/components/sprints/SprintDiffModal';
 import { WorkItem } from '@/types/tracker';
 
 /**
@@ -69,6 +71,7 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
 
   // Demo state for zero-sum trade-off modal
   const [isGuardrailModalOpen, setIsGuardrailModalOpen] = useState(false);
+  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [guardrailItems, setGuardrailItems] = useState<WorkItem[]>([]);
   const [previewToast, setPreviewToast] = useState<string | null>(null);
   const [showRulesJson, setShowRulesJson] = useState(false);
@@ -250,6 +253,16 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
             </select>
             <button
               type="button"
+              onClick={() => setIsDiffModalOpen(true)}
+              data-testid="open-diff-modal-btn"
+              className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-colors flex items-center gap-1.5 text-xs font-mono"
+              title="Inspect Snapshot Delta Diff"
+            >
+              <GitCompare className="w-4 h-4 text-sky-400" />
+              <span className="hidden sm:inline">Snapshot Diff</span>
+            </button>
+            <button
+              type="button"
               onClick={fetchReport}
               data-testid="refresh-telemetry-button"
               className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors"
@@ -391,13 +404,23 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
                   ({report?.scopeCreepPercent ?? 0}%)
                 </span>
               </div>
-              <div className="mt-2">
+              <div className="mt-2 flex items-center justify-between gap-2">
                 <span
                   data-testid="tag-added-after-sprint-start"
                   className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30"
                 >
                   Added After Sprint Start
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDiffModalOpen(true)}
+                  data-testid="inspect-scope-diff-btn"
+                  className="py-0.5 px-2 rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 text-[10px] font-mono flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Inspect Scope Delta Diff"
+                >
+                  <GitCompare className="w-3 h-3" />
+                  <span>Diff</span>
+                </button>
               </div>
             </div>
 
@@ -674,6 +697,22 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
               ]
         }
       />
+
+      {(() => {
+        const currentSprintObj = availableSprints.find(
+          (s) => s.id === selectedSprint || s.name === selectedSprint
+        );
+        return (
+          <SprintDiffModal
+            isOpen={isDiffModalOpen}
+            onClose={() => setIsDiffModalOpen(false)}
+            sprintId={selectedSprint || 'current'}
+            sprintName={selectedSprint || 'Sprint'}
+            projectId={currentSprintObj?.project_id || currentSprintObj?.project_slug}
+            tenantSlug={tenantSlug}
+          />
+        );
+      })()}
     </div>
   );
 }

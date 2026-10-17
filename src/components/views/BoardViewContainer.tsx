@@ -20,6 +20,7 @@ import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
+import { SprintTimelineScrubber, TimelineSnapshotPoint } from '@/components/sprints/SprintTimelineScrubber';
 
 export interface BoardViewContainerProps {
   hiddenBoardItems: WorkItem[];
@@ -93,6 +94,10 @@ export interface BoardViewContainerProps {
   coldCount?: number;
   isLoadingColdArchive?: boolean;
   onLoadColdArchive?: () => Promise<void> | void;
+  timelineSnapshots?: TimelineSnapshotPoint[];
+  activeTimelineSnapshot?: TimelineSnapshotPoint | null;
+  onSelectTimelineSnapshot?: (snap: TimelineSnapshotPoint | null) => void;
+  onOpenDiffModal?: (baseId: string, targetId: string) => void;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -163,7 +168,13 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     coldCount = 0,
     isLoadingColdArchive = false,
     onLoadColdArchive,
+    timelineSnapshots = [],
+    activeTimelineSnapshot = null,
+    onSelectTimelineSnapshot,
+    onOpenDiffModal,
   } = props;
+
+  const isEffectivelyReadOnly = isReadOnly || Boolean(activeTimelineSnapshot);
 
   const [internalOrientation, setInternalOrientation] = React.useState<'columns' | 'stack'>(() => {
     if (typeof window !== 'undefined') {
@@ -282,6 +293,18 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
         />
       </div>
 
+      {/* Interactive Sprint Timeline Scrubber (Time Machine Mode) */}
+      {selectedSprint && selectedSprint !== 'all' && timelineSnapshots && timelineSnapshots.length > 0 && (
+        <SprintTimelineScrubber
+          sprintId={selectedSprint}
+          sprintName={selectedSprint}
+          snapshots={timelineSnapshots}
+          selectedSnapshotId={activeTimelineSnapshot?.id || null}
+          onSelectSnapshot={onSelectTimelineSnapshot}
+          onOpenDiffModal={onOpenDiffModal}
+        />
+      )}
+
       {/* Board Columns Canvas */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -380,7 +403,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                   </div>
 
                   <div className="flex items-center space-x-1 shrink-0">
-                    {!isReadOnly && (
+                    {!isEffectivelyReadOnly && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -479,7 +502,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 )}
 
                 {/* Inline Quick Add Input */}
-                {quickAddColId === col.id && !isReadOnly && (
+                {quickAddColId === col.id && !isEffectivelyReadOnly && (
                   <div className="p-3 border-b border-slate-800/80 bg-slate-950/60 animate-in fade-in">
                     <form
                       onSubmit={(e) => {
@@ -563,14 +586,14 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                               allProjects={allProjects}
                               isAllProjects={isAllProjects}
                               isCardImmutable={isCardImmutable}
-                              isReadOnly={isReadOnly}
+                              isReadOnly={isEffectivelyReadOnly}
                               isBeingDragged={isBeingDragged}
                               onEditItem={setEditingItem}
                               onDeleteItem={setDeleteConfirmItem}
                               onUpdateStatus={handleUpdateStatus}
                               onUpdateType={handleUpdateType}
                               getItemStatuses={getItemStatuses}
-                              onDragStart={handleDragStart}
+                              onDragStart={isEffectivelyReadOnly ? () => {} : handleDragStart}
                               onDragEnd={handleDragEnd}
                               onDragOver={(e) => handleDragOverCard(e, col.id, index)}
                               onDrop={(e) => {
@@ -619,7 +642,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       allProjects={allProjects}
                       isAllProjects={isAllProjects}
                       isCardImmutable={isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs)}
-                      isReadOnly={isReadOnly}
+                      isReadOnly={isEffectivelyReadOnly}
                       onEditItem={setEditingItem}
                       onDeleteItem={setDeleteConfirmItem}
                       onUpdateStatus={handleUpdateStatus}

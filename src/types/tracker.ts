@@ -49,10 +49,16 @@ export interface MetricRules {
   reliability_healthy_threshold?: number;
   /** Say/Do ratio threshold for warning amber status in % (default: 70) */
   reliability_warning_threshold?: number;
-  /** Elapsed sprint runway ratio cutoff to trigger sizing guardrails (default: 0.60) */
-  late_runway_threshold?: number;
-  /** Maximum story points allowed for feature items when runway threshold is exceeded (default: 2) */
-  late_runway_max_points?: number;
+  /** Elapsed sprint runway ratio cutoff to trigger sizing guardrails (default: 0.60, or null when disabled) */
+  late_runway_threshold?: number | null;
+  /** Maximum story points allowed for feature items when runway threshold is exceeded (default: 2, or null when disabled) */
+  late_runway_max_points?: number | null;
+  /** Maximum story points allowed for late inflow items (null when disabled) */
+  late_inflow_cap?: number | null;
+  /** Elapsed sprint runway ratio cutoff to trigger sizing guardrails (null when disabled) */
+  runway_cutoff?: number | null;
+  /** Whether late inflow and runway caps are enforced (default: true) */
+  enforce_late_inflow_caps?: boolean;
   /** Item types classified as feature stories subject to late runway limits (default: ['story', 'feature']) */
   feature_story_types?: string[];
   /** Allowed item types when late runway is exceeded (default: ['chore', 'task', 'debt', 'documentation', 'doc', 'test', 'bug']) */
@@ -184,6 +190,7 @@ export interface WorkItem {
   tenant_id: string;
   project_id: string;
   parent_id?: string | null;
+  sprint_id?: string | null;
   external_ref_id?: string | null;
   item_type: string;
   status: string;

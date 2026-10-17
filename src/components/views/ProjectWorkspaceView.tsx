@@ -20,6 +20,7 @@ import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
+import { SprintDiffModal, TimelineSnapshotPoint } from '@/components/sprints';
 import { BulkDeleteConfirmModal } from '@/components/BulkDeleteConfirmModal';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation';
@@ -38,10 +39,13 @@ import {
 import { mergeProjectSettings, getItemProjectSettings as getEffectiveItemProjectSettings } from '@/lib/portfolio-merge';
 import { bulkReassignProjects } from '@/app/actions/trackerActions';
 import { saveModalItem } from '@/lib/save-modal-item';
+import { parseResilientJson } from '@/lib/jsonSanitizer';
 import { useTabSync } from '@/hooks/useTabSync';
 import { broadcastItemMutation } from '@/lib/sync-channel';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { WorkspaceShell } from '@/components/layout/WorkspaceShell';
+import { normalizeProjectSettings, DEFAULT_PROJECT_SETTINGS } from '@/hooks/useProjectSettings';
+import { ProjectViewErrorBoundary } from '@/components/schema/ProjectViewErrorBoundary';
 import { LeftHandNavTree } from '@/components/navigation/LeftHandNavTree';
 import { WorkItemInspectorDrawer } from '@/components/drawer/WorkItemInspectorDrawer';
 import { SprintInspectorDrawer } from '@/components/drawer/SprintInspectorDrawer';
@@ -53,6 +57,8 @@ import {
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -111,6 +117,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   useEffect(() => {
     setTreeSelectedProjectId(null);
   }, [projectSlug]);
+
+  // Sprint Timeline Scrubber (Time Machine Mode) & Diff Modal state
+  const [timelineSnapshots, setTimelineSnapshots] = useState<TimelineSnapshotPoint[]>([]);
+  const [activeTimelineSnapshot, setActiveTimelineSnapshot] = useState<TimelineSnapshotPoint | null>(null);
+  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  const [diffBaseId, setDiffBaseId] = useState<string>('baseline');
+  const [diffTargetId, setDiffTargetId] = useState<string>('live');
 
   const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(true);
 
@@ -380,22 +393,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [bulkToast, setBulkToast] = useState<string | null>(null);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
-  const [projectSettings, setProjectSettings] = useState<ProjectSettings>({
-    schema_version: '1.0',
-    hierarchy: [
-      { type: 'project', label: 'Project', level: 1, allowed_parents: [], color: '#c084fc' },
-      { type: 'epic', label: 'Epic', level: 2, allowed_parents: ['project'], color: '#38bdf8' },
-      { type: 'story', label: 'Story', level: 3, allowed_parents: ['epic'], color: '#34d399' },
-      { type: 'task', label: 'Task', level: 4, allowed_parents: ['story', 'epic'], color: '#fbbf24' },
-    ],
-    statuses: [
-      { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
-      { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
-      { id: 'planned', label: 'Planned', color: '#a855f7', order: 3 },
-      { id: 'complete', label: 'Complete', color: '#22c55e', order: 4 },
-    ],
-    custom_fields: ['priority', 'complexity', 'timeline', 'commit_hash', 'source_type'],
-  });
+  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
   const [isSavingSchema, setIsSavingSchema] = useState(false);
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
@@ -554,34 +552,34 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const effectiveSelectedStatuses = useMemo(() => {
     if (selectedStatuses !== null) return selectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [selectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [selectedStatuses, projectSettings?.statuses]);
 
   const effectiveSelectedLevels = useMemo(() => {
     if (selectedLevels !== null) return selectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [selectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [selectedLevels, projectSettings?.hierarchy]);
 
   // Tree and Sprint Planning Multi-Select Effective Filters
   const effectiveTreeStatuses = useMemo(() => {
     if (treeSelectedStatuses !== null) return treeSelectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [treeSelectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [treeSelectedStatuses, projectSettings?.statuses]);
 
   const effectiveTreeLevels = useMemo(() => {
     if (treeSelectedLevels !== null) return treeSelectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [treeSelectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [treeSelectedLevels, projectSettings?.hierarchy]);
 
   const effectiveSprintStatuses = useMemo(() => {
     if (sprintSelectedStatuses !== null) return sprintSelectedStatuses;
-    return projectSettings.statuses.map((s) => s.id);
-  }, [sprintSelectedStatuses, projectSettings.statuses]);
+    return (projectSettings?.statuses || []).map((s) => s.id);
+  }, [sprintSelectedStatuses, projectSettings?.statuses]);
 
   const effectiveSprintLevels = useMemo(() => {
     if (sprintSelectedLevels !== null) return sprintSelectedLevels;
-    return projectSettings.hierarchy.map((h) => h.type);
-  }, [sprintSelectedLevels, projectSettings.hierarchy]);
+    return (projectSettings?.hierarchy || []).map((h) => h.type);
+  }, [sprintSelectedLevels, projectSettings?.hierarchy]);
 
   // Tree items filtered by selectedSprint, status, level, and assignee
   const treeFilteredItems = useMemo(() => {
@@ -767,6 +765,89 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     });
   }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
 
+  // Reset historical snapshot only when switching sprint or project context
+  useEffect(() => {
+    setActiveTimelineSnapshot(null);
+  }, [selectedSprint, projectSlug]);
+
+  // Fetch timeline snapshots when a specific sprint is filtered on the board
+  useEffect(() => {
+    if (!selectedSprint || selectedSprint === 'all' || !projectSlug) {
+      setTimelineSnapshots([]);
+      return;
+    }
+
+    // Resolve sprint name to relational UUID if available
+    const matchedDef = (availableSprintDefs || []).find(
+      (s) => s.name === selectedSprint || s.id === selectedSprint
+    );
+    const sprintParam = matchedDef?.id && UUID_REGEX.test(matchedDef.id) ? matchedDef.id : selectedSprint;
+
+    let isMounted = true;
+    fetch(
+      `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
+        sprintParam
+      )}&snapshot_type=all`,
+      {
+        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : undefined,
+      }
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!isMounted) return;
+        if (d?.snapshots && Array.isArray(d.snapshots)) {
+          setTimelineSnapshots(d.snapshots);
+        } else {
+          setTimelineSnapshots([]);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setTimelineSnapshots([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSprint, projectSlug, tenantSlug, availableSprintDefs]);
+
+  // Compute effective items displayed on the board (historical when scrubbing)
+  const effectiveBoardItems = useMemo(() => {
+    if (!activeTimelineSnapshot) return items;
+    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items)) {
+      return activeTimelineSnapshot.assignee_breakdown.items.map((it: any) => ({
+        ...it,
+        tenant_id: tenantSlug,
+        project_id: projectSlug,
+        order_index: it.order_index ?? 0,
+        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
+        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
+      }));
+    }
+    if (Array.isArray(activeTimelineSnapshot.items)) {
+      return activeTimelineSnapshot.items.map((it: any) => ({
+        ...it,
+        tenant_id: tenantSlug,
+        project_id: projectSlug,
+        order_index: it.order_index ?? 0,
+        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
+        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
+      }));
+    }
+    const capturedTime = activeTimelineSnapshot.captured_at ? new Date(activeTimelineSnapshot.captured_at).getTime() : Infinity;
+    if (Array.isArray(activeTimelineSnapshot.committed_item_ids) && activeTimelineSnapshot.committed_item_ids.length > 0) {
+      const allowed = new Set(activeTimelineSnapshot.committed_item_ids);
+      return items.filter((it) => {
+        if (!allowed.has(it.id)) return false;
+        if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
+        return true;
+      });
+    }
+    return items.filter((it) => {
+      if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
+      return true;
+    });
+  }, [items, activeTimelineSnapshot, tenantSlug, projectSlug]);
+
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);
   const lastSprintInitializedProjectRef = useRef<string | null>(null);
 
@@ -919,7 +1000,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
           setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
           const portfolioSettings = mergeProjectSettings(sData.projects);
-          setProjectSettings(portfolioSettings);
+          setProjectSettings(normalizeProjectSettings(portfolioSettings));
           setLoadedProjectSlug(projectSlug);
         } else if (!isAllProjects) {
           const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
@@ -929,26 +1010,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             if (detailRes.ok) {
               const detail = await detailRes.json();
               if (detail.settings) {
-                const enrichedHierarchy = (detail.settings.hierarchy || []).map((h: any) => ({
+                const normalized = normalizeProjectSettings(detail.settings);
+                const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
                   ...h,
                   color: h.color || getDefaultLevelHex(h.level),
                 }));
                 const enrichedSettings: ProjectSettings = {
-                  ...detail.settings,
+                  ...normalized,
                   hierarchy: enrichedHierarchy,
                 };
                 setProjectSettings(enrichedSettings);
-                if (detail.settings.statuses?.length) {
+                if (enrichedSettings.statuses?.length) {
                   setSelectedStatuses((prev) => {
                     if (prev === null) return null;
-                    const validIds = new Set(detail.settings.statuses.map((s: any) => s.id));
+                    const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
                     return prev.filter((id) => validIds.has(id));
                   });
                 }
-                if (detail.settings.hierarchy?.length) {
+                if (enrichedSettings.hierarchy?.length) {
                   setSelectedLevels((prev) => {
                     if (prev === null) return null;
-                    const validTypes = new Set(detail.settings.hierarchy.map((h: any) => h.type));
+                    const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
                     return prev.filter((t) => validTypes.has(t));
                   });
                 }
@@ -1164,7 +1246,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           prev.map((p) => (p.slug === targetSlug ? { ...p, settings: newSettings } : p))
         );
         if (!isAllProjects) {
-          setProjectSettings(newSettings);
+          setProjectSettings(normalizeProjectSettings(newSettings));
         } else {
           fetchData();
         }
@@ -1176,6 +1258,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       setIsSavingSchema(false);
     }
   };
+
+  const handleResetSchemaToDefault = useCallback(async () => {
+    setProjectSettings(DEFAULT_PROJECT_SETTINGS);
+    try {
+      await handleSaveSchema(DEFAULT_PROJECT_SETTINGS);
+    } catch (err) {
+      console.error('Failed to persist reset default schema:', err);
+    }
+  }, [handleSaveSchema]);
 
   useEffect(() => {
     fetchTenantInfo();
@@ -1419,7 +1510,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           },
         };
 
-        const metricRules = projectSettings?.sprint_settings?.metric_rules || projectSettings?.sprint_settings?.sprint_metrics;
+        const metricRules =
+          projectSettings?.sprint_metrics ||
+          projectSettings?.metric_rules ||
+          projectSettings?.sprint_settings?.metric_rules ||
+          projectSettings?.sprint_settings?.sprint_metrics ||
+          projectSettings?.sprint_settings?.metrics;
 
         try {
           validateSprintIntakePure({
@@ -1470,7 +1566,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       (targetSprintName
         ? availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
         : null);
-    const targetSprintId = configuredSprintDef?.id || null;
+    const rawSingleSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const targetSprintId = rawSingleSprintId && UUID_REGEX.test(rawSingleSprintId) ? rawSingleSprintId : null;
+    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const newMetadata = { ...(item.metadata || {}) };
     if (targetSprintName) {
@@ -1480,15 +1578,29 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       } else {
         delete newMetadata.sprint_id;
       }
+      if (isTargetActive) {
+        newMetadata.added_mid_sprint = true;
+        newMetadata.governance_bypass = true;
+      } else {
+        delete newMetadata.added_mid_sprint;
+        delete newMetadata.governance_bypass;
+      }
     } else {
       delete newMetadata.sprint;
       delete newMetadata.sprint_id;
+      delete newMetadata.added_mid_sprint;
+      delete newMetadata.governance_bypass;
     }
 
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'PATCH',
-        body: JSON.stringify({ id: itemId, metadata: newMetadata }),
+        body: JSON.stringify({
+          id: itemId,
+          sprint_id: targetSprintName ? targetSprintId : null,
+          governance_bypass: isTargetActive ? true : undefined,
+          metadata: newMetadata,
+        }),
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -1508,11 +1620,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               } else {
                 delete nextMeta.sprint_id;
               }
+              if (isTargetActive) {
+                nextMeta.added_mid_sprint = true;
+                nextMeta.governance_bypass = true;
+              } else {
+                delete nextMeta.added_mid_sprint;
+                delete nextMeta.governance_bypass;
+              }
             } else {
               delete nextMeta.sprint;
               delete nextMeta.sprint_id;
+              delete nextMeta.added_mid_sprint;
+              delete nextMeta.governance_bypass;
             }
-            return { ...it, metadata: nextMeta };
+            return {
+              ...it,
+              sprint_id: targetSprintName ? targetSprintId : null,
+              metadata: nextMeta,
+            };
           }
           return it;
         })
@@ -1895,13 +2020,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const handleSaveSprints = async (sprints: SprintDefinition[]) => {
     if (isReadOnly) return;
-    const newSettings: ProjectSettings = {
+    const newSettings: ProjectSettings = normalizeProjectSettings({
       ...projectSettings,
       sprint_settings: {
         ...projectSettings.sprint_settings,
         sprints,
       },
-    };
+    });
     setProjectSettings(newSettings);
     try {
       const res = await apiFetch(`/api/v1/projects/${projectSlug}/settings`, {
@@ -2303,34 +2428,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           )
         : null);
 
-    const targetSprintId = configuredSprintDef?.id || null;
-
-    // Active sprint lock guard: only check items that are actually entering the active sprint
-    if (targetSprintDef && isSprintActive(targetSprintDef)) {
-      const itemsEnteringSprint = mutableItems.filter((it) => {
-        const curSprintName = it.metadata?.sprint;
-        const curSprintId = it.metadata?.sprint_id;
-        const isAlreadyInTarget = Boolean(
-          (configuredSprintDef?.id && curSprintId === configuredSprintDef.id) ||
-          (targetSprintDef.name && curSprintName === targetSprintDef.name)
-        );
-        return !isAlreadyInTarget;
-      });
-
-      const estimatedItemsEntering = itemsEnteringSprint.filter(
-        (it) =>
-          Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0 &&
-          !it.metadata?.added_mid_sprint
-      );
-
-      if (estimatedItemsEntering.length > 0) {
-        setBulkToast(
-          `Cannot move ${estimatedItemsEntering.length} estimated item(s) to active sprint "${targetSprintDef.name}". Active sprint scope is locked.`
-        );
-        setTimeout(() => setBulkToast(null), 4000);
-        return;
-      }
-    }
+    const rawSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const targetSprintId = rawSprintId && UUID_REGEX.test(rawSprintId) ? rawSprintId : null;
+    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
@@ -2340,14 +2440,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     // Instead, indicate bulk operation is in progress via isBulkApplying.
     setIsBulkApplying(true);
     try {
-      const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'PATCH',
+      const res = await apiFetch('/api/v1/items/bulk-update', {
+        method: 'POST',
         body: JSON.stringify({
           ids: mutableIds,
+          governance_bypass: isTargetActive ? true : undefined,
           updates: {
+            sprint_id: targetSprintName ? targetSprintId : null,
             metadata: {
               sprint: targetSprintName,
               sprint_id: targetSprintId,
+              governance_bypass: isTargetActive ? true : undefined,
+              added_mid_sprint: isTargetActive ? true : undefined,
             },
           },
         }),
@@ -2371,11 +2475,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             } else {
               delete newMeta.sprint_id;
             }
+            if (isTargetActive) {
+              newMeta.added_mid_sprint = true;
+              newMeta.governance_bypass = true;
+            } else {
+              delete newMeta.added_mid_sprint;
+              delete newMeta.governance_bypass;
+            }
           } else {
             delete newMeta.sprint;
             delete newMeta.sprint_id;
+            delete newMeta.added_mid_sprint;
+            delete newMeta.governance_bypass;
           }
-          return { ...it, metadata: newMeta };
+          return {
+            ...it,
+            sprint_id: targetSprintName ? targetSprintId : null,
+            metadata: newMeta,
+          };
         })
       );
 
@@ -2944,13 +3061,20 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return () => window.removeEventListener('keydown', handleSearchKeyDown);
   }, []);
 
-  const handleRunSparkIngest = async () => {
+  const handleRunSparkIngest = async (preParsedPayload?: any) => {
     if (isReadOnly) return;
     setIsIngesting(true);
     setIngestResponse(null);
     setLastIngestedItemIds(null);
     try {
-      const parsed = JSON.parse(sparkPayload);
+      let parsed = preParsedPayload;
+      if (!parsed) {
+        const parseResult = parseResilientJson(sparkPayload);
+        if (!parseResult.success) {
+          throw new Error(parseResult.error || 'Failed to parse JSON payload');
+        }
+        parsed = parseResult.data;
+      }
       if (sparkOverrideProject) {
         parsed.override_project_slug = sparkOverrideProject;
       }
@@ -3381,7 +3505,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             )}
 
             <div className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
-              {activeTab === 'board' && (
+              <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>
+                {activeTab === 'board' && (
                 <BoardViewContainer
                   hiddenBoardItems={hiddenBoardItems}
                   dismissedBoardDeviationBanner={dismissedBoardDeviationBanner}
@@ -3404,7 +3529,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   setSelectedSprint={setSelectedSprint}
                   availableSprints={availableSprints}
                   availableSprintDefs={availableSprintDefs}
-                  items={items}
+                  items={effectiveBoardItems}
+                  timelineSnapshots={timelineSnapshots}
+                  activeTimelineSnapshot={activeTimelineSnapshot}
+                  onSelectTimelineSnapshot={setActiveTimelineSnapshot}
+                  onOpenDiffModal={(base, target) => {
+                    setDiffBaseId(base);
+                    setDiffTargetId(target);
+                    setIsDiffModalOpen(true);
+                  }}
                   projectSettings={projectSettings}
                   getItemProjectSettings={getItemProjectSettings}
                   pointMode={pointMode}
@@ -3557,6 +3690,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               {activeTab === 'spark' && (
                 <SparkViewContainer
                   isReadOnly={isReadOnly}
+                  tenantSlug={tenantSlug}
+                  apiFetch={apiFetch}
                   sparkOverrideProject={sparkOverrideProject}
                   setSparkOverrideProject={setSparkOverrideProject}
                   sparkOverrideSprint={sparkOverrideSprint}
@@ -3574,11 +3709,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   isIngesting={isIngesting}
                   handleRunSparkIngest={handleRunSparkIngest}
                   ingestResponse={ingestResponse}
+                  setIngestResponse={setIngestResponse}
                   ingestedAffectedItemCount={ingestedAffectedItemCount}
                   onOpenReconciliation={() => {
                     setFocusedDeviationId(null);
                     setIsReconciliationModalOpen(true);
                   }}
+                  onRefresh={fetchData}
                 />
               )}
 
@@ -3606,6 +3743,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   }
                 />
               )}
+              </ProjectViewErrorBoundary>
             </div>
           </div>
         }
@@ -3778,6 +3916,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         items={itemsToBulkDelete}
         isDeleting={isBulkApplying}
       />
+
+      {/* Scope Delta Diff Modal for Sprint Board & Timeline Scrubber */}
+      {isDiffModalOpen && (
+        <SprintDiffModal
+          isOpen={true}
+          onClose={() => setIsDiffModalOpen(false)}
+          sprintId={selectedSprint !== 'all' ? selectedSprint : 'current'}
+          sprintName={selectedSprint !== 'all' ? selectedSprint : 'Sprint Backlog'}
+          projectId={currentProjectId || projectSlug}
+          tenantSlug={tenantSlug}
+          snapshots={timelineSnapshots}
+          initialBaseId={diffBaseId}
+          initialTargetId={diffTargetId}
+        />
+      )}
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
       {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (

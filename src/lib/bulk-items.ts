@@ -63,7 +63,7 @@ export function reconcileSprintMetadata(
   existingMeta: Record<string, any> = {},
   incomingMeta: Record<string, any> = {},
   projectSettings?: ProjectSettings,
-  options?: { fullReplacement?: boolean }
+  options?: { fullReplacement?: boolean; availableSprints?: any[]; governanceBypass?: boolean }
 ): Record<string, any> {
   const isFullReplacement = Boolean(options?.fullReplacement);
   const merged: Record<string, any> = isFullReplacement
@@ -76,6 +76,12 @@ export function reconcileSprintMetadata(
         delete merged[k];
       }
     }
+  }
+
+  // Handle governance bypass flag synchronization
+  if (incomingMeta.governance_bypass === true || options?.governanceBypass === true) {
+    merged.governance_bypass = true;
+    merged.added_mid_sprint = true;
   }
 
   const sprintRequested = Object.prototype.hasOwnProperty.call(incomingMeta, 'sprint');
@@ -114,7 +120,14 @@ export function reconcileSprintMetadata(
   }
 
   // 2. Sprint assignment or change
-  const sprints = projectSettings?.sprint_settings?.sprints || [];
+  const sprints = [
+    ...(options?.availableSprints || []),
+    ...(projectSettings?.sprint_settings?.sprints || []),
+  ];
+
+  const isUuid = (val: any) =>
+    typeof val === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
   if (hasExplicitSprint) {
     // Lookup by incoming sprint name or id
@@ -132,9 +145,11 @@ export function reconcileSprintMetadata(
         delete merged.sprint_id;
       }
     } else {
-      // Ad-hoc sprint not in projectSettings
+      // Ad-hoc sprint not in projectSettings or availableSprints
       merged.sprint = incomingSprint;
-      if (incomingSprintId && incomingSprintId !== incomingSprint && incomingSprintId !== '__none__') {
+      if (incomingSprintId && isUuid(incomingSprintId)) {
+        merged.sprint_id = incomingSprintId;
+      } else if (incomingSprintId && incomingSprintId !== incomingSprint && incomingSprintId !== '__none__') {
         merged.sprint_id = incomingSprintId;
       } else {
         delete merged.sprint_id;
@@ -249,9 +264,11 @@ export interface BulkUpdateItemInput {
   item_type?: string;
   assignee?: string | null;
   parent_id?: string | null;
+  sprint_id?: string | null;
   external_ref_id?: string | null;
   metadata?: Record<string, any>;
   order_index?: number;
+  governance_bypass?: boolean;
 }
 
 export interface BulkUpdatePayload {
@@ -263,10 +280,13 @@ export interface BulkUpdatePayload {
     item_type?: string;
     assignee?: string | null;
     parent_id?: string | null;
+    sprint_id?: string | null;
     metadata?: Record<string, any>;
     order_index?: number;
+    governance_bypass?: boolean;
   };
   items?: BulkUpdateItemInput[];
+  governance_bypass?: boolean;
 }
 
 export interface BulkDeletePayload {
@@ -940,7 +960,7 @@ async function dispatchBulkNotifications(
 export async function handleBulkUpdateItems(
   tenantId: string,
   payload: BulkUpdatePayload,
-  options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null }
+  options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null; governance_bypass?: boolean }
 ): Promise<{ success: boolean; updated_count: number; items: WorkItem[]; error?: string; status?: number }> {
   // Shared project settings cache
   const projectSettingsCache = new Map<string, ProjectSettings>();
@@ -1149,16 +1169,73 @@ export async function handleBulkUpdateItems(
         itemUpdate.parent_id = targetParentId;
       }
       if (updates.order_index !== undefined) itemUpdate.order_index = updates.order_index;
+      if (updates.sprint_id !== undefined) itemUpdate.sprint_id = updates.sprint_id;
 
-      if (updates.metadata !== undefined) {
-        const mergedMetadata = reconcileSprintMetadata(item.metadata, updates.metadata, projectSettings);
-        itemUpdate.metadata = mergedMetadata;
+      const isGovernanceBypassed = options?.governance_bypass !== undefined
+        ? Boolean(options.governance_bypass)
+        : false;
+
+      // Ensure direct sprint_id updates are reconciled with metadata and subjected to sprint guardrails
+      const effectiveMetadataInput: Record<string, any> | undefined = updates.metadata !== undefined
+        ? { ...updates.metadata }
+        : updates.sprint_id !== undefined
+        ? { sprint_id: updates.sprint_id }
+        : undefined;
+
+      if (updates.sprint_id !== undefined && effectiveMetadataInput && !('sprint_id' in effectiveMetadataInput)) {
+        effectiveMetadataInput.sprint_id = updates.sprint_id;
+      }
+
+      if (effectiveMetadataInput !== undefined) {
+        const mergedMetadata = reconcileSprintMetadata(item.metadata, effectiveMetadataInput, projectSettings, {
+          governanceBypass: isGovernanceBypassed,
+        });
 
         const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
+
+        const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
+        const targetSprintDef = targetSprintName
+          ? sprints.find((s: any) =>
+              s.name === targetSprintName || s.id === targetSprintName
+            )
+          : null;
+        const isTargetSprintActive = targetSprintDef
+          ? Boolean(targetSprintDef.status === 'active' || targetSprintDef.is_active || targetSprintDef.is_current)
+          : false;
+
+        // Only mark added_mid_sprint when genuinely entering an active sprint
+        if (isIntake && activeSprint) {
+          if (isGovernanceBypassed) {
+            mergedMetadata.governance_bypass = true;
+            mergedMetadata.added_mid_sprint = true;
+          }
+        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__' || !isTargetSprintActive) {
+          // Cleared, moved to backlog, or moved to a non-active (planned/completed) sprint: purge intake marker
+          delete mergedMetadata.added_mid_sprint;
+          if (!isGovernanceBypassed) {
+            delete mergedMetadata.governance_bypass;
+          }
+        } else if (!isGovernanceBypassed) {
+          delete mergedMetadata.governance_bypass;
+        }
+
+        itemUpdate.metadata = mergedMetadata;
+
+        // Synchronize relational sprint_id if present in metadata or moved to backlog
+        if (mergedMetadata.sprint_id !== undefined) {
+          itemUpdate.sprint_id = mergedMetadata.sprint_id;
+        } else if (updates.sprint_id !== undefined) {
+          itemUpdate.sprint_id = updates.sprint_id;
+        } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
+          if (!mergedMetadata.sprint) {
+            itemUpdate.sprint_id = null;
+          }
+        }
 
         // Active sprint estimate immutability guard: check items already in an active sprint
         const itemSprint = item.metadata?.sprint || item.metadata?.sprint_id;
-        if (itemSprint) {
+        if (itemSprint && !isGovernanceBypassed) {
           const activeSprintDef = sprints.find(
             (s: any) =>
               (s.id === itemSprint || s.name === itemSprint) &&
@@ -1185,9 +1262,7 @@ export async function handleBulkUpdateItems(
         }
 
         // Active sprint immutability guard
-        const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
-
-        if (isIntake && activeSprint) {
+        if (isIntake && activeSprint && !isGovernanceBypassed) {
           const hasPoints =
             (item.metadata?.story_points !== undefined && item.metadata?.story_points !== null && Number(item.metadata.story_points) > 0) ||
             (item.metadata?.points !== undefined && item.metadata?.points !== null && Number(item.metadata.points) > 0) ||
@@ -1211,8 +1286,9 @@ export async function handleBulkUpdateItems(
     }
 
     // Check if updates across all items are completely uniform without per-item differences
+    const hasSprintOrMetadataUpdates = updates.metadata !== undefined || updates.sprint_id !== undefined;
     const isCompletelyUniform =
-      updates.metadata === undefined &&
+      !hasSprintOrMetadataUpdates &&
       plannedUpdates.every((p) => {
         const keys1 = Object.keys(p.fields).sort();
         const keys2 = Object.keys(plannedUpdates[0].fields).sort();
@@ -1316,6 +1392,7 @@ export async function handleBulkUpdateItems(
                 parent_id: original.parent_id,
                 external_ref_id: original.external_ref_id,
                 order_index: original.order_index,
+                sprint_id: original.sprint_id ?? null,
                 metadata: original.metadata,
                 updated_at: original.updated_at,
               })
@@ -1595,16 +1672,73 @@ export async function handleBulkUpdateItems(
       }
       if (it.external_ref_id !== undefined) patchFields.external_ref_id = it.external_ref_id;
       if (it.order_index !== undefined) patchFields.order_index = it.order_index;
+      if (it.sprint_id !== undefined) patchFields.sprint_id = it.sprint_id;
 
-      if (it.metadata !== undefined) {
-        const mergedMetadata = reconcileSprintMetadata(existing.metadata, it.metadata, projectSettings);
-        patchFields.metadata = mergedMetadata;
+      const isGovernanceBypassed = options?.governance_bypass !== undefined
+        ? Boolean(options.governance_bypass)
+        : false;
+
+      // Ensure direct sprint_id updates are reconciled with metadata and subjected to sprint guardrails
+      const effectiveMetadataInput: Record<string, any> | undefined = it.metadata !== undefined
+        ? { ...it.metadata }
+        : it.sprint_id !== undefined
+        ? { sprint_id: it.sprint_id }
+        : undefined;
+
+      if (it.sprint_id !== undefined && effectiveMetadataInput && !('sprint_id' in effectiveMetadataInput)) {
+        effectiveMetadataInput.sprint_id = it.sprint_id;
+      }
+
+      if (effectiveMetadataInput !== undefined) {
+        const mergedMetadata = reconcileSprintMetadata(existing.metadata, effectiveMetadataInput, projectSettings, {
+          governanceBypass: isGovernanceBypassed,
+        });
 
         const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
+
+        const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
+        const targetSprintDef = targetSprintName
+          ? sprints.find((s: any) =>
+              s.name === targetSprintName || s.id === targetSprintName
+            )
+          : null;
+        const isTargetSprintActive = targetSprintDef
+          ? Boolean(targetSprintDef.status === 'active' || targetSprintDef.is_active || targetSprintDef.is_current)
+          : false;
+
+        // Only mark added_mid_sprint when genuinely entering an active sprint
+        if (isIntake && activeSprint) {
+          if (isGovernanceBypassed) {
+            mergedMetadata.governance_bypass = true;
+            mergedMetadata.added_mid_sprint = true;
+          }
+        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__' || !isTargetSprintActive) {
+          // Cleared, moved to backlog, or moved to a non-active (planned/completed) sprint: purge intake marker
+          delete mergedMetadata.added_mid_sprint;
+          if (!isGovernanceBypassed) {
+            delete mergedMetadata.governance_bypass;
+          }
+        } else if (!isGovernanceBypassed) {
+          delete mergedMetadata.governance_bypass;
+        }
+
+        patchFields.metadata = mergedMetadata;
+
+        // Synchronize relational sprint_id if present in metadata or moved to backlog
+        if (mergedMetadata.sprint_id !== undefined) {
+          patchFields.sprint_id = mergedMetadata.sprint_id;
+        } else if (it.sprint_id !== undefined) {
+          patchFields.sprint_id = it.sprint_id;
+        } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
+          if (!mergedMetadata.sprint) {
+            patchFields.sprint_id = null;
+          }
+        }
 
         // Active sprint estimate immutability guard: check items already in an active sprint
         const itemSprint = existing.metadata?.sprint || existing.metadata?.sprint_id;
-        if (itemSprint) {
+        if (itemSprint && !isGovernanceBypassed) {
           const activeSprintDef = sprints.find(
             (s: any) =>
               (s.id === itemSprint || s.name === itemSprint) &&
@@ -1631,9 +1765,7 @@ export async function handleBulkUpdateItems(
         }
 
         // Active sprint immutability guard
-        const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
-
-        if (isIntake && activeSprint) {
+        if (isIntake && activeSprint && !isGovernanceBypassed) {
           const hasPoints =
             (existing.metadata?.story_points !== undefined && existing.metadata?.story_points !== null && Number(existing.metadata.story_points) > 0) ||
             (existing.metadata?.points !== undefined && existing.metadata?.points !== null && Number(existing.metadata.points) > 0) ||
@@ -1697,6 +1829,7 @@ export async function handleBulkUpdateItems(
                 parent_id: original.parent_id,
                 external_ref_id: original.external_ref_id,
                 order_index: original.order_index,
+                sprint_id: original.sprint_id ?? null,
                 metadata: original.metadata,
                 updated_at: original.updated_at,
               })

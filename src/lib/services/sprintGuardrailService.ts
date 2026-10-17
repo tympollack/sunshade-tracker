@@ -213,24 +213,31 @@ export function validateSprintIntakePure(params: {
   if (startedAt && endsAt) {
     elapsedRatio = calculateElapsedRatio(startedAt, endsAt, options?.now);
 
-    // If elapsed_ratio > rules.late_runway_threshold (default 0.60), enforce strict sizing:
-    if (elapsedRatio > rules.late_runway_threshold) {
+    const runwayCutoff = rules.runway_cutoff !== undefined ? rules.runway_cutoff : rules.late_runway_threshold;
+    const lateCap = rules.late_inflow_cap !== undefined ? rules.late_inflow_cap : rules.late_runway_max_points;
+    const isLateInflowEnforced =
+      runwayCutoff !== null &&
+      lateCap !== null &&
+      rules.enforce_late_inflow_caps !== false;
+
+    // If late inflow enforcement is active and elapsed_ratio > runwayCutoff, enforce strict sizing:
+    if (isLateInflowEnforced && runwayCutoff !== null && lateCap !== null && elapsedRatio > runwayCutoff) {
       const incomingPoints = extractStoryPoints(incomingItem, metricKey);
       const incomingType = String(incomingItem.item_type || incomingItem.type || incomingItem.metadata?.item_type || '').toLowerCase().trim();
       const isAllowedLateType = (rules.allowed_late_types || []).some((t) => t.toLowerCase().trim() === incomingType);
       const isFeature = isFeatureStory(incomingItem, rules.feature_story_types);
 
-      if ((isFeature || !isAllowedLateType) && incomingPoints > rules.late_runway_max_points) {
-        const thresholdPercent = Math.round(rules.late_runway_threshold * 100);
+      if ((isFeature || !isAllowedLateType) && incomingPoints > lateCap) {
+        const thresholdPercent = Math.round(runwayCutoff * 100);
         const remainingPercent = 100 - thresholdPercent;
         throw new SprintGuardrailError({
           code: 'LATE_RUNWAY_EXCEEDED',
           status: 409,
-          message: `Late-sprint runway threshold exceeded (${(elapsedRatio * 100).toFixed(1)}% elapsed > ${thresholdPercent}%). New feature stories are capped at ${rules.late_runway_max_points} story points during the final ${remainingPercent}% of the sprint. Only non-feature chores, test debt, or documentation tasks may exceed ${rules.late_runway_max_points} points.`,
+          message: `Late-sprint runway threshold exceeded (${(elapsedRatio * 100).toFixed(1)}% elapsed > ${thresholdPercent}%). New feature stories are capped at ${lateCap} story points during the final ${remainingPercent}% of the sprint. Only non-feature chores, test debt, or documentation tasks may exceed ${lateCap} points.`,
           details: {
             elapsed_ratio: elapsedRatio,
-            threshold: rules.late_runway_threshold,
-            max_points: rules.late_runway_max_points,
+            threshold: runwayCutoff,
+            max_points: lateCap,
             incoming_points: incomingPoints,
             item_type: incomingItem.item_type || incomingItem.type || 'story',
           },

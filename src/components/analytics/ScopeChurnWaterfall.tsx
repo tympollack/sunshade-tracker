@@ -66,9 +66,55 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
 
       {/* Waterfall Visualization Canvas */}
       <div className="flex-1 flex items-end justify-around gap-4 px-4 pb-4 pt-8 border-b border-slate-800/80 relative">
+        {/* Subtle Horizontal Dashed Bridge Lines */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-0"
+          preserveAspectRatio="none"
+        >
+          {baseline > 0 && (
+            <line
+              x1="12.5%"
+              y1={`${Math.max(2, Math.min(98, 100 - baselineHeightPct))}%`}
+              x2="37.5%"
+              y2={`${Math.max(2, Math.min(98, 100 - baselineHeightPct))}%`}
+              stroke="#475569"
+              strokeDasharray="2 2"
+              strokeWidth="1.5"
+              className="stroke-slate-600"
+              data-testid="bridge-baseline-added"
+            />
+          )}
+          {added > 0 && (
+            <line
+              x1="37.5%"
+              y1={`${Math.max(2, Math.min(98, 100 - (addedBottomPct + addedHeightPct)))}%`}
+              x2="62.5%"
+              y2={`${Math.max(2, Math.min(98, 100 - (addedBottomPct + addedHeightPct)))}%`}
+              stroke="#475569"
+              strokeDasharray="2 2"
+              strokeWidth="1.5"
+              className="stroke-slate-600"
+              data-testid="bridge-added-dropped"
+            />
+          )}
+          {dropped > 0 && (
+            <line
+              x1="62.5%"
+              y1={`${Math.max(2, Math.min(98, 100 - droppedBottomPct))}%`}
+              x2="87.5%"
+              y2={`${Math.max(2, Math.min(98, 100 - droppedBottomPct))}%`}
+              stroke="#475569"
+              strokeDasharray="2 2"
+              strokeWidth="1.5"
+              className="stroke-slate-600"
+              data-testid="bridge-dropped-delivered"
+            />
+          )}
+        </svg>
+
         {/* Baseline Bar */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end group">
-          <span className="text-xs font-bold text-blue-400 font-mono mb-2">
+        <div className="flex flex-col items-center flex-1 h-full justify-end group z-10">
+          <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
             {baseline} pts
           </span>
           <div
@@ -78,11 +124,11 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </div>
 
         {/* (+) Added Scope Bar (Floating) */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end relative group">
+        <div className="flex flex-col items-center flex-1 h-full justify-end relative group z-10">
           {added > 0 ? (
             <>
               <span
-                className="absolute text-xs font-bold text-amber-400 font-mono mb-2"
+                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
                 style={{ bottom: `${addedBottomPct + addedHeightPct}%` }}
               >
                 +{added} pts
@@ -101,11 +147,11 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </div>
 
         {/* (-) Dropped Scope Bar (Floating) */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end relative group">
+        <div className="flex flex-col items-center flex-1 h-full justify-end relative group z-10">
           {dropped > 0 ? (
             <>
               <span
-                className="absolute text-xs font-bold text-red-400 font-mono mb-2"
+                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
                 style={{ bottom: `${droppedBottomPct + droppedHeightPct}%` }}
               >
                 -{dropped} pts
@@ -124,8 +170,8 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </div>
 
         {/* (=) Final Delivered Points Bar */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end group">
-          <span className="text-xs font-bold text-emerald-400 font-mono mb-2">
+        <div className="flex flex-col items-center flex-1 h-full justify-end group z-10">
+          <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
             {delivered} pts
           </span>
           <div
