@@ -1473,7 +1473,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       (targetSprintName
         ? availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
         : null);
-    const targetSprintId = configuredSprintDef?.id || null;
+    const targetSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const newMetadata = { ...(item.metadata || {}) };
     if (targetSprintName) {
@@ -1483,15 +1484,26 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       } else {
         delete newMetadata.sprint_id;
       }
+      if (isTargetActive) {
+        newMetadata.added_mid_sprint = true;
+        newMetadata.governance_bypass = true;
+      }
     } else {
       delete newMetadata.sprint;
       delete newMetadata.sprint_id;
+      delete newMetadata.added_mid_sprint;
+      delete newMetadata.governance_bypass;
     }
 
     try {
       const res = await apiFetch('/api/v1/items', {
         method: 'PATCH',
-        body: JSON.stringify({ id: itemId, metadata: newMetadata }),
+        body: JSON.stringify({
+          id: itemId,
+          sprint_id: targetSprintName ? targetSprintId : null,
+          governance_bypass: isTargetActive ? true : undefined,
+          metadata: newMetadata,
+        }),
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -1511,11 +1523,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               } else {
                 delete nextMeta.sprint_id;
               }
+              if (isTargetActive) {
+                nextMeta.added_mid_sprint = true;
+                nextMeta.governance_bypass = true;
+              }
             } else {
               delete nextMeta.sprint;
               delete nextMeta.sprint_id;
+              delete nextMeta.added_mid_sprint;
+              delete nextMeta.governance_bypass;
             }
-            return { ...it, metadata: nextMeta };
+            return {
+              ...it,
+              sprint_id: targetSprintName ? targetSprintId : null,
+              metadata: nextMeta,
+            };
           }
           return it;
         })
@@ -2306,34 +2328,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           )
         : null);
 
-    const targetSprintId = configuredSprintDef?.id || null;
-
-    // Active sprint lock guard: only check items that are actually entering the active sprint
-    if (targetSprintDef && isSprintActive(targetSprintDef)) {
-      const itemsEnteringSprint = mutableItems.filter((it) => {
-        const curSprintName = it.metadata?.sprint;
-        const curSprintId = it.metadata?.sprint_id;
-        const isAlreadyInTarget = Boolean(
-          (configuredSprintDef?.id && curSprintId === configuredSprintDef.id) ||
-          (targetSprintDef.name && curSprintName === targetSprintDef.name)
-        );
-        return !isAlreadyInTarget;
-      });
-
-      const estimatedItemsEntering = itemsEnteringSprint.filter(
-        (it) =>
-          Number(it.metadata?.story_points ?? it.metadata?.points ?? 0) > 0 &&
-          !it.metadata?.added_mid_sprint
-      );
-
-      if (estimatedItemsEntering.length > 0) {
-        setBulkToast(
-          `Cannot move ${estimatedItemsEntering.length} estimated item(s) to active sprint "${targetSprintDef.name}". Active sprint scope is locked.`
-        );
-        setTimeout(() => setBulkToast(null), 4000);
-        return;
-      }
-    }
+    const targetSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
@@ -2343,14 +2339,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     // Instead, indicate bulk operation is in progress via isBulkApplying.
     setIsBulkApplying(true);
     try {
-      const res = await apiFetch('/api/v1/items/bulk', {
-        method: 'PATCH',
+      const res = await apiFetch('/api/v1/items/bulk-update', {
+        method: 'POST',
         body: JSON.stringify({
           ids: mutableIds,
+          governance_bypass: true,
           updates: {
+            sprint_id: targetSprintName ? targetSprintId : null,
             metadata: {
               sprint: targetSprintName,
               sprint_id: targetSprintId,
+              governance_bypass: true,
+              added_mid_sprint: isTargetActive ? true : undefined,
             },
           },
         }),
@@ -2374,11 +2374,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             } else {
               delete newMeta.sprint_id;
             }
+            if (isTargetActive) {
+              newMeta.added_mid_sprint = true;
+              newMeta.governance_bypass = true;
+            }
           } else {
             delete newMeta.sprint;
             delete newMeta.sprint_id;
+            delete newMeta.added_mid_sprint;
+            delete newMeta.governance_bypass;
           }
-          return { ...it, metadata: newMeta };
+          return {
+            ...it,
+            sprint_id: targetSprintName ? targetSprintId : null,
+            metadata: newMeta,
+          };
         })
       );
 

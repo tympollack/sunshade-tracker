@@ -1181,23 +1181,49 @@ export async function PATCH(req: NextRequest) {
     if (description !== undefined) updateFields.description = description;
     if (assignee !== undefined) updateFields.assignee = assignee;
 
+    const requestedGovernanceBypass = Boolean(
+      body?.governance_bypass ||
+      (metadata && typeof metadata === 'object' && metadata?.governance_bypass) ||
+      req.headers.get('x-governance-bypass') === 'true'
+    );
+
+    const isCallerAdmin =
+      authCtx.role === 'owner' ||
+      authCtx.role === 'admin' ||
+      (!authCtx.userId && authCtx.role === null);
+
+    if (requestedGovernanceBypass && !isCallerAdmin) {
+      return NextResponse.json(
+        { error: 'Forbidden: Only workspace admins and owners can bypass sprint governance' },
+        { status: 403 }
+      );
+    }
+
+    const isGovernanceBypassed = isCallerAdmin && requestedGovernanceBypass;
+    let resolvedMetadata: any = undefined;
+
     if (metadata !== undefined) {
       if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
         return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
       }
 
       const { reconcileSprintMetadata, isMovingIntoActiveSprint } = await import('@/lib/bulk-items');
-      const resolvedMetadata = reconcileSprintMetadata(
+      resolvedMetadata = reconcileSprintMetadata(
         existingItem.metadata || {},
         metadata,
         effectiveProjectSettings,
-        { fullReplacement: true }
+        { fullReplacement: true, governanceBypass: isGovernanceBypassed }
       );
+
+      if (isGovernanceBypassed) {
+        resolvedMetadata.governance_bypass = true;
+        resolvedMetadata.added_mid_sprint = true;
+      }
 
       // Guardrail 3: Immutable Estimates on active sprint items
       try {
         const itemSprint = existingItem.metadata?.sprint || existingItem.metadata?.sprint_id;
-        if (itemSprint) {
+        if (itemSprint && !isGovernanceBypassed) {
           const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
           const activeSprintDef = sprints.find(
             (s: any) =>
@@ -1225,7 +1251,7 @@ export async function PATCH(req: NextRequest) {
           sprints
         );
 
-        if (isIntake && activeSprint) {
+        if (isIntake && activeSprint && !isGovernanceBypassed) {
           const hasPoints =
             (existingItem.metadata?.story_points !== undefined && existingItem.metadata?.story_points !== null && Number(existingItem.metadata.story_points) > 0) ||
             (existingItem.metadata?.points !== undefined && existingItem.metadata?.points !== null && Number(existingItem.metadata.points) > 0) ||
@@ -1370,8 +1396,20 @@ export async function PATCH(req: NextRequest) {
       updateFields.order_index = calculateOrderIndex(prev_order, next_order);
     }
 
+    // Dual-column sprint_id synchronization
+    if (resolvedMetadata?.sprint_id !== undefined) {
+      updateFields.sprint_id = resolvedMetadata.sprint_id;
+    } else if (body.sprint_id !== undefined) {
+      updateFields.sprint_id = body.sprint_id;
+    } else if (metadata !== undefined && ('sprint' in metadata || 'sprint_id' in metadata)) {
+      if (!resolvedMetadata?.sprint) {
+        updateFields.sprint_id = null;
+      }
+    }
+
     // Guardrail: Validate sprint intake if moving item to an active sprint
     if (
+      !isGovernanceBypassed &&
       metadata !== undefined &&
       metadata?.sprint !== undefined &&
       metadata.sprint !== existingItem.metadata?.sprint &&
@@ -1513,13 +1551,15 @@ export async function PATCH(req: NextRequest) {
               {
                 sprint: nextSprintName,
                 sprint_id: nextSprintId,
+                governance_bypass: isGovernanceBypassed,
               },
               effectiveProjectSettings,
-              { fullReplacement: false }
+              { fullReplacement: false, governanceBypass: isGovernanceBypassed }
             );
             return supabaseAdmin
               .from('work_items')
               .update({
+                sprint_id: nextSprintId,
                 metadata: nextMeta,
                 updated_at: new Date().toISOString(),
               })
