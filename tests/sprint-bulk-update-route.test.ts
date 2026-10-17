@@ -287,5 +287,62 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
       const json = await res.json();
       expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
     });
+
+    it('rejects unprivileged member from setting items[].governance_bypass in heterogeneous /api/v1/items/bulk-update', async () => {
+      vi.mocked(authGuard.authenticate).mockResolvedValue({
+        errorResponse: null,
+        context: {
+          ...mockAuthContext,
+          role: 'member',
+        } as any,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'item-1',
+              governance_bypass: true,
+              metadata: { sprint: 'Sprint Active' },
+            },
+          ],
+        }),
+      });
+
+      const res = await bulkUpdatePOST(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
+    });
+
+    it('rejects unprivileged member from setting items[].metadata.governance_bypass in /api/v1/items/bulk', async () => {
+      vi.mocked(authGuard.authenticate).mockResolvedValue({
+        errorResponse: null,
+        context: {
+          ...mockAuthContext,
+          role: 'member',
+        } as any,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items/bulk', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'item-1',
+              metadata: { sprint: 'Sprint Active', governance_bypass: true },
+            },
+          ],
+        }),
+      });
+
+      const res = await bulkPATCH(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
+    });
   });
 });

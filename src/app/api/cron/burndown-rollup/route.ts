@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
         // Query work items for this project
         let itemQuery: any = supabaseAdmin
           .from('work_items')
-          .select('id, parent_id, external_ref_id, metadata, status, assignee')
+          .select('id, title, item_type, parent_id, external_ref_id, metadata, status, assignee, order_index, created_at, updated_at, sprint_id')
           .eq('project_id', project.id);
 
         if (typeof itemQuery.is === 'function') {
@@ -121,7 +121,8 @@ export async function POST(req: NextRequest) {
 
         const sprintItems = (items || []).filter((item: any) => {
           const itemSprint = item.metadata?.sprint || item.metadata?.sprint_id;
-          return itemSprint === sprintIdentifier || itemSprint === sprintName;
+          const directSprint = item.sprint_id;
+          return itemSprint === sprintIdentifier || itemSprint === sprintName || directSprint === sprintIdentifier || directSprint === sprintName;
         });
 
         // Filter out completed items using comprehensive completion set
@@ -205,11 +206,28 @@ export async function POST(req: NextRequest) {
           Math.round((baselinePoints - (baselinePoints / totalSprintDays) * currentDayIndex) * 10) / 10
         );
 
+        const currentSprintItemIds = sprintItems.map((it: any) => it.id);
+        const itemizedSnapshotItems = sprintItems.map((item: any) => ({
+          id: item.id,
+          title: item.title || 'Untitled',
+          status: item.status || 'not_started',
+          story_points: Number(item.metadata?.story_points ?? item.metadata?.points ?? 0),
+          assignee: item.assignee || null,
+          item_type: item.item_type || item.metadata?.item_type || 'task',
+          parent_id: item.parent_id || null,
+          external_ref_id: item.external_ref_id || null,
+          order_index: item.order_index ?? 0,
+          created_at: item.created_at,
+          updated_at: item.updated_at,
+          metadata: item.metadata || {},
+        }));
+
         const breakdownPayload = {
           actors: actorAttribution,
           ideal_burn: idealBurn,
           day_index: currentDayIndex,
           total_days: totalSprintDays,
+          items: itemizedSnapshotItems,
         };
 
         // Check if a daily_rollup already exists for today
@@ -240,6 +258,7 @@ export async function POST(req: NextRequest) {
             .update({
               committed_points: baselinePoints,
               remaining_points: remainingPoints,
+              committed_item_ids: currentSprintItemIds.length > 0 ? currentSprintItemIds : committedItemIds,
               assignee_breakdown: breakdownPayload,
               captured_at: now.toISOString(),
             })
@@ -261,7 +280,7 @@ export async function POST(req: NextRequest) {
               snapshot_type: 'daily_rollup',
               committed_points: baselinePoints,
               remaining_points: remainingPoints,
-              committed_item_ids: committedItemIds,
+              committed_item_ids: currentSprintItemIds.length > 0 ? currentSprintItemIds : committedItemIds,
               assignee_breakdown: breakdownPayload,
               captured_at: now.toISOString(),
             })

@@ -58,6 +58,8 @@ import {
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
   projectSlug: string;
@@ -122,61 +124,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [diffBaseId, setDiffBaseId] = useState<string>('baseline');
   const [diffTargetId, setDiffTargetId] = useState<string>('live');
-
-  // Fetch timeline snapshots when a specific sprint is filtered on the board
-  useEffect(() => {
-    if (!selectedSprint || selectedSprint === 'all' || !projectSlug) {
-      setTimelineSnapshots([]);
-      setActiveTimelineSnapshot(null);
-      return;
-    }
-
-    let isMounted = true;
-    fetch(
-      `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
-        selectedSprint
-      )}&snapshot_type=all`,
-      {
-        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : undefined,
-      }
-    )
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!isMounted) return;
-        if (d?.snapshots && Array.isArray(d.snapshots)) {
-          setTimelineSnapshots(d.snapshots);
-        } else {
-          setTimelineSnapshots([]);
-        }
-      })
-      .catch(() => {
-        if (isMounted) setTimelineSnapshots([]);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedSprint, projectSlug, tenantSlug]);
-
-  // Compute effective items displayed on the board (historical when scrubbing)
-  const effectiveBoardItems = useMemo(() => {
-    if (!activeTimelineSnapshot) return items;
-    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items) && activeTimelineSnapshot.assignee_breakdown.items.length > 0) {
-      return activeTimelineSnapshot.assignee_breakdown.items.map((it: any) => ({
-        ...it,
-        tenant_id: tenantSlug,
-        project_id: projectSlug,
-        order_index: it.order_index ?? 0,
-        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
-        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
-      }));
-    }
-    if (Array.isArray(activeTimelineSnapshot.committed_item_ids) && activeTimelineSnapshot.committed_item_ids.length > 0) {
-      const allowed = new Set(activeTimelineSnapshot.committed_item_ids);
-      return items.filter((it) => allowed.has(it.id));
-    }
-    return items;
-  }, [items, activeTimelineSnapshot, tenantSlug, projectSlug]);
 
   const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(true);
 
@@ -817,6 +764,97 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       return sprintDef?.status?.toLowerCase() !== 'completed';
     });
   }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
+
+  // Fetch timeline snapshots when a specific sprint is filtered on the board
+  useEffect(() => {
+    // Reset historical timeline state whenever switching sprint context
+    setActiveTimelineSnapshot(null);
+
+    if (!selectedSprint || selectedSprint === 'all' || !projectSlug) {
+      setTimelineSnapshots([]);
+      return;
+    }
+
+    // Resolve sprint name to relational UUID if available
+    const matchedDef = (availableSprintDefs || []).find(
+      (s) => s.name === selectedSprint || s.id === selectedSprint
+    );
+    const sprintParam = matchedDef?.id && UUID_REGEX.test(matchedDef.id) ? matchedDef.id : selectedSprint;
+
+    let isMounted = true;
+    fetch(
+      `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
+        sprintParam
+      )}&snapshot_type=all`,
+      {
+        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : undefined,
+      }
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!isMounted) return;
+        if (d?.snapshots && Array.isArray(d.snapshots)) {
+          setTimelineSnapshots(d.snapshots);
+        } else {
+          setTimelineSnapshots([]);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setTimelineSnapshots([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSprint, projectSlug, tenantSlug, availableSprintDefs]);
+
+  // Compute effective items displayed on the board (historical when scrubbing)
+  const effectiveBoardItems = useMemo(() => {
+    if (!activeTimelineSnapshot) return items;
+    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items) && activeTimelineSnapshot.assignee_breakdown.items.length > 0) {
+      return activeTimelineSnapshot.assignee_breakdown.items.map((it: any) => ({
+        ...it,
+        tenant_id: tenantSlug,
+        project_id: projectSlug,
+        order_index: it.order_index ?? 0,
+        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
+        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
+      }));
+    }
+    const capturedTime = activeTimelineSnapshot.captured_at ? new Date(activeTimelineSnapshot.captured_at).getTime() : Infinity;
+    if (Array.isArray(activeTimelineSnapshot.committed_item_ids) && activeTimelineSnapshot.committed_item_ids.length > 0) {
+      const allowed = new Set(activeTimelineSnapshot.committed_item_ids);
+      return items
+        .filter((it) => {
+          if (!allowed.has(it.id)) return false;
+          if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
+          return true;
+        })
+        .map((it) => {
+          if (it.updated_at && new Date(it.updated_at).getTime() > capturedTime) {
+            const isCompleted = it.status === 'done' || it.status === 'completed' || it.status === 'closed';
+            if (isCompleted) {
+              return { ...it, status: 'in_progress' };
+            }
+          }
+          return it;
+        });
+    }
+    return items
+      .filter((it) => {
+        if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
+        return true;
+      })
+      .map((it) => {
+        if (it.updated_at && new Date(it.updated_at).getTime() > capturedTime) {
+          const isCompleted = it.status === 'done' || it.status === 'completed' || it.status === 'closed';
+          if (isCompleted) {
+            return { ...it, status: 'in_progress' };
+          }
+        }
+        return it;
+      });
+  }, [items, activeTimelineSnapshot, tenantSlug, projectSlug]);
 
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);
   const lastSprintInitializedProjectRef = useRef<string | null>(null);
@@ -1536,7 +1574,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       (targetSprintName
         ? availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
         : null);
-    const targetSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const rawSingleSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const targetSprintId = rawSingleSprintId && UUID_REGEX.test(rawSingleSprintId) ? rawSingleSprintId : null;
     const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const newMetadata = { ...(item.metadata || {}) };
@@ -1550,6 +1589,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       if (isTargetActive) {
         newMetadata.added_mid_sprint = true;
         newMetadata.governance_bypass = true;
+      } else {
+        delete newMetadata.added_mid_sprint;
+        delete newMetadata.governance_bypass;
       }
     } else {
       delete newMetadata.sprint;
@@ -1589,6 +1631,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               if (isTargetActive) {
                 nextMeta.added_mid_sprint = true;
                 nextMeta.governance_bypass = true;
+              } else {
+                delete nextMeta.added_mid_sprint;
+                delete nextMeta.governance_bypass;
               }
             } else {
               delete nextMeta.sprint;
@@ -2391,7 +2436,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           )
         : null);
 
-    const targetSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const rawSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    const targetSprintId = rawSprintId && UUID_REGEX.test(rawSprintId) ? rawSprintId : null;
     const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
     const mutableIds = mutableItems.map((it) => it.id);
@@ -2406,13 +2452,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         method: 'POST',
         body: JSON.stringify({
           ids: mutableIds,
-          governance_bypass: true,
+          governance_bypass: isTargetActive ? true : undefined,
           updates: {
             sprint_id: targetSprintName ? targetSprintId : null,
             metadata: {
               sprint: targetSprintName,
               sprint_id: targetSprintId,
-              governance_bypass: true,
+              governance_bypass: isTargetActive ? true : undefined,
               added_mid_sprint: isTargetActive ? true : undefined,
             },
           },
@@ -2440,6 +2486,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             if (isTargetActive) {
               newMeta.added_mid_sprint = true;
               newMeta.governance_bypass = true;
+            } else {
+              delete newMeta.added_mid_sprint;
+              delete newMeta.governance_bypass;
             }
           } else {
             delete newMeta.sprint;
@@ -3883,7 +3932,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           onClose={() => setIsDiffModalOpen(false)}
           sprintId={selectedSprint !== 'all' ? selectedSprint : 'current'}
           sprintName={selectedSprint !== 'all' ? selectedSprint : 'Sprint Backlog'}
-          projectId={projectSlug}
+          projectId={currentProjectId || projectSlug}
           tenantSlug={tenantSlug}
           snapshots={timelineSnapshots}
           initialBaseId={diffBaseId}
