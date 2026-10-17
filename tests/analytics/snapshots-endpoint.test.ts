@@ -213,17 +213,13 @@ describe('TASK-TRK-BURNDOWN-SNAPSHOTS-ENDPOINT: snapshots reader and sprint list
           };
         }
         if (table === 'sprints') {
+          const sprintsBuilder: any = {
+            eq: vi.fn().mockImplementation(() => sprintsBuilder),
+            or: vi.fn().mockImplementation(() => sprintsBuilder),
+            then: (resolve: any) => resolve({ data: [{ id: 'uuid-sprint-12', name: 'Sprint 12' }], error: null }),
+          };
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: 'uuid-sprint-12', name: 'Sprint 12' },
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
+            select: vi.fn().mockReturnValue(sprintsBuilder),
           };
         }
         if (table === 'sprint_snapshots') {

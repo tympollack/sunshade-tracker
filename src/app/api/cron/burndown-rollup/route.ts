@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
             .update({
               committed_points: baselinePoints,
               remaining_points: remainingPoints,
-              committed_item_ids: currentSprintItemIds.length > 0 ? currentSprintItemIds : committedItemIds,
+              committed_item_ids: currentSprintItemIds,
               assignee_breakdown: breakdownPayload,
               captured_at: now.toISOString(),
             })
@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
               snapshot_type: 'daily_rollup',
               committed_points: baselinePoints,
               remaining_points: remainingPoints,
-              committed_item_ids: currentSprintItemIds.length > 0 ? currentSprintItemIds : committedItemIds,
+              committed_item_ids: currentSprintItemIds,
               assignee_breakdown: breakdownPayload,
               captured_at: now.toISOString(),
             })

@@ -2,116 +2,162 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { WorkItem } from '@/types/tracker';
 import { TimelineSnapshotPoint } from '@/components/sprints/SprintTimelineScrubber';
+import { getCompletedStatusSet } from '@/lib/sprint-utils';
 
-describe('PR 105 Review Fixes: Workspace Timeline & Sprint Scoping Guards', () => {
+describe('PR 105 & PR 106 Review Fixes: Workspace Timeline, Governance & Integrity Guards', () => {
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  describe('BUG-0002 & BUG-0003: Historical Timeline Replay Guards', () => {
-    const liveItems: WorkItem[] = [
-      {
-        id: 'item-1',
-        title: 'Original Baseline Card',
-        status: 'completed', // Completed on Friday
-        created_at: '2026-10-01T10:00:00Z',
-        updated_at: '2026-10-09T18:00:00Z', // Updated Friday
-        tenant_id: 'default',
-        project_id: 'proj-1',
-        item_type: 'task',
-        order_index: 0,
-        metadata: {},
-      },
-      {
-        id: 'item-2',
-        title: 'Mid-sprint Intake Card',
-        status: 'in_progress',
-        created_at: '2026-10-08T12:00:00Z', // Injected Thursday
-        updated_at: '2026-10-08T12:00:00Z',
-        tenant_id: 'default',
-        project_id: 'proj-1',
-        item_type: 'task',
-        order_index: 1,
-        metadata: {},
-      },
-    ];
+  describe('BUG-PR106-0004: Explicit Incomplete Status (getCompletedStatusSet)', () => {
+    it('honors is_completed: false even when status is named "done" or "closed"', () => {
+      const customStatuses = [
+        { id: 'todo', label: 'To Do', is_completed: false },
+        { id: 'in_progress', label: 'In Progress', is_completed: false },
+        { id: 'done', label: 'Done (Needs QA)', is_completed: false }, // Explicitly false!
+        { id: 'released', label: 'Released', is_completed: true },
+      ];
 
-    it('uses itemized assignee_breakdown.items directly when available', () => {
-      const snapshotWithItemized: TimelineSnapshotPoint = {
-        id: 'snap-wednesday',
-        snapshot_type: 'daily_rollup',
-        captured_at: '2026-10-07T00:00:00Z', // Wednesday
-        assignee_breakdown: {
-          items: [
-            {
-              id: 'item-1',
-              title: 'Original Baseline Card',
-              status: 'in_progress', // On Wednesday, it was in_progress!
-              story_points: 5,
-              created_at: '2026-10-01T10:00:00Z',
-              updated_at: '2026-10-05T10:00:00Z',
-            },
-          ],
-        },
-      };
-
-      // Pure representation of ProjectWorkspaceView effectiveBoardItems
-      const effectiveItems = snapshotWithItemized.assignee_breakdown?.items?.map((it: any) => ({
-        ...it,
-        tenant_id: 'default',
-        project_id: 'proj-1',
-        order_index: 0,
-      }));
-
-      expect(effectiveItems).toHaveLength(1);
-      expect(effectiveItems![0].id).toBe('item-1');
-      expect(effectiveItems![0].status).toBe('in_progress');
+      const completedSet = getCompletedStatusSet(customStatuses);
+      expect(completedSet.has('done')).toBe(false);
+      expect(completedSet.has('released')).toBe(true);
+      expect(completedSet.has('todo')).toBe(false);
     });
 
-    it('filters out future-created items and rolls back future completed status when itemized items are absent', () => {
-      const snapshotFallbackWednesday: TimelineSnapshotPoint = {
-        id: 'snap-wednesday-fallback',
-        snapshot_type: 'daily_rollup',
-        captured_at: '2026-10-07T00:00:00Z', // Wednesday
-        committed_item_ids: ['item-1'],
-      };
+    it('falls back to default completed statuses when is_completed is undefined', () => {
+      const defaultStatuses = [
+        { id: 'open', label: 'Open' },
+        { id: 'closed', label: 'Closed' },
+      ];
 
-      const capturedTime = new Date(snapshotFallbackWednesday.captured_at!).getTime();
-      const allowed = new Set(snapshotFallbackWednesday.committed_item_ids);
-
-      const effectiveItems = liveItems
-        .filter((it) => {
-          if (!allowed.has(it.id)) return false;
-          if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
-          return true;
-        })
-        .map((it) => {
-          if (it.updated_at && new Date(it.updated_at).getTime() > capturedTime) {
-            const isCompleted = it.status === 'done' || it.status === 'completed' || it.status === 'closed';
-            if (isCompleted) {
-              return { ...it, status: 'in_progress' };
-            }
-          }
-          return it;
-        });
-
-      // item-2 (created Thursday) is excluded
-      expect(effectiveItems).toHaveLength(1);
-      expect(effectiveItems[0].id).toBe('item-1');
-      // item-1 (completed Friday) status rolled back to in_progress for Wednesday snapshot
-      expect(effectiveItems[0].status).toBe('in_progress');
+      const completedSet = getCompletedStatusSet(defaultStatuses);
+      expect(completedSet.has('closed')).toBe(true);
+      expect(completedSet.has('open')).toBe(false);
     });
   });
 
-  describe('ANALYSIS-0001: Sprint Context Switching Cleanup', () => {
-    it('resets activeTimelineSnapshot to null when selected sprint changes', () => {
-      let activeTimelineSnapshot: any = { id: 'snap-1', sprint_id: 'sprint-1' };
+  describe('BUG-PR106-0001: Separation of Snapshot Reset and Timeline Fetch Effects', () => {
+    it('preserves activeTimelineSnapshot when items refresh or availableSprintDefs recomputes', () => {
+      let activeTimelineSnapshot: any = { id: 'snap-historical-1' };
+      let previousSprint = 'Sprint 1';
 
-      const handleSprintSwitch = (newSprint: string) => {
-        // Enforced invariant: reset historical snapshot immediately
-        activeTimelineSnapshot = null;
+      // Simulates the separated reset effect: only triggers when sprint or project changes
+      const onSprintOrProjectChange = (newSprint: string) => {
+        if (newSprint !== previousSprint) {
+          activeTimelineSnapshot = null;
+          previousSprint = newSprint;
+        }
       };
 
-      handleSprintSwitch('sprint-2');
+      // Item refresh occurs: sprint is still 'Sprint 1'
+      onSprintOrProjectChange('Sprint 1');
+      expect(activeTimelineSnapshot).toEqual({ id: 'snap-historical-1' });
+
+      // Sprint switch occurs: active snapshot is reset
+      onSprintOrProjectChange('Sprint 2');
       expect(activeTimelineSnapshot).toBeNull();
+    });
+  });
+
+  describe('BUG-PR106-0002: Empty Sprint Rollup & Itemized Check', () => {
+    it('treats explicitly empty assignee_breakdown.items array as empty rather than absent', () => {
+      const emptySnapshot: TimelineSnapshotPoint = {
+        id: 'snap-empty-sprint',
+        snapshot_type: 'daily_rollup',
+        captured_at: '2026-10-07T00:00:00Z',
+        committed_item_ids: [],
+        assignee_breakdown: {
+          items: [], // All items departed the sprint
+        },
+      };
+
+      // Board logic check
+      let effectiveItems: any[] = [];
+      if (Array.isArray(emptySnapshot.assignee_breakdown?.items)) {
+        effectiveItems = emptySnapshot.assignee_breakdown.items;
+      } else if (Array.isArray(emptySnapshot.committed_item_ids)) {
+        effectiveItems = [{ id: 'resurrected-item' }];
+      }
+
+      expect(effectiveItems).toHaveLength(0);
+    });
+  });
+
+  describe('BUG-PR106-0005: Purge Stale Intake Markers When Moving to Non-Active Sprints', () => {
+    it('removes added_mid_sprint when moving an item from active to planned sprint', () => {
+      const plannedSprint = { id: 'sprint-planned', name: 'Sprint Planned', status: 'planned' };
+      const sprints = [plannedSprint];
+
+      const initialMetadata = {
+        sprint: 'Sprint Active',
+        added_mid_sprint: true,
+        governance_bypass: true,
+      };
+
+      // Emulate bulk-items purge logic for target sprint
+      const targetSprintName = 'Sprint Planned';
+      const targetSprintDef = sprints.find((s) => s.name === targetSprintName);
+      const isTargetActive = targetSprintDef ? targetSprintDef.status === 'active' : false;
+
+      const mergedMetadata: Record<string, any> = { ...initialMetadata, sprint: targetSprintName };
+      if (!isTargetActive) {
+        delete mergedMetadata.added_mid_sprint;
+        delete mergedMetadata.governance_bypass;
+      }
+
+      expect(mergedMetadata.sprint).toBe('Sprint Planned');
+      expect(mergedMetadata.added_mid_sprint).toBeUndefined();
+      expect(mergedMetadata.governance_bypass).toBeUndefined();
+    });
+  });
+
+  describe('ANALYSIS-PR106-0002: Status Transitions Do Not Reduce Item Estimate', () => {
+    it('does not reduce story points when status transition contains burned points delta', () => {
+      const basePoints = 5;
+      let effectivePoints = basePoints;
+
+      const events = [
+        {
+          event_type: 'status_transition',
+          points_delta: 5, // 5 points burned upon completion
+          previous_state: { status: 'in_progress' },
+        },
+      ];
+
+      for (const ev of events) {
+        if (ev.event_type === 'estimate_change') {
+          if (typeof (ev as any).previous_state?.points === 'number') {
+            effectivePoints = (ev as any).previous_state.points;
+          } else if (typeof ev.points_delta === 'number') {
+            effectivePoints -= ev.points_delta;
+          }
+        }
+      }
+
+      // Estimate remains unchanged because status transition is not an estimate change
+      expect(effectivePoints).toBe(5);
+    });
+
+    it('correctly reverts points when event_type is estimate_change', () => {
+      let effectivePoints = 8;
+
+      const events = [
+        {
+          event_type: 'estimate_change',
+          points_delta: 3, // Points were increased from 5 to 8
+          previous_state: { points: 5 },
+        },
+      ];
+
+      for (const ev of events) {
+        if (ev.event_type === 'estimate_change') {
+          if (typeof (ev as any).previous_state?.points === 'number') {
+            effectivePoints = (ev as any).previous_state.points;
+          } else if (typeof ev.points_delta === 'number') {
+            effectivePoints -= ev.points_delta;
+          }
+        }
+      }
+
+      expect(effectivePoints).toBe(5);
     });
   });
 

@@ -84,11 +84,18 @@ export async function GET(
             sprintLookup = sprintLookup.eq('id', sprintId);
           } else {
             sprintLookup = sprintLookup.eq('name', sprintId);
+            if (project?.id && typeof sprintLookup?.or === 'function') {
+              sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
+            } else if (project?.id && typeof sprintLookup?.eq === 'function') {
+              sprintLookup = sprintLookup.eq('project_id', project.id);
+            }
           }
-          if (typeof sprintLookup?.maybeSingle === 'function') {
-            const { data: sprintRecord } = await sprintLookup.maybeSingle();
-            if (sprintRecord?.id) sprintIdentifiers.add(sprintRecord.id);
-            if (sprintRecord?.name) sprintIdentifiers.add(sprintRecord.name);
+          const { data: sprintRecords } = await sprintLookup;
+          if (Array.isArray(sprintRecords)) {
+            sprintRecords.forEach((s: any) => {
+              if (s?.id) sprintIdentifiers.add(s.id);
+              if (s?.name) sprintIdentifiers.add(s.name);
+            });
           }
         }
       } catch {

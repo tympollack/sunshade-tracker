@@ -1173,7 +1173,7 @@ export async function handleBulkUpdateItems(
 
       const isGovernanceBypassed = options?.governance_bypass !== undefined
         ? Boolean(options.governance_bypass)
-        : Boolean(payload.governance_bypass || updates.governance_bypass || updates.metadata?.governance_bypass);
+        : false;
 
       // Ensure direct sprint_id updates are reconciled with metadata and subjected to sprint guardrails
       const effectiveMetadataInput: Record<string, any> | undefined = updates.metadata !== undefined
@@ -1194,16 +1194,28 @@ export async function handleBulkUpdateItems(
         const sprints = projectSettings?.sprint_settings?.sprints || [];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
 
+        const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
+        const targetSprintDef = targetSprintName
+          ? sprints.find((s: any) =>
+              s.name === targetSprintName || s.id === targetSprintName
+            )
+          : null;
+        const isTargetSprintActive = targetSprintDef
+          ? Boolean(targetSprintDef.status === 'active' || targetSprintDef.is_active || targetSprintDef.is_current)
+          : false;
+
         // Only mark added_mid_sprint when genuinely entering an active sprint
         if (isIntake && activeSprint) {
           if (isGovernanceBypassed) {
             mergedMetadata.governance_bypass = true;
             mergedMetadata.added_mid_sprint = true;
           }
-        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__') {
-          // Cleared or moved to backlog: purge active sprint markers
+        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__' || !isTargetSprintActive) {
+          // Cleared, moved to backlog, or moved to a non-active (planned/completed) sprint: purge intake marker
           delete mergedMetadata.added_mid_sprint;
-          delete mergedMetadata.governance_bypass;
+          if (!isGovernanceBypassed) {
+            delete mergedMetadata.governance_bypass;
+          }
         } else if (!isGovernanceBypassed) {
           delete mergedMetadata.governance_bypass;
         }
@@ -1664,10 +1676,10 @@ export async function handleBulkUpdateItems(
 
       const isGovernanceBypassed = options?.governance_bypass !== undefined
         ? Boolean(options.governance_bypass)
-        : Boolean(payload.governance_bypass || it.governance_bypass || it.metadata?.governance_bypass);
+        : false;
 
       // Ensure direct sprint_id updates are reconciled with metadata and subjected to sprint guardrails
-      const effectiveMetadataInput = it.metadata !== undefined
+      const effectiveMetadataInput: Record<string, any> | undefined = it.metadata !== undefined
         ? { ...it.metadata }
         : it.sprint_id !== undefined
         ? { sprint_id: it.sprint_id }
@@ -1685,16 +1697,28 @@ export async function handleBulkUpdateItems(
         const sprints = projectSettings?.sprint_settings?.sprints || [];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
 
+        const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
+        const targetSprintDef = targetSprintName
+          ? sprints.find((s: any) =>
+              s.name === targetSprintName || s.id === targetSprintName
+            )
+          : null;
+        const isTargetSprintActive = targetSprintDef
+          ? Boolean(targetSprintDef.status === 'active' || targetSprintDef.is_active || targetSprintDef.is_current)
+          : false;
+
         // Only mark added_mid_sprint when genuinely entering an active sprint
         if (isIntake && activeSprint) {
           if (isGovernanceBypassed) {
             mergedMetadata.governance_bypass = true;
             mergedMetadata.added_mid_sprint = true;
           }
-        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__') {
-          // Cleared or moved to backlog: purge active sprint markers
+        } else if (!mergedMetadata.sprint || mergedMetadata.sprint === '__none__' || !isTargetSprintActive) {
+          // Cleared, moved to backlog, or moved to a non-active (planned/completed) sprint: purge intake marker
           delete mergedMetadata.added_mid_sprint;
-          delete mergedMetadata.governance_bypass;
+          if (!isGovernanceBypassed) {
+            delete mergedMetadata.governance_bypass;
+          }
         } else if (!isGovernanceBypassed) {
           delete mergedMetadata.governance_bypass;
         }

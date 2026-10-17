@@ -765,11 +765,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     });
   }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
 
+  // Reset historical snapshot only when switching sprint or project context
+  useEffect(() => {
+    setActiveTimelineSnapshot(null);
+  }, [selectedSprint, projectSlug]);
+
   // Fetch timeline snapshots when a specific sprint is filtered on the board
   useEffect(() => {
-    // Reset historical timeline state whenever switching sprint context
-    setActiveTimelineSnapshot(null);
-
     if (!selectedSprint || selectedSprint === 'all' || !projectSlug) {
       setTimelineSnapshots([]);
       return;
@@ -811,8 +813,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   // Compute effective items displayed on the board (historical when scrubbing)
   const effectiveBoardItems = useMemo(() => {
     if (!activeTimelineSnapshot) return items;
-    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items) && activeTimelineSnapshot.assignee_breakdown.items.length > 0) {
+    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items)) {
       return activeTimelineSnapshot.assignee_breakdown.items.map((it: any) => ({
+        ...it,
+        tenant_id: tenantSlug,
+        project_id: projectSlug,
+        order_index: it.order_index ?? 0,
+        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
+        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
+      }));
+    }
+    if (Array.isArray(activeTimelineSnapshot.items)) {
+      return activeTimelineSnapshot.items.map((it: any) => ({
         ...it,
         tenant_id: tenantSlug,
         project_id: projectSlug,
@@ -824,36 +836,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const capturedTime = activeTimelineSnapshot.captured_at ? new Date(activeTimelineSnapshot.captured_at).getTime() : Infinity;
     if (Array.isArray(activeTimelineSnapshot.committed_item_ids) && activeTimelineSnapshot.committed_item_ids.length > 0) {
       const allowed = new Set(activeTimelineSnapshot.committed_item_ids);
-      return items
-        .filter((it) => {
-          if (!allowed.has(it.id)) return false;
-          if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
-          return true;
-        })
-        .map((it) => {
-          if (it.updated_at && new Date(it.updated_at).getTime() > capturedTime) {
-            const isCompleted = it.status === 'done' || it.status === 'completed' || it.status === 'closed';
-            if (isCompleted) {
-              return { ...it, status: 'in_progress' };
-            }
-          }
-          return it;
-        });
-    }
-    return items
-      .filter((it) => {
+      return items.filter((it) => {
+        if (!allowed.has(it.id)) return false;
         if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
         return true;
-      })
-      .map((it) => {
-        if (it.updated_at && new Date(it.updated_at).getTime() > capturedTime) {
-          const isCompleted = it.status === 'done' || it.status === 'completed' || it.status === 'closed';
-          if (isCompleted) {
-            return { ...it, status: 'in_progress' };
-          }
-        }
-        return it;
       });
+    }
+    return items.filter((it) => {
+      if (it.created_at && new Date(it.created_at).getTime() > capturedTime) return false;
+      return true;
+    });
   }, [items, activeTimelineSnapshot, tenantSlug, projectSlug]);
 
   const [loadedProjectSlug, setLoadedProjectSlug] = useState<string | null>(null);

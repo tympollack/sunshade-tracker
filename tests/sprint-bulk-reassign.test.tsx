@@ -1083,6 +1083,76 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(appliedFields.sprint_id).toBeNull();
       expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
     });
+
+    it('clears added_mid_sprint flag when moving items from an active sprint to a planned sprint', async () => {
+      let appliedFields: any = null;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'item-planned',
+                  title: 'Active sprint item moving to planned',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: 'sprint-active-uuid-1',
+                  metadata: {
+                    sprint: 'Sprint 1 (Active)',
+                    sprint_id: 'sprint-active-uuid-1',
+                    added_mid_sprint: true,
+                    story_points: 3,
+                  },
+                },
+              ],
+              error: null,
+            }),
+            update: vi.fn().mockImplementation((fields: any) => {
+              appliedFields = fields;
+              return {
+                eq: vi.fn().mockReturnThis(),
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'item-planned', ...fields },
+                    error: null,
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(tenantId, {
+        ids: ['item-planned'],
+        updates: {
+          sprint_id: 'sprint-planned-uuid-2',
+          metadata: { sprint: 'Sprint 2 (Planned)' },
+        },
+      });
+
+      expect(res.success).toBe(true);
+      expect(appliedFields).toBeDefined();
+      expect(appliedFields.sprint_id).toBe('sprint-planned-uuid-2');
+      expect(appliedFields.metadata.sprint).toBe('Sprint 2 (Planned)');
+      expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
+    });
   });
 
   describe('PostgreSQL Migration Script Integrity', () => {

@@ -226,10 +226,10 @@ export async function extractSnapshotItems(
   if (!snapshot) return [];
 
   // 1. Direct itemized breakdown on snapshot
-  if (Array.isArray(snapshot.assignee_breakdown?.items) && snapshot.assignee_breakdown.items.length > 0) {
+  if (Array.isArray(snapshot.assignee_breakdown?.items)) {
     return snapshot.assignee_breakdown.items.map(normalizeSnapshotItem);
   }
-  if (Array.isArray(snapshot.items) && snapshot.items.length > 0) {
+  if (Array.isArray(snapshot.items)) {
     return snapshot.items.map(normalizeSnapshotItem);
   }
 
@@ -237,7 +237,7 @@ export async function extractSnapshotItems(
   if (Array.isArray(snapshot.committed_item_ids) && snapshot.committed_item_ids.length > 0) {
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
-      .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+      .select('id, title, status, sprint_id, metadata, item_type, assignee, created_at, updated_at')
       .eq('tenant_id', tenantId);
 
     if (projectId && typeof itemsQuery?.eq === 'function') {
@@ -296,10 +296,12 @@ export async function extractSnapshotItems(
         if (ev.event_type === 'status_transition' && (ev.previous_state?.status || ev.old_state?.status)) {
           effectiveStatus = ev.previous_state?.status || ev.old_state?.status;
         }
-        if (ev.event_type === 'estimate_change' && typeof ev.previous_state?.points === 'number') {
-          effectivePoints = ev.previous_state.points;
-        } else if (typeof ev.points_delta === 'number' && ev.points_delta !== 0) {
-          effectivePoints -= ev.points_delta;
+        if (ev.event_type === 'estimate_change') {
+          if (typeof ev.previous_state?.points === 'number') {
+            effectivePoints = ev.previous_state.points;
+          } else if (typeof ev.points_delta === 'number' && ev.points_delta !== 0) {
+            effectivePoints -= ev.points_delta;
+          }
         }
       }
 
@@ -444,7 +446,7 @@ export async function getSprintSnapshotDiff(
       // Reconstruct target from current live work_items associated with this sprint
       let itemsQuery: any = supabaseAdmin
         .from('work_items')
-        .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+        .select('id, title, status, sprint_id, metadata, item_type, assignee, created_at, updated_at')
         .eq('tenant_id', tenantId);
 
       if (resolvedProjectId && typeof itemsQuery?.eq === 'function') {

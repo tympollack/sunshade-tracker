@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST as bulkUpdatePOST, PATCH as bulkUpdatePATCH, PUT as bulkUpdatePUT } from '@/app/api/v1/items/bulk-update/route';
 import { POST as bulkPOST, PATCH as bulkPATCH } from '@/app/api/v1/items/bulk/route';
+import { PATCH as itemsPATCH } from '@/app/api/v1/items/route';
 import { handleBulkUpdateItems } from '@/lib/bulk-items';
 import * as authGuard from '@/lib/auth-guard';
 
@@ -343,6 +344,35 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.error).toContain('Forbidden: Only workspace admins and owners can bypass sprint governance');
+    });
+
+    it('rejects unprivileged member from requesting governance_bypass on bulk array in /api/v1/items', async () => {
+      vi.mocked(authGuard.authenticate).mockResolvedValue({
+        errorResponse: null,
+        context: {
+          ...mockAuthContext,
+          role: 'member',
+        } as any,
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/items', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: 'item-1',
+              governance_bypass: true,
+              metadata: { sprint: 'Sprint Active' },
+            },
+          ],
+        }),
+      });
+
+      const res = await itemsPATCH(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('Forbidden: Sprint governance bypass requires admin role');
     });
   });
 });
