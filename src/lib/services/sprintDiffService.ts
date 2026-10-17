@@ -59,6 +59,8 @@ export interface SprintSnapshotDiff {
   estimate_drift_points: number;
 }
 
+export type SnapshotDiffResult = SprintSnapshotDiff;
+
 /**
  * Normalizes an item or raw database row into canonical SnapshotItem format.
  */
