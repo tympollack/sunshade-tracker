@@ -70,8 +70,6 @@ export function CommitmentCard({
         >
           <BadgeIcon className="w-3 h-3" />
           <span>{badge.label}</span>
-          {/* Accessible compatibility alias for tests checking legacy Predictable label */}
-          {badge.label === 'Healthy' && <span className="sr-only">Predictable</span>}
         </span>
       </div>
     </div>

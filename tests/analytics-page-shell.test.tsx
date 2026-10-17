@@ -49,7 +49,7 @@ describe('TASK-TRK-UI-PAGE-SHELL: Analytics Header and KPI Cards', () => {
     expect(screen.getByText('24.5')).toBeInTheDocument();
     expect(screen.getByText('Trending upward')).toBeInTheDocument();
     expect(screen.getByText('92.5%')).toBeInTheDocument();
-    expect(screen.getByText('Predictable')).toBeInTheDocument();
+    expect(screen.getByText('Healthy')).toBeInTheDocument();
     expect(screen.getByText('+10%')).toBeInTheDocument();
     expect(screen.getByText('14')).toBeInTheDocument();
   });

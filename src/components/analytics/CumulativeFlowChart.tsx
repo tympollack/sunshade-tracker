@@ -127,6 +127,9 @@ export function CumulativeFlowChart({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<CfdTimeWindow>(initialTimeWindow);
 
+  // Slices the telemetry series based on selected quick-filter preset:
+  // - '14D' and '30D' filter down to the most recent 14 or 30 days of data.
+  // - 'Full Sprint' preserves the entire timeline series provided by the parent analytics container.
   const displayData = React.useMemo(() => {
     if (!data || data.length === 0) return [];
     if (timeWindow === '14D') return data.slice(-14);
