@@ -157,6 +157,55 @@ describe('TASK-TRK-UI-CFD-WATERFALL: CFD and Waterfall widgets', () => {
       expect(screen.getByText('Net Scope:')).toBeInTheDocument();
     });
 
+    it('renders subtle horizontal dashed bridge lines connecting intermediate delta bars', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 35,
+            addedPoints: 26,
+            droppedPoints: 5,
+            finalDelivered: 56,
+          }}
+        />
+      );
+
+      const baselineBridge = container.querySelector('[data-testid="bridge-baseline-added"]');
+      expect(baselineBridge).toBeInTheDocument();
+      expect(baselineBridge).toHaveAttribute('stroke-dasharray', '2 2');
+      expect(baselineBridge).toHaveClass('stroke-slate-600');
+
+      const addedBridge = container.querySelector('[data-testid="bridge-added-dropped"]');
+      expect(addedBridge).toBeInTheDocument();
+      expect(addedBridge).toHaveAttribute('stroke-dasharray', '2 2');
+
+      const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
+      expect(droppedBridge).toBeInTheDocument();
+      expect(droppedBridge).toHaveAttribute('stroke-dasharray', '2 2');
+    });
+
+    it('renders high-contrast white text with subtle dark pill backdrop on bar value callouts', () => {
+      render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 35,
+            addedPoints: 26,
+            droppedPoints: 5,
+            finalDelivered: 56,
+          }}
+        />
+      );
+
+      const addedLabel = screen.getByText('+26 pts');
+      expect(addedLabel).toHaveClass('text-slate-100');
+      expect(addedLabel).toHaveClass('bg-slate-900/80');
+
+      // Verify centered sub-labels
+      expect(screen.getByText('Day 1 Commitment')).toBeInTheDocument();
+      expect(screen.getByText('Injected Scope')).toBeInTheDocument();
+      expect(screen.getByText('Backlog Return')).toBeInTheDocument();
+      expect(screen.getByText('Delivered')).toBeInTheDocument();
+    });
+
     it('handles zero added or dropped scope gracefully', () => {
       render(
         <ScopeChurnWaterfall
