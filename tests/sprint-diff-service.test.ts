@@ -232,9 +232,17 @@ describe('TASK-TRK-DIFF-CALCULATION-SERVICE: Snapshot Delta Computation Engine',
           const snapQueryBuilder: any = {
             eq: vi.fn().mockImplementation(() => snapQueryBuilder),
             or: vi.fn().mockImplementation(() => snapQueryBuilder),
+            in: vi.fn().mockImplementation(() => snapQueryBuilder),
             order: vi.fn().mockResolvedValue({ data: mockSnapshots, error: null }),
           };
           return { select: vi.fn().mockReturnValue(snapQueryBuilder) };
+        }
+        if (table === 'sprints') {
+          const sprintQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => sprintQueryBuilder),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'sprint-q4', name: 'Sprint Q4' }, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(sprintQueryBuilder) };
         }
         if (table === 'work_items') {
           const itemsQueryBuilder: any = {

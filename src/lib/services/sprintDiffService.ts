@@ -238,13 +238,30 @@ export async function getSprintSnapshotDiff(
       query = query.eq('project_id', options.projectId);
     }
 
-    // Match sprint by UUID or name
+    // Match sprint by UUID or name safely using parameterized .in filter (prevents PostgREST filter injection)
+    const sprintIdentifiers = new Set<string>([sprintId]);
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintId);
-    if (isUuid) {
-      query = query.eq('sprint_id', sprintId);
-    } else {
-      query = query.or(`sprint_id.eq.${sprintId},sprint_id.eq.${encodeURIComponent(sprintId)}`);
+
+    try {
+      let sprintLookup = supabaseAdmin
+        .from('sprints')
+        .select('id, name')
+        .eq('tenant_id', tenantId);
+
+      if (isUuid) {
+        sprintLookup = sprintLookup.eq('id', sprintId);
+      } else {
+        sprintLookup = sprintLookup.eq('name', sprintId);
+      }
+
+      const { data: sprintRecord } = await sprintLookup.maybeSingle();
+      if (sprintRecord?.id) sprintIdentifiers.add(sprintRecord.id);
+      if (sprintRecord?.name) sprintIdentifiers.add(sprintRecord.name);
+    } catch {
+      // Graceful fallback to sprintId directly
     }
+
+    query = query.in('sprint_id', Array.from(sprintIdentifiers));
 
     const { data: rawSnapshots, error: snapErr } = await query.order('captured_at', {
       ascending: true,
@@ -320,9 +337,9 @@ export async function getSprintSnapshotDiff(
           const metaSprintId = it.metadata?.sprint_id;
           const directSprintId = it.sprint_id;
           return (
-            metaSprint === sprintId ||
-            metaSprintId === sprintId ||
-            directSprintId === sprintId
+            (metaSprint && sprintIdentifiers.has(metaSprint)) ||
+            (metaSprintId && sprintIdentifiers.has(metaSprintId)) ||
+            (directSprintId && sprintIdentifiers.has(directSprintId))
           );
         })
         .map(normalizeSnapshotItem);

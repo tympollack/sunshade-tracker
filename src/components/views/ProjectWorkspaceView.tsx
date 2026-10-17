@@ -20,6 +20,7 @@ import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { SprintGuardrailModal } from '@/components/sprints/SprintGuardrailModal';
+import { SprintDiffModal, TimelineSnapshotPoint } from '@/components/sprints';
 import { BulkDeleteConfirmModal } from '@/components/BulkDeleteConfirmModal';
 import { useTabUrlSync } from '@/components/rev_trk_02';
 import { detectSchemaDeviations, SchemaDeviation } from '@/lib/schema-deviation';
@@ -114,6 +115,68 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   useEffect(() => {
     setTreeSelectedProjectId(null);
   }, [projectSlug]);
+
+  // Sprint Timeline Scrubber (Time Machine Mode) & Diff Modal state
+  const [timelineSnapshots, setTimelineSnapshots] = useState<TimelineSnapshotPoint[]>([]);
+  const [activeTimelineSnapshot, setActiveTimelineSnapshot] = useState<TimelineSnapshotPoint | null>(null);
+  const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  const [diffBaseId, setDiffBaseId] = useState<string>('baseline');
+  const [diffTargetId, setDiffTargetId] = useState<string>('live');
+
+  // Fetch timeline snapshots when a specific sprint is filtered on the board
+  useEffect(() => {
+    if (!selectedSprint || selectedSprint === 'all' || !projectSlug) {
+      setTimelineSnapshots([]);
+      setActiveTimelineSnapshot(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetch(
+      `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
+        selectedSprint
+      )}&snapshot_type=all`,
+      {
+        headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : undefined,
+      }
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!isMounted) return;
+        if (d?.snapshots && Array.isArray(d.snapshots)) {
+          setTimelineSnapshots(d.snapshots);
+        } else {
+          setTimelineSnapshots([]);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setTimelineSnapshots([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSprint, projectSlug, tenantSlug]);
+
+  // Compute effective items displayed on the board (historical when scrubbing)
+  const effectiveBoardItems = useMemo(() => {
+    if (!activeTimelineSnapshot) return items;
+    if (Array.isArray(activeTimelineSnapshot.assignee_breakdown?.items) && activeTimelineSnapshot.assignee_breakdown.items.length > 0) {
+      return activeTimelineSnapshot.assignee_breakdown.items.map((it: any) => ({
+        ...it,
+        tenant_id: tenantSlug,
+        project_id: projectSlug,
+        order_index: it.order_index ?? 0,
+        created_at: it.created_at ?? activeTimelineSnapshot.captured_at,
+        updated_at: it.updated_at ?? activeTimelineSnapshot.captured_at,
+      }));
+    }
+    if (Array.isArray(activeTimelineSnapshot.committed_item_ids) && activeTimelineSnapshot.committed_item_ids.length > 0) {
+      const allowed = new Set(activeTimelineSnapshot.committed_item_ids);
+      return items.filter((it) => allowed.has(it.id));
+    }
+    return items;
+  }, [items, activeTimelineSnapshot, tenantSlug, projectSlug]);
 
   const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(true);
 
@@ -3425,7 +3488,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   setSelectedSprint={setSelectedSprint}
                   availableSprints={availableSprints}
                   availableSprintDefs={availableSprintDefs}
-                  items={items}
+                  items={effectiveBoardItems}
+                  timelineSnapshots={timelineSnapshots}
+                  activeTimelineSnapshot={activeTimelineSnapshot}
+                  onSelectTimelineSnapshot={setActiveTimelineSnapshot}
+                  onOpenDiffModal={(base, target) => {
+                    setDiffBaseId(base);
+                    setDiffTargetId(target);
+                    setIsDiffModalOpen(true);
+                  }}
                   projectSettings={projectSettings}
                   getItemProjectSettings={getItemProjectSettings}
                   pointMode={pointMode}
@@ -3804,6 +3875,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         items={itemsToBulkDelete}
         isDeleting={isBulkApplying}
       />
+
+      {/* Scope Delta Diff Modal for Sprint Board & Timeline Scrubber */}
+      {isDiffModalOpen && (
+        <SprintDiffModal
+          isOpen={true}
+          onClose={() => setIsDiffModalOpen(false)}
+          sprintId={selectedSprint !== 'all' ? selectedSprint : 'current'}
+          sprintName={selectedSprint !== 'all' ? selectedSprint : 'Sprint Backlog'}
+          projectId={projectSlug}
+          tenantSlug={tenantSlug}
+          snapshots={timelineSnapshots}
+          initialBaseId={diffBaseId}
+          initialTargetId={diffTargetId}
+        />
+      )}
 
       {/* Floating Multi-Item Bulk Actions Toolbar */}
       {!isReadOnly && activeTab === 'sprint' && selectedItemIds.size > 0 && (

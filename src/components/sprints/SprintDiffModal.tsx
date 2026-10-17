@@ -44,6 +44,8 @@ export interface SprintDiffModalProps {
   tenantSlug?: string;
   snapshots?: SprintSnapshotSummary[];
   initialDiff?: SnapshotDiffResult | null;
+  initialBaseId?: string;
+  initialTargetId?: string;
   onDiffLoaded?: (diff: SnapshotDiffResult) => void;
   fetchDiffOverride?: (sprintId: string, base: string, target: string) => Promise<SnapshotDiffResult>;
 }
@@ -59,11 +61,13 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
   tenantSlug,
   snapshots: propSnapshots,
   initialDiff = null,
+  initialBaseId = 'baseline',
+  initialTargetId = 'live',
   onDiffLoaded,
   fetchDiffOverride,
 }) => {
-  const [baseId, setBaseId] = useState<string>('baseline');
-  const [targetId, setTargetId] = useState<string>('live');
+  const [baseId, setBaseId] = useState<string>(initialBaseId);
+  const [targetId, setTargetId] = useState<string>(initialTargetId);
   const [activeTab, setActiveTab] = useState<TabType>('injected');
   const [diff, setDiff] = useState<SnapshotDiffResult | null>(initialDiff);
   const [loading, setLoading] = useState<boolean>(false);
@@ -80,18 +84,20 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
     }
   }, [propSnapshots]);
 
+  // Request tracking to prevent out-of-order race conditions
+  const latestRequestIdRef = React.useRef(0);
+
   // Load snapshots if not provided and modal is open
   useEffect(() => {
     if (!isOpen) return;
     if (propSnapshots && propSnapshots.length > 0) return;
-    if (!projectId && !sprintId) return;
+    if (!projectId || projectId === 'current' || !sprintId) return;
 
     let isMounted = true;
     setLoadingSnapshots(true);
 
-    const targetProject = projectId || 'current';
     fetch(
-      `/api/v1/projects/${encodeURIComponent(targetProject)}/analytics/snapshots?sprint_id=${encodeURIComponent(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/analytics/snapshots?sprint_id=${encodeURIComponent(
         sprintId
       )}&snapshot_type=all`,
       {
@@ -122,12 +128,14 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
     async (base: string, target: string) => {
       if (!isOpen || !sprintId) return;
 
+      const currentReqId = ++latestRequestIdRef.current;
       setLoading(true);
       setError(null);
 
       try {
         if (fetchDiffOverride) {
           const res = await fetchDiffOverride(sprintId, base, target);
+          if (currentReqId !== latestRequestIdRef.current) return;
           setDiff(res);
           onDiffLoaded?.(res);
           return;
@@ -137,7 +145,7 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
           base,
           target,
         });
-        if (projectId) params.set('project_id', projectId);
+        if (projectId && projectId !== 'current') params.set('project_id', projectId);
 
         const headers: Record<string, string> = {};
         if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
@@ -152,12 +160,16 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
         }
 
         const data = await res.json();
+        if (currentReqId !== latestRequestIdRef.current) return;
         setDiff(data.diff);
         onDiffLoaded?.(data.diff);
       } catch (err: any) {
+        if (currentReqId !== latestRequestIdRef.current) return;
         setError(err.message || 'Error calculating snapshot delta');
       } finally {
-        setLoading(false);
+        if (currentReqId === latestRequestIdRef.current) {
+          setLoading(false);
+        }
       }
     },
     [isOpen, sprintId, projectId, tenantSlug, fetchDiffOverride, onDiffLoaded]
@@ -177,11 +189,11 @@ export const SprintDiffModal: React.FC<SprintDiffModalProps> = ({
   // Reset to default on initial open
   useEffect(() => {
     if (isOpen) {
-      setBaseId('baseline');
-      setTargetId('live');
+      setBaseId(initialBaseId);
+      setTargetId(initialTargetId);
       setActiveTab('injected');
     }
-  }, [isOpen]);
+  }, [isOpen, initialBaseId, initialTargetId]);
 
   // Presets handlers
   const handlePresetBaselineVsNow = () => {

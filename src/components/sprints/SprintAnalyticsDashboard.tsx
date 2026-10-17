@@ -698,13 +698,21 @@ export function SprintAnalyticsContent({ tenantSlug }: { tenantSlug: string }) {
         }
       />
 
-      <SprintDiffModal
-        isOpen={isDiffModalOpen}
-        onClose={() => setIsDiffModalOpen(false)}
-        sprintId={selectedSprint || 'current'}
-        sprintName={selectedSprint || 'Sprint'}
-        tenantSlug={tenantSlug}
-      />
+      {(() => {
+        const currentSprintObj = availableSprints.find(
+          (s) => s.id === selectedSprint || s.name === selectedSprint
+        );
+        return (
+          <SprintDiffModal
+            isOpen={isDiffModalOpen}
+            onClose={() => setIsDiffModalOpen(false)}
+            sprintId={selectedSprint || 'current'}
+            sprintName={selectedSprint || 'Sprint'}
+            projectId={currentSprintObj?.project_id || currentSprintObj?.project_slug}
+            tenantSlug={tenantSlug}
+          />
+        );
+      })()}
     </div>
   );
 }
