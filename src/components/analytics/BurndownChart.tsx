@@ -26,6 +26,44 @@ const CONTRIBUTOR_COLORS = [
   '#6366f1', // indigo
 ];
 
+export function calculateBurndownTickInterval(totalPoints: number): number {
+  if (totalPoints <= 14) return 1;
+  if (totalPoints > 28) return Math.min(7, Math.ceil(totalPoints / 6));
+  if (totalPoints > 21) return 5;
+  return 2;
+}
+
+export function getBurndownTickIndices(dataLength: number): number[] {
+  if (dataLength <= 0) return [];
+  if (dataLength === 1) return [0];
+  if (dataLength <= 14) {
+    return Array.from({ length: dataLength }, (_, i) => i);
+  }
+
+  const interval = calculateBurndownTickInterval(dataLength);
+  const indices: number[] = [];
+
+  for (let i = 0; i < dataLength; i += interval) {
+    indices.push(i);
+  }
+
+  const lastIdx = dataLength - 1;
+  const lastSelected = indices[indices.length - 1];
+
+  if (lastSelected !== lastIdx) {
+    const distance = lastIdx - lastSelected;
+    const minSpacingThreshold = Math.max(2, Math.ceil(interval / 2));
+
+    if (distance < minSpacingThreshold && indices.length > 1) {
+      indices[indices.length - 1] = lastIdx;
+    } else {
+      indices.push(lastIdx);
+    }
+  }
+
+  return indices;
+}
+
 export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -53,9 +91,11 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   // Dimensions & Scale Calculations
   const svgWidth = 800;
   const svgHeight = 360;
-  const padding = { top: 35, right: 30, bottom: 50, left: 55 };
+  const padding = { top: 35, right: 30, bottom: 60, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
+  const tickIndicesSet = new Set(getBurndownTickIndices(data.length));
+  const shouldTilt = data.length > 14;
 
   // Max value calculation
   const maxPointValue = Math.max(
@@ -170,22 +210,36 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
 
           {/* Date Axis Labels */}
           {data.map((d, i) => {
+            if (!tickIndicesSet.has(i)) return null;
             const x = getX(i);
+            const y = svgHeight - padding.bottom + 14;
             const dateLabel = d.date.includes('-')
               ? d.date.split('-').slice(1).join('/')
               : d.date;
             return (
-              <text
-                key={i}
-                x={x}
-                y={svgHeight - padding.bottom + 20}
-                textAnchor="middle"
-                fill="#94a3b8"
-                fontSize="11"
-                fontFamily="sans-serif"
-              >
-                {dateLabel}
-              </text>
+              <g key={i}>
+                <line
+                  x1={x}
+                  y1={svgHeight - padding.bottom}
+                  x2={x}
+                  y2={svgHeight - padding.bottom + 4}
+                  stroke="#475569"
+                  strokeWidth="1"
+                />
+                <text
+                  x={x}
+                  y={y}
+                  textAnchor={shouldTilt ? 'end' : 'middle'}
+                  transform={shouldTilt ? `rotate(-35 ${x} ${y})` : undefined}
+                  dy={shouldTilt ? '8' : '10'}
+                  fill="#94a3b8"
+                  fontSize="10"
+                  fontFamily="monospace"
+                  className="text-[10px] text-slate-400 font-mono"
+                >
+                  {dateLabel}
+                </text>
+              </g>
             );
           })}
 
