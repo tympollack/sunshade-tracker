@@ -4,9 +4,13 @@ import React, { useState } from 'react';
 import { AreaChart, HelpCircle } from 'lucide-react';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 
-interface CumulativeFlowChartProps {
+export type CfdTimeWindow = '14D' | '30D' | 'Full Sprint';
+
+export interface CumulativeFlowChartProps {
   data: CfdDataPoint[];
   isLoading?: boolean;
+  initialTimeWindow?: CfdTimeWindow;
+  dateFormat?: 'MMM DD' | 'MM/DD';
 }
 
 interface StatusLayer {
@@ -23,6 +27,34 @@ const STATUS_LAYERS: StatusLayer[] = [
   { key: 'not_started', label: 'Not Started', color: '#64748b', fillOpacity: 0.55 },
   { key: 'unplanned', label: 'Unplanned Scope', color: '#f59e0b', fillOpacity: 0.8 },
 ];
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function formatCfdDate(dateStr: string, format: 'MMM DD' | 'MM/DD' = 'MMM DD'): string {
+  if (!dateStr) return '';
+  if (dateStr.includes('-')) {
+    const parts = dateStr.split('-');
+    if (parts.length >= 3) {
+      const m = parseInt(parts[1], 10);
+      const d = parts[2];
+      if (format === 'MM/DD') {
+        return `${parts[1]}/${d}`;
+      }
+      const month = m >= 1 && m <= 12 ? MONTH_NAMES[m - 1] : parts[1];
+      return `${month} ${d}`;
+    }
+    if (parts.length === 2) {
+      const m = parseInt(parts[0], 10);
+      const d = parts[1];
+      if (format === 'MM/DD') {
+        return `${parts[0]}/${d}`;
+      }
+      const month = m >= 1 && m <= 12 ? MONTH_NAMES[m - 1] : parts[0];
+      return `${month} ${d}`;
+    }
+  }
+  return dateStr;
+}
 
 /**
  * Dynamically calculates adaptive tick interval for X-axis labels
@@ -86,8 +118,21 @@ export function getAdaptiveTickIndices(dataLength: number, maxTicks: number = 8)
   return indices;
 }
 
-export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowChartProps) {
+export function CumulativeFlowChart({
+  data,
+  isLoading = false,
+  initialTimeWindow = 'Full Sprint',
+  dateFormat = 'MMM DD',
+}: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [timeWindow, setTimeWindow] = useState<CfdTimeWindow>(initialTimeWindow);
+
+  const displayData = React.useMemo(() => {
+    if (!data || data.length === 0) return [];
+    if (timeWindow === '14D') return data.slice(-14);
+    if (timeWindow === '30D') return data.slice(-30);
+    return data;
+  }, [data, timeWindow]);
 
   if (isLoading) {
     return (
@@ -98,7 +143,7 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!displayData || displayData.length === 0) {
     return (
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center">
         <AreaChart className="w-10 h-10 text-slate-600 mb-3" />
@@ -116,18 +161,18 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
   const padding = { top: 35, right: 30, bottom: 65, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
-  const tickIndicesSet = new Set(getAdaptiveTickIndices(data.length));
+  const tickIndicesSet = new Set(getAdaptiveTickIndices(displayData.length));
 
   // Calculate totals and maximum ceiling
-  const totals = data.map(
+  const totals = displayData.map(
     (d) => d.complete + d.in_review + d.in_progress + d.not_started + d.unplanned
   );
   const maxTotal = Math.max(10, ...totals);
   const yCeiling = Math.ceil(maxTotal / 5) * 5;
 
   const getX = (index: number) => {
-    if (data.length <= 1) return padding.left + plotWidth / 2;
-    return padding.left + (index / (data.length - 1)) * plotWidth;
+    if (displayData.length <= 1) return padding.left + plotWidth / 2;
+    return padding.left + (index / (displayData.length - 1)) * plotWidth;
   };
 
   const getY = (val: number) => {
@@ -140,7 +185,7 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
     const topPoints: string[] = [];
     const bottomPoints: string[] = [];
 
-    data.forEach((d, i) => {
+    displayData.forEach((d, i) => {
       let cumulativeBottom = 0;
       for (let prevIdx = 0; prevIdx < layerIdx; prevIdx++) {
         cumulativeBottom += d[STATUS_LAYERS[prevIdx].key];
@@ -159,33 +204,62 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
     };
   });
 
-  const activePoint = hoveredIndex !== null ? data[hoveredIndex] : null;
+  const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
-      {/* Header and Legend */}
+      {/* Header and Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-            <AreaChart className="w-4 h-4 text-emerald-400" />
-            Cumulative Flow Diagram (CFD)
+            <AreaChart className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate">Cumulative Flow Diagram (CFD)</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             WIP inventory, bottleneck discovery, and delivery flow progression
           </p>
         </div>
 
-        {/* Legend */}
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-          {[...STATUS_LAYERS].reverse().map((layer) => (
-            <div key={layer.key} className="flex items-center gap-1.5">
-              <span
-                className="w-2.5 h-2.5 rounded-sm"
-                style={{ backgroundColor: layer.color }}
-              />
-              <span>{layer.label}</span>
-            </div>
-          ))}
+        {/* Right Controls: Filter Pills & Pinned Legend */}
+        <div className="flex flex-wrap items-center gap-4 ml-auto">
+          {/* Quick-Select Range Filter */}
+          <div
+            className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
+            role="group"
+            aria-label="CFD time window filter"
+          >
+            {(['14D', '30D', 'Full Sprint'] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => {
+                  setTimeWindow(preset);
+                  setHoveredIndex(null);
+                }}
+                className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
+                  timeWindow === preset
+                    ? 'bg-slate-700 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                data-testid={`cfd-window-${preset.toLowerCase().replace(/\s+/g, '-')}`}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+
+          {/* Legend: Pinned to top right without wrapping into chart plot area */}
+          <div className="flex flex-wrap items-center justify-end gap-2.5 text-xs text-slate-300">
+            {[...STATUS_LAYERS].reverse().map((layer) => (
+              <div key={layer.key} className="flex items-center gap-1.5 whitespace-nowrap">
+                <span
+                  className="w-2.5 h-2.5 rounded-sm shrink-0"
+                  style={{ backgroundColor: layer.color }}
+                />
+                <span>{layer.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -226,13 +300,11 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
           })}
 
           {/* Date Axis Labels */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             if (!tickIndicesSet.has(i)) return null;
             const x = getX(i);
             const y = svgHeight - padding.bottom + 14;
-            const dateLabel = d.date.includes('-')
-              ? d.date.split('-').slice(1).join('/')
-              : d.date;
+            const dateLabel = formatCfdDate(d.date, dateFormat);
             return (
               <g key={`x-tick-${i}`}>
                 <line
@@ -271,7 +343,7 @@ export function CumulativeFlowChart({ data, isLoading = false }: CumulativeFlowC
           ))}
 
           {/* Hover Column Triggers & Cursor Line */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             const x = getX(i);
             const isHovered = hoveredIndex === i;
 
