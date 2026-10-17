@@ -182,5 +182,88 @@ describe('TASK-TRK-BURNDOWN-SNAPSHOTS-ENDPOINT: snapshots reader and sprint list
       expect(json.sprints[0].id).toBe('db-sprint-1');
       expect(json.sprints[1].id).toBe('settings-sprint-2');
     });
+
+    it('resolves relational UUID when queried with sprint name so UUID-keyed snapshots appear', async () => {
+      let queriedSprintIds: string[] = [];
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'proj-123',
+                        settings: {
+                          sprint_settings: {
+                            sprints: [
+                              { id: 'uuid-sprint-12', name: 'Sprint 12' },
+                            ],
+                          },
+                        },
+                      },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sprints') {
+          const sprintsBuilder: any = {
+            eq: vi.fn().mockImplementation(() => sprintsBuilder),
+            or: vi.fn().mockImplementation(() => sprintsBuilder),
+            then: (resolve: any) => resolve({ data: [{ id: 'uuid-sprint-12', name: 'Sprint 12' }], error: null }),
+          };
+          return {
+            select: vi.fn().mockReturnValue(sprintsBuilder),
+          };
+        }
+        if (table === 'sprint_snapshots') {
+          const snapQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => snapQueryBuilder),
+            in: vi.fn().mockImplementation((col: string, vals: string[]) => {
+              if (col === 'sprint_id') queriedSprintIds = vals;
+              return snapQueryBuilder;
+            }),
+            order: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'snap-uuid-1',
+                  sprint_id: 'uuid-sprint-12',
+                  snapshot_type: 'daily_rollup',
+                  committed_points: 20,
+                  remaining_points: 15,
+                  captured_at: '2026-10-05T00:00:00.000Z',
+                  assignee_breakdown: { ideal_burn: 20 },
+                },
+              ],
+              error: null,
+            }),
+          };
+          return {
+            select: vi.fn().mockReturnValue(snapQueryBuilder),
+          };
+        }
+        return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
+      });
+
+      const req = new NextRequest(
+        'http://localhost:3000/api/v1/projects/my-project/analytics/snapshots?sprint_id=Sprint%2012'
+      );
+      const res = await getSnapshotsHandler(req, {
+        params: Promise.resolve({ projectId: 'my-project' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(queriedSprintIds).toContain('Sprint 12');
+      expect(queriedSprintIds).toContain('uuid-sprint-12');
+      const json = await res.json();
+      expect(json.snapshots).toHaveLength(1);
+      expect(json.snapshots[0].sprint_id).toBe('uuid-sprint-12');
+    });
   });
 });

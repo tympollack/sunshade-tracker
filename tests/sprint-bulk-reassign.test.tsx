@@ -866,6 +866,293 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(res.status).toBe(400);
       expect(res.error).toContain('violates check constraint "trg_enforce_sprint_governance"');
     });
+
+    it('enforces active sprint scope lock even when updating only sprint_id without metadata', async () => {
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'item-direct-sprint-id',
+                  title: 'Direct sprint ID item',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: null,
+                  metadata: { story_points: 5 }, // Estimated item in backlog
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          ids: ['item-direct-sprint-id'],
+          updates: {
+            sprint_id: 'sprint-active-uuid-1', // Points to active sprint definition
+          },
+        },
+        { governance_bypass: false }
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(409);
+      expect(res.error).toContain('Active sprint scope is locked');
+    });
+
+    it('restores original sprint_id when a batch update experiences a partial write failure', async () => {
+      const rollbackPayloads: any[] = [];
+      let callCount = 0;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'item-1',
+                  title: 'Item 1',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: 'original-sprint-uuid-1',
+                  metadata: { sprint: 'Original Sprint', sprint_id: 'original-sprint-uuid-1' },
+                },
+                {
+                  id: 'item-2',
+                  title: 'Item 2',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: 'original-sprint-uuid-2',
+                  metadata: { sprint: 'Original Sprint 2', sprint_id: 'original-sprint-uuid-2' },
+                },
+              ],
+              error: null,
+            }),
+            update: vi.fn().mockImplementation((fields: any) => {
+              callCount++;
+              // First item succeeds, second item fails
+              if (callCount === 1) {
+                return {
+                  eq: vi.fn().mockReturnThis(),
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'item-1', ...fields },
+                      error: null,
+                    }),
+                  }),
+                };
+              }
+              if (callCount === 2) {
+                return {
+                  eq: vi.fn().mockReturnThis(),
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: { message: 'Database connection dropped' },
+                    }),
+                  }),
+                };
+              }
+              // Rollback calls
+              rollbackPayloads.push(fields);
+              return {
+                eq: vi.fn().mockReturnThis(),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          ids: ['item-1', 'item-2'],
+          updates: {
+            sprint_id: 'new-dest-sprint-uuid',
+            metadata: { sprint: 'New Destination Sprint', sprint_id: 'new-dest-sprint-uuid' },
+          },
+        },
+        { governance_bypass: true }
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Rolled back all partially applied changes');
+      expect(rollbackPayloads.length).toBeGreaterThanOrEqual(1);
+      expect(rollbackPayloads[0].sprint_id).toBe('original-sprint-uuid-1');
+    });
+
+    it('clears added_mid_sprint flag when moving items from an active sprint to backlog', async () => {
+      let appliedFields: any = null;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'item-backlog',
+                  title: 'Active sprint item moving to backlog',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: 'sprint-active-uuid-1',
+                  metadata: {
+                    sprint: 'Sprint 1 (Active)',
+                    sprint_id: 'sprint-active-uuid-1',
+                    added_mid_sprint: true,
+                    story_points: 3,
+                  },
+                },
+              ],
+              error: null,
+            }),
+            update: vi.fn().mockImplementation((fields: any) => {
+              appliedFields = fields;
+              return {
+                eq: vi.fn().mockReturnThis(),
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'item-backlog', ...fields },
+                    error: null,
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(tenantId, {
+        ids: ['item-backlog'],
+        updates: {
+          sprint_id: null,
+          metadata: { sprint: null },
+        },
+      });
+
+      expect(res.success).toBe(true);
+      expect(appliedFields).toBeDefined();
+      expect(appliedFields.sprint_id).toBeNull();
+      expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
+    });
+
+    it('clears added_mid_sprint flag when moving items from an active sprint to a planned sprint', async () => {
+      let appliedFields: any = null;
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: projectId, settings: mockProjectSettings },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'item-planned',
+                  title: 'Active sprint item moving to planned',
+                  project_id: projectId,
+                  status: 'not_started',
+                  sprint_id: 'sprint-active-uuid-1',
+                  metadata: {
+                    sprint: 'Sprint 1 (Active)',
+                    sprint_id: 'sprint-active-uuid-1',
+                    added_mid_sprint: true,
+                    story_points: 3,
+                  },
+                },
+              ],
+              error: null,
+            }),
+            update: vi.fn().mockImplementation((fields: any) => {
+              appliedFields = fields;
+              return {
+                eq: vi.fn().mockReturnThis(),
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'item-planned', ...fields },
+                    error: null,
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await handleBulkUpdateItems(tenantId, {
+        ids: ['item-planned'],
+        updates: {
+          sprint_id: 'sprint-planned-uuid-2',
+          metadata: { sprint: 'Sprint 2 (Planned)' },
+        },
+      });
+
+      expect(res.success).toBe(true);
+      expect(appliedFields).toBeDefined();
+      expect(appliedFields.sprint_id).toBe('sprint-planned-uuid-2');
+      expect(appliedFields.metadata.sprint).toBe('Sprint 2 (Planned)');
+      expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
+    });
   });
 
   describe('PostgreSQL Migration Script Integrity', () => {

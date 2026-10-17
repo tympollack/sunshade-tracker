@@ -216,6 +216,107 @@ export function computeSnapshotItemDiff(
 }
 
 /**
+ * Helper to extract or reconstruct snapshot items as of snapshot.captured_at
+ */
+export async function extractSnapshotItems(
+  snapshot: any,
+  tenantId: string,
+  projectId?: string
+): Promise<SnapshotItem[]> {
+  if (!snapshot) return [];
+
+  // 1. Direct itemized breakdown on snapshot
+  if (Array.isArray(snapshot.assignee_breakdown?.items)) {
+    return snapshot.assignee_breakdown.items.map(normalizeSnapshotItem);
+  }
+  if (Array.isArray(snapshot.items)) {
+    return snapshot.items.map(normalizeSnapshotItem);
+  }
+
+  // 2. Reconstruct from committed_item_ids and audit events at captured_at
+  if (Array.isArray(snapshot.committed_item_ids) && snapshot.committed_item_ids.length > 0) {
+    let itemsQuery: any = supabaseAdmin
+      .from('work_items')
+      .select('id, title, status, sprint_id, metadata, item_type, assignee, created_at, updated_at')
+      .eq('tenant_id', tenantId);
+
+    if (projectId && typeof itemsQuery?.eq === 'function') {
+      itemsQuery = itemsQuery.eq('project_id', projectId);
+    }
+
+    if (typeof itemsQuery?.in === 'function') {
+      itemsQuery = itemsQuery.in('id', snapshot.committed_item_ids);
+    }
+
+    const { data: itemsFromDb } = await itemsQuery;
+    const rawItems = itemsFromDb || [];
+
+    const snapshotTimestampMs = snapshot.captured_at
+      ? new Date(snapshot.captured_at).getTime()
+      : Infinity;
+
+    // Filter out items created strictly after the snapshot was captured
+    const validItems = rawItems.filter((it: any) => {
+      if (!it.created_at || !snapshot.captured_at) return true;
+      return new Date(it.created_at).getTime() <= snapshotTimestampMs;
+    });
+
+    // Query sprint_events occurring after captured_at to roll back mutations
+    let eventsAfterSnapshot: any[] = [];
+    if (snapshot.captured_at) {
+      try {
+        let evQuery: any = supabaseAdmin
+          .from('sprint_events')
+          .select('work_item_id, event_type, previous_state, old_state, new_state, points_delta, occurred_at')
+          .in('work_item_id', snapshot.committed_item_ids)
+          .gt('occurred_at', snapshot.captured_at);
+
+        if (typeof evQuery?.order === 'function') {
+          evQuery = evQuery.order('occurred_at', { ascending: false });
+        }
+        const { data: evData } = await evQuery;
+        if (Array.isArray(evData)) eventsAfterSnapshot = evData;
+      } catch {
+        // Fallback gracefully if sprint_events table is unmocked or empty
+      }
+    }
+
+    return validItems.map((it: any) => {
+      let effectiveStatus = it.status;
+      let effectivePoints =
+        typeof it.metadata?.story_points === 'number'
+          ? it.metadata.story_points
+          : typeof it.story_points === 'number'
+          ? it.story_points
+          : 0;
+
+      // Find transitions for this item occurring after snapshot was captured
+      const itemEvents = eventsAfterSnapshot.filter((e) => e.work_item_id === it.id);
+      for (const ev of itemEvents) {
+        if (ev.event_type === 'status_transition' && (ev.previous_state?.status || ev.old_state?.status)) {
+          effectiveStatus = ev.previous_state?.status || ev.old_state?.status;
+        }
+        if (ev.event_type === 'estimate_change') {
+          if (typeof ev.previous_state?.points === 'number') {
+            effectivePoints = ev.previous_state.points;
+          } else if (typeof ev.points_delta === 'number' && ev.points_delta !== 0) {
+            effectivePoints -= ev.points_delta;
+          }
+        }
+      }
+
+      return normalizeSnapshotItem({
+        ...it,
+        status: effectiveStatus,
+        story_points: Math.max(0, effectivePoints),
+      });
+    });
+  }
+
+  return [];
+}
+
+/**
  * Server Service: queries snapshots or live board items and calculates full diff.
  */
 export async function getSprintSnapshotDiff(
@@ -228,24 +329,39 @@ export async function getSprintSnapshotDiff(
   }
 ): Promise<{ data: SprintSnapshotDiff | null; error: string | null }> {
   try {
-    // 1. Fetch available snapshots for the sprint
-    let query: any = supabaseAdmin
-      .from('sprint_snapshots')
-      .select('*')
-      .eq('tenant_id', tenantId);
-
-    if (options?.projectId) {
-      query = query.eq('project_id', options.projectId);
+    // 0. Resolve project slug to UUID if provided as a slug
+    let resolvedProjectId: string | undefined = undefined;
+    if (options?.projectId && options.projectId !== 'all') {
+      const isProjectUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.projectId);
+      if (isProjectUuid) {
+        resolvedProjectId = options.projectId;
+      } else {
+        try {
+          const projLookup: any = supabaseAdmin
+            .from('projects')
+            .select('id')
+            .eq('tenant_id', tenantId)
+            .eq('slug', options.projectId);
+          if (typeof projLookup?.maybeSingle === 'function') {
+            const { data: projRecord } = await projLookup.maybeSingle();
+            if (projRecord?.id) resolvedProjectId = projRecord.id;
+          }
+        } catch {
+          // ignore
+        }
+        if (!resolvedProjectId) resolvedProjectId = options.projectId;
+      }
     }
 
     // Match sprint by UUID or name safely using parameterized .in filter (prevents PostgREST filter injection)
     const sprintIdentifiers = new Set<string>([sprintId]);
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintId);
+    let sprintRecordProjectId: string | null = null;
 
     try {
-      let sprintLookup = supabaseAdmin
+      let sprintLookup: any = supabaseAdmin
         .from('sprints')
-        .select('id, name')
+        .select('id, name, project_id')
         .eq('tenant_id', tenantId);
 
       if (isUuid) {
@@ -254,11 +370,28 @@ export async function getSprintSnapshotDiff(
         sprintLookup = sprintLookup.eq('name', sprintId);
       }
 
-      const { data: sprintRecord } = await sprintLookup.maybeSingle();
-      if (sprintRecord?.id) sprintIdentifiers.add(sprintRecord.id);
-      if (sprintRecord?.name) sprintIdentifiers.add(sprintRecord.name);
+      if (typeof sprintLookup?.maybeSingle === 'function') {
+        const { data: sprintRecord } = await sprintLookup.maybeSingle();
+        if (sprintRecord?.id) sprintIdentifiers.add(sprintRecord.id);
+        if (sprintRecord?.name) sprintIdentifiers.add(sprintRecord.name);
+        if (sprintRecord?.project_id) sprintRecordProjectId = sprintRecord.project_id;
+      }
     } catch {
       // Graceful fallback to sprintId directly
+    }
+
+    if (!resolvedProjectId && sprintRecordProjectId) {
+      resolvedProjectId = sprintRecordProjectId;
+    }
+
+    // 1. Fetch available snapshots for the sprint
+    let query: any = supabaseAdmin
+      .from('sprint_snapshots')
+      .select('*')
+      .eq('tenant_id', tenantId);
+
+    if (resolvedProjectId) {
+      query = query.eq('project_id', resolvedProjectId);
     }
 
     query = query.in('sprint_id', Array.from(sprintIdentifiers));
@@ -272,6 +405,10 @@ export async function getSprintSnapshotDiff(
     }
 
     const snapshots = rawSnapshots || [];
+
+    if (!resolvedProjectId && snapshots.length > 0 && snapshots[0].project_id) {
+      resolvedProjectId = snapshots[0].project_id;
+    }
 
     // 2. Resolve base snapshot
     let baseSnap: any = null;
@@ -300,19 +437,7 @@ export async function getSprintSnapshotDiff(
     // 4. Extract base items
     let baseItems: SnapshotItem[] = [];
     if (baseSnap) {
-      if (Array.isArray(baseSnap.assignee_breakdown?.items)) {
-        baseItems = baseSnap.assignee_breakdown.items.map(normalizeSnapshotItem);
-      } else if (Array.isArray(baseSnap.committed_item_ids) && baseSnap.committed_item_ids.length > 0) {
-        const { data: itemsFromDb } = await supabaseAdmin
-          .from('work_items')
-          .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
-          .eq('tenant_id', tenantId)
-          .in('id', baseSnap.committed_item_ids);
-
-        baseItems = (itemsFromDb || []).map(normalizeSnapshotItem);
-      } else if (Array.isArray(baseSnap.items)) {
-        baseItems = baseSnap.items.map(normalizeSnapshotItem);
-      }
+      baseItems = await extractSnapshotItems(baseSnap, tenantId, resolvedProjectId);
     }
 
     // 5. Extract target items
@@ -321,12 +446,15 @@ export async function getSprintSnapshotDiff(
       // Reconstruct target from current live work_items associated with this sprint
       let itemsQuery: any = supabaseAdmin
         .from('work_items')
-        .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
-        .eq('tenant_id', tenantId)
-        .is('deleted_at', null);
+        .select('id, title, status, sprint_id, metadata, item_type, assignee, created_at, updated_at')
+        .eq('tenant_id', tenantId);
 
-      if (options?.projectId) {
-        itemsQuery = itemsQuery.eq('project_id', options.projectId);
+      if (resolvedProjectId && typeof itemsQuery?.eq === 'function') {
+        itemsQuery = itemsQuery.eq('project_id', resolvedProjectId);
+      }
+
+      if (typeof itemsQuery?.is === 'function') {
+        itemsQuery = itemsQuery.is('deleted_at', null);
       }
 
       const { data: allItems } = await itemsQuery;
@@ -344,19 +472,7 @@ export async function getSprintSnapshotDiff(
         })
         .map(normalizeSnapshotItem);
     } else if (targetSnap) {
-      if (Array.isArray(targetSnap.assignee_breakdown?.items)) {
-        targetItems = targetSnap.assignee_breakdown.items.map(normalizeSnapshotItem);
-      } else if (Array.isArray(targetSnap.committed_item_ids) && targetSnap.committed_item_ids.length > 0) {
-        const { data: itemsFromDb } = await supabaseAdmin
-          .from('work_items')
-          .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
-          .eq('tenant_id', tenantId)
-          .in('id', targetSnap.committed_item_ids);
-
-        targetItems = (itemsFromDb || []).map(normalizeSnapshotItem);
-      } else if (Array.isArray(targetSnap.items)) {
-        targetItems = targetSnap.items.map(normalizeSnapshotItem);
-      }
+      targetItems = await extractSnapshotItems(targetSnap, tenantId, resolvedProjectId);
     }
 
     // 6. Compute diff

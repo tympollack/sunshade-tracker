@@ -25,7 +25,7 @@ export async function GET(
     const isUuid = UUID_REGEX.test(projectId.trim());
     let projectQuery = supabaseAdmin
       .from('projects')
-      .select('id, name, slug, tenant_id')
+      .select('id, name, slug, tenant_id, settings')
       .eq('tenant_id', authCtx.tenant.id)
       .is('deleted_at', null);
 
@@ -71,7 +71,47 @@ export async function GET(
     }
 
     if (sprintId) {
-      snapshotQuery = snapshotQuery.eq('sprint_id', sprintId);
+      const sprintIdentifiers = new Set<string>([sprintId]);
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintId);
+      try {
+        let sprintLookup: any = supabaseAdmin
+          .from('sprints')
+          .select('id, name');
+
+        if (typeof sprintLookup?.eq === 'function') {
+          sprintLookup = sprintLookup.eq('tenant_id', authCtx.tenant.id);
+          if (isUuid) {
+            sprintLookup = sprintLookup.eq('id', sprintId);
+          } else {
+            sprintLookup = sprintLookup.eq('name', sprintId);
+            if (project?.id && typeof sprintLookup?.or === 'function') {
+              sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
+            } else if (project?.id && typeof sprintLookup?.eq === 'function') {
+              sprintLookup = sprintLookup.eq('project_id', project.id);
+            }
+          }
+          const { data: sprintRecords } = await sprintLookup;
+          if (Array.isArray(sprintRecords)) {
+            sprintRecords.forEach((s: any) => {
+              if (s?.id) sprintIdentifiers.add(s.id);
+              if (s?.name) sprintIdentifiers.add(s.name);
+            });
+          }
+        }
+      } catch {
+        // Fallback to sprintId
+      }
+
+      const settingSprints = (project as any)?.settings?.sprint_settings?.sprints || [];
+      const match = settingSprints.find((s: any) => s.id === sprintId || s.name === sprintId);
+      if (match?.id) sprintIdentifiers.add(match.id);
+      if (match?.name) sprintIdentifiers.add(match.name);
+
+      if (typeof snapshotQuery.in === 'function') {
+        snapshotQuery = snapshotQuery.in('sprint_id', Array.from(sprintIdentifiers));
+      } else {
+        snapshotQuery = snapshotQuery.eq('sprint_id', sprintId);
+      }
     }
 
     const { data: snapshotsData, error: snapErr } = await snapshotQuery.order('captured_at', {

@@ -1085,10 +1085,35 @@ export async function PATCH(req: NextRequest) {
       (Array.isArray(body.ids) && body.ids.length > 0) ||
       (Array.isArray(body.items) && body.items.length > 0)
     ) {
+      const isCallerAdmin =
+        authCtx.role === 'owner' ||
+        authCtx.role === 'admin' ||
+        (!authCtx.userId && authCtx.role === null);
+
+      const hasItemGovernanceBypass =
+        (Array.isArray(body.items) && body.items.some((it: any) => it?.governance_bypass || it?.metadata?.governance_bypass)) ||
+        (Array.isArray(body) && body.some((it: any) => it?.governance_bypass || it?.metadata?.governance_bypass));
+
+      const requestedBulkGovernanceBypass = Boolean(
+        body?.governance_bypass ||
+        body?.updates?.governance_bypass ||
+        body?.updates?.metadata?.governance_bypass ||
+        hasItemGovernanceBypass ||
+        req.headers.get('x-governance-bypass') === 'true'
+      );
+
+      if (requestedBulkGovernanceBypass && !isCallerAdmin) {
+        return NextResponse.json(
+          { error: 'Forbidden: Sprint governance bypass requires admin role' },
+          { status: 403 }
+        );
+      }
+
       const bulkRes = await handleBulkUpdateItems(authCtx.tenant.id, body, {
         tenantSlug: authCtx.tenant.slug,
         actorId: authCtx.userId || null,
         actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API'),
+        governance_bypass: isCallerAdmin && requestedBulkGovernanceBypass,
       });
       if (!bulkRes.success) {
         return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });

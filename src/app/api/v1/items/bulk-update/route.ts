@@ -14,10 +14,20 @@ async function processBulkUpdate(req: NextRequest) {
         ? { ...body, ids: body.ids || body.item_ids }
         : body;
 
+    const hasItemBypass =
+      Array.isArray(payload?.items) &&
+      payload.items.some(
+        (it: any) =>
+          it?.governance_bypass ||
+          it?.metadata?.governance_bypass
+      );
+
     const requestedGovernanceBypass = Boolean(
       payload?.governance_bypass ||
       payload?.updates?.governance_bypass ||
+      payload?.updates?.metadata?.governance_bypass ||
       payload?.metadata?.governance_bypass ||
+      hasItemBypass ||
       req.headers.get('x-governance-bypass') === 'true'
     );
 

@@ -132,6 +132,20 @@ describe('BUG-TRK-SCHEMA-HYDRATION-GUARD: Schema Normalization & Error Boundary'
       expect(normalized.custom_fields).toEqual(['custom_metric', 'deploy_target']);
       expect(normalized.sprint_settings?.default_sprint).toBe('Sprint 42');
     });
+
+    it('preserves explicit is_completed: false flag and does not silently strip it', () => {
+      const raw = {
+        hierarchy: DEFAULT_PROJECT_SETTINGS.hierarchy,
+        statuses: [
+          { id: 'done_review', label: 'Done Review', is_completed: false },
+          { id: 'shipped', label: 'Shipped', is_completed: true },
+        ],
+      };
+
+      const normalized = normalizeProjectSettings(raw);
+      expect(normalized.statuses[0].is_completed).toBe(false);
+      expect(normalized.statuses[1].is_completed).toBe(true);
+    });
   });
 
   describe('useProjectSettings Hook', () => {
