@@ -226,5 +226,77 @@ describe('FEAT-TRK-SCHEMA-KEY-CASCADE-MIGRATION', () => {
       // 3. Modal closed
       expect(screen.queryByTestId('confirm-cascade-migration-button')).toBeNull();
     });
+
+    it('includes x-tenant-slug header in bulk migration requests when tenantSlug is provided', async () => {
+      const handleSave = vi.fn().mockResolvedValue(undefined);
+      const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        } as any)
+      );
+
+      const newSettingsWithoutBacklog: ProjectSettings = {
+        ...originalSettings,
+        statuses: [
+          { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 1 },
+          { id: 'done', label: 'Done', color: '#22c55e', order: 2, is_completed: true },
+        ],
+      };
+
+      const freshItems: WorkItem[] = [
+        {
+          id: 'item-tenant-1',
+          tenant_id: 'tenant-1',
+          project_id: 'proj-1',
+          title: 'Item in backlog',
+          item_type: 'task',
+          status: 'backlog',
+          order_index: 1000,
+          metadata: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ];
+
+      render(
+        <ProjectSchemaView
+          projectId="proj-1"
+          tenantSlug="acme-corp"
+          settings={originalSettings}
+          onSave={handleSave}
+          activeItems={freshItems}
+          initialMode="raw"
+        />
+      );
+
+      const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+      await act(async () => {
+        fireEvent.change(textarea, {
+          target: { value: JSON.stringify(newSettingsWithoutBacklog, null, 2) },
+        });
+      });
+
+      const saveBtn = screen.getByText('Save Schema');
+      await act(async () => {
+        fireEvent.click(saveBtn);
+      });
+
+      const confirmBtn = screen.getByTestId('confirm-cascade-migration-button');
+      await act(async () => {
+        fireEvent.click(confirmBtn);
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/v1/items/bulk',
+        expect.objectContaining({
+          method: 'PATCH',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'x-tenant-slug': 'acme-corp',
+          }),
+        })
+      );
+    });
   });
 });

@@ -29,6 +29,7 @@ export type SchemaViewMode = 'visual' | 'tree' | 'raw';
 export interface ProjectSchemaViewProps {
   settings: ProjectSettings;
   projectId?: string | null;
+  tenantSlug?: string;
   onSave: (updatedSettings: ProjectSettings) => Promise<void> | void;
   activeItems?: WorkItem[];
   isSaving?: boolean;
@@ -41,6 +42,7 @@ export interface ProjectSchemaViewProps {
 export function ProjectSchemaView({
   settings,
   projectId,
+  tenantSlug,
   onSave,
   activeItems = [],
   isSaving = false,
@@ -70,7 +72,9 @@ export function ProjectSchemaView({
   useEffect(() => {
     if (availableProjects && availableProjects.length > 0) return;
     let isCancelled = false;
-    fetch('/api/v1/projects')
+    const headers: Record<string, string> = {};
+    if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+    fetch('/api/v1/projects', { headers })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!isCancelled && data?.projects) {
@@ -81,7 +85,7 @@ export function ProjectSchemaView({
     return () => {
       isCancelled = true;
     };
-  }, [availableProjects]);
+  }, [availableProjects, tenantSlug]);
 
   const allCandidateProjects = availableProjects && availableProjects.length > 0 ? availableProjects : fetchedProjects;
   const availableSiblingProjects = useMemo(() => {
@@ -388,9 +392,13 @@ export function ProjectSchemaView({
           if (onMigrateItems) {
             await onMigrateItems([{ ids, updates: { status: newStatusId } }]);
           } else {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (tenantSlug) {
+              headers['x-tenant-slug'] = tenantSlug;
+            }
             await fetch('/api/v1/items/bulk', {
               method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
+              headers,
               body: JSON.stringify({ ids, updates: { status: newStatusId } }),
             });
           }
@@ -408,9 +416,13 @@ export function ProjectSchemaView({
           if (onMigrateItems) {
             await onMigrateItems([{ ids, updates: { item_type: newType } }]);
           } else {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (tenantSlug) {
+              headers['x-tenant-slug'] = tenantSlug;
+            }
             await fetch('/api/v1/items/bulk', {
               method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
+              headers,
               body: JSON.stringify({ ids, updates: { item_type: newType } }),
             });
           }
