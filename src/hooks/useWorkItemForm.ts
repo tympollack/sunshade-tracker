@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { WorkItem, ProjectSettings, HierarchyLevel, SprintDefinition } from '@/types/tracker';
+import { WorkItem, ProjectSettings, HierarchyLevel, SprintDefinition, CustomFieldDefinition, normalizeCustomFields } from '@/types/tracker';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -66,6 +66,27 @@ export function useWorkItemForm({
     return projectSettings;
   }, [selectedProjectId, projects, projectSettings]);
 
+  const fieldDefMap = useMemo(() => {
+    const map = new Map<string, CustomFieldDefinition>();
+    normalizeCustomFields(effectiveProjectSettings.custom_fields).forEach((f) => {
+      if (f.key) map.set(f.key, f);
+    });
+    (effectiveProjectSettings.custom_metadata_fields || []).forEach((f) => {
+      if (f.key && !map.has(f.key)) {
+        map.set(f.key, {
+          key: f.key,
+          label: f.label,
+          type: (f.type as any) || 'string',
+          options: f.options,
+          unit: f.unit,
+          placeholder: f.placeholder,
+          description: f.description,
+        });
+      }
+    });
+    return map;
+  }, [effectiveProjectSettings]);
+
   // Keep itemType and status aligned with effectiveProjectSettings
   useEffect(() => {
     if (!effectiveProjectSettings) return;
@@ -98,6 +119,11 @@ export function useWorkItemForm({
       setExternalRef(item.external_ref_id || '');
       setSelectedProjectId(item.project_id || '');
       const rawMeta = item.metadata ? { ...item.metadata } : {};
+      normalizeCustomFields(effectiveProjectSettings.custom_fields).forEach((f) => {
+        if (f.default !== undefined && !(f.key in rawMeta)) {
+          rawMeta[f.key] = f.default;
+        }
+      });
       setMetadata(rawMeta);
       const drafts: Record<string, string> = {};
       Object.entries(rawMeta).forEach(([k, v]) => {
@@ -108,7 +134,7 @@ export function useWorkItemForm({
       setShowAddMeta(false);
       setSaveError(null);
     }
-  }, [item, projectSettings]);
+  }, [item, projectSettings, effectiveProjectSettings]);
 
   const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
   const [isLoadingParents, setIsLoadingParents] = useState(false);
@@ -207,6 +233,18 @@ export function useWorkItemForm({
       setSaveError('Please correct invalid metadata values before saving.');
       return;
     }
+
+    const configuredFields = normalizeCustomFields(effectiveProjectSettings.custom_fields);
+    for (const f of configuredFields) {
+      if (f.required) {
+        const val = metadata[f.key];
+        if (val === undefined || val === null || val === '') {
+          setSaveError(`${f.label || f.key} is required.`);
+          return;
+        }
+      }
+    }
+
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -260,8 +298,13 @@ export function useWorkItemForm({
       return;
     }
 
+    const def = fieldDefMap.get(key);
     let parsedVal: any = newMetaVal.trim();
-    if (parsedVal === 'true') parsedVal = true;
+    if (def?.type === 'number') {
+      parsedVal = parsedVal === '' ? null : Number(parsedVal);
+    } else if (def?.type === 'boolean') {
+      parsedVal = parsedVal === 'true';
+    } else if (parsedVal === 'true') parsedVal = true;
     else if (parsedVal === 'false') parsedVal = false;
     else if (parsedVal === 'null') parsedVal = null;
     else if (!isNaN(Number(parsedVal)) && parsedVal !== '') parsedVal = Number(parsedVal);
@@ -293,22 +336,13 @@ export function useWorkItemForm({
   const handleUpdateMetaField = (key: string, rawText: string) => {
     setMetaDrafts((prev) => ({ ...prev, [key]: rawText }));
 
+    const def = fieldDefMap.get(key);
+    const targetType = def?.type;
     const currentVal = metadata[key];
     const isOriginalObject = typeof currentVal === 'object' && currentVal !== null;
     const looksLikeJson = rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
 
-    if (isOriginalObject || looksLikeJson) {
-      try {
-        const parsed = JSON.parse(rawText);
-        setMetadata((prev) => ({ ...prev, [key]: parsed }));
-        setMetaErrors((prev) => ({ ...prev, [key]: null }));
-      } catch {
-        setMetaErrors((prev) => ({ ...prev, [key]: 'Invalid JSON format' }));
-      }
-      return;
-    }
-
-    if (typeof currentVal === 'number') {
+    if (targetType === 'number' || typeof currentVal === 'number') {
       const trimmed = rawText.trim();
       if (trimmed === '') {
         setMetadata((prev) => ({ ...prev, [key]: null }));
@@ -321,6 +355,43 @@ export function useWorkItemForm({
           setMetadata((prev) => ({ ...prev, [key]: num }));
           setMetaErrors((prev) => ({ ...prev, [key]: null }));
         }
+      }
+      return;
+    }
+
+    if (targetType === 'boolean' || typeof currentVal === 'boolean') {
+      const trimmed = rawText.trim();
+      if (trimmed === '' || trimmed === 'null') {
+        setMetadata((prev) => ({ ...prev, [key]: null }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      } else {
+        setMetadata((prev) => ({ ...prev, [key]: trimmed === 'true' }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      }
+      return;
+    }
+
+    if (targetType === 'date') {
+      const trimmed = rawText.trim();
+      setMetadata((prev) => ({ ...prev, [key]: trimmed || null }));
+      setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      return;
+    }
+
+    if (targetType === 'enum') {
+      const trimmed = rawText.trim();
+      setMetadata((prev) => ({ ...prev, [key]: trimmed || null }));
+      setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      return;
+    }
+
+    if (isOriginalObject || looksLikeJson) {
+      try {
+        const parsed = JSON.parse(rawText);
+        setMetadata((prev) => ({ ...prev, [key]: parsed }));
+        setMetaErrors((prev) => ({ ...prev, [key]: null }));
+      } catch {
+        setMetaErrors((prev) => ({ ...prev, [key]: 'Invalid JSON format' }));
       }
       return;
     }
@@ -338,13 +409,6 @@ export function useWorkItemForm({
         return;
       }
       setMetadata((prev) => ({ ...prev, [key]: rawText }));
-      setMetaErrors((prev) => ({ ...prev, [key]: null }));
-      return;
-    }
-
-    if (typeof currentVal === 'boolean') {
-      const boolVal = rawText === 'true';
-      setMetadata((prev) => ({ ...prev, [key]: boolVal }));
       setMetaErrors((prev) => ({ ...prev, [key]: null }));
       return;
     }

@@ -22,6 +22,7 @@ import {
   ProjectSettings,
   CustomMetadataFieldDefinition,
   CustomFieldType,
+  normalizeCustomField,
 } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -121,7 +122,13 @@ export function resolveCustomMetadataFields(
   } else if (projectSettings?.custom_metadata_fields && projectSettings.custom_metadata_fields.length > 0) {
     fields = projectSettings.custom_metadata_fields;
   } else if (projectSettings?.custom_fields && projectSettings.custom_fields.length > 0) {
-    fields = projectSettings.custom_fields.map((fieldKey) => inferFieldDefinitionFromKey(fieldKey));
+    fields = projectSettings.custom_fields.map((fieldKey) => {
+      const def = normalizeCustomField(fieldKey);
+      if (def.type && def.type !== 'string') {
+        return def as CustomMetadataFieldDefinition;
+      }
+      return inferFieldDefinitionFromKey(def.key);
+    });
   }
 
   return fields.map((field) => {

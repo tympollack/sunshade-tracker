@@ -90,7 +90,78 @@ export interface SprintSettings {
   [key: string]: any;
 }
 
-export type CustomFieldType = 'number' | 'string' | 'enum' | 'boolean' | 'date';
+export type CustomFieldType = 'number' | 'string' | 'text' | 'enum' | 'boolean' | 'date';
+
+export interface CustomFieldDefinition {
+  key: string;
+  label?: string;
+  type?: CustomFieldType;
+  options?: string[];
+  unit?: string;
+  placeholder?: string;
+  target_field?: string;
+  actual_field?: string;
+  description?: string;
+  default?: any;
+  required?: boolean;
+}
+
+export type CustomField = string | CustomFieldDefinition;
+
+export function normalizeCustomField(field: any): CustomFieldDefinition {
+  if (typeof field === 'string') {
+    return {
+      key: field,
+      label: field.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+      type: 'string',
+    };
+  }
+  if (field && typeof field === 'object') {
+    if (typeof field.key === 'string' && field.key) {
+      return {
+        ...field,
+        label: field.label || field.key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+        type: field.type || (Array.isArray(field.options) ? 'enum' : 'string'),
+      };
+    }
+    const entries = Object.entries(field);
+    if (entries.length === 1) {
+      const [k, v] = entries[0];
+      if (Array.isArray(v)) {
+        return {
+          key: k,
+          label: k.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          type: 'enum',
+          options: v as string[],
+        };
+      }
+      if (v && typeof v === 'object') {
+        const objVal = v as any;
+        return {
+          key: k,
+          label: objVal.label || k.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          type: objVal.type || (Array.isArray(objVal.options) ? 'enum' : 'string'),
+          options: objVal.options,
+          unit: objVal.unit,
+          placeholder: objVal.placeholder,
+          description: objVal.description,
+          default: objVal.default,
+          required: objVal.required,
+        };
+      }
+    }
+  }
+  return {
+    key: String(field?.key || field || ''),
+    label: String(field?.label || field?.key || field || ''),
+    type: 'string',
+  };
+}
+
+export function normalizeCustomFields(fields?: CustomField[] | null): CustomFieldDefinition[] {
+  if (!fields || !Array.isArray(fields)) return [];
+  return fields.map(normalizeCustomField);
+}
 
 export interface CustomMetadataFieldDefinition {
   key: string;
@@ -138,7 +209,7 @@ export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
   statuses: StatusDefinition[];
-  custom_fields: string[];
+  custom_fields: CustomField[];
   custom_metadata_fields?: CustomMetadataFieldDefinition[];
   work_metric_config?: WorkMetricConfig;
   work_unit_field?: string;
