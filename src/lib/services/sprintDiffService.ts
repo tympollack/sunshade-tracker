@@ -7,6 +7,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/db';
+import { isMissingSprintIdColumnError } from '@/lib/bulk-items';
 
 export interface SnapshotItem {
   id: string;
@@ -248,7 +249,24 @@ export async function extractSnapshotItems(
       itemsQuery = itemsQuery.in('id', snapshot.committed_item_ids);
     }
 
-    const { data: itemsFromDb } = await itemsQuery;
+    let { data: itemsFromDb, error: itemsErr } = await itemsQuery;
+    if (itemsErr && isMissingSprintIdColumnError(itemsErr)) {
+      let fallbackQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+        .eq('tenant_id', tenantId);
+
+      if (projectId && typeof fallbackQuery?.eq === 'function') {
+        fallbackQuery = fallbackQuery.eq('project_id', projectId);
+      }
+
+      if (typeof fallbackQuery?.in === 'function') {
+        fallbackQuery = fallbackQuery.in('id', snapshot.committed_item_ids);
+      }
+
+      const retryRes = await fallbackQuery;
+      itemsFromDb = retryRes.data;
+    }
     const rawItems = itemsFromDb || [];
 
     const snapshotTimestampMs = snapshot.captured_at
@@ -457,7 +475,24 @@ export async function getSprintSnapshotDiff(
         itemsQuery = itemsQuery.is('deleted_at', null);
       }
 
-      const { data: allItems } = await itemsQuery;
+      let { data: allItems, error: itemsErr } = await itemsQuery;
+      if (itemsErr && isMissingSprintIdColumnError(itemsErr)) {
+        let fallbackQuery: any = supabaseAdmin
+          .from('work_items')
+          .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+          .eq('tenant_id', tenantId);
+
+        if (resolvedProjectId && typeof fallbackQuery?.eq === 'function') {
+          fallbackQuery = fallbackQuery.eq('project_id', resolvedProjectId);
+        }
+
+        if (typeof fallbackQuery?.is === 'function') {
+          fallbackQuery = fallbackQuery.is('deleted_at', null);
+        }
+
+        const retryRes = await fallbackQuery;
+        allItems = retryRes.data;
+      }
 
       targetItems = (allItems || [])
         .filter((it: any) => {

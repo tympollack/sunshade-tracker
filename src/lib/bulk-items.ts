@@ -56,6 +56,21 @@ export function validateItemPayloadSizes(item: {
 }
 
 /**
+ * Detects whether a PostgREST error is caused by the relational sprint_id column
+ * being absent from the PostgREST schema cache (e.g. pending DB migration or schema reload).
+ */
+export function isMissingSprintIdColumnError(err: any): boolean {
+  if (!err) return false;
+  const msg = typeof err === 'string' ? err : `${err.message || ''} ${err.details || ''} ${err.hint || ''}`;
+  const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+  return (
+    (/sprint_id/i.test(msg) && (/schema cache/i.test(msg) || /column.*does not exist/i.test(msg))) ||
+    (code === 'PGRST204' && /sprint_id/i.test(msg)) ||
+    (code === '42703' && /sprint_id/i.test(msg))
+  );
+}
+
+/**
  * Reconciles relational sprint_id and metadata.sprint to prevent payload mismatches
  * and stale sprint_id bindings when moving items between sprints or into backlog.
  */
@@ -1309,7 +1324,24 @@ export async function handleBulkUpdateItems(
         updateQuery = updateQuery.is('deleted_at', null);
       }
 
-      const { data: updatedRows, error: updErr } = await updateQuery.select('*');
+      let { data: updatedRows, error: updErr } = await updateQuery.select('*');
+      if (updErr && 'sprint_id' in plannedUpdates[0].fields && isMissingSprintIdColumnError(updErr)) {
+        const fallbackFields = { ...plannedUpdates[0].fields };
+        delete fallbackFields.sprint_id;
+        let retryQuery: any = supabaseAdmin
+          .from('work_items')
+          .update(fallbackFields)
+          .in('id', ids)
+          .eq('tenant_id', tenantId);
+
+        if (typeof retryQuery.is === 'function') {
+          retryQuery = retryQuery.is('deleted_at', null);
+        }
+
+        const retryRes = await retryQuery.select('*');
+        updatedRows = retryRes.data;
+        updErr = retryRes.error;
+      }
       if (updErr) {
         return { success: false, updated_count: 0, items: [], error: updErr.message, status: 400 };
       }
@@ -1353,13 +1385,27 @@ export async function handleBulkUpdateItems(
 
     // Execute concurrently using Promise.all to avoid serial request loops
     const updatePromises = plannedUpdates.map(async ({ id, fields }) => {
-      return supabaseAdmin
+      let res = await supabaseAdmin
         .from('work_items')
         .update(fields)
         .eq('id', id)
         .eq('tenant_id', tenantId)
         .select('*')
         .single();
+
+      if (res.error && 'sprint_id' in fields && isMissingSprintIdColumnError(res.error)) {
+        const fallbackFields = { ...fields };
+        delete fallbackFields.sprint_id;
+        res = await supabaseAdmin
+          .from('work_items')
+          .update(fallbackFields)
+          .eq('id', id)
+          .eq('tenant_id', tenantId)
+          .select('*')
+          .single();
+      }
+
+      return res;
     });
 
     const results = await Promise.all(updatePromises);
@@ -1378,26 +1424,38 @@ export async function handleBulkUpdateItems(
       // Roll back any partially committed updates
       if (updatedItems.length > 0) {
         await Promise.allSettled(
-          updatedItems.map((item) => {
+          updatedItems.map(async (item) => {
             const original = existingItems.find((e: any) => e.id === item.id);
-            if (!original) return Promise.resolve();
-            return supabaseAdmin
+            if (!original) return;
+            const rollbackPayload: Record<string, any> = {
+              title: original.title,
+              description: original.description,
+              status: original.status,
+              item_type: original.item_type,
+              assignee: original.assignee,
+              parent_id: original.parent_id,
+              external_ref_id: original.external_ref_id,
+              order_index: original.order_index,
+              metadata: original.metadata,
+              updated_at: original.updated_at,
+            };
+            if (original.sprint_id !== undefined) {
+              rollbackPayload.sprint_id = original.sprint_id ?? null;
+            }
+            let rollRes = await supabaseAdmin
               .from('work_items')
-              .update({
-                title: original.title,
-                description: original.description,
-                status: original.status,
-                item_type: original.item_type,
-                assignee: original.assignee,
-                parent_id: original.parent_id,
-                external_ref_id: original.external_ref_id,
-                order_index: original.order_index,
-                sprint_id: original.sprint_id ?? null,
-                metadata: original.metadata,
-                updated_at: original.updated_at,
-              })
+              .update(rollbackPayload)
               .eq('id', item.id)
               .eq('tenant_id', tenantId);
+
+            if (rollRes.error && 'sprint_id' in rollbackPayload && isMissingSprintIdColumnError(rollRes.error)) {
+              delete rollbackPayload.sprint_id;
+              await supabaseAdmin
+                .from('work_items')
+                .update(rollbackPayload)
+                .eq('id', item.id)
+                .eq('tenant_id', tenantId);
+            }
           })
         );
       }
@@ -1790,13 +1848,27 @@ export async function handleBulkUpdateItems(
 
     // Execute concurrently using Promise.all to avoid serial request loops
     const updatePromises = plannedUpdates.map(async ({ id, fields }) => {
-      return supabaseAdmin
+      let res = await supabaseAdmin
         .from('work_items')
         .update(fields)
         .eq('id', id)
         .eq('tenant_id', tenantId)
         .select('*')
         .single();
+
+      if (res.error && 'sprint_id' in fields && isMissingSprintIdColumnError(res.error)) {
+        const fallbackFields = { ...fields };
+        delete fallbackFields.sprint_id;
+        res = await supabaseAdmin
+          .from('work_items')
+          .update(fallbackFields)
+          .eq('id', id)
+          .eq('tenant_id', tenantId)
+          .select('*')
+          .single();
+      }
+
+      return res;
     });
 
     const results = await Promise.all(updatePromises);
@@ -1815,26 +1887,38 @@ export async function handleBulkUpdateItems(
       // Roll back any partially committed updates
       if (updatedItems.length > 0) {
         await Promise.allSettled(
-          updatedItems.map((item) => {
+          updatedItems.map(async (item) => {
             const original = existingMap.get(item.id);
-            if (!original) return Promise.resolve();
-            return supabaseAdmin
+            if (!original) return;
+            const rollbackPayload: Record<string, any> = {
+              title: original.title,
+              description: original.description,
+              status: original.status,
+              item_type: original.item_type,
+              assignee: original.assignee,
+              parent_id: original.parent_id,
+              external_ref_id: original.external_ref_id,
+              order_index: original.order_index,
+              metadata: original.metadata,
+              updated_at: original.updated_at,
+            };
+            if (original.sprint_id !== undefined) {
+              rollbackPayload.sprint_id = original.sprint_id ?? null;
+            }
+            let rollRes = await supabaseAdmin
               .from('work_items')
-              .update({
-                title: original.title,
-                description: original.description,
-                status: original.status,
-                item_type: original.item_type,
-                assignee: original.assignee,
-                parent_id: original.parent_id,
-                external_ref_id: original.external_ref_id,
-                order_index: original.order_index,
-                sprint_id: original.sprint_id ?? null,
-                metadata: original.metadata,
-                updated_at: original.updated_at,
-              })
+              .update(rollbackPayload)
               .eq('id', item.id)
               .eq('tenant_id', tenantId);
+
+            if (rollRes.error && 'sprint_id' in rollbackPayload && isMissingSprintIdColumnError(rollRes.error)) {
+              delete rollbackPayload.sprint_id;
+              await supabaseAdmin
+                .from('work_items')
+                .update(rollbackPayload)
+                .eq('id', item.id)
+                .eq('tenant_id', tenantId);
+            }
           })
         );
       }

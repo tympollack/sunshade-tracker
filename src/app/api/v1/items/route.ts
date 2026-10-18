@@ -9,6 +9,7 @@ import {
   handleBulkCreateItems,
   handleBulkUpdateItems,
   handleBulkDeleteItems,
+  isMissingSprintIdColumnError,
 } from '@/lib/bulk-items';
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
@@ -1483,13 +1484,27 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    const { data: updated, error } = await supabaseAdmin
+    let { data: updated, error } = await supabaseAdmin
       .from('work_items')
       .update(updateFields)
       .eq('id', id)
       .eq('tenant_id', authCtx.tenant.id)
       .select()
       .single();
+
+    if (error && 'sprint_id' in updateFields && isMissingSprintIdColumnError(error)) {
+      const fallbackFields = { ...updateFields };
+      delete fallbackFields.sprint_id;
+      const retryResult = await supabaseAdmin
+        .from('work_items')
+        .update(fallbackFields)
+        .eq('id', id)
+        .eq('tenant_id', authCtx.tenant.id)
+        .select()
+        .single();
+      updated = retryResult.data;
+      error = retryResult.error;
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -1570,7 +1585,7 @@ export async function PATCH(req: NextRequest) {
         const { reconcileSprintMetadata } = await import('@/lib/bulk-items');
         const descendantsToUpdate = (tenantItems || []).filter((it) => descendantIds.includes(it.id));
         const descendantUpdates = await Promise.all(
-          descendantsToUpdate.map((it) => {
+          descendantsToUpdate.map(async (it) => {
             const nextMeta = reconcileSprintMetadata(
               it.metadata || {},
               {
@@ -1581,7 +1596,7 @@ export async function PATCH(req: NextRequest) {
               effectiveProjectSettings,
               { fullReplacement: false, governanceBypass: isGovernanceBypassed }
             );
-            return supabaseAdmin
+            let descRes = await supabaseAdmin
               .from('work_items')
               .update({
                 sprint_id: nextSprintId,
@@ -1590,6 +1605,19 @@ export async function PATCH(req: NextRequest) {
               })
               .eq('id', it.id)
               .eq('tenant_id', authCtx.tenant.id);
+
+            if (descRes.error && isMissingSprintIdColumnError(descRes.error)) {
+              descRes = await supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMeta,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', it.id)
+                .eq('tenant_id', authCtx.tenant.id);
+            }
+
+            return descRes;
           })
         );
 
