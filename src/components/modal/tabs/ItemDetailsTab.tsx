@@ -477,7 +477,7 @@ export function ItemDetailsTab({
               } else if (isTyped) {
                 entriesMap.set(
                   key,
-                  def.default !== undefined ? def.default : (def.type === 'boolean' ? false : '')
+                  def.default !== undefined ? def.default : ''
                 );
               }
             });
@@ -595,13 +595,20 @@ export function ItemDetailsTab({
                       />
                     ) : fieldType === 'boolean' || typeof v === 'boolean' ? (
                       <select
-                        value={String(v ?? draftVal)}
+                        value={
+                          draftVal === 'true' || draftVal === 'false'
+                            ? draftVal
+                            : typeof v === 'boolean'
+                            ? String(v)
+                            : ''
+                        }
                         disabled={isEstimateLocked}
                         data-testid={`custom-field-boolean-${k}`}
                         aria-label={def?.label || k}
                         onChange={(e) => onUpdateMetaField(k, e.target.value)}
                         className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
+                        <option value="">-- Select {def?.label || k} --</option>
                         <option value="true">true</option>
                         <option value="false">false</option>
                       </select>

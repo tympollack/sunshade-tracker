@@ -265,4 +265,62 @@ describe('FEAT-TRK-TYPED-CUSTOM-FIELDS', () => {
       })
     );
   });
+
+  it('allows single-selection on required boolean field when initial metadata is empty', async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const settings: ProjectSettings = {
+      ...baseSettings,
+      custom_fields: [
+        {
+          key: 'requires_signoff',
+          label: 'Requires Signoff',
+          type: 'boolean',
+          required: true,
+        },
+      ],
+    };
+
+    const itemWithoutMeta: WorkItem = {
+      ...sampleItem,
+      metadata: {},
+    };
+
+    await act(async () => {
+      render(
+        <WorkItemModal
+          item={itemWithoutMeta}
+          isOpen={true}
+          onClose={() => {}}
+          onSave={handleSave}
+          onDelete={() => {}}
+          projectSettings={settings}
+          allItems={[itemWithoutMeta]}
+        />
+      );
+    });
+
+    const boolSelect = screen.getByTestId('custom-field-boolean-requires_signoff') as HTMLSelectElement;
+    expect(boolSelect.value).toBe('');
+
+    // Selecting 'false' on the first interaction should immediately register false
+    await act(async () => {
+      fireEvent.change(boolSelect, { target: { value: 'false' } });
+    });
+    expect(boolSelect.value).toBe('false');
+
+    // Save should succeed with requires_signoff: false
+    const saveBtn = screen.getByText('Save Changes');
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+
+    expect(handleSave).toHaveBeenCalledWith(
+      'item-001',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          requires_signoff: false,
+        }),
+      })
+    );
+  });
 });
