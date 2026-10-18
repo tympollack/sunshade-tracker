@@ -7,6 +7,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/db';
+import { isMissingSprintIdColumnError } from '@/lib/bulk-items';
 
 export interface SnapshotItem {
   id: string;
@@ -248,7 +249,24 @@ export async function extractSnapshotItems(
       itemsQuery = itemsQuery.in('id', snapshot.committed_item_ids);
     }
 
-    const { data: itemsFromDb } = await itemsQuery;
+    let { data: itemsFromDb, error: itemsErr } = await itemsQuery;
+    if (itemsErr && isMissingSprintIdColumnError(itemsErr)) {
+      let fallbackQuery: any = supabaseAdmin
+        .from('work_items')
+        .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+        .eq('tenant_id', tenantId);
+
+      if (projectId && typeof fallbackQuery?.eq === 'function') {
+        fallbackQuery = fallbackQuery.eq('project_id', projectId);
+      }
+
+      if (typeof fallbackQuery?.in === 'function') {
+        fallbackQuery = fallbackQuery.in('id', snapshot.committed_item_ids);
+      }
+
+      const retryRes = await fallbackQuery;
+      itemsFromDb = retryRes.data;
+    }
     const rawItems = itemsFromDb || [];
 
     const snapshotTimestampMs = snapshot.captured_at
@@ -457,18 +475,43 @@ export async function getSprintSnapshotDiff(
         itemsQuery = itemsQuery.is('deleted_at', null);
       }
 
-      const { data: allItems } = await itemsQuery;
+      let { data: allItems, error: itemsErr } = await itemsQuery;
+      if (itemsErr && isMissingSprintIdColumnError(itemsErr)) {
+        let fallbackQuery: any = supabaseAdmin
+          .from('work_items')
+          .select('id, title, status, metadata, item_type, assignee, created_at, updated_at')
+          .eq('tenant_id', tenantId);
+
+        if (resolvedProjectId && typeof fallbackQuery?.eq === 'function') {
+          fallbackQuery = fallbackQuery.eq('project_id', resolvedProjectId);
+        }
+
+        if (typeof fallbackQuery?.is === 'function') {
+          fallbackQuery = fallbackQuery.is('deleted_at', null);
+        }
+
+        const retryRes = await fallbackQuery;
+        allItems = retryRes.data;
+      }
 
       targetItems = (allItems || [])
         .filter((it: any) => {
           const metaSprint = it.metadata?.sprint;
           const metaSprintId = it.metadata?.sprint_id;
+          // When metadata contains sprint details, metadata is the single authoritative source of truth
+          if (metaSprint || metaSprintId) {
+            return Boolean(
+              (metaSprint && sprintIdentifiers.has(metaSprint)) ||
+              (metaSprintId && sprintIdentifiers.has(metaSprintId))
+            );
+          }
+          // If metadata exists and explicitly cleared sprint (backlog), never match stale relational column
+          if (it.metadata && ('sprint' in it.metadata || 'sprint_id' in it.metadata)) {
+            return false;
+          }
+          // Only fallback to relational column when metadata is missing sprint keys
           const directSprintId = it.sprint_id;
-          return (
-            (metaSprint && sprintIdentifiers.has(metaSprint)) ||
-            (metaSprintId && sprintIdentifiers.has(metaSprintId)) ||
-            (directSprintId && sprintIdentifiers.has(directSprintId))
-          );
+          return Boolean(directSprintId && sprintIdentifiers.has(directSprintId));
         })
         .map(normalizeSnapshotItem);
     } else if (targetSnap) {
