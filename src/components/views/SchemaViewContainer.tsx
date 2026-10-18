@@ -17,6 +17,7 @@ export interface SchemaViewContainerProps {
   setIsArchiveModalOpen: (open: boolean) => void;
   activeItems?: WorkItem[];
   projectSlug?: string;
+  tenantSlug?: string;
 }
 
 export function SchemaViewContainer(props: SchemaViewContainerProps) {
@@ -32,6 +33,7 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
     setIsArchiveModalOpen,
     activeItems = [],
     projectSlug,
+    tenantSlug,
   } = props;
 
   return (
@@ -76,6 +78,7 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
       {/* Main Schema Editor View with 3-way Switcher */}
       <ProjectSchemaView
         projectId={isAllProjects ? selectedSchemaProjectSlug : projectSlug}
+        tenantSlug={tenantSlug}
         settings={activeSchemaSettings}
         onSave={handleSaveSchema}
         activeItems={activeItems}

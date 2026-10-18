@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   AlertCircle,
@@ -109,6 +109,42 @@ export function ItemDetailsTab({
   modalRepo,
   modalOwner,
 }: ItemDetailsTabProps) {
+  const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setRemovedKeys(new Set());
+  }, [item?.id]);
+
+  useEffect(() => {
+    setRemovedKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((k) => {
+        if (!(k in metadata)) {
+          next.add(k);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [metadata]);
+
+  const handleRemoveField = (k: string) => {
+    setRemovedKeys((prev) => new Set(prev).add(k));
+    onRemoveMetaField(k);
+  };
+
+  const handleUpdateField = (k: string, val: string) => {
+    setRemovedKeys((prev) => {
+      if (!prev.has(k)) return prev;
+      const next = new Set(prev);
+      next.delete(k);
+      return next;
+    });
+    onUpdateMetaField(k, val);
+  };
+
   return (
     <>
       {isLocked && (
@@ -384,9 +420,10 @@ export function ItemDetailsTab({
           const allConfigured = normalizeCustomFields(effectiveProjectSettings.custom_fields);
 
           // Rendered fields determination:
-          // A field is directly rendered if it's already in metadata, OR if it has a rich type definition (enum, date, number, boolean, text, options) or default value.
+          // A field is directly rendered if it's already in metadata, OR if it has a rich type definition (enum, date, number, boolean, text, options) or default value, unless explicitly removed.
           const renderedKeySet = new Set<string>();
           allConfigured.forEach((def) => {
+            if (removedKeys.has(def.key) && !(def.key in metadata)) return;
             const isTyped =
               def.type === 'enum' ||
               def.type === 'date' ||
@@ -399,7 +436,9 @@ export function ItemDetailsTab({
               renderedKeySet.add(def.key);
             }
           });
-          Object.keys(metadata).forEach((k) => renderedKeySet.add(k));
+          Object.keys(metadata).forEach((k) => {
+            if (!(removedKeys.has(k) && !(k in metadata))) renderedKeySet.add(k);
+          });
 
           const suggestedList = allConfigured.filter((def) => !renderedKeySet.has(def.key));
 
@@ -422,7 +461,7 @@ export function ItemDetailsTab({
                     key={f}
                     type="button"
                     disabled={isLocked}
-                    onClick={() => !isLocked && onUpdateMetaField(f, def.default !== undefined ? String(def.default) : '')}
+                    onClick={() => !isLocked && handleUpdateField(f, def.default !== undefined ? String(def.default) : '')}
                     className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors flex items-center space-x-1 ${
                       isLocked
                         ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
@@ -463,6 +502,7 @@ export function ItemDetailsTab({
             // Determine all entries to render
             const entriesMap = new Map<string, any>();
             configuredMap.forEach((def, key) => {
+              if (removedKeys.has(key) && !(key in metadata)) return;
               const isTyped =
                 def.type === 'enum' ||
                 def.type === 'date' ||
@@ -483,7 +523,7 @@ export function ItemDetailsTab({
             });
 
             Object.entries(metadata).forEach(([k, v]) => {
-              if (!entriesMap.has(k)) {
+              if (!(removedKeys.has(k) && !(k in metadata)) && !entriesMap.has(k)) {
                 entriesMap.set(k, v);
               }
             });
@@ -515,6 +555,8 @@ export function ItemDetailsTab({
             return renderedEntries.map(([k, v]) => {
               const def = configuredMap.get(k);
               const isEstimateLocked = shouldLockEstimates && isItemInActiveSprint && (k === 'story_points' || k === 'points');
+              const isRequired = Boolean(def?.required);
+              const canRemove = !isEstimateLocked && !isRequired;
               const draftVal =
                 metaDrafts[k] ??
                 (typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? ''));
@@ -546,21 +588,21 @@ export function ItemDetailsTab({
                         {k}
                       </span>
                       <span className="text-[10px] text-slate-500 font-mono">
-                        ({typeLabel}{def?.label && def.label !== k ? ` • ${def.label}` : ''})
+                        ({typeLabel}{def?.label && def.label !== k ? ` • ${def.label}` : ''}{def?.required ? ' • required' : ''})
                       </span>
                     </div>
-                    {!isEstimateLocked ? (
+                    {canRemove ? (
                       <button
                         type="button"
-                        onClick={() => onRemoveMetaField(k)}
+                        onClick={() => handleRemoveField(k)}
                         className="sm:hidden text-slate-600 hover:text-red-400 transition-colors p-1"
                         title={`Remove ${k}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
-                    ) : (
+                    ) : isEstimateLocked ? (
                       <Lock className="w-3.5 h-3.5 sm:hidden text-amber-500/70" />
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="flex-1 flex flex-col space-y-1">
@@ -570,7 +612,7 @@ export function ItemDetailsTab({
                         disabled={isEstimateLocked}
                         data-testid={`custom-field-enum-${k}`}
                         aria-label={def?.label || k}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
                         <option value="">-- Select {def?.label || k} --</option>
@@ -590,7 +632,7 @@ export function ItemDetailsTab({
                         disabled={isEstimateLocked}
                         data-testid={`custom-field-date-${k}`}
                         aria-label={def?.label || k}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                       />
                     ) : fieldType === 'boolean' || typeof v === 'boolean' ? (
@@ -605,7 +647,7 @@ export function ItemDetailsTab({
                         disabled={isEstimateLocked}
                         data-testid={`custom-field-boolean-${k}`}
                         aria-label={def?.label || k}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
                         <option value="">-- Select {def?.label || k} --</option>
@@ -619,7 +661,7 @@ export function ItemDetailsTab({
                         disabled={isEstimateLocked}
                         data-testid={`custom-field-text-${k}`}
                         aria-label={def?.label || k}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
                         placeholder={def?.placeholder || `Enter ${def?.label || k}...`}
                       />
@@ -627,7 +669,7 @@ export function ItemDetailsTab({
                       <textarea
                         rows={isObjectOrArray ? 4 : 3}
                         value={draftVal}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
                         placeholder={`Enter ${k}...`}
                       />
@@ -645,7 +687,7 @@ export function ItemDetailsTab({
                             : undefined
                         }
                         aria-label={def?.label || k}
-                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        onChange={(e) => handleUpdateField(k, e.target.value)}
                         className={`w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 ${
                           isEstimateLocked ? 'opacity-50 cursor-not-allowed bg-slate-950 text-slate-500' : ''
                         }`}
@@ -681,23 +723,23 @@ export function ItemDetailsTab({
                     )}
                   </div>
 
-                  {!isEstimateLocked ? (
+                  {canRemove ? (
                     <button
                       type="button"
-                      onClick={() => onRemoveMetaField(k)}
+                      onClick={() => handleRemoveField(k)}
                       className="hidden sm:inline-flex p-1.5 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-colors shrink-0 mt-0.5"
                       title={`Remove ${k}`}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
-                  ) : (
+                  ) : isEstimateLocked ? (
                     <div
                       className="hidden sm:inline-flex p-1.5 text-amber-500/70 shrink-0 mt-0.5"
                       title="Estimates locked while sprint is active"
                     >
                       <Lock className="w-3.5 h-3.5" />
                     </div>
-                  )}
+                  ) : null}
                 </div>
               );
             });

@@ -3731,6 +3731,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   isSavingSchema={isSavingSchema}
                   setIsArchiveModalOpen={setIsArchiveModalOpen}
                   projectSlug={projectSlug}
+                  tenantSlug={tenantSlug}
                   activeItems={
                     isAllProjects
                       ? items.filter((it) => {
