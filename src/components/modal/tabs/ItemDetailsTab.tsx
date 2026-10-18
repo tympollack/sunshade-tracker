@@ -9,7 +9,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { WorkItem, ProjectSettings, StatusDefinition } from '@/types/tracker';
+import { WorkItem, ProjectSettings, StatusDefinition, CustomFieldDefinition, normalizeCustomFields } from '@/types/tracker';
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { isGitHubMetadataKey } from '@/lib/github-metadata';
 import { normalizeAssignee } from '@/lib/assignee-utils';
@@ -369,7 +369,7 @@ export function ItemDetailsTab({
         </div>
 
         {/* Suggested Fields */}
-        {effectiveProjectSettings.custom_fields && effectiveProjectSettings.custom_fields.length > 0 && (() => {
+        {(() => {
           const sprintDefs = effectiveProjectSettings?.sprint_settings?.sprints || [];
           const activeSprintDef = sprintDefs.find(
             (s: any) => s.name === metadata.sprint || s.id === metadata.sprint
@@ -380,190 +380,328 @@ export function ItemDetailsTab({
             activeSprintDef?.is_current
           );
 
+          // Configured definitions
+          const allConfigured = normalizeCustomFields(effectiveProjectSettings.custom_fields);
+
+          // Rendered fields determination:
+          // A field is directly rendered if it's already in metadata, OR if it has a rich type definition (enum, date, number, boolean, text, options) or default value.
+          const renderedKeySet = new Set<string>();
+          allConfigured.forEach((def) => {
+            const isTyped =
+              def.type === 'enum' ||
+              def.type === 'date' ||
+              def.type === 'number' ||
+              def.type === 'boolean' ||
+              def.type === 'text' ||
+              Boolean(def.options && def.options.length > 0) ||
+              def.default !== undefined;
+            if (isTyped || def.key in metadata) {
+              renderedKeySet.add(def.key);
+            }
+          });
+          Object.keys(metadata).forEach((k) => renderedKeySet.add(k));
+
+          const suggestedList = allConfigured.filter((def) => !renderedKeySet.has(def.key));
+
+          if (suggestedList.length === 0) return null;
+
           return (
             <div className="flex items-center flex-wrap gap-1.5 pt-1">
               <span className="text-[10px] text-slate-500 font-mono">Suggested fields:</span>
-              {effectiveProjectSettings.custom_fields
-                .filter((f) => !(f in metadata))
-                .map((f) => {
-                  const isEstimateField = f === 'story_points' || f === 'points';
-                  const shouldLock =
-                    effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
-                    effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
-                    effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
-                    true;
-                  const isLocked = shouldLock && isEstimateField && isItemInActiveSprint;
-                  return (
-                    <button
-                      key={f}
-                      type="button"
-                      disabled={isLocked}
-                      onClick={() => !isLocked && onUpdateMetaField(f, '')}
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors flex items-center space-x-1 ${
-                        isLocked
-                          ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
-                          : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-emerald-400'
-                      }`}
-                      title={isLocked ? 'Estimates locked while sprint is active' : `Add ${f} field`}
-                    >
-                      <Plus className="w-2.5 h-2.5" />
-                      <span>{f}</span>
-                    </button>
-                  );
-                })}
+              {suggestedList.map((def) => {
+                const f = def.key;
+                const isEstimateField = f === 'story_points' || f === 'points';
+                const shouldLock =
+                  effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+                  effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+                  effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+                  true;
+                const isLocked = shouldLock && isEstimateField && isItemInActiveSprint;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    disabled={isLocked}
+                    onClick={() => !isLocked && onUpdateMetaField(f, def.default !== undefined ? String(def.default) : '')}
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors flex items-center space-x-1 ${
+                      isLocked
+                        ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-60'
+                        : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-emerald-400'
+                    }`}
+                    title={isLocked ? 'Estimates locked while sprint is active' : `Add ${def.label || f} field`}
+                  >
+                    <Plus className="w-2.5 h-2.5" />
+                    <span>{def.label || f}</span>
+                  </button>
+                );
+              })}
             </div>
           );
         })()}
 
         {/* Fields List */}
         <div className="space-y-2 pt-1">
-          {Object.entries(metadata).length === 0 ? (
-            <p className="text-xs text-slate-600 italic py-1">No custom metadata attributes defined.</p>
-          ) : (
-            (() => {
-              const sprintDefs = effectiveProjectSettings?.sprint_settings?.sprints || [];
-              const activeSprintDef = sprintDefs.find(
-                (s: any) => s.name === metadata.sprint || s.id === metadata.sprint
+          {(() => {
+            const configuredMap = new Map<string, CustomFieldDefinition>();
+            normalizeCustomFields(effectiveProjectSettings.custom_fields).forEach((f) => {
+              if (f.key) configuredMap.set(f.key, f);
+            });
+            (effectiveProjectSettings.custom_metadata_fields || []).forEach((f) => {
+              if (f && f.key && !configuredMap.has(f.key)) {
+                configuredMap.set(f.key, {
+                  key: f.key,
+                  label: f.label || f.key,
+                  type: (f.type as any) || 'string',
+                  options: f.options,
+                  unit: f.unit,
+                  placeholder: f.placeholder,
+                  description: f.description,
+                });
+              }
+            });
+
+            // Determine all entries to render
+            const entriesMap = new Map<string, any>();
+            configuredMap.forEach((def, key) => {
+              const isTyped =
+                def.type === 'enum' ||
+                def.type === 'date' ||
+                def.type === 'number' ||
+                def.type === 'boolean' ||
+                def.type === 'text' ||
+                Boolean(def.options && def.options.length > 0) ||
+                def.default !== undefined;
+
+              if (key in metadata) {
+                entriesMap.set(key, metadata[key]);
+              } else if (isTyped) {
+                entriesMap.set(
+                  key,
+                  def.default !== undefined ? def.default : ''
+                );
+              }
+            });
+
+            Object.entries(metadata).forEach(([k, v]) => {
+              if (!entriesMap.has(k)) {
+                entriesMap.set(k, v);
+              }
+            });
+
+            const renderedEntries = Array.from(entriesMap.entries());
+
+            if (renderedEntries.length === 0) {
+              return (
+                <p className="text-xs text-slate-600 italic py-1">No custom metadata attributes defined.</p>
               );
-              const isItemInActiveSprint = Boolean(
-                activeSprintDef?.is_active ||
-                activeSprintDef?.status === 'active' ||
-                activeSprintDef?.is_current
-              );
+            }
 
-              const shouldLockEstimates =
-                effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
-                effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
-                effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
-                true;
+            const sprintDefs = effectiveProjectSettings?.sprint_settings?.sprints || [];
+            const activeSprintDef = sprintDefs.find(
+              (s: any) => s.name === metadata.sprint || s.id === metadata.sprint
+            );
+            const isItemInActiveSprint = Boolean(
+              activeSprintDef?.is_active ||
+              activeSprintDef?.status === 'active' ||
+              activeSprintDef?.is_current
+            );
 
-              return Object.entries(metadata).map(([k, v]) => {
-                const isEstimateLocked = shouldLockEstimates && isItemInActiveSprint && (k === 'story_points' || k === 'points');
-                const draftVal =
-                  metaDrafts[k] ??
-                  (typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? ''));
-                const isObjectOrArray = typeof v === 'object' && v !== null;
-                const isMultiline =
-                  isObjectOrArray ||
-                  (typeof v === 'string' && (v.includes('\n') || v.length > 60 || k === 'agent_prompt'));
-                const error = metaErrors[k];
-                const typeLabel = isObjectOrArray
-                  ? Array.isArray(v)
-                    ? 'array'
-                    : 'object'
-                  : typeof v;
+            const shouldLockEstimates =
+              effectiveProjectSettings?.sprint_metrics?.lock_estimates_in_active_sprint ??
+              effectiveProjectSettings?.metric_rules?.lock_estimates_in_active_sprint ??
+              effectiveProjectSettings?.sprint_settings?.metric_rules?.lock_estimates_in_active_sprint ??
+              true;
 
-                return (
-                  <div
-                    key={k}
-                    className={`flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl bg-slate-950 border text-xs transition-colors ${
-                      error ? 'border-red-500/60 bg-red-950/10' : 'border-slate-800 hover:border-slate-700/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between sm:w-36 shrink-0 pt-1">
-                      <div className="flex flex-col min-w-0 pr-1">
-                        <span className="font-mono text-slate-300 font-semibold truncate" title={k}>
-                          {k}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono">({typeLabel})</span>
-                      </div>
-                      {!isEstimateLocked ? (
-                        <button
-                          type="button"
-                          onClick={() => onRemoveMetaField(k)}
-                          className="sm:hidden text-slate-600 hover:text-red-400 transition-colors p-1"
-                          title={`Remove ${k}`}
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <Lock className="w-3.5 h-3.5 sm:hidden text-amber-500/70" />
-                      )}
+            return renderedEntries.map(([k, v]) => {
+              const def = configuredMap.get(k);
+              const isEstimateLocked = shouldLockEstimates && isItemInActiveSprint && (k === 'story_points' || k === 'points');
+              const draftVal =
+                metaDrafts[k] ??
+                (typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? ''));
+              const isObjectOrArray = typeof v === 'object' && v !== null;
+              const isMultiline =
+                isObjectOrArray ||
+                (typeof v === 'string' && (v.includes('\n') || v.length > 60 || k === 'agent_prompt'));
+              const error = metaErrors[k];
+              const fieldType = def?.type || (typeof v === 'boolean' ? 'boolean' : typeof v === 'number' ? 'number' : 'string');
+              const isEnum = fieldType === 'enum' || Boolean(def?.options && def.options.length > 0);
+              const typeLabel = isEnum
+                ? 'enum'
+                : isObjectOrArray
+                ? Array.isArray(v)
+                  ? 'array'
+                  : 'object'
+                : fieldType;
+
+              return (
+                <div
+                  key={k}
+                  className={`flex flex-col sm:flex-row sm:items-start gap-2 p-2.5 rounded-xl bg-slate-950 border text-xs transition-colors ${
+                    error ? 'border-red-500/60 bg-red-950/10' : 'border-slate-800 hover:border-slate-700/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between sm:w-36 shrink-0 pt-1">
+                    <div className="flex flex-col min-w-0 pr-1">
+                      <span className="font-mono text-slate-300 font-semibold truncate" title={def?.label || k}>
+                        {k}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        ({typeLabel}{def?.label && def.label !== k ? ` • ${def.label}` : ''})
+                      </span>
                     </div>
-
-                    <div className="flex-1 flex flex-col space-y-1">
-                      {typeof v === 'boolean' ? (
-                        <select
-                          value={String(v)}
-                          onChange={(e) => onUpdateMetaField(k, e.target.value)}
-                          className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                      ) : isMultiline ? (
-                        <textarea
-                          rows={isObjectOrArray ? 4 : 3}
-                          value={draftVal}
-                          onChange={(e) => onUpdateMetaField(k, e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
-                          placeholder={`Enter ${k}...`}
-                        />
-                      ) : (
-                        <input
-                          type={typeof v === 'number' ? 'number' : 'text'}
-                          value={draftVal}
-                          disabled={isEstimateLocked}
-                          title={isEstimateLocked ? 'Estimates locked while sprint is active' : undefined}
-                          data-testid={isEstimateLocked ? 'estimate-locked-input' : undefined}
-                          onChange={(e) => onUpdateMetaField(k, e.target.value)}
-                          className={`w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 ${
-                            isEstimateLocked ? 'opacity-50 cursor-not-allowed bg-slate-950 text-slate-500' : ''
-                          }`}
-                          placeholder={`Enter ${k}...`}
-                        />
-                      )}
-                      {isEstimateLocked && (
-                        <span
-                          data-testid="estimate-locked-tooltip"
-                          title="Estimates locked while sprint is active"
-                          className="text-[10px] text-amber-400 font-mono flex items-center space-x-1 pt-0.5"
-                        >
-                          <Lock className="w-2.5 h-2.5 text-amber-400" />
-                          <span>Estimates locked while sprint is active</span>
-                        </span>
-                      )}
-                      {error && (
-                        <span className="text-[11px] text-red-400 font-mono flex items-center space-x-1">
-                          <span>⚠ {error}</span>
-                        </span>
-                      )}
-                      {isGitHubMetadataKey(k) && draftVal && (
-                        <div className="pt-0.5">
-                          <GitHubBadge
-                            type={k.toLowerCase().includes('commit') || k.toLowerCase() === 'sha' ? 'commit' : 'pr'}
-                            value={draftVal}
-                            prUrl={modalPrUrl || undefined}
-                            repo={modalRepo || undefined}
-                            owner={modalOwner || undefined}
-                            compact
-                          />
-                        </div>
-                      )}
-                    </div>
-
                     {!isEstimateLocked ? (
                       <button
                         type="button"
                         onClick={() => onRemoveMetaField(k)}
-                        className="hidden sm:inline-flex p-1.5 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-colors shrink-0 mt-0.5"
+                        className="sm:hidden text-slate-600 hover:text-red-400 transition-colors p-1"
                         title={`Remove ${k}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     ) : (
-                      <div
-                        className="hidden sm:inline-flex p-1.5 text-amber-500/70 shrink-0 mt-0.5"
-                        title="Estimates locked while sprint is active"
+                      <Lock className="w-3.5 h-3.5 sm:hidden text-amber-500/70" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 flex flex-col space-y-1">
+                    {isEnum ? (
+                      <select
+                        value={draftVal || ''}
+                        disabled={isEstimateLocked}
+                        data-testid={`custom-field-enum-${k}`}
+                        aria-label={def?.label || k}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
-                        <Lock className="w-3.5 h-3.5" />
+                        <option value="">-- Select {def?.label || k} --</option>
+                        {draftVal && !def?.options?.includes(draftVal) && (
+                          <option value={draftVal}>{draftVal}</option>
+                        )}
+                        {(def?.options || []).map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : fieldType === 'date' ? (
+                      <input
+                        type="date"
+                        value={draftVal || ''}
+                        disabled={isEstimateLocked}
+                        data-testid={`custom-field-date-${k}`}
+                        aria-label={def?.label || k}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      />
+                    ) : fieldType === 'boolean' || typeof v === 'boolean' ? (
+                      <select
+                        value={
+                          draftVal === 'true' || draftVal === 'false'
+                            ? draftVal
+                            : typeof v === 'boolean'
+                            ? String(v)
+                            : ''
+                        }
+                        disabled={isEstimateLocked}
+                        data-testid={`custom-field-boolean-${k}`}
+                        aria-label={def?.label || k}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 cursor-pointer"
+                      >
+                        <option value="">-- Select {def?.label || k} --</option>
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    ) : fieldType === 'text' ? (
+                      <textarea
+                        rows={3}
+                        value={draftVal}
+                        disabled={isEstimateLocked}
+                        data-testid={`custom-field-text-${k}`}
+                        aria-label={def?.label || k}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
+                        placeholder={def?.placeholder || `Enter ${def?.label || k}...`}
+                      />
+                    ) : isMultiline ? (
+                      <textarea
+                        rows={isObjectOrArray ? 4 : 3}
+                        value={draftVal}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 custom-scrollbar resize-y leading-relaxed"
+                        placeholder={`Enter ${k}...`}
+                      />
+                    ) : (
+                      <input
+                        type={fieldType === 'number' || typeof v === 'number' ? 'number' : 'text'}
+                        value={draftVal}
+                        disabled={isEstimateLocked}
+                        title={isEstimateLocked ? 'Estimates locked while sprint is active' : undefined}
+                        data-testid={
+                          isEstimateLocked
+                            ? 'estimate-locked-input'
+                            : fieldType === 'number' || typeof v === 'number'
+                            ? `custom-field-number-${k}`
+                            : undefined
+                        }
+                        aria-label={def?.label || k}
+                        onChange={(e) => onUpdateMetaField(k, e.target.value)}
+                        className={`w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-lg text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 ${
+                          isEstimateLocked ? 'opacity-50 cursor-not-allowed bg-slate-950 text-slate-500' : ''
+                        }`}
+                        placeholder={def?.placeholder || `Enter ${k}...`}
+                      />
+                    )}
+                    {isEstimateLocked && (
+                      <span
+                        data-testid="estimate-locked-tooltip"
+                        title="Estimates locked while sprint is active"
+                        className="text-[10px] text-amber-400 font-mono flex items-center space-x-1 pt-0.5"
+                      >
+                        <Lock className="w-2.5 h-2.5 text-amber-400" />
+                        <span>Estimates locked while sprint is active</span>
+                      </span>
+                    )}
+                    {error && (
+                      <span className="text-[11px] text-red-400 font-mono flex items-center space-x-1">
+                        <span>⚠ {error}</span>
+                      </span>
+                    )}
+                    {isGitHubMetadataKey(k) && draftVal && (
+                      <div className="pt-0.5">
+                        <GitHubBadge
+                          type={k.toLowerCase().includes('commit') || k.toLowerCase() === 'sha' ? 'commit' : 'pr'}
+                          value={draftVal}
+                          prUrl={modalPrUrl || undefined}
+                          repo={modalRepo || undefined}
+                          owner={modalOwner || undefined}
+                          compact
+                        />
                       </div>
                     )}
                   </div>
-                );
-              });
-            })()
-          )}
+
+                  {!isEstimateLocked ? (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveMetaField(k)}
+                      className="hidden sm:inline-flex p-1.5 rounded text-slate-600 hover:text-red-400 hover:bg-slate-900 transition-colors shrink-0 mt-0.5"
+                      title={`Remove ${k}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <div
+                      className="hidden sm:inline-flex p-1.5 text-amber-500/70 shrink-0 mt-0.5"
+                      title="Estimates locked while sprint is active"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
         </div>
 
         {/* Add Field Inputs */}

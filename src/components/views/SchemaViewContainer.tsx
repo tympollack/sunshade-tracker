@@ -81,6 +81,7 @@ export function SchemaViewContainer(props: SchemaViewContainerProps) {
         activeItems={activeItems}
         isSaving={isSavingSchema}
         readOnly={isReadOnly}
+        availableProjects={allProjects}
       />
 
       {/* Danger Zone: Archive Project */}

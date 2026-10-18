@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { ProjectSettings, HierarchyLevel, StatusDefinition } from '@/types/tracker';
+import { ProjectSettings, HierarchyLevel, StatusDefinition, CustomField } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 
 export const HexColorRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -139,12 +139,12 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
   }
 
   // 5. Custom Fields
-  let normalizedCustomFields: string[] = [];
+  let normalizedCustomFields: CustomField[] = [];
   if (Array.isArray(raw.custom_fields)) {
     normalizedCustomFields = raw.custom_fields
       .map((f: any) => {
         if (typeof f === 'string') return f.trim();
-        if (f && typeof f === 'object' && typeof f.key === 'string') return f.key.trim();
+        if (f && typeof f === 'object' && typeof f.key === 'string' && f.key.trim()) return f;
         return '';
       })
       .filter(Boolean);
