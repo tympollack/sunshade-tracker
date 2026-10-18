@@ -12,6 +12,7 @@ import {
   AlertCircle,
   ChevronsLeftRight,
   X,
+  Copy,
 } from 'lucide-react';
 import { ProjectSettings, WorkItem } from '@/types/tracker';
 import { lintProjectSettings, SchemaLintError } from '@/lib/project-settings-schema';
@@ -28,6 +29,7 @@ export interface ProjectSchemaViewProps {
   isSaving?: boolean;
   readOnly?: boolean;
   initialMode?: SchemaViewMode;
+  availableProjects?: Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>;
 }
 
 export function ProjectSchemaView({
@@ -38,6 +40,7 @@ export function ProjectSchemaView({
   isSaving = false,
   readOnly = false,
   initialMode = 'visual',
+  availableProjects = [],
 }: ProjectSchemaViewProps) {
   // Unified in-memory draft state
   const [draftData, setDraftData] = useState<ProjectSettings>(settings);
@@ -48,6 +51,74 @@ export function ProjectSchemaView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [collapseLevel, setCollapseLevel] = useState<number>(3);
+  const [fetchedProjects, setFetchedProjects] = useState<Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>>([]);
+
+  useEffect(() => {
+    if (availableProjects && availableProjects.length > 0) return;
+    let isCancelled = false;
+    fetch('/api/v1/projects')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isCancelled && data?.projects) {
+          setFetchedProjects(data.projects);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isCancelled = true;
+    };
+  }, [availableProjects]);
+
+  const allCandidateProjects = availableProjects && availableProjects.length > 0 ? availableProjects : fetchedProjects;
+  const availableSiblingProjects = useMemo(() => {
+    return allCandidateProjects.filter((p) => p.slug !== projectId && p.id !== projectId);
+  }, [allCandidateProjects, projectId]);
+
+  const handleCopySchemaFromProject = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const targetKey = e.target.value;
+    if (!targetKey) return;
+    const targetProj = availableSiblingProjects.find((p) => p.slug === targetKey || p.id === targetKey);
+    if (!targetProj) return;
+
+    const confirmed = window.confirm(
+      `Warning: Copying schema from "${targetProj.name}" will replace unsaved schema edits in this editor with its statuses, hierarchy levels, and custom fields.\n\nDo you want to proceed?`
+    );
+    if (!confirmed) {
+      e.target.value = '';
+      return;
+    }
+
+    try {
+      let sourceSettings = targetProj.settings;
+      if (!sourceSettings || !sourceSettings.statuses || !sourceSettings.hierarchy) {
+        const res = await fetch(`/api/v1/projects/${targetProj.id || targetProj.slug}/settings`);
+        if (res.ok) {
+          const data = await res.json();
+          sourceSettings = data.settings || data;
+        }
+      }
+
+      if (sourceSettings) {
+        const updatedDraft: ProjectSettings = {
+          ...draftData,
+          statuses: sourceSettings.statuses || draftData.statuses,
+          hierarchy: sourceSettings.hierarchy || draftData.hierarchy,
+          custom_fields: sourceSettings.custom_fields || draftData.custom_fields,
+          custom_metadata_fields: sourceSettings.custom_metadata_fields || draftData.custom_metadata_fields,
+          work_metric_config: sourceSettings.work_metric_config || draftData.work_metric_config,
+        };
+        setDraftData(updatedDraft);
+        setRawText(JSON.stringify(updatedDraft, null, 2));
+        setRawError(null);
+        setSyntaxToast(null);
+        setSaveError(null);
+      }
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to fetch source project settings.');
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const savedBaselineJsonRef = useRef(JSON.stringify(settings, null, 2));
   const lastObservedPropSettingsRef = useRef(JSON.stringify(settings, null, 2));
@@ -314,8 +385,31 @@ export function ProjectSchemaView({
           )}
         </div>
 
-        {/* Pinned Action Buttons: [ Format ], [ Reset ], [ Save Schema ] */}
+        {/* Pinned Action Buttons: [ Copy Schema From... ], [ Format ], [ Reset ], [ Save Schema ] */}
         <div className="flex items-center space-x-2">
+          {/* Sibling Projects Dropdown: Copy Schema From... */}
+          {availableSiblingProjects.length > 0 && !readOnly && (
+            <div className="relative inline-flex items-center">
+              <select
+                value=""
+                onChange={handleCopySchemaFromProject}
+                disabled={isSaving}
+                aria-label="Copy Schema From Project"
+                data-testid="copy-schema-from-project-select"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-medium focus:outline-none focus:border-emerald-500 cursor-pointer transition-colors disabled:opacity-50"
+              >
+                <option value="" disabled>
+                  Copy Schema From...
+                </option>
+                {availableSiblingProjects.map((p) => (
+                  <option key={p.id || p.slug} value={p.slug || p.id}>
+                    {p.name} ({p.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Format button pinned across modes */}
           <button
             type="button"
