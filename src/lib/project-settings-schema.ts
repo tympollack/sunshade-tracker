@@ -42,13 +42,16 @@ export const CustomFieldSchema = z.union([
     .object({
       key: z.string().min(1, 'Field key is required'),
       label: z.string().optional(),
-      type: z.enum(['number', 'string', 'enum', 'boolean', 'date']).optional(),
+      type: z.enum(['number', 'string', 'text', 'enum', 'boolean', 'date']).optional(),
       options: z.array(z.string()).optional(),
       unit: z.string().optional(),
       placeholder: z.string().optional(),
       description: z.string().optional(),
+      default: z.any().optional(),
+      required: z.boolean().optional(),
     })
     .passthrough(),
+  z.record(z.union([z.array(z.string()), z.any()])),
 ]);
 
 export const WorkMetricConfigSchema = z.object({

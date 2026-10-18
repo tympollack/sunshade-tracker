@@ -121,8 +121,14 @@ export async function POST(req: NextRequest) {
 
         const sprintItems = (items || []).filter((item: any) => {
           const itemSprint = item.metadata?.sprint || item.metadata?.sprint_id;
+          if (itemSprint) {
+            return itemSprint === sprintIdentifier || itemSprint === sprintName;
+          }
+          if (item.metadata && ('sprint' in item.metadata || 'sprint_id' in item.metadata)) {
+            return false;
+          }
           const directSprint = item.sprint_id;
-          return itemSprint === sprintIdentifier || itemSprint === sprintName || directSprint === sprintIdentifier || directSprint === sprintName;
+          return directSprint === sprintIdentifier || directSprint === sprintName;
         });
 
         // Filter out completed items using comprehensive completion set

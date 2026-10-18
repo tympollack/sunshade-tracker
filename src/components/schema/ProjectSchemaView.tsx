@@ -12,32 +12,44 @@ import {
   AlertCircle,
   ChevronsLeftRight,
   X,
+  Copy,
 } from 'lucide-react';
 import { ProjectSettings, WorkItem } from '@/types/tracker';
 import { lintProjectSettings, SchemaLintError } from '@/lib/project-settings-schema';
 import { ProjectSchemaEditor } from './ProjectSchemaEditor';
 import { JsonTreeNode } from './JsonTreeNode';
+import {
+  SchemaKeyCascadeModal,
+  OrphanStatusEntry,
+  OrphanHierarchyEntry,
+} from './SchemaKeyCascadeModal';
 
 export type SchemaViewMode = 'visual' | 'tree' | 'raw';
 
 export interface ProjectSchemaViewProps {
   settings: ProjectSettings;
   projectId?: string | null;
+  tenantSlug?: string;
   onSave: (updatedSettings: ProjectSettings) => Promise<void> | void;
   activeItems?: WorkItem[];
   isSaving?: boolean;
   readOnly?: boolean;
   initialMode?: SchemaViewMode;
+  availableProjects?: Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>;
+  onMigrateItems?: (migrations: Array<{ ids: string[]; updates: Partial<WorkItem> }>) => Promise<void>;
 }
 
 export function ProjectSchemaView({
   settings,
   projectId,
+  tenantSlug,
   onSave,
   activeItems = [],
   isSaving = false,
   readOnly = false,
   initialMode = 'visual',
+  availableProjects = [],
+  onMigrateItems,
 }: ProjectSchemaViewProps) {
   // Unified in-memory draft state
   const [draftData, setDraftData] = useState<ProjectSettings>(settings);
@@ -48,6 +60,85 @@ export function ProjectSchemaView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [collapseLevel, setCollapseLevel] = useState<number>(3);
+  const [fetchedProjects, setFetchedProjects] = useState<Array<{ id: string; slug: string; name: string; settings?: ProjectSettings }>>([]);
+
+  // Cascade remap migration state
+  const [isCascadeModalOpen, setIsCascadeModalOpen] = useState(false);
+  const [isCascadeMigrating, setIsCascadeMigrating] = useState(false);
+  const [pendingPayloadToSave, setPendingPayloadToSave] = useState<ProjectSettings | null>(null);
+  const [pendingOrphanStatuses, setPendingOrphanStatuses] = useState<OrphanStatusEntry[]>([]);
+  const [pendingOrphanHierarchies, setPendingOrphanHierarchies] = useState<OrphanHierarchyEntry[]>([]);
+
+  useEffect(() => {
+    if (availableProjects && availableProjects.length > 0) return;
+    let isCancelled = false;
+    const headers: Record<string, string> = {};
+    if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+    fetch('/api/v1/projects', { headers })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!isCancelled && data?.projects) {
+          setFetchedProjects(data.projects);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isCancelled = true;
+    };
+  }, [availableProjects, tenantSlug]);
+
+  const allCandidateProjects = availableProjects && availableProjects.length > 0 ? availableProjects : fetchedProjects;
+  const availableSiblingProjects = useMemo(() => {
+    return allCandidateProjects.filter((p) => p.slug !== projectId && p.id !== projectId);
+  }, [allCandidateProjects, projectId]);
+
+  const handleCopySchemaFromProject = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const targetKey = e.target.value;
+    if (!targetKey) return;
+    const targetProj = availableSiblingProjects.find((p) => p.slug === targetKey || p.id === targetKey);
+    if (!targetProj) return;
+
+    const confirmed = window.confirm(
+      `Warning: Copying schema from "${targetProj.name}" will replace unsaved schema edits in this editor with its statuses, hierarchy levels, and custom fields.\n\nDo you want to proceed?`
+    );
+    if (!confirmed) {
+      e.target.value = '';
+      return;
+    }
+
+    try {
+      let sourceSettings = targetProj.settings;
+      if (!sourceSettings || !sourceSettings.statuses || !sourceSettings.hierarchy) {
+        const headers: Record<string, string> = {};
+        if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+        const res = await fetch(`/api/v1/projects/${targetProj.id || targetProj.slug}/settings`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          sourceSettings = data.settings || data;
+        }
+      }
+
+      if (sourceSettings) {
+        const updatedDraft: ProjectSettings = {
+          ...draftData,
+          statuses: sourceSettings.statuses || draftData.statuses,
+          hierarchy: sourceSettings.hierarchy || draftData.hierarchy,
+          custom_fields: sourceSettings.custom_fields || draftData.custom_fields,
+          custom_metadata_fields: sourceSettings.custom_metadata_fields || draftData.custom_metadata_fields,
+          work_metric_config: sourceSettings.work_metric_config || draftData.work_metric_config,
+        };
+        setDraftData(updatedDraft);
+        setRawText(JSON.stringify(updatedDraft, null, 2));
+        setRawError(null);
+        setSyntaxToast(null);
+        setSaveError(null);
+      }
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to fetch source project settings.');
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const savedBaselineJsonRef = useRef(JSON.stringify(settings, null, 2));
   const lastObservedPropSettingsRef = useRef(JSON.stringify(settings, null, 2));
@@ -225,6 +316,49 @@ export function ProjectSchemaView({
       return;
     }
 
+    // Check for cascade migration: removed statuses or hierarchy types affecting activeItems
+    const newStatuses = Array.isArray(payloadToSave.statuses) ? payloadToSave.statuses : [];
+    const newHierarchy = Array.isArray(payloadToSave.hierarchy) ? payloadToSave.hierarchy : [];
+
+    const removedStatuses = (settings.statuses || []).filter(
+      (orig) => !newStatuses.some((s) => s.id === orig.id)
+    );
+    const removedHierarchy = (settings.hierarchy || []).filter(
+      (orig) => !newHierarchy.some((h) => h.type === orig.type)
+    );
+
+    const orphanStatuses: OrphanStatusEntry[] =
+      activeItems.length > 0
+        ? removedStatuses
+            .map((oldStatus) => ({
+              oldStatus,
+              items: activeItems.filter((it) => it.status === oldStatus.id),
+            }))
+            .filter((entry) => entry.items.length > 0)
+        : [];
+
+    const orphanHierarchies: OrphanHierarchyEntry[] =
+      activeItems.length > 0
+        ? removedHierarchy
+            .map((oldHierarchy) => ({
+              oldHierarchy,
+              items: activeItems.filter((it) => it.item_type === oldHierarchy.type),
+            }))
+            .filter((entry) => entry.items.length > 0)
+        : [];
+
+    if (orphanStatuses.length > 0 || orphanHierarchies.length > 0) {
+      setPendingPayloadToSave(payloadToSave);
+      setPendingOrphanStatuses(orphanStatuses);
+      setPendingOrphanHierarchies(orphanHierarchies);
+      setIsCascadeModalOpen(true);
+      return;
+    }
+
+    await executeSave(payloadToSave);
+  };
+
+  const executeSave = async (payloadToSave: ProjectSettings) => {
     try {
       await onSave(payloadToSave);
       const savedFormatted = JSON.stringify(payloadToSave, null, 2);
@@ -237,6 +371,85 @@ export function ProjectSchemaView({
       const msg = err.message || 'Failed to save schema settings.';
       setSaveError(msg);
       setRawError(msg);
+    }
+  };
+
+  const handleConfirmCascade = async ({
+    statusRemaps,
+    hierarchyRemaps,
+  }: {
+    statusRemaps: Record<string, string>;
+    hierarchyRemaps: Record<string, string>;
+  }) => {
+    if (!pendingPayloadToSave) return;
+    setIsCascadeMigrating(true);
+    setSaveError(null);
+
+    try {
+      // 1. Remap status on orphan items
+      for (const [oldStatusId, newStatusId] of Object.entries(statusRemaps)) {
+        const affectedItems = pendingOrphanStatuses.find((e) => e.oldStatus.id === oldStatusId)?.items || [];
+        const ids = affectedItems.map((it) => it.id);
+        if (ids.length > 0) {
+          if (onMigrateItems) {
+            await onMigrateItems([{ ids, updates: { status: newStatusId } }]);
+          } else {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (tenantSlug) {
+              headers['x-tenant-slug'] = tenantSlug;
+            }
+            const res = await fetch('/api/v1/items/bulk', {
+              method: 'PATCH',
+              headers,
+              body: JSON.stringify({ ids, updates: { status: newStatusId } }),
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => null);
+              throw new Error(errData?.error || `Failed to remap status for ${ids.length} items (HTTP ${res.status}).`);
+            }
+          }
+          affectedItems.forEach((it) => {
+            it.status = newStatusId;
+          });
+        }
+      }
+
+      // 2. Remap hierarchy level on orphan items
+      for (const [oldType, newType] of Object.entries(hierarchyRemaps)) {
+        const affectedItems = pendingOrphanHierarchies.find((e) => e.oldHierarchy.type === oldType)?.items || [];
+        const ids = affectedItems.map((it) => it.id);
+        if (ids.length > 0) {
+          if (onMigrateItems) {
+            await onMigrateItems([{ ids, updates: { item_type: newType } }]);
+          } else {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (tenantSlug) {
+              headers['x-tenant-slug'] = tenantSlug;
+            }
+            const res = await fetch('/api/v1/items/bulk', {
+              method: 'PATCH',
+              headers,
+              body: JSON.stringify({ ids, updates: { item_type: newType } }),
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => null);
+              throw new Error(errData?.error || `Failed to remap item type for ${ids.length} items (HTTP ${res.status}).`);
+            }
+          }
+          affectedItems.forEach((it) => {
+            it.item_type = newType;
+          });
+        }
+      }
+
+      // 3. Persist new schema
+      await executeSave(pendingPayloadToSave);
+      setIsCascadeModalOpen(false);
+      setPendingPayloadToSave(null);
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed during cascade migration.');
+    } finally {
+      setIsCascadeMigrating(false);
     }
   };
 
@@ -314,8 +527,31 @@ export function ProjectSchemaView({
           )}
         </div>
 
-        {/* Pinned Action Buttons: [ Format ], [ Reset ], [ Save Schema ] */}
+        {/* Pinned Action Buttons: [ Copy Schema From... ], [ Format ], [ Reset ], [ Save Schema ] */}
         <div className="flex items-center space-x-2">
+          {/* Sibling Projects Dropdown: Copy Schema From... */}
+          {availableSiblingProjects.length > 0 && !readOnly && (
+            <div className="relative inline-flex items-center">
+              <select
+                value=""
+                onChange={handleCopySchemaFromProject}
+                disabled={isSaving}
+                aria-label="Copy Schema From Project"
+                data-testid="copy-schema-from-project-select"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-medium focus:outline-none focus:border-emerald-500 cursor-pointer transition-colors disabled:opacity-50"
+              >
+                <option value="" disabled>
+                  Copy Schema From...
+                </option>
+                {availableSiblingProjects.map((p) => (
+                  <option key={p.id || p.slug} value={p.slug || p.id}>
+                    {p.name} ({p.slug})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Format button pinned across modes */}
           <button
             type="button"
@@ -488,6 +724,22 @@ export function ProjectSchemaView({
           />
         )}
       </div>
+
+      {/* Schema Key Cascade Remap Modal */}
+      {isCascadeModalOpen && pendingPayloadToSave && (
+        <SchemaKeyCascadeModal
+          isOpen={isCascadeModalOpen}
+          onClose={() => {
+            setIsCascadeModalOpen(false);
+            setPendingPayloadToSave(null);
+          }}
+          orphanStatuses={pendingOrphanStatuses}
+          orphanHierarchies={pendingOrphanHierarchies}
+          newSettings={pendingPayloadToSave}
+          onConfirmCascade={handleConfirmCascade}
+          isMigrating={isCascadeMigrating}
+        />
+      )}
     </div>
   );
 }

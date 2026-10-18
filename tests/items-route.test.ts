@@ -1283,4 +1283,105 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     expect(json.items).toHaveLength(1);
     expect(json.items[0].id).toBe('portfolio-task-target');
   });
+
+  it('reconciles direct sprint_id into metadata and recovers without sprint_id on schema cache error during PATCH', async () => {
+    const existingItem = {
+      id: 'task-direct-sprint',
+      tenant_id: mockTenant.id,
+      project_id: mockProject.id,
+      item_type: 'task',
+      status: 'not_started',
+      title: 'Direct Sprint Task',
+      order_index: 1000,
+      metadata: { sprint: 'Old Sprint', sprint_id: 'old-sprint-id' },
+    };
+
+    const mockProjectWithSprints = {
+      ...mockProject,
+      settings: {
+        ...mockProject.settings,
+        sprint_settings: {
+          sprints: [
+            { id: 'sprint-new-uuid', name: 'Sprint New (Planned)', status: 'planned', is_active: false },
+          ],
+        },
+      },
+    };
+
+    const attemptedUpdates: any[] = [];
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        const b: any = { eq: vi.fn(() => b), single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }) };
+        return { select: vi.fn(() => b) } as any;
+      }
+      if (table === 'projects') {
+        const b: any = {
+          eq: vi.fn(() => b),
+          single: vi.fn().mockResolvedValue({ data: mockProjectWithSprints, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: mockProjectWithSprints, error: null }),
+        };
+        return { select: vi.fn(() => b) } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: existingItem, error: null }),
+              }),
+            }),
+          }),
+          update: vi.fn().mockImplementation((fields: any) => {
+            attemptedUpdates.push(fields);
+            if ('sprint_id' in fields) {
+              return {
+                eq: vi.fn().mockReturnThis(),
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: null,
+                    error: { message: "Could not find the 'sprint_id' column of 'work_items' in the schema cache" },
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: vi.fn().mockReturnThis(),
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { ...existingItem, ...fields },
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items', {
+      method: 'PATCH',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'task-direct-sprint',
+        sprint_id: 'sprint-new-uuid',
+      }),
+    });
+
+    const res = await patchItemHandler(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    // Verified 2 attempts: first with sprint_id, second with metadata only
+    expect(attemptedUpdates.length).toBe(2);
+    expect(attemptedUpdates[0].sprint_id).toBe('sprint-new-uuid');
+    expect(attemptedUpdates[1].sprint_id).toBeUndefined();
+    expect(attemptedUpdates[1].metadata.sprint).toBe('Sprint New (Planned)');
+    expect(attemptedUpdates[1].metadata.sprint_id).toBe('sprint-new-uuid');
+    expect(json.item.metadata.sprint).toBe('Sprint New (Planned)');
+  });
 });

@@ -1,4 +1,4 @@
-import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition, CustomField } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 
 export interface ProjectLike {
@@ -120,7 +120,9 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
   const mergedSprints: any[] = [];
 
   projects.forEach((proj) => {
-    (proj.settings?.custom_fields || []).forEach((f: string) => mergedFields.add(f));
+    (proj.settings?.custom_fields || []).forEach((f: CustomField) =>
+      mergedFields.add(typeof f === 'string' ? f : f.key)
+    );
     (proj.settings?.custom_metadata_fields || []).forEach((cmf: CustomMetadataFieldDefinition) => {
       if (!mergedCustomMetaFields.some((m) => m.key === cmf.key)) {
         mergedCustomMetaFields.push(cmf);

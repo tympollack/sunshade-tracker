@@ -9,6 +9,7 @@ import {
   reconcileSprintMetadata,
   isMovingIntoActiveSprint,
   handleBulkUpdateItems,
+  isMissingSprintIdColumnError,
 } from '@/lib/bulk-items';
 import { ProjectSettings } from '@/types/tracker';
 import { supabaseAdmin } from '@/lib/db';
@@ -1152,6 +1153,236 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(appliedFields.sprint_id).toBe('sprint-planned-uuid-2');
       expect(appliedFields.metadata.sprint).toBe('Sprint 2 (Planned)');
       expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
+    });
+
+    it('identifies missing sprint_id column PostgREST schema cache errors accurately', () => {
+      expect(
+        isMissingSprintIdColumnError({
+          message: "Could not find the 'sprint_id' column of 'work_items' in the schema cache",
+        })
+      ).toBe(true);
+      expect(
+        isMissingSprintIdColumnError({
+          message: 'column "sprint_id" of relation "work_items" does not exist',
+          code: '42703',
+        })
+      ).toBe(true);
+      expect(
+        isMissingSprintIdColumnError({
+          message: 'Unknown field',
+          details: 'sprint_id column is missing in schema cache',
+        })
+      ).toBe(true);
+      expect(
+        isMissingSprintIdColumnError({
+          code: 'PGRST204',
+          message: 'Field sprint_id not recognized',
+        })
+      ).toBe(true);
+      expect(
+        isMissingSprintIdColumnError({
+          message: 'violates foreign key constraint',
+        })
+      ).toBe(false);
+      expect(
+        isMissingSprintIdColumnError(null)
+      ).toBe(false);
+    });
+
+    it('falls back to updating metadata without sprint_id when PostgREST schema cache lacks sprint_id column (Modality A)', () => {
+      return new Promise<void>(async (resolve) => {
+        const tenantId = 'test-tenant-uuid';
+        const projectId = 'test-proj-uuid';
+        const attemptedCalls: any[] = [];
+
+        (supabaseAdmin.from as any).mockImplementation((table: string) => {
+          if (table === 'projects') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: projectId, settings: mockProjectSettings },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'sprints') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockResolvedValue({
+                data: mockProjectSettings.sprint_settings?.sprints || [],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'work_items') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'item-missing-column',
+                    title: 'Item moving between sprints',
+                    project_id: projectId,
+                    status: 'not_started',
+                    metadata: {
+                      sprint: 'Sprint 1 (Active)',
+                      sprint_id: 'sprint-active-uuid-1',
+                    },
+                  },
+                ],
+                error: null,
+              }),
+              update: vi.fn().mockImplementation((fields: any) => {
+                attemptedCalls.push(fields);
+                // First call with sprint_id fails due to missing column in schema cache
+                if ('sprint_id' in fields) {
+                  return {
+                    eq: vi.fn().mockReturnThis(),
+                    select: vi.fn().mockReturnValue({
+                      single: vi.fn().mockResolvedValue({
+                        data: null,
+                        error: {
+                          message: "Could not find the 'sprint_id' column of 'work_items' in the schema cache",
+                        },
+                      }),
+                    }),
+                  };
+                }
+                // Retry without sprint_id succeeds
+                return {
+                  eq: vi.fn().mockReturnThis(),
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'item-missing-column', ...fields },
+                      error: null,
+                    }),
+                  }),
+                };
+              }),
+            };
+          }
+          return {};
+        });
+
+        const res = await handleBulkUpdateItems(tenantId, {
+          ids: ['item-missing-column'],
+          updates: {
+            sprint_id: 'sprint-planned-uuid-2',
+            metadata: { sprint: 'Sprint 2 (Planned)' },
+          },
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.updated_count).toBe(1);
+        expect(attemptedCalls.length).toBe(2);
+        // First attempt had sprint_id
+        expect(attemptedCalls[0].sprint_id).toBe('sprint-planned-uuid-2');
+        // Second attempt stripped sprint_id and preserved metadata
+        expect(attemptedCalls[1].sprint_id).toBeUndefined();
+        expect(attemptedCalls[1].metadata.sprint).toBe('Sprint 2 (Planned)');
+        expect(attemptedCalls[1].metadata.sprint_id).toBe('sprint-planned-uuid-2');
+        resolve();
+      });
+    });
+
+    it('falls back to updating metadata without sprint_id when PostgREST schema cache lacks sprint_id column (Modality B)', () => {
+      return new Promise<void>(async (resolve) => {
+        const tenantId = 'test-tenant-uuid';
+        const projectId = 'test-proj-uuid';
+        const attemptedCalls: any[] = [];
+
+        (supabaseAdmin.from as any).mockImplementation((table: string) => {
+          if (table === 'projects') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: projectId, settings: mockProjectSettings },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'sprints') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockResolvedValue({
+                data: mockProjectSettings.sprint_settings?.sprints || [],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'work_items') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'item-modality-b',
+                    title: 'Heterogeneous item moving',
+                    project_id: projectId,
+                    status: 'not_started',
+                    metadata: {
+                      sprint: 'Sprint 1 (Active)',
+                      sprint_id: 'sprint-active-uuid-1',
+                    },
+                  },
+                ],
+                error: null,
+              }),
+              update: vi.fn().mockImplementation((fields: any) => {
+                attemptedCalls.push(fields);
+                if ('sprint_id' in fields) {
+                  return {
+                    eq: vi.fn().mockReturnThis(),
+                    select: vi.fn().mockReturnValue({
+                      single: vi.fn().mockResolvedValue({
+                        data: null,
+                        error: {
+                          message: "Could not find the 'sprint_id' column of 'work_items' in the schema cache",
+                        },
+                      }),
+                    }),
+                  };
+                }
+                return {
+                  eq: vi.fn().mockReturnThis(),
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'item-modality-b', ...fields },
+                      error: null,
+                    }),
+                  }),
+                };
+              }),
+            };
+          }
+          return {};
+        });
+
+        const res = await handleBulkUpdateItems(tenantId, {
+          items: [
+            {
+              id: 'item-modality-b',
+              sprint_id: 'sprint-planned-uuid-2',
+              metadata: { sprint: 'Sprint 2 (Planned)' },
+            },
+          ],
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.updated_count).toBe(1);
+        expect(attemptedCalls.length).toBe(2);
+        expect(attemptedCalls[0].sprint_id).toBe('sprint-planned-uuid-2');
+        expect(attemptedCalls[1].sprint_id).toBeUndefined();
+        expect(attemptedCalls[1].metadata.sprint).toBe('Sprint 2 (Planned)');
+        expect(attemptedCalls[1].metadata.sprint_id).toBe('sprint-planned-uuid-2');
+        resolve();
+      });
     });
   });
 

@@ -9,6 +9,7 @@ import {
   WorkItem,
   WorkMetricConfig,
   getWorkMetricConfig,
+  normalizeCustomField,
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 import { ProjectSettingsSchema, lintProjectSettings } from '@/lib/project-settings-schema';
@@ -96,7 +97,9 @@ export function ProjectSchemaEditor({
       }
     });
 
-    (settings.custom_fields || []).forEach((key) => {
+    (settings.custom_fields || []).forEach((fieldItem) => {
+      const def = normalizeCustomField(fieldItem);
+      const key = def.key;
       if (nonNumericStandardFields.has(key.toLowerCase())) {
         return;
       }
@@ -104,8 +107,8 @@ export function ProjectSchemaEditor({
         seenKeys.add(key);
         result.push({
           key,
-          label: key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-          unit_label: 'pts',
+          label: def.label || key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          unit_label: def.unit || 'pts',
         });
       }
     });
@@ -434,14 +437,17 @@ export function ProjectSchemaEditor({
               Custom Fields
             </h4>
             <div className="flex flex-wrap gap-1.5">
-              {(settings.custom_fields || []).map((f: string) => (
-                <span
-                  key={f}
-                  className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
-                >
-                  {f}
-                </span>
-              ))}
+              {(settings.custom_fields || []).map((fieldItem) => {
+                const def = normalizeCustomField(fieldItem);
+                return (
+                  <span
+                    key={def.key}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
+                  >
+                    {def.key}{def.type && def.type !== 'string' ? ` (${def.type})` : ''}
+                  </span>
+                );
+              })}
               {(!settings.custom_fields || settings.custom_fields.length === 0) && (
                 <span className="text-xs text-slate-500 italic">None defined</span>
               )}

@@ -431,5 +431,84 @@ describe('TASK-TRK-DIFF-CALCULATION-SERVICE: Snapshot Delta Computation Engine',
       expect(data).toBeDefined();
       expect(data?.base_snapshot?.total_points).toBe(5); // Rolled back from 8 to 5
     });
+
+    it('treats metadata sprint as authoritative over stale direct sprint_id column', async () => {
+      const mockSnapshots = [
+        {
+          id: 'snap-baseline',
+          sprint_id: 'sprint-q4',
+          snapshot_type: 'commitment_baseline',
+          committed_points: 0,
+          captured_at: '2026-10-01T00:00:00Z',
+          assignee_breakdown: { items: [] },
+        },
+      ];
+
+      const mockLiveItems = [
+        // Item 1: metadata says sprint-q4, stale relational column says sprint-q3 -> SHOULD be in sprint-q4
+        {
+          id: 'item-authoritative-q4',
+          title: 'Authoritative Q4',
+          status: 'not_started',
+          sprint_id: 'sprint-q3',
+          metadata: { sprint: 'sprint-q4', sprint_id: 'sprint-q4', story_points: 3 },
+        },
+        // Item 2: metadata says sprint-q3, stale relational column says sprint-q4 -> should NOT be in sprint-q4
+        {
+          id: 'item-moved-to-q3',
+          title: 'Moved to Q3',
+          status: 'not_started',
+          sprint_id: 'sprint-q4',
+          metadata: { sprint: 'sprint-q3', sprint_id: 'sprint-q3', story_points: 5 },
+        },
+        // Item 3: metadata cleared to backlog, stale relational column says sprint-q4 -> should NOT be in sprint-q4
+        {
+          id: 'item-moved-to-backlog',
+          title: 'Moved to Backlog',
+          status: 'not_started',
+          sprint_id: 'sprint-q4',
+          metadata: { sprint: null, story_points: 2 },
+        },
+      ];
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'sprint_snapshots') {
+          const snapQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => snapQueryBuilder),
+            or: vi.fn().mockImplementation(() => snapQueryBuilder),
+            in: vi.fn().mockImplementation(() => snapQueryBuilder),
+            order: vi.fn().mockResolvedValue({ data: mockSnapshots, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(snapQueryBuilder) };
+        }
+        if (table === 'sprints') {
+          const sprintQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => sprintQueryBuilder),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'sprint-q4', name: 'Sprint Q4' }, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(sprintQueryBuilder) };
+        }
+        if (table === 'work_items') {
+          const itemsQueryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => itemsQueryBuilder),
+            is: vi.fn().mockResolvedValue({ data: mockLiveItems, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(itemsQueryBuilder) };
+        }
+        return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
+      });
+
+      const { data, error } = await SprintDiffService.getSprintSnapshotDiff('tenant-1', 'sprint-q4', {
+        baseSnapshotId: 'snap-baseline',
+        targetSnapshotId: 'live',
+      });
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      // Target snapshot should contain exclusively item-authoritative-q4
+      expect(data?.target_snapshot?.total_items).toBe(1);
+      expect(data?.target_snapshot?.total_points).toBe(3);
+      expect(data?.injected.map((i) => i.id)).toEqual(['item-authoritative-q4']);
+    });
   });
 });
