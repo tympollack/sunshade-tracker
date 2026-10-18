@@ -498,12 +498,20 @@ export async function getSprintSnapshotDiff(
         .filter((it: any) => {
           const metaSprint = it.metadata?.sprint;
           const metaSprintId = it.metadata?.sprint_id;
+          // When metadata contains sprint details, metadata is the single authoritative source of truth
+          if (metaSprint || metaSprintId) {
+            return Boolean(
+              (metaSprint && sprintIdentifiers.has(metaSprint)) ||
+              (metaSprintId && sprintIdentifiers.has(metaSprintId))
+            );
+          }
+          // If metadata exists and explicitly cleared sprint (backlog), never match stale relational column
+          if (it.metadata && ('sprint' in it.metadata || 'sprint_id' in it.metadata)) {
+            return false;
+          }
+          // Only fallback to relational column when metadata is missing sprint keys
           const directSprintId = it.sprint_id;
-          return (
-            (metaSprint && sprintIdentifiers.has(metaSprint)) ||
-            (metaSprintId && sprintIdentifiers.has(metaSprintId)) ||
-            (directSprintId && sprintIdentifiers.has(directSprintId))
-          );
+          return Boolean(directSprintId && sprintIdentifiers.has(directSprintId));
         })
         .map(normalizeSnapshotItem);
     } else if (targetSnap) {

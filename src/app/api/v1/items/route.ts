@@ -1228,18 +1228,49 @@ export async function PATCH(req: NextRequest) {
     const isGovernanceBypassed = isCallerAdmin && requestedGovernanceBypass;
     let resolvedMetadata: any = undefined;
 
-    if (metadata !== undefined) {
-      if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
+    const effectiveMetadataInput = metadata !== undefined
+      ? metadata
+      : body.sprint_id !== undefined
+      ? { sprint_id: body.sprint_id }
+      : undefined;
+
+    if (effectiveMetadataInput !== undefined) {
+      if (typeof effectiveMetadataInput !== 'object' || effectiveMetadataInput === null || Array.isArray(effectiveMetadataInput)) {
         return NextResponse.json({ error: '"metadata" must be an object' }, { status: 400 });
+      }
+
+      // Collect available sprints from settings and database
+      let availableSprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+      if (availableSprints.length === 0) {
+        const { data: dbSprints } = await supabaseAdmin
+          .from('sprints')
+          .select('*')
+          .eq('tenant_id', authCtx.tenant.id)
+          .eq('project_id', targetProjectId);
+        if (dbSprints && dbSprints.length > 0) {
+          availableSprints = dbSprints;
+        }
       }
 
       const { reconcileSprintMetadata, isMovingIntoActiveSprint } = await import('@/lib/bulk-items');
       resolvedMetadata = reconcileSprintMetadata(
         existingItem.metadata || {},
-        metadata,
+        effectiveMetadataInput,
         effectiveProjectSettings,
-        { fullReplacement: true, governanceBypass: isGovernanceBypassed }
+        {
+          fullReplacement: metadata !== undefined,
+          availableSprints,
+          governanceBypass: isGovernanceBypassed,
+        }
       );
+
+      // If caller passed direct sprint_id that cannot be resolved to any sprint and is not null
+      if (body.sprint_id !== undefined && body.sprint_id !== null && !resolvedMetadata?.sprint) {
+        return NextResponse.json(
+          { error: `Sprint '${body.sprint_id}' not found in project or workspace` },
+          { status: 404 }
+        );
+      }
 
       if (isGovernanceBypassed) {
         resolvedMetadata.governance_bypass = true;
@@ -1250,7 +1281,7 @@ export async function PATCH(req: NextRequest) {
       try {
         const itemSprint = existingItem.metadata?.sprint || existingItem.metadata?.sprint_id;
         if (itemSprint && !isGovernanceBypassed) {
-          const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+          const sprints = availableSprints.length > 0 ? availableSprints : (effectiveProjectSettings?.sprint_settings?.sprints || []);
           const activeSprintDef = sprints.find(
             (s: any) =>
               (s.id === itemSprint || s.name === itemSprint) &&
@@ -1270,7 +1301,7 @@ export async function PATCH(req: NextRequest) {
         }
 
         // Active sprint intake guard: reject assigning estimated items to active sprint without mid-sprint flag
-        const sprints = effectiveProjectSettings?.sprint_settings?.sprints || [];
+        const sprints = availableSprints.length > 0 ? availableSprints : (effectiveProjectSettings?.sprint_settings?.sprints || []);
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(
           existingItem.metadata || {},
           resolvedMetadata,
@@ -1427,7 +1458,7 @@ export async function PATCH(req: NextRequest) {
       updateFields.sprint_id = resolvedMetadata.sprint_id;
     } else if (body.sprint_id !== undefined) {
       updateFields.sprint_id = body.sprint_id;
-    } else if (metadata !== undefined && ('sprint' in metadata || 'sprint_id' in metadata)) {
+    } else if (effectiveMetadataInput !== undefined && ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput)) {
       if (!resolvedMetadata?.sprint) {
         updateFields.sprint_id = null;
       }
