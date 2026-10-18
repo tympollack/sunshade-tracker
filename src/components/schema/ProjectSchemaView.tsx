@@ -109,7 +109,9 @@ export function ProjectSchemaView({
     try {
       let sourceSettings = targetProj.settings;
       if (!sourceSettings || !sourceSettings.statuses || !sourceSettings.hierarchy) {
-        const res = await fetch(`/api/v1/projects/${targetProj.id || targetProj.slug}/settings`);
+        const headers: Record<string, string> = {};
+        if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
+        const res = await fetch(`/api/v1/projects/${targetProj.id || targetProj.slug}/settings`, { headers });
         if (res.ok) {
           const data = await res.json();
           sourceSettings = data.settings || data;
@@ -396,11 +398,15 @@ export function ProjectSchemaView({
             if (tenantSlug) {
               headers['x-tenant-slug'] = tenantSlug;
             }
-            await fetch('/api/v1/items/bulk', {
+            const res = await fetch('/api/v1/items/bulk', {
               method: 'PATCH',
               headers,
               body: JSON.stringify({ ids, updates: { status: newStatusId } }),
             });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => null);
+              throw new Error(errData?.error || `Failed to remap status for ${ids.length} items (HTTP ${res.status}).`);
+            }
           }
           affectedItems.forEach((it) => {
             it.status = newStatusId;
@@ -420,11 +426,15 @@ export function ProjectSchemaView({
             if (tenantSlug) {
               headers['x-tenant-slug'] = tenantSlug;
             }
-            await fetch('/api/v1/items/bulk', {
+            const res = await fetch('/api/v1/items/bulk', {
               method: 'PATCH',
               headers,
               body: JSON.stringify({ ids, updates: { item_type: newType } }),
             });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => null);
+              throw new Error(errData?.error || `Failed to remap item type for ${ids.length} items (HTTP ${res.status}).`);
+            }
           }
           affectedItems.forEach((it) => {
             it.item_type = newType;

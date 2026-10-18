@@ -115,6 +115,21 @@ export function ItemDetailsTab({
     setRemovedKeys(new Set());
   }, [item?.id]);
 
+  useEffect(() => {
+    setRemovedKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((k) => {
+        if (!(k in metadata)) {
+          next.add(k);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [metadata]);
+
   const handleRemoveField = (k: string) => {
     setRemovedKeys((prev) => new Set(prev).add(k));
     onRemoveMetaField(k);
@@ -408,7 +423,7 @@ export function ItemDetailsTab({
           // A field is directly rendered if it's already in metadata, OR if it has a rich type definition (enum, date, number, boolean, text, options) or default value, unless explicitly removed.
           const renderedKeySet = new Set<string>();
           allConfigured.forEach((def) => {
-            if (removedKeys.has(def.key)) return;
+            if (removedKeys.has(def.key) && !(def.key in metadata)) return;
             const isTyped =
               def.type === 'enum' ||
               def.type === 'date' ||
@@ -422,7 +437,7 @@ export function ItemDetailsTab({
             }
           });
           Object.keys(metadata).forEach((k) => {
-            if (!removedKeys.has(k)) renderedKeySet.add(k);
+            if (!(removedKeys.has(k) && !(k in metadata))) renderedKeySet.add(k);
           });
 
           const suggestedList = allConfigured.filter((def) => !renderedKeySet.has(def.key));
@@ -487,7 +502,7 @@ export function ItemDetailsTab({
             // Determine all entries to render
             const entriesMap = new Map<string, any>();
             configuredMap.forEach((def, key) => {
-              if (removedKeys.has(key)) return;
+              if (removedKeys.has(key) && !(key in metadata)) return;
               const isTyped =
                 def.type === 'enum' ||
                 def.type === 'date' ||
@@ -508,7 +523,7 @@ export function ItemDetailsTab({
             });
 
             Object.entries(metadata).forEach(([k, v]) => {
-              if (!removedKeys.has(k) && !entriesMap.has(k)) {
+              if (!(removedKeys.has(k) && !(k in metadata)) && !entriesMap.has(k)) {
                 entriesMap.set(k, v);
               }
             });

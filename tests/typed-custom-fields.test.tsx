@@ -390,4 +390,72 @@ describe('FEAT-TRK-TYPED-CUSTOM-FIELDS', () => {
       })
     );
   });
+
+  it('makes field visible again when manually re-added via Add Field', async () => {
+    const handleSave = vi.fn().mockResolvedValue(undefined);
+    const settings: ProjectSettings = {
+      ...baseSettings,
+      custom_fields: [
+        {
+          key: 'tone_standard',
+          label: 'Tone Standard',
+          type: 'enum',
+          options: ['Peplink', 'Academic'],
+        },
+      ],
+    };
+
+    const itemWithTone: WorkItem = {
+      ...sampleItem,
+      metadata: {
+        tone_standard: 'Peplink',
+      },
+    };
+
+    await act(async () => {
+      render(
+        <WorkItemModal
+          item={itemWithTone}
+          isOpen={true}
+          onClose={() => {}}
+          onSave={handleSave}
+          onDelete={() => {}}
+          projectSettings={settings}
+          allItems={[itemWithTone]}
+        />
+      );
+    });
+
+    // 1. Remove tone_standard
+    const removeBtn = screen.getAllByTitle('Remove tone_standard')[0];
+    await act(async () => {
+      fireEvent.click(removeBtn);
+    });
+    expect(screen.queryByTestId('custom-field-enum-tone_standard')).toBeNull();
+
+    // 2. Open manual "Add Field"
+    const addFieldToggle = screen.getByText('Add Field');
+    await act(async () => {
+      fireEvent.click(addFieldToggle);
+    });
+
+    // 3. Fill in key and value
+    const keyInput = screen.getByPlaceholderText(/key \(e\.g\. priority\)/i);
+    const valInput = screen.getByPlaceholderText(/value/i);
+    await act(async () => {
+      fireEvent.change(keyInput, { target: { value: 'tone_standard' } });
+      fireEvent.change(valInput, { target: { value: 'Academic' } });
+    });
+
+    // 4. Click Add button
+    const addAttrBtn = screen.getByRole('button', { name: /^add$/i });
+    await act(async () => {
+      fireEvent.click(addAttrBtn);
+    });
+
+    // 5. Field is restored to the DOM and has value 'Academic'
+    const restoredSelect = screen.getByTestId('custom-field-enum-tone_standard') as HTMLSelectElement;
+    expect(restoredSelect).toBeDefined();
+    expect(restoredSelect.value).toBe('Academic');
+  });
 });
