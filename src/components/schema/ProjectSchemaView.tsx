@@ -311,26 +311,35 @@ export function ProjectSchemaView({
     }
 
     // Check for cascade migration: removed statuses or hierarchy types affecting activeItems
+    const newStatuses = Array.isArray(payloadToSave.statuses) ? payloadToSave.statuses : [];
+    const newHierarchy = Array.isArray(payloadToSave.hierarchy) ? payloadToSave.hierarchy : [];
+
     const removedStatuses = (settings.statuses || []).filter(
-      (orig) => !payloadToSave.statuses.some((s) => s.id === orig.id)
+      (orig) => !newStatuses.some((s) => s.id === orig.id)
     );
     const removedHierarchy = (settings.hierarchy || []).filter(
-      (orig) => !payloadToSave.hierarchy.some((h) => h.type === orig.type)
+      (orig) => !newHierarchy.some((h) => h.type === orig.type)
     );
 
-    const orphanStatuses: OrphanStatusEntry[] = removedStatuses
-      .map((oldStatus) => ({
-        oldStatus,
-        items: activeItems.filter((it) => it.status === oldStatus.id),
-      }))
-      .filter((entry) => entry.items.length > 0);
+    const orphanStatuses: OrphanStatusEntry[] =
+      activeItems.length > 0
+        ? removedStatuses
+            .map((oldStatus) => ({
+              oldStatus,
+              items: activeItems.filter((it) => it.status === oldStatus.id),
+            }))
+            .filter((entry) => entry.items.length > 0)
+        : [];
 
-    const orphanHierarchies: OrphanHierarchyEntry[] = removedHierarchy
-      .map((oldHierarchy) => ({
-        oldHierarchy,
-        items: activeItems.filter((it) => it.item_type === oldHierarchy.type),
-      }))
-      .filter((entry) => entry.items.length > 0);
+    const orphanHierarchies: OrphanHierarchyEntry[] =
+      activeItems.length > 0
+        ? removedHierarchy
+            .map((oldHierarchy) => ({
+              oldHierarchy,
+              items: activeItems.filter((it) => it.item_type === oldHierarchy.type),
+            }))
+            .filter((entry) => entry.items.length > 0)
+        : [];
 
     if (orphanStatuses.length > 0 || orphanHierarchies.length > 0) {
       setPendingPayloadToSave(payloadToSave);

@@ -149,7 +149,7 @@ export function SchemaKeyCascadeModal({
                         data-testid={`remap-status-${entry.oldStatus.id}`}
                         className="px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
-                        {newSettings.statuses.map((st) => (
+                        {(newSettings.statuses || []).map((st) => (
                           <option key={st.id} value={st.id}>
                             {st.label} ({st.id})
                           </option>
@@ -198,7 +198,7 @@ export function SchemaKeyCascadeModal({
                         data-testid={`remap-hierarchy-${entry.oldHierarchy.type}`}
                         className="px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer"
                       >
-                        {newSettings.hierarchy.map((h) => (
+                        {(newSettings.hierarchy || []).map((h) => (
                           <option key={h.type} value={h.type}>
                             {h.label} ({h.type})
                           </option>
