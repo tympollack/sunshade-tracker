@@ -119,7 +119,7 @@ export function useWorkItemForm({
       setExternalRef(item.external_ref_id || '');
       setSelectedProjectId(item.project_id || '');
       const rawMeta = item.metadata ? { ...item.metadata } : {};
-      normalizeCustomFields(effectiveProjectSettings.custom_fields).forEach((f) => {
+      normalizeCustomFields(projectSettings.custom_fields).forEach((f) => {
         if (f.default !== undefined && !(f.key in rawMeta)) {
           rawMeta[f.key] = f.default;
         }
@@ -134,7 +134,7 @@ export function useWorkItemForm({
       setShowAddMeta(false);
       setSaveError(null);
     }
-  }, [item, projectSettings, effectiveProjectSettings]);
+  }, [item, projectSettings]);
 
   const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
   const [isLoadingParents, setIsLoadingParents] = useState(false);
