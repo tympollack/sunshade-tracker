@@ -1302,7 +1302,7 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
         ...mockProject.settings,
         sprint_settings: {
           sprints: [
-            { id: 'sprint-new-uuid', name: 'Sprint New (Planned)', status: 'planned', is_active: false },
+            { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', name: 'Sprint New (Planned)', status: 'planned', is_active: false },
           ],
         },
       },
@@ -1368,7 +1368,7 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
       },
       body: JSON.stringify({
         id: 'task-direct-sprint',
-        sprint_id: 'sprint-new-uuid',
+        sprint_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       }),
     });
 
@@ -1378,10 +1378,10 @@ describe('Work Items REST Endpoint (/api/v1/items)', () => {
     expect(json.success).toBe(true);
     // Verified 2 attempts: first with sprint_id, second with metadata only
     expect(attemptedUpdates.length).toBe(2);
-    expect(attemptedUpdates[0].sprint_id).toBe('sprint-new-uuid');
+    expect(attemptedUpdates[0].sprint_id).toBe('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');
     expect(attemptedUpdates[1].sprint_id).toBeUndefined();
     expect(attemptedUpdates[1].metadata.sprint).toBe('Sprint New (Planned)');
-    expect(attemptedUpdates[1].metadata.sprint_id).toBe('sprint-new-uuid');
+    expect(attemptedUpdates[1].metadata.sprint_id).toBe('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');
     expect(json.item.metadata.sprint).toBe('Sprint New (Planned)');
   });
 });
