@@ -727,7 +727,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ...(s.metadata || {}),
           ...(existing?.metadata?.summary ? { summary: existing.metadata.summary } : {}),
         };
-        map.set(s.name, existing ? { ...existing, ...s, metadata: mergedMetadata } : s);
+        const preservedId = (existing?.id && UUID_REGEX.test(existing.id))
+          ? existing.id
+          : (s.id && UUID_REGEX.test(s.id))
+          ? s.id
+          : existing?.id || s.id;
+        map.set(s.name, existing ? { ...existing, ...s, id: preservedId, metadata: mergedMetadata } : s);
       }
     });
 
@@ -2412,23 +2417,47 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const isMovingToBacklog = !targetSprint || targetSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : targetSprint;
 
+    const targetProjectIds = new Set(mutableItems.map((it) => it.project_id).filter(Boolean));
+    const isSingleProject = targetProjectIds.size === 1;
+    const singleProjectId = isSingleProject ? Array.from(targetProjectIds)[0] : null;
+
     // Resolve target sprint definition: only configured sprints have real relational sprint_ids.
-    // Ad-hoc sprints missing from settings should NOT receive fabricated string IDs.
+    // In portfolio view, ensure we match definition against the selected items' project to avoid cross-project ID pollution.
     const configuredSprintDef = targetSprintName
       ? (projectSettings?.sprint_settings?.sprints || []).find(
           (s: any) => s.name === targetSprintName || s.id === targetSprintName
         )
       : null;
 
-    const targetSprintDef =
-      configuredSprintDef ||
-      (targetSprintName
-        ? availableSprintDefs.find(
-            (s) => s.name === targetSprintName || s.id === targetSprintName
-          )
-        : null);
+    const targetSprintDef = targetSprintName
+      ? (singleProjectId
+          ? (dbSprints || []).find(
+              (s) =>
+                (s.name === targetSprintName || s.id === targetSprintName) &&
+                s.project_id === singleProjectId &&
+                s.id &&
+                UUID_REGEX.test(s.id)
+            ) ||
+            (projectSettings?.sprint_settings?.sprints || []).find(
+              (s: any) =>
+                (s.name === targetSprintName || s.id === targetSprintName) &&
+                (!s.project_id || s.project_id === singleProjectId) &&
+                s.id &&
+                UUID_REGEX.test(s.id)
+            )
+          : null) ||
+        configuredSprintDef ||
+        availableSprintDefs.find(
+          (s) => s.name === targetSprintName || s.id === targetSprintName
+        )
+      : null;
 
-    const rawSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
+    // Only supply a top-level sprint_id if all selected items belong to the same project
+    // and the target sprint definition belongs to that project (prevents cross-project sprint pollution).
+    const rawSprintId =
+      isSingleProject && (!targetSprintDef?.project_id || targetSprintDef?.project_id === singleProjectId)
+        ? targetSprintDef?.id || configuredSprintDef?.id || null
+        : null;
     const targetSprintId = rawSprintId && UUID_REGEX.test(rawSprintId) ? rawSprintId : null;
     const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
 
