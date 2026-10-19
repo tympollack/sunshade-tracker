@@ -80,15 +80,15 @@ export async function GET(
 
         if (typeof sprintLookup?.eq === 'function') {
           sprintLookup = sprintLookup.eq('tenant_id', authCtx.tenant.id);
+          if (project?.id && typeof sprintLookup?.or === 'function') {
+            sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
+          } else if (project?.id && typeof sprintLookup?.eq === 'function') {
+            sprintLookup = sprintLookup.eq('project_id', project.id);
+          }
           if (isUuid) {
             sprintLookup = sprintLookup.eq('id', sprintId);
           } else {
             sprintLookup = sprintLookup.eq('name', sprintId);
-            if (project?.id && typeof sprintLookup?.or === 'function') {
-              sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
-            } else if (project?.id && typeof sprintLookup?.eq === 'function') {
-              sprintLookup = sprintLookup.eq('project_id', project.id);
-            }
           }
           const { data: sprintRecords } = await sprintLookup;
           if (Array.isArray(sprintRecords)) {

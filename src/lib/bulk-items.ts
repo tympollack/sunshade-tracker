@@ -1002,6 +1002,32 @@ export async function handleBulkUpdateItems(
     return settings;
   }
 
+  // Shared project relational sprints cache
+  const projectSprintsCache = new Map<string, any[]>();
+  async function getProjectSprints(projectId: string): Promise<any[]> {
+    if (projectSprintsCache.has(projectId)) return projectSprintsCache.get(projectId)!;
+    try {
+      let sprintQuery: any = supabaseAdmin
+        .from('sprints')
+        .select('id, name, status, is_active, project_id')
+        .eq('tenant_id', tenantId);
+
+      if (projectId && typeof sprintQuery.or === 'function') {
+        sprintQuery = sprintQuery.or(`project_id.eq.${projectId},project_id.is.null`);
+      } else if (projectId && typeof sprintQuery.eq === 'function') {
+        sprintQuery = sprintQuery.eq('project_id', projectId);
+      }
+
+      const { data: dbSprints } = await sprintQuery;
+      const list = Array.isArray(dbSprints) ? dbSprints : [];
+      projectSprintsCache.set(projectId, list);
+      return list;
+    } catch {
+      projectSprintsCache.set(projectId, []);
+      return [];
+    }
+  }
+
   // Modality A: Uniform update on `ids` with `updates` object
   if (Array.isArray(payload.ids) && payload.ids.length > 0 && payload.updates && typeof payload.updates === 'object') {
     const { ids, updates } = payload;
@@ -1209,11 +1235,16 @@ export async function handleBulkUpdateItems(
       }
 
       if (effectiveMetadataInput !== undefined) {
+        const projectSprints = await getProjectSprints(item.project_id);
         const mergedMetadata = reconcileSprintMetadata(item.metadata, effectiveMetadataInput, projectSettings, {
           governanceBypass: isGovernanceBypassed,
+          availableSprints: projectSprints,
         });
 
-        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const sprints = [
+          ...projectSprints,
+          ...(projectSettings?.sprint_settings?.sprints || []),
+        ];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
 
         const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
@@ -1753,11 +1784,16 @@ export async function handleBulkUpdateItems(
       }
 
       if (effectiveMetadataInput !== undefined) {
+        const projectSprints = await getProjectSprints(existing.project_id);
         const mergedMetadata = reconcileSprintMetadata(existing.metadata, effectiveMetadataInput, projectSettings, {
           governanceBypass: isGovernanceBypassed,
+          availableSprints: projectSprints,
         });
 
-        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const sprints = [
+          ...projectSprints,
+          ...(projectSettings?.sprint_settings?.sprints || []),
+        ];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
 
         const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;

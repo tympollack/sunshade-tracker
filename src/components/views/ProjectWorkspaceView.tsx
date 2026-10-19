@@ -57,8 +57,7 @@ import {
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -770,64 +769,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     });
   }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
 
-  // Unified sprint resolution helper: scopes sprint definitions and UUIDs strictly to the target project.
-  // Prevents cross-project UUID borrowing in portfolio views and aligns resolution between single and bulk moves.
-  const resolveTargetSprint = useCallback(
-    (targetSprintName: string | null | undefined, targetProjectId?: string | null): {
-      targetSprintDef: SprintDefinition | null;
-      targetSprintId: string | null;
-      isTargetActive: boolean;
-    } => {
-      if (!targetSprintName || targetSprintName === '__none__') {
-        return { targetSprintDef: null, targetSprintId: null, isTargetActive: false };
-      }
-
-      const targetProjId = targetProjectId || (!isAllProjects ? currentProjectId : null);
-
-      // 1. Get effective project settings for targetProjId
-      const effectiveSettings = targetProjId
-        ? getItemProjectSettings({ project_id: targetProjId })
-        : projectSettings;
-
-      const projectSprintDefs = effectiveSettings?.sprint_settings?.sprints || [];
-
-      // Priority 1: Relational sprint from dbSprints with valid UUID matching project
-      const dbMatch = (dbSprints || []).find((s) => {
-        const matchesName = s.name === targetSprintName || s.id === targetSprintName;
-        const matchesProject = targetProjId
-          ? (!s.project_id || s.project_id === targetProjId)
-          : !isAllProjects;
-        return matchesName && matchesProject && s.id && UUID_REGEX.test(s.id);
+  // Unified sprint resolution helper: delegates to pure resolveTargetSprint from @/lib/sprint-resolver.
+  // Scopes sprint definitions and UUIDs strictly to the target project, avoiding cross-project UUID borrowing.
+  const resolveTargetSprintCallback = useCallback(
+    (targetSprintName: string | null | undefined, targetProjectId?: string | null) => {
+      return resolveTargetSprint({
+        targetSprintName,
+        targetProjectId,
+        dbSprints,
+        projectSettings,
+        allProjects,
+        isAllProjects,
+        currentProjectId,
       });
-
-      // Priority 2: Project-scoped sprint definition from project settings
-      const settingsMatch = projectSprintDefs.find((s: any) => {
-        const matchesName = s.name === targetSprintName || s.id === targetSprintName;
-        const matchesProject = targetProjId
-          ? (!s.project_id || s.project_id === targetProjId)
-          : !isAllProjects;
-        return matchesName && matchesProject;
-      });
-
-      // Relational sprint with valid UUID takes precedence, merged with any settings metadata
-      const targetSprintDef: SprintDefinition | null = dbMatch
-        ? {
-            ...settingsMatch,
-            ...dbMatch,
-            metadata: {
-              ...(settingsMatch?.metadata || {}),
-              ...(dbMatch.metadata || {}),
-            },
-          }
-        : settingsMatch || null;
-
-      const rawId = dbMatch?.id || (settingsMatch?.id && UUID_REGEX.test(settingsMatch.id) ? settingsMatch.id : null);
-      const targetSprintId = rawId && UUID_REGEX.test(rawId) ? rawId : null;
-      const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
-
-      return { targetSprintDef, targetSprintId, isTargetActive };
     },
-    [getItemProjectSettings, projectSettings, dbSprints, isAllProjects, currentProjectId]
+    [dbSprints, projectSettings, allProjects, isAllProjects, currentProjectId]
   );
 
   // Reset historical snapshot only when switching sprint or project context
@@ -1622,7 +1578,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
     const isMovingToBacklog = !newSprint || newSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : newSprint;
-    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprint(
+    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprintCallback(
       targetSprintName,
       item.project_id
     );
@@ -1675,14 +1631,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             return {
               ...it,
               ...updatedServerItem,
-              metadata: {
-                ...(it.metadata || {}),
-                ...(updatedServerItem.metadata || {}),
-              },
+              metadata: updatedServerItem.metadata || {},
             };
           }
           if (targetIdSet.has(it.id)) {
-            const descendantResolved = resolveTargetSprint(targetSprintName, it.project_id);
+            const descendantResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
             const nextMeta = { ...(it.metadata || {}) };
             if (targetSprintName) {
               nextMeta.sprint = descendantResolved.targetSprintDef?.name || targetSprintName;
@@ -2488,14 +2441,14 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const singleProjectId = isSingleProject ? Array.from(targetProjectIds)[0] : null;
 
     // Resolve target sprint definition using unified helper scoped to project
-    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprint(
+    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprintCallback(
       targetSprintName,
       singleProjectId
     );
 
     const effectiveIsTargetActive = isSingleProject
       ? isTargetActive
-      : Array.from(targetProjectIds).some((pId) => resolveTargetSprint(targetSprintName, pId).isTargetActive);
+      : Array.from(targetProjectIds).some((pId) => resolveTargetSprintCallback(targetSprintName, pId).isTargetActive);
 
     const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
@@ -2505,37 +2458,79 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     // Instead, indicate bulk operation is in progress via isBulkApplying.
     setIsBulkApplying(true);
     try {
-      const payloadUpdates: Record<string, any> = {
-        metadata: {
-          sprint: targetSprintName,
-        },
-      };
+      let bulkPayload: any;
 
-      if (isMovingToBacklog) {
-        payloadUpdates.sprint_id = null;
-        payloadUpdates.metadata.sprint_id = null;
-      } else if (isSingleProject) {
-        payloadUpdates.sprint_id = targetSprintId;
-        if (targetSprintId) {
-          payloadUpdates.metadata.sprint_id = targetSprintId;
-        } else {
+      if (!isSingleProject) {
+        // Heterogeneous bulk move (Modality B): each item gets its project-resolved sprint_id and metadata
+        bulkPayload = {
+          items: mutableItems.map((it) => {
+            const itemResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
+            const newMeta = { ...(it.metadata || {}) };
+            if (targetSprintName) {
+              newMeta.sprint = itemResolved.targetSprintDef?.name || targetSprintName;
+              if (itemResolved.targetSprintId) {
+                newMeta.sprint_id = itemResolved.targetSprintId;
+              } else {
+                delete newMeta.sprint_id;
+              }
+              if (itemResolved.isTargetActive) {
+                newMeta.added_mid_sprint = true;
+                newMeta.governance_bypass = true;
+              } else {
+                delete newMeta.added_mid_sprint;
+                delete newMeta.governance_bypass;
+              }
+            } else {
+              delete newMeta.sprint;
+              delete newMeta.sprint_id;
+              delete newMeta.added_mid_sprint;
+              delete newMeta.governance_bypass;
+            }
+            return {
+              id: it.id,
+              sprint_id: targetSprintName ? itemResolved.targetSprintId : null,
+              governance_bypass: itemResolved.isTargetActive ? true : undefined,
+              metadata: newMeta,
+            };
+          }),
+          governance_bypass: effectiveIsTargetActive ? true : undefined,
+        };
+      } else {
+        // Uniform bulk move (Modality A) for single project
+        const payloadUpdates: Record<string, any> = {
+          metadata: {
+            sprint: targetSprintName,
+          },
+        };
+
+        if (isMovingToBacklog) {
+          payloadUpdates.sprint_id = null;
           payloadUpdates.metadata.sprint_id = null;
+        } else {
+          payloadUpdates.sprint_id = targetSprintId;
+          if (targetSprintId) {
+            payloadUpdates.metadata.sprint_id = targetSprintId;
+          } else {
+            payloadUpdates.metadata.sprint_id = null;
+          }
         }
-      }
 
-      if (effectiveIsTargetActive) {
-        payloadUpdates.governance_bypass = true;
-        payloadUpdates.metadata.governance_bypass = true;
-        payloadUpdates.metadata.added_mid_sprint = true;
+        if (effectiveIsTargetActive) {
+          payloadUpdates.governance_bypass = true;
+          payloadUpdates.metadata.governance_bypass = true;
+          payloadUpdates.metadata.added_mid_sprint = true;
+        }
+
+        bulkPayload = {
+          ids: mutableIds,
+          governance_bypass: effectiveIsTargetActive ? true : undefined,
+          updates: payloadUpdates,
+        };
       }
 
       const res = await apiFetch('/api/v1/items/bulk-update', {
         method: 'POST',
-        body: JSON.stringify({
-          ids: mutableIds,
-          governance_bypass: effectiveIsTargetActive ? true : undefined,
-          updates: payloadUpdates,
-        }),
+        body: JSON.stringify(bulkPayload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -2558,15 +2553,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             return {
               ...it,
               ...serverUpdated,
-              metadata: {
-                ...(it.metadata || {}),
-                ...(serverUpdated.metadata || {}),
-              },
+              metadata: serverUpdated.metadata || {},
             };
           }
 
           // Fallback per-item sprint resolution if server did not return items
-          const itemResolved = resolveTargetSprint(targetSprintName, it.project_id);
+          const itemResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
           const newMeta = { ...(it.metadata || {}) };
           if (targetSprintName) {
             newMeta.sprint = itemResolved.targetSprintDef?.name || targetSprintName;
