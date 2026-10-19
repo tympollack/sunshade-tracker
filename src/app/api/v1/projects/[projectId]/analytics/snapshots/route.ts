@@ -103,9 +103,17 @@ export async function GET(
       }
 
       const settingSprints = (project as any)?.settings?.sprint_settings?.sprints || [];
-      const match = settingSprints.find((s: any) => s.id === sprintId || s.name === sprintId);
-      if (match?.id) sprintIdentifiers.add(match.id);
-      if (match?.name) sprintIdentifiers.add(match.name);
+      settingSprints.forEach((s: any) => {
+        if (
+          sprintIdentifiers.has(s.id) ||
+          sprintIdentifiers.has(s.name) ||
+          s.id === sprintId ||
+          s.name === sprintId
+        ) {
+          if (s?.id) sprintIdentifiers.add(s.id);
+          if (s?.name) sprintIdentifiers.add(s.name);
+        }
+      });
 
       if (typeof snapshotQuery.in === 'function') {
         snapshotQuery = snapshotQuery.in('sprint_id', Array.from(sprintIdentifiers));
