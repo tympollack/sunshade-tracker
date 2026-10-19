@@ -10,6 +10,7 @@ import {
   handleBulkUpdateItems,
   handleBulkDeleteItems,
   isMissingSprintIdColumnError,
+  isUuid,
 } from '@/lib/bulk-items';
 import { recordAuditLog, computeChangedFields } from '@/lib/audit-log';
 import { dispatchItemNotifications, resolveRecipient } from '@/lib/notifications';
@@ -1455,9 +1456,9 @@ export async function PATCH(req: NextRequest) {
 
     // Dual-column sprint_id synchronization
     if (resolvedMetadata?.sprint_id !== undefined) {
-      updateFields.sprint_id = resolvedMetadata.sprint_id;
+      updateFields.sprint_id = isUuid(resolvedMetadata.sprint_id) ? resolvedMetadata.sprint_id : null;
     } else if (body.sprint_id !== undefined) {
-      updateFields.sprint_id = body.sprint_id;
+      updateFields.sprint_id = isUuid(body.sprint_id) ? body.sprint_id : null;
     } else if (effectiveMetadataInput !== undefined && ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput)) {
       if (!resolvedMetadata?.sprint) {
         updateFields.sprint_id = null;
@@ -1630,7 +1631,7 @@ export async function PATCH(req: NextRequest) {
             let descRes = await supabaseAdmin
               .from('work_items')
               .update({
-                sprint_id: nextSprintId,
+                sprint_id: isUuid(nextSprintId) ? nextSprintId : null,
                 metadata: nextMeta,
                 updated_at: new Date().toISOString(),
               })

@@ -727,7 +727,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ...(s.metadata || {}),
           ...(existing?.metadata?.summary ? { summary: existing.metadata.summary } : {}),
         };
-        map.set(s.name, existing ? { ...existing, ...s, metadata: mergedMetadata } : s);
+        const preservedId = (existing?.id && UUID_REGEX.test(existing.id))
+          ? existing.id
+          : (s.id && UUID_REGEX.test(s.id))
+          ? s.id
+          : existing?.id || s.id;
+        map.set(s.name, existing ? { ...existing, ...s, id: preservedId, metadata: mergedMetadata } : s);
       }
     });
 
@@ -2421,6 +2426,11 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       : null;
 
     const targetSprintDef =
+      (targetSprintName
+        ? availableSprintDefs.find(
+            (s) => (s.name === targetSprintName || s.id === targetSprintName) && s.id && UUID_REGEX.test(s.id)
+          )
+        : null) ||
       configuredSprintDef ||
       (targetSprintName
         ? availableSprintDefs.find(
