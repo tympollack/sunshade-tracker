@@ -80,15 +80,15 @@ export async function GET(
 
         if (typeof sprintLookup?.eq === 'function') {
           sprintLookup = sprintLookup.eq('tenant_id', authCtx.tenant.id);
+          if (project?.id && typeof sprintLookup?.or === 'function') {
+            sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
+          } else if (project?.id && typeof sprintLookup?.eq === 'function') {
+            sprintLookup = sprintLookup.eq('project_id', project.id);
+          }
           if (isUuid) {
             sprintLookup = sprintLookup.eq('id', sprintId);
           } else {
             sprintLookup = sprintLookup.eq('name', sprintId);
-            if (project?.id && typeof sprintLookup?.or === 'function') {
-              sprintLookup = sprintLookup.or(`project_id.eq.${project.id},project_id.is.null`);
-            } else if (project?.id && typeof sprintLookup?.eq === 'function') {
-              sprintLookup = sprintLookup.eq('project_id', project.id);
-            }
           }
           const { data: sprintRecords } = await sprintLookup;
           if (Array.isArray(sprintRecords)) {
@@ -103,9 +103,17 @@ export async function GET(
       }
 
       const settingSprints = (project as any)?.settings?.sprint_settings?.sprints || [];
-      const match = settingSprints.find((s: any) => s.id === sprintId || s.name === sprintId);
-      if (match?.id) sprintIdentifiers.add(match.id);
-      if (match?.name) sprintIdentifiers.add(match.name);
+      settingSprints.forEach((s: any) => {
+        if (
+          sprintIdentifiers.has(s.id) ||
+          sprintIdentifiers.has(s.name) ||
+          s.id === sprintId ||
+          s.name === sprintId
+        ) {
+          if (s?.id) sprintIdentifiers.add(s.id);
+          if (s?.name) sprintIdentifiers.add(s.name);
+        }
+      });
 
       if (typeof snapshotQuery.in === 'function') {
         snapshotQuery = snapshotQuery.in('sprint_id', Array.from(sprintIdentifiers));

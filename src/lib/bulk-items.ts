@@ -70,6 +70,10 @@ export function isMissingSprintIdColumnError(err: any): boolean {
   );
 }
 
+export const isUuid = (val: any): boolean =>
+  typeof val === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
 /**
  * Reconciles relational sprint_id and metadata.sprint to prevent payload mismatches
  * and stale sprint_id bindings when moving items between sprints or into backlog.
@@ -140,10 +144,6 @@ export function reconcileSprintMetadata(
     ...(projectSettings?.sprint_settings?.sprints || []),
   ];
 
-  const isUuid = (val: any) =>
-    typeof val === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-
   if (hasExplicitSprint) {
     // Lookup by incoming sprint name or id
     const matched = sprints.find(
@@ -152,9 +152,9 @@ export function reconcileSprintMetadata(
 
     if (matched) {
       merged.sprint = matched.name || incomingSprint;
-      if (matched.id) {
+      if (matched.id && isUuid(matched.id)) {
         merged.sprint_id = matched.id;
-      } else if (incomingSprintId && incomingSprintId !== incomingSprint && incomingSprintId !== '__none__') {
+      } else if (incomingSprintId && isUuid(incomingSprintId)) {
         merged.sprint_id = incomingSprintId;
       } else {
         delete merged.sprint_id;
@@ -163,8 +163,6 @@ export function reconcileSprintMetadata(
       // Ad-hoc sprint not in projectSettings or availableSprints
       merged.sprint = incomingSprint;
       if (incomingSprintId && isUuid(incomingSprintId)) {
-        merged.sprint_id = incomingSprintId;
-      } else if (incomingSprintId && incomingSprintId !== incomingSprint && incomingSprintId !== '__none__') {
         merged.sprint_id = incomingSprintId;
       } else {
         delete merged.sprint_id;
@@ -178,9 +176,18 @@ export function reconcileSprintMetadata(
 
     if (matched) {
       merged.sprint = matched.name;
-      merged.sprint_id = matched.id || incomingSprintId;
-    } else {
+      if (matched.id && isUuid(matched.id)) {
+        merged.sprint_id = matched.id;
+      } else if (isUuid(incomingSprintId)) {
+        merged.sprint_id = incomingSprintId;
+      } else {
+        delete merged.sprint_id;
+      }
+    } else if (isUuid(incomingSprintId)) {
       merged.sprint_id = incomingSprintId;
+      delete merged.sprint;
+    } else {
+      delete merged.sprint_id;
       delete merged.sprint;
     }
   }
@@ -995,6 +1002,32 @@ export async function handleBulkUpdateItems(
     return settings;
   }
 
+  // Shared project relational sprints cache
+  const projectSprintsCache = new Map<string, any[]>();
+  async function getProjectSprints(projectId: string): Promise<any[]> {
+    if (projectSprintsCache.has(projectId)) return projectSprintsCache.get(projectId)!;
+    try {
+      let sprintQuery: any = supabaseAdmin
+        .from('sprints')
+        .select('id, name, status, is_active, project_id')
+        .eq('tenant_id', tenantId);
+
+      if (projectId && typeof sprintQuery.or === 'function') {
+        sprintQuery = sprintQuery.or(`project_id.eq.${projectId},project_id.is.null`);
+      } else if (projectId && typeof sprintQuery.eq === 'function') {
+        sprintQuery = sprintQuery.eq('project_id', projectId);
+      }
+
+      const { data: dbSprints } = await sprintQuery;
+      const list = Array.isArray(dbSprints) ? dbSprints : [];
+      projectSprintsCache.set(projectId, list);
+      return list;
+    } catch {
+      projectSprintsCache.set(projectId, []);
+      return [];
+    }
+  }
+
   // Modality A: Uniform update on `ids` with `updates` object
   if (Array.isArray(payload.ids) && payload.ids.length > 0 && payload.updates && typeof payload.updates === 'object') {
     const { ids, updates } = payload;
@@ -1184,7 +1217,7 @@ export async function handleBulkUpdateItems(
         itemUpdate.parent_id = targetParentId;
       }
       if (updates.order_index !== undefined) itemUpdate.order_index = updates.order_index;
-      if (updates.sprint_id !== undefined) itemUpdate.sprint_id = updates.sprint_id;
+      if (updates.sprint_id !== undefined) itemUpdate.sprint_id = isUuid(updates.sprint_id) ? updates.sprint_id : null;
 
       const isGovernanceBypassed = options?.governance_bypass !== undefined
         ? Boolean(options.governance_bypass)
@@ -1202,11 +1235,16 @@ export async function handleBulkUpdateItems(
       }
 
       if (effectiveMetadataInput !== undefined) {
+        const projectSprints = await getProjectSprints(item.project_id);
         const mergedMetadata = reconcileSprintMetadata(item.metadata, effectiveMetadataInput, projectSettings, {
           governanceBypass: isGovernanceBypassed,
+          availableSprints: projectSprints,
         });
 
-        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const sprints = [
+          ...projectSprints,
+          ...(projectSettings?.sprint_settings?.sprints || []),
+        ];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(item.metadata, mergedMetadata, sprints);
 
         const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
@@ -1239,13 +1277,11 @@ export async function handleBulkUpdateItems(
 
         // Synchronize relational sprint_id if present in metadata or moved to backlog
         if (mergedMetadata.sprint_id !== undefined) {
-          itemUpdate.sprint_id = mergedMetadata.sprint_id;
+          itemUpdate.sprint_id = isUuid(mergedMetadata.sprint_id) ? mergedMetadata.sprint_id : null;
         } else if (updates.sprint_id !== undefined) {
-          itemUpdate.sprint_id = updates.sprint_id;
+          itemUpdate.sprint_id = isUuid(updates.sprint_id) ? updates.sprint_id : null;
         } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
-          if (!mergedMetadata.sprint) {
-            itemUpdate.sprint_id = null;
-          }
+          itemUpdate.sprint_id = null;
         }
 
         // Active sprint estimate immutability guard: check items already in an active sprint
@@ -1440,7 +1476,7 @@ export async function handleBulkUpdateItems(
               updated_at: original.updated_at,
             };
             if (original.sprint_id !== undefined) {
-              rollbackPayload.sprint_id = original.sprint_id ?? null;
+              rollbackPayload.sprint_id = isUuid(original.sprint_id) ? original.sprint_id : null;
             }
             let rollRes = await supabaseAdmin
               .from('work_items')
@@ -1730,7 +1766,7 @@ export async function handleBulkUpdateItems(
       }
       if (it.external_ref_id !== undefined) patchFields.external_ref_id = it.external_ref_id;
       if (it.order_index !== undefined) patchFields.order_index = it.order_index;
-      if (it.sprint_id !== undefined) patchFields.sprint_id = it.sprint_id;
+      if (it.sprint_id !== undefined) patchFields.sprint_id = isUuid(it.sprint_id) ? it.sprint_id : null;
 
       const isGovernanceBypassed = options?.governance_bypass !== undefined
         ? Boolean(options.governance_bypass)
@@ -1748,11 +1784,16 @@ export async function handleBulkUpdateItems(
       }
 
       if (effectiveMetadataInput !== undefined) {
+        const projectSprints = await getProjectSprints(existing.project_id);
         const mergedMetadata = reconcileSprintMetadata(existing.metadata, effectiveMetadataInput, projectSettings, {
           governanceBypass: isGovernanceBypassed,
+          availableSprints: projectSprints,
         });
 
-        const sprints = projectSettings?.sprint_settings?.sprints || [];
+        const sprints = [
+          ...projectSprints,
+          ...(projectSettings?.sprint_settings?.sprints || []),
+        ];
         const { isIntake, activeSprint } = isMovingIntoActiveSprint(existing.metadata, mergedMetadata, sprints);
 
         const targetSprintName = mergedMetadata.sprint || mergedMetadata.sprint_id;
@@ -1785,13 +1826,11 @@ export async function handleBulkUpdateItems(
 
         // Synchronize relational sprint_id if present in metadata or moved to backlog
         if (mergedMetadata.sprint_id !== undefined) {
-          patchFields.sprint_id = mergedMetadata.sprint_id;
+          patchFields.sprint_id = isUuid(mergedMetadata.sprint_id) ? mergedMetadata.sprint_id : null;
         } else if (it.sprint_id !== undefined) {
-          patchFields.sprint_id = it.sprint_id;
+          patchFields.sprint_id = isUuid(it.sprint_id) ? it.sprint_id : null;
         } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
-          if (!mergedMetadata.sprint) {
-            patchFields.sprint_id = null;
-          }
+          patchFields.sprint_id = null;
         }
 
         // Active sprint estimate immutability guard: check items already in an active sprint
@@ -1903,7 +1942,7 @@ export async function handleBulkUpdateItems(
               updated_at: original.updated_at,
             };
             if (original.sprint_id !== undefined) {
-              rollbackPayload.sprint_id = original.sprint_id ?? null;
+              rollbackPayload.sprint_id = isUuid(original.sprint_id) ? original.sprint_id : null;
             }
             let rollRes = await supabaseAdmin
               .from('work_items')

@@ -57,8 +57,7 @@ import {
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -607,7 +606,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return res;
   }, [items, selectedSprint, treeSelectedStatuses, effectiveTreeStatuses, treeSelectedLevels, effectiveTreeLevels, treeSelectedAssignees]);
 
-  const getItemProjectSettings = useCallback((item: WorkItem | null | undefined): ProjectSettings => {
+  const getItemProjectSettings = useCallback((item: { project_id?: string | null } | null | undefined): ProjectSettings => {
     return getEffectiveItemProjectSettings(item, allProjects, projectSettings, isAllProjects);
   }, [isAllProjects, allProjects, projectSettings]);
 
@@ -727,7 +726,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           ...(s.metadata || {}),
           ...(existing?.metadata?.summary ? { summary: existing.metadata.summary } : {}),
         };
-        map.set(s.name, existing ? { ...existing, ...s, metadata: mergedMetadata } : s);
+        const preservedId = (existing?.id && UUID_REGEX.test(existing.id))
+          ? existing.id
+          : (s.id && UUID_REGEX.test(s.id))
+          ? s.id
+          : existing?.id || s.id;
+        map.set(s.name, existing ? { ...existing, ...s, id: preservedId, metadata: mergedMetadata } : s);
       }
     });
 
@@ -764,6 +768,23 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       return sprintDef?.status?.toLowerCase() !== 'completed';
     });
   }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
+
+  // Unified sprint resolution helper: delegates to pure resolveTargetSprint from @/lib/sprint-resolver.
+  // Scopes sprint definitions and UUIDs strictly to the target project, avoiding cross-project UUID borrowing.
+  const resolveTargetSprintCallback = useCallback(
+    (targetSprintName: string | null | undefined, targetProjectId?: string | null) => {
+      return resolveTargetSprint({
+        targetSprintName,
+        targetProjectId,
+        dbSprints,
+        projectSettings,
+        allProjects,
+        isAllProjects,
+        currentProjectId,
+      });
+    },
+    [dbSprints, projectSettings, allProjects, isAllProjects, currentProjectId]
+  );
 
   // Reset historical snapshot only when switching sprint or project context
   useEffect(() => {
@@ -1555,20 +1576,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       }
     }
 
-    const sprintDefs = projectSettings?.sprint_settings?.sprints || [];
     const isMovingToBacklog = !newSprint || newSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : newSprint;
-    const configuredSprintDef = targetSprintName
-      ? sprintDefs.find((s: any) => s.name === targetSprintName || s.id === targetSprintName)
-      : null;
-    const targetSprintDef =
-      configuredSprintDef ||
-      (targetSprintName
-        ? availableSprintDefs.find((s) => s.name === targetSprintName || s.id === targetSprintName)
-        : null);
-    const rawSingleSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
-    const targetSprintId = rawSingleSprintId && UUID_REGEX.test(rawSingleSprintId) ? rawSingleSprintId : null;
-    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
+    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprintCallback(
+      targetSprintName,
+      item.project_id
+    );
 
     const newMetadata = { ...(item.metadata || {}) };
     if (targetSprintName) {
@@ -1609,18 +1622,29 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         return;
       }
 
+      const patchData = await res.json().catch(() => ({}));
+      const updatedServerItem = patchData?.item;
+
       setItems((prev) =>
         prev.map((it) => {
+          if (it.id === itemId && updatedServerItem) {
+            return {
+              ...it,
+              ...updatedServerItem,
+              metadata: updatedServerItem.metadata || {},
+            };
+          }
           if (targetIdSet.has(it.id)) {
+            const descendantResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
             const nextMeta = { ...(it.metadata || {}) };
             if (targetSprintName) {
-              nextMeta.sprint = targetSprintDef?.name || targetSprintName;
-              if (targetSprintId) {
-                nextMeta.sprint_id = targetSprintId;
+              nextMeta.sprint = descendantResolved.targetSprintDef?.name || targetSprintName;
+              if (descendantResolved.targetSprintId) {
+                nextMeta.sprint_id = descendantResolved.targetSprintId;
               } else {
                 delete nextMeta.sprint_id;
               }
-              if (isTargetActive) {
+              if (descendantResolved.isTargetActive) {
                 nextMeta.added_mid_sprint = true;
                 nextMeta.governance_bypass = true;
               } else {
@@ -1635,7 +1659,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             }
             return {
               ...it,
-              sprint_id: targetSprintName ? targetSprintId : null,
+              sprint_id: targetSprintName ? descendantResolved.targetSprintId : null,
               metadata: nextMeta,
             };
           }
@@ -2412,25 +2436,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const isMovingToBacklog = !targetSprint || targetSprint === '__none__';
     const targetSprintName = isMovingToBacklog ? null : targetSprint;
 
-    // Resolve target sprint definition: only configured sprints have real relational sprint_ids.
-    // Ad-hoc sprints missing from settings should NOT receive fabricated string IDs.
-    const configuredSprintDef = targetSprintName
-      ? (projectSettings?.sprint_settings?.sprints || []).find(
-          (s: any) => s.name === targetSprintName || s.id === targetSprintName
-        )
-      : null;
+    const targetProjectIds = new Set(mutableItems.map((it) => it.project_id).filter(Boolean));
+    const isSingleProject = targetProjectIds.size === 1;
+    const singleProjectId = isSingleProject ? Array.from(targetProjectIds)[0] : null;
 
-    const targetSprintDef =
-      configuredSprintDef ||
-      (targetSprintName
-        ? availableSprintDefs.find(
-            (s) => s.name === targetSprintName || s.id === targetSprintName
-          )
-        : null);
+    // Resolve target sprint definition using unified helper scoped to project
+    const { targetSprintDef, targetSprintId, isTargetActive } = resolveTargetSprintCallback(
+      targetSprintName,
+      singleProjectId
+    );
 
-    const rawSprintId = targetSprintDef?.id || configuredSprintDef?.id || null;
-    const targetSprintId = rawSprintId && UUID_REGEX.test(rawSprintId) ? rawSprintId : null;
-    const isTargetActive = targetSprintDef ? isSprintActive(targetSprintDef) : false;
+    const effectiveIsTargetActive = isSingleProject
+      ? isTargetActive
+      : Array.from(targetProjectIds).some((pId) => resolveTargetSprintCallback(targetSprintName, pId).isTargetActive);
 
     const mutableIds = mutableItems.map((it) => it.id);
     const idSet = new Set(mutableIds);
@@ -2440,21 +2458,79 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     // Instead, indicate bulk operation is in progress via isBulkApplying.
     setIsBulkApplying(true);
     try {
+      let bulkPayload: any;
+
+      if (!isSingleProject) {
+        // Heterogeneous bulk move (Modality B): each item gets its project-resolved sprint_id and metadata
+        bulkPayload = {
+          items: mutableItems.map((it) => {
+            const itemResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
+            const newMeta = { ...(it.metadata || {}) };
+            if (targetSprintName) {
+              newMeta.sprint = itemResolved.targetSprintDef?.name || targetSprintName;
+              if (itemResolved.targetSprintId) {
+                newMeta.sprint_id = itemResolved.targetSprintId;
+              } else {
+                delete newMeta.sprint_id;
+              }
+              if (itemResolved.isTargetActive) {
+                newMeta.added_mid_sprint = true;
+                newMeta.governance_bypass = true;
+              } else {
+                delete newMeta.added_mid_sprint;
+                delete newMeta.governance_bypass;
+              }
+            } else {
+              delete newMeta.sprint;
+              delete newMeta.sprint_id;
+              delete newMeta.added_mid_sprint;
+              delete newMeta.governance_bypass;
+            }
+            return {
+              id: it.id,
+              sprint_id: targetSprintName ? itemResolved.targetSprintId : null,
+              governance_bypass: itemResolved.isTargetActive ? true : undefined,
+              metadata: newMeta,
+            };
+          }),
+          governance_bypass: effectiveIsTargetActive ? true : undefined,
+        };
+      } else {
+        // Uniform bulk move (Modality A) for single project
+        const payloadUpdates: Record<string, any> = {
+          metadata: {
+            sprint: targetSprintName,
+          },
+        };
+
+        if (isMovingToBacklog) {
+          payloadUpdates.sprint_id = null;
+          payloadUpdates.metadata.sprint_id = null;
+        } else {
+          payloadUpdates.sprint_id = targetSprintId;
+          if (targetSprintId) {
+            payloadUpdates.metadata.sprint_id = targetSprintId;
+          } else {
+            payloadUpdates.metadata.sprint_id = null;
+          }
+        }
+
+        if (effectiveIsTargetActive) {
+          payloadUpdates.governance_bypass = true;
+          payloadUpdates.metadata.governance_bypass = true;
+          payloadUpdates.metadata.added_mid_sprint = true;
+        }
+
+        bulkPayload = {
+          ids: mutableIds,
+          governance_bypass: effectiveIsTargetActive ? true : undefined,
+          updates: payloadUpdates,
+        };
+      }
+
       const res = await apiFetch('/api/v1/items/bulk-update', {
         method: 'POST',
-        body: JSON.stringify({
-          ids: mutableIds,
-          governance_bypass: isTargetActive ? true : undefined,
-          updates: {
-            sprint_id: targetSprintName ? targetSprintId : null,
-            metadata: {
-              sprint: targetSprintName,
-              sprint_id: targetSprintId,
-              governance_bypass: isTargetActive ? true : undefined,
-              added_mid_sprint: isTargetActive ? true : undefined,
-            },
-          },
-        }),
+        body: JSON.stringify(bulkPayload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -2463,19 +2539,35 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         return;
       }
 
+      const data = await res.json().catch(() => ({}));
+      const returnedItems: WorkItem[] = Array.isArray(data?.items) ? data.items : [];
+      const returnedItemMap = new Map<string, WorkItem>(returnedItems.map((it: WorkItem) => [it.id, it]));
+
       // Mutation succeeded: apply updated sprint state now
       setItems((prev) =>
         prev.map((it) => {
           if (!idSet.has(it.id)) return it;
+
+          const serverUpdated = returnedItemMap.get(it.id);
+          if (serverUpdated) {
+            return {
+              ...it,
+              ...serverUpdated,
+              metadata: serverUpdated.metadata || {},
+            };
+          }
+
+          // Fallback per-item sprint resolution if server did not return items
+          const itemResolved = resolveTargetSprintCallback(targetSprintName, it.project_id);
           const newMeta = { ...(it.metadata || {}) };
           if (targetSprintName) {
-            newMeta.sprint = targetSprintDef?.name || targetSprintName;
-            if (targetSprintId) {
-              newMeta.sprint_id = targetSprintId;
+            newMeta.sprint = itemResolved.targetSprintDef?.name || targetSprintName;
+            if (itemResolved.targetSprintId) {
+              newMeta.sprint_id = itemResolved.targetSprintId;
             } else {
               delete newMeta.sprint_id;
             }
-            if (isTargetActive) {
+            if (itemResolved.isTargetActive) {
               newMeta.added_mid_sprint = true;
               newMeta.governance_bypass = true;
             } else {
@@ -2490,7 +2582,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           }
           return {
             ...it,
-            sprint_id: targetSprintName ? targetSprintId : null,
+            sprint_id: targetSprintName ? itemResolved.targetSprintId : null,
             metadata: newMeta,
           };
         })

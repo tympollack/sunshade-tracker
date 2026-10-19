@@ -51,11 +51,11 @@ describe('PR-83 Review Fixes Verification Suite', () => {
 
     it('preserves explicit ad-hoc relational sprint_id when provided with ad-hoc sprint name', () => {
       const existing = {};
-      const incoming = { sprint: 'Adhoc Sprint Beta', sprint_id: 'db-sprint-uuid-99' };
+      const incoming = { sprint: 'Adhoc Sprint Beta', sprint_id: '00000000-0000-4000-8000-000000000099' };
 
       const result = reconcileSprintMetadata(existing, incoming, mockSettings);
       expect(result.sprint).toBe('Adhoc Sprint Beta');
-      expect(result.sprint_id).toBe('db-sprint-uuid-99');
+      expect(result.sprint_id).toBe('00000000-0000-4000-8000-000000000099');
     });
 
     it('purges both sprint and sprint_id when incoming specifies only sprint_id: null without explicit sprint', () => {
@@ -398,11 +398,11 @@ describe('PR-83 Review Fixes Verification Suite', () => {
     };
 
     it('clears stale sprint name when incoming specifies unknown sprint_id only', () => {
-      const existing = { sprint: 'Old Sprint Name', sprint_id: 'old-sprint-id' };
-      const incoming = { sprint_id: 'new-unmatched-sprint-id' };
+      const existing = { sprint: 'Old Sprint Name', sprint_id: '00000000-0000-4000-8000-000000000001' };
+      const incoming = { sprint_id: '00000000-0000-4000-8000-000000000099' };
 
       const result = reconcileSprintMetadata(existing, incoming, mockSettings);
-      expect(result.sprint_id).toBe('new-unmatched-sprint-id');
+      expect(result.sprint_id).toBe('00000000-0000-4000-8000-000000000099');
       expect(result.sprint).toBeUndefined();
     });
   });
