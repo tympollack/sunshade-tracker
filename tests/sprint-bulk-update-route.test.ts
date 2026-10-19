@@ -44,7 +44,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         body: JSON.stringify({
           ids: ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
             metadata: { sprint: 'Sprint 1 (Active)' },
           },
           governance_bypass: true,
@@ -93,7 +93,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         body: JSON.stringify({
           item_ids: ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
             metadata: { sprint: 'Sprint 1 (Active)' },
           },
         }),
@@ -155,7 +155,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         body: JSON.stringify({
           ids: ['item-1'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
           },
         }),
       });
@@ -183,7 +183,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
           action: 'update',
           ids: ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
             metadata: { sprint: 'Sprint 1 (Active)' },
           },
           governance_bypass: true,
@@ -218,7 +218,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         body: JSON.stringify({
           ids: ['item-1', 'item-2', 'item-3'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
           },
         }),
       });
@@ -252,7 +252,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         },
         body: JSON.stringify({
           ids: ['item-1'],
-          updates: { sprint_id: 'sprint-active-uuid-1' },
+          updates: { sprint_id: 'a1111111-1111-4111-8111-111111111111' },
         }),
       });
 
@@ -278,7 +278,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Bulk Update REST Routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ids: ['item-1'],
-          updates: { sprint_id: 'sprint-active-uuid-1' },
+          updates: { sprint_id: 'a1111111-1111-4111-8111-111111111111' },
           governance_bypass: true,
         }),
       });

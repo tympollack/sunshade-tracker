@@ -197,5 +197,99 @@ describe('Sprint Move Non-UUID Slug ID Guard', () => {
       expect(capturedPayload.metadata.sprint).toBe('Sprint 2026-Q4');
       expect(capturedPayload.metadata.sprint_id).toBeUndefined();
     });
+
+    it('clears relational sprint_id to null when moving from a UUID-backed sprint to a slug-backed sprint by name', async () => {
+      const existingItemWithUuid = {
+        id: 'item-002',
+        tenant_id: tenantId,
+        project_id: projectId,
+        title: 'Story moving from UUID to slug sprint',
+        sprint_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+        metadata: {
+          sprint: 'Sprint Alpha',
+          sprint_id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+        },
+      };
+
+      let capturedPayload: any = null;
+
+      const mockUpdate = vi.fn().mockImplementation((payload) => {
+        capturedPayload = payload;
+        return {
+          eq: vi.fn().mockReturnThis(),
+          select: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({
+            data: { ...existingItemWithUuid, ...payload },
+            error: null,
+          }),
+        };
+      });
+
+      const mockFrom = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const projectObj = {
+            id: projectId,
+            slug: 'sunshade-tracker',
+            settings: mockSettingsWithSlugId,
+          };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: projectObj, error: null }),
+            single: vi.fn().mockResolvedValue({ data: projectObj, error: null }),
+            then: (resolve: any) => resolve({ data: [projectObj], error: null }),
+          };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            update: mockUpdate,
+            then: (resolve: any) => resolve({ data: [existingItemWithUuid], error: null }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          then: (resolve: any) => resolve({ data: [], error: null }),
+        };
+      });
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(mockFrom as any);
+
+      // Caller moves item by name to Sprint 2026-Q4 (which is slug-backed in mockSettingsWithSlugId)
+      const res = await handleBulkUpdateItems(
+        tenantId,
+        {
+          ids: ['item-002'],
+          governance_bypass: true,
+          updates: {
+            metadata: {
+              sprint: 'Sprint 2026-Q4',
+            },
+          },
+        },
+        {
+          actorId: 'admin-1',
+          actorName: 'Admin',
+          governance_bypass: true,
+        }
+      );
+
+      expect(res.success).toBe(true);
+      expect(capturedPayload).not.toBeNull();
+      // Relational column must be explicitly cleared to null, NOT retained as old UUID
+      expect(capturedPayload.sprint_id).toBeNull();
+      expect(capturedPayload.metadata.sprint).toBe('Sprint 2026-Q4');
+      expect(capturedPayload.metadata.sprint_id).toBeUndefined();
+    });
   });
 });

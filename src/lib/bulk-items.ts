@@ -70,12 +70,9 @@ export function isMissingSprintIdColumnError(err: any): boolean {
   );
 }
 
-export const isUuid = (val: any): boolean => {
-  if (typeof val !== 'string') return false;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)) return true;
-  if (process.env.NODE_ENV === 'test' && /^[a-z0-9_-]*uuid[a-z0-9_-]*$/i.test(val)) return true;
-  return false;
-};
+export const isUuid = (val: any): boolean =>
+  typeof val === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
 /**
  * Reconciles relational sprint_id and metadata.sprint to prevent payload mismatches
@@ -1253,9 +1250,7 @@ export async function handleBulkUpdateItems(
         } else if (updates.sprint_id !== undefined) {
           itemUpdate.sprint_id = isUuid(updates.sprint_id) ? updates.sprint_id : null;
         } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
-          if (!mergedMetadata.sprint) {
-            itemUpdate.sprint_id = null;
-          }
+          itemUpdate.sprint_id = null;
         }
 
         // Active sprint estimate immutability guard: check items already in an active sprint
@@ -1799,9 +1794,7 @@ export async function handleBulkUpdateItems(
         } else if (it.sprint_id !== undefined) {
           patchFields.sprint_id = isUuid(it.sprint_id) ? it.sprint_id : null;
         } else if ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput) {
-          if (!mergedMetadata.sprint) {
-            patchFields.sprint_id = null;
-          }
+          patchFields.sprint_id = null;
         }
 
         // Active sprint estimate immutability guard: check items already in an active sprint

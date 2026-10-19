@@ -1460,9 +1460,7 @@ export async function PATCH(req: NextRequest) {
     } else if (body.sprint_id !== undefined) {
       updateFields.sprint_id = isUuid(body.sprint_id) ? body.sprint_id : null;
     } else if (effectiveMetadataInput !== undefined && ('sprint' in effectiveMetadataInput || 'sprint_id' in effectiveMetadataInput)) {
-      if (!resolvedMetadata?.sprint) {
-        updateFields.sprint_id = null;
-      }
+      updateFields.sprint_id = null;
     }
 
     // Guardrail: Validate sprint intake if moving item to an active sprint

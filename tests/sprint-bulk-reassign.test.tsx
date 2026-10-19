@@ -37,14 +37,14 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     sprint_settings: {
       sprints: [
         {
-          id: 'sprint-active-uuid-1',
+          id: 'a1111111-1111-4111-8111-111111111111',
           name: 'Sprint 1 (Active)',
           status: 'active',
           is_active: true,
           committed_points: 30,
         },
         {
-          id: 'sprint-planned-uuid-2',
+          id: 'b2222222-2222-4222-8222-222222222222',
           name: 'Sprint 2 (Planned)',
           status: 'planned',
           is_active: false,
@@ -63,7 +63,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       const existing = {
         priority: 'High',
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
         story_points: 5,
       };
       const incoming = { sprint: null };
@@ -78,7 +78,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     it('purges both sprint and sprint_id when moving an item to backlog via sprint: "__none__" or empty string', () => {
       const existing = {
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
       };
 
       const resultNone = reconcileSprintMetadata(existing, { sprint: '__none__' }, mockProjectSettings);
@@ -93,7 +93,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     it('purges sprint_id when incoming specifies sprint_id: null', () => {
       const existing = {
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
       };
       const incoming = { sprint_id: null };
 
@@ -105,19 +105,19 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     it('binds relational sprint_id when moving to a known sprint by name', () => {
       const existing = {
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
       };
       const incoming = { sprint: 'Sprint 2 (Planned)' };
 
       const result = reconcileSprintMetadata(existing, incoming, mockProjectSettings);
       expect(result.sprint).toBe('Sprint 2 (Planned)');
-      expect(result.sprint_id).toBe('sprint-planned-uuid-2');
+      expect(result.sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
     });
 
     it('purges stale sprint_id when moving to an ad-hoc unindexed sprint name', () => {
       const existing = {
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
       };
       const incoming = { sprint: 'Future Ad-hoc Sprint' };
 
@@ -128,11 +128,11 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
 
     it('resolves canonical sprint name when incoming provides only sprint_id', () => {
       const existing = {};
-      const incoming = { sprint_id: 'sprint-planned-uuid-2' };
+      const incoming = { sprint_id: 'b2222222-2222-4222-8222-222222222222' };
 
       const result = reconcileSprintMetadata(existing, incoming, mockProjectSettings);
       expect(result.sprint).toBe('Sprint 2 (Planned)');
-      expect(result.sprint_id).toBe('sprint-planned-uuid-2');
+      expect(result.sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
     });
 
     it('does not assign fabricated sprint_id for ad-hoc sprints not in project settings', () => {
@@ -147,7 +147,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
     it('supports fullReplacement mode to ensure removed metadata keys are not retained', () => {
       const existing = {
         sprint: 'Sprint 1 (Active)',
-        sprint_id: 'sprint-active-uuid-1',
+        sprint_id: 'a1111111-1111-4111-8111-111111111111',
         priority: 'High',
         component: 'UI',
       };
@@ -259,7 +259,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                 metadata: {
                   ...mockItem.metadata,
                   sprint: 'Sprint 1 (Active)',
-                  sprint_id: 'sprint-active-uuid-1',
+                  sprint_id: 'a1111111-1111-4111-8111-111111111111',
                   added_mid_sprint: true,
                 },
               },
@@ -324,7 +324,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                 metadata: {
                   ...mockItem.metadata,
                   sprint: 'Sprint 1 (Active)',
-                  sprint_id: 'sprint-active-uuid-1',
+                  sprint_id: 'a1111111-1111-4111-8111-111111111111',
                 },
               },
               error: null,
@@ -358,7 +358,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         order_index: 1000,
         metadata: {
           sprint: 'Sprint 1 (Active)',
-          sprint_id: 'sprint-active-uuid-1',
+          sprint_id: 'a1111111-1111-4111-8111-111111111111',
           story_points: 5,
         },
       };
@@ -490,7 +490,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(res.success).toBe(true);
       expect(capturedUpdate.metadata.priority).toBe('Urgent');
       expect(capturedUpdate.metadata.sprint).toBe('Sprint 1 (Active)');
-      expect(capturedUpdate.metadata.sprint_id).toBe('sprint-active-uuid-1');
+      expect(capturedUpdate.metadata.sprint_id).toBe('a1111111-1111-4111-8111-111111111111');
     });
   });
 
@@ -499,14 +499,14 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
 
     it('returns isIntake: false when item is already in the active sprint without sprint_id', () => {
       const prevMeta = { sprint: 'Sprint 1 (Active)', story_points: 5 };
-      const targetMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'sprint-active-uuid-1', story_points: 5 };
+      const targetMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'a1111111-1111-4111-8111-111111111111', story_points: 5 };
       const result = isMovingIntoActiveSprint(prevMeta, targetMeta, sprints);
       expect(result.isIntake).toBe(false);
     });
 
     it('returns isIntake: true when item is moving from backlog into the active sprint', () => {
       const prevMeta = { story_points: 5 };
-      const targetMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'sprint-active-uuid-1', story_points: 5 };
+      const targetMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'a1111111-1111-4111-8111-111111111111', story_points: 5 };
       const result = isMovingIntoActiveSprint(prevMeta, targetMeta, sprints);
       expect(result.isIntake).toBe(true);
       expect(result.activeSprint?.name).toBe('Sprint 1 (Active)');
@@ -514,13 +514,13 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
 
     it('returns isIntake: false when target sprint is planned or inactive', () => {
       const prevMeta = { story_points: 5 };
-      const targetMeta = { sprint: 'Sprint 2 (Planned)', sprint_id: 'sprint-planned-uuid-2' };
+      const targetMeta = { sprint: 'Sprint 2 (Planned)', sprint_id: 'b2222222-2222-4222-8222-222222222222' };
       const result = isMovingIntoActiveSprint(prevMeta, targetMeta, sprints);
       expect(result.isIntake).toBe(false);
     });
 
     it('returns isIntake: false when moving to backlog', () => {
-      const prevMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'sprint-active-uuid-1' };
+      const prevMeta = { sprint: 'Sprint 1 (Active)', sprint_id: 'a1111111-1111-4111-8111-111111111111' };
       const targetMeta = {};
       const result = isMovingIntoActiveSprint(prevMeta, targetMeta, sprints);
       expect(result.isIntake).toBe(false);
@@ -679,7 +679,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         {
           ids: mockItems.map((i) => i.id),
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
             metadata: {
               sprint: 'Sprint 1 (Active)',
             },
@@ -696,10 +696,10 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         const update = capturedUpdates[item.id];
         expect(update).toBeDefined();
         // Relational foreign key column
-        expect(update.sprint_id).toBe('sprint-active-uuid-1');
+        expect(update.sprint_id).toBe('a1111111-1111-4111-8111-111111111111');
         // JSONB metadata synchronization
         expect(update.metadata.sprint).toBe('Sprint 1 (Active)');
-        expect(update.metadata.sprint_id).toBe('sprint-active-uuid-1');
+        expect(update.metadata.sprint_id).toBe('a1111111-1111-4111-8111-111111111111');
         // Governance bypass flags
         expect(update.metadata.governance_bypass).toBe(true);
         expect(update.metadata.added_mid_sprint).toBe(true);
@@ -781,12 +781,12 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
           items: [
             {
               id: 'item-het-1',
-              sprint_id: 'sprint-active-uuid-1',
+              sprint_id: 'a1111111-1111-4111-8111-111111111111',
               metadata: { sprint: 'Sprint 1 (Active)' },
             },
             {
               id: 'item-het-2',
-              sprint_id: 'sprint-active-uuid-1',
+              sprint_id: 'a1111111-1111-4111-8111-111111111111',
               metadata: { sprint: 'Sprint 1 (Active)' },
             },
           ],
@@ -796,9 +796,9 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
 
       expect(res.success).toBe(true);
       expect(res.updated_count).toBe(2);
-      expect(capturedUpdates['item-het-1'].sprint_id).toBe('sprint-active-uuid-1');
+      expect(capturedUpdates['item-het-1'].sprint_id).toBe('a1111111-1111-4111-8111-111111111111');
       expect(capturedUpdates['item-het-1'].metadata.sprint).toBe('Sprint 1 (Active)');
-      expect(capturedUpdates['item-het-2'].sprint_id).toBe('sprint-active-uuid-1');
+      expect(capturedUpdates['item-het-2'].sprint_id).toBe('a1111111-1111-4111-8111-111111111111');
       expect(capturedUpdates['item-het-2'].metadata.sprint).toBe('Sprint 1 (Active)');
     });
 
@@ -856,7 +856,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         {
           ids: ['item-rejected'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1',
+            sprint_id: 'a1111111-1111-4111-8111-111111111111',
             metadata: { sprint: 'Sprint 1 (Active)' },
           },
         },
@@ -909,7 +909,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         {
           ids: ['item-direct-sprint-id'],
           updates: {
-            sprint_id: 'sprint-active-uuid-1', // Points to active sprint definition
+            sprint_id: 'a1111111-1111-4111-8111-111111111111', // Points to active sprint definition
           },
         },
         { governance_bypass: false }
@@ -948,8 +948,8 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                   title: 'Item 1',
                   project_id: projectId,
                   status: 'not_started',
-                  sprint_id: 'original-sprint-uuid-1',
-                  metadata: { sprint: 'Original Sprint', sprint_id: 'original-sprint-uuid-1' },
+                  sprint_id: 'c3333333-3333-4333-8333-333333333333',
+                  metadata: { sprint: 'Original Sprint', sprint_id: 'c3333333-3333-4333-8333-333333333333' },
                 },
                 {
                   id: 'item-2',
@@ -1013,7 +1013,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       expect(res.success).toBe(false);
       expect(res.error).toContain('Rolled back all partially applied changes');
       expect(rollbackPayloads.length).toBeGreaterThanOrEqual(1);
-      expect(rollbackPayloads[0].sprint_id).toBe('original-sprint-uuid-1');
+      expect(rollbackPayloads[0].sprint_id).toBe('c3333333-3333-4333-8333-333333333333');
     });
 
     it('clears added_mid_sprint flag when moving items from an active sprint to backlog', async () => {
@@ -1043,10 +1043,10 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                   title: 'Active sprint item moving to backlog',
                   project_id: projectId,
                   status: 'not_started',
-                  sprint_id: 'sprint-active-uuid-1',
+                  sprint_id: 'a1111111-1111-4111-8111-111111111111',
                   metadata: {
                     sprint: 'Sprint 1 (Active)',
-                    sprint_id: 'sprint-active-uuid-1',
+                    sprint_id: 'a1111111-1111-4111-8111-111111111111',
                     added_mid_sprint: true,
                     story_points: 3,
                   },
@@ -1112,10 +1112,10 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                   title: 'Active sprint item moving to planned',
                   project_id: projectId,
                   status: 'not_started',
-                  sprint_id: 'sprint-active-uuid-1',
+                  sprint_id: 'a1111111-1111-4111-8111-111111111111',
                   metadata: {
                     sprint: 'Sprint 1 (Active)',
-                    sprint_id: 'sprint-active-uuid-1',
+                    sprint_id: 'a1111111-1111-4111-8111-111111111111',
                     added_mid_sprint: true,
                     story_points: 3,
                   },
@@ -1143,14 +1143,14 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
       const res = await handleBulkUpdateItems(tenantId, {
         ids: ['item-planned'],
         updates: {
-          sprint_id: 'sprint-planned-uuid-2',
+          sprint_id: 'b2222222-2222-4222-8222-222222222222',
           metadata: { sprint: 'Sprint 2 (Planned)' },
         },
       });
 
       expect(res.success).toBe(true);
       expect(appliedFields).toBeDefined();
-      expect(appliedFields.sprint_id).toBe('sprint-planned-uuid-2');
+      expect(appliedFields.sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
       expect(appliedFields.metadata.sprint).toBe('Sprint 2 (Planned)');
       expect(appliedFields.metadata.added_mid_sprint).toBeUndefined();
     });
@@ -1229,7 +1229,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                     status: 'not_started',
                     metadata: {
                       sprint: 'Sprint 1 (Active)',
-                      sprint_id: 'sprint-active-uuid-1',
+                      sprint_id: 'a1111111-1111-4111-8111-111111111111',
                     },
                   },
                 ],
@@ -1270,7 +1270,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         const res = await handleBulkUpdateItems(tenantId, {
           ids: ['item-missing-column'],
           updates: {
-            sprint_id: 'sprint-planned-uuid-2',
+            sprint_id: 'b2222222-2222-4222-8222-222222222222',
             metadata: { sprint: 'Sprint 2 (Planned)' },
           },
         });
@@ -1279,11 +1279,11 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         expect(res.updated_count).toBe(1);
         expect(attemptedCalls.length).toBe(2);
         // First attempt had sprint_id
-        expect(attemptedCalls[0].sprint_id).toBe('sprint-planned-uuid-2');
+        expect(attemptedCalls[0].sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
         // Second attempt stripped sprint_id and preserved metadata
         expect(attemptedCalls[1].sprint_id).toBeUndefined();
         expect(attemptedCalls[1].metadata.sprint).toBe('Sprint 2 (Planned)');
-        expect(attemptedCalls[1].metadata.sprint_id).toBe('sprint-planned-uuid-2');
+        expect(attemptedCalls[1].metadata.sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
         resolve();
       });
     });
@@ -1328,7 +1328,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
                     status: 'not_started',
                     metadata: {
                       sprint: 'Sprint 1 (Active)',
-                      sprint_id: 'sprint-active-uuid-1',
+                      sprint_id: 'a1111111-1111-4111-8111-111111111111',
                     },
                   },
                 ],
@@ -1368,7 +1368,7 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
           items: [
             {
               id: 'item-modality-b',
-              sprint_id: 'sprint-planned-uuid-2',
+              sprint_id: 'b2222222-2222-4222-8222-222222222222',
               metadata: { sprint: 'Sprint 2 (Planned)' },
             },
           ],
@@ -1377,10 +1377,10 @@ describe('BUG-TRK-SPRINT-MOVE-DB-REJECT: Sprint Batch Reassign & Active Lock Gua
         expect(res.success).toBe(true);
         expect(res.updated_count).toBe(1);
         expect(attemptedCalls.length).toBe(2);
-        expect(attemptedCalls[0].sprint_id).toBe('sprint-planned-uuid-2');
+        expect(attemptedCalls[0].sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
         expect(attemptedCalls[1].sprint_id).toBeUndefined();
         expect(attemptedCalls[1].metadata.sprint).toBe('Sprint 2 (Planned)');
-        expect(attemptedCalls[1].metadata.sprint_id).toBe('sprint-planned-uuid-2');
+        expect(attemptedCalls[1].metadata.sprint_id).toBe('b2222222-2222-4222-8222-222222222222');
         resolve();
       });
     });
