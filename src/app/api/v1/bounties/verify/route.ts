@@ -1,34 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-
-const STANDARD_PREFIX_PATTERN = /\b((?:TASK|BUG|STORY|EPIC|FEAT|EVT|SUBTASK|PRD|RFC|TRK|PW|VAL)-[A-Za-z0-9_-]+)\b/i;
-const BRACKETED_REF_PATTERN = /\[([A-Za-z0-9_]+-[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)\]/i;
-const GENERAL_REF_PATTERN = /\b([A-Z]{2,8}-\d+(?:-[A-Za-z0-9_]+)*)\b/i;
-
-export function extractTaskRefId(texts: Array<string | null | undefined>): string | null {
-  for (const text of texts) {
-    if (!text) continue;
-
-    // 1. Bracketed ref: [TASK-101]
-    const bracketMatch = text.match(BRACKETED_REF_PATTERN);
-    if (bracketMatch && !/^patch-\d+$/i.test(bracketMatch[1])) {
-      return bracketMatch[1].toUpperCase();
-    }
-
-    // 2. Known ecosystem prefix: TASK-*, BUG-*, STORY-*, etc.
-    const standardMatch = text.match(STANDARD_PREFIX_PATTERN);
-    if (standardMatch) {
-      return standardMatch[1].toUpperCase();
-    }
-
-    // 3. General uppercase prefix with number (e.g. PROJ-101)
-    const generalMatch = text.match(GENERAL_REF_PATTERN);
-    if (generalMatch && !/^patch-\d+$/i.test(generalMatch[1])) {
-      return generalMatch[1].toUpperCase();
-    }
-  }
-  return null;
-}
+import { extractTaskRefId } from '@/lib/bounties/extractRef';
 
 /**
  * POST /api/v1/bounties/verify
@@ -69,11 +41,92 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 2. Query work item
+  // 2. Extract scoping parameters (tenant, project, repository) to prevent cross-workspace PR collisions
+  const searchParams = req.nextUrl.searchParams;
+  const tenantSlug =
+    searchParams.get('tenant') ||
+    searchParams.get('tenant_slug') ||
+    req.headers.get('x-tenant-slug') ||
+    body.tenant_slug;
+
+  const tenantId =
+    searchParams.get('tenant_id') ||
+    req.headers.get('x-tenant-id') ||
+    body.tenant_id;
+
+  const projectSlug =
+    searchParams.get('project') ||
+    searchParams.get('project_slug') ||
+    req.headers.get('x-project-slug') ||
+    body.project_slug;
+
+  const projectId =
+    searchParams.get('project_id') ||
+    req.headers.get('x-project-id') ||
+    body.project_id;
+
+  let scopedTenantId = tenantId;
+  let scopedTenant: any = null;
+
+  if (tenantSlug && !scopedTenantId) {
+    const tAdmin = supabaseAdmin.from('tenants');
+    if (tAdmin && typeof tAdmin.select === 'function') {
+      let tQuery: any = tAdmin
+        .select('id, slug, tier, metadata')
+        .eq('slug', tenantSlug);
+      if (typeof tQuery.is === 'function') {
+        tQuery = tQuery.is('deleted_at', null);
+      }
+      if (typeof tQuery.maybeSingle === 'function') {
+        const { data: tenantData } = await tQuery.maybeSingle();
+        if (tenantData) {
+          scopedTenantId = tenantData.id;
+          scopedTenant = tenantData;
+        } else {
+          return NextResponse.json(
+            { success: false, error: `Tenant "${tenantSlug}" not found.` },
+            { status: 404 }
+          );
+        }
+      }
+    }
+  }
+
+  let scopedProjectId = projectId;
+  if (projectSlug && !scopedProjectId) {
+    const pAdmin = supabaseAdmin.from('projects');
+    if (pAdmin && typeof pAdmin.select === 'function') {
+      let pQuery: any = pAdmin
+        .select('id, slug, tenant_id')
+        .eq('slug', projectSlug);
+      if (scopedTenantId && typeof pQuery.eq === 'function') {
+        pQuery = pQuery.eq('tenant_id', scopedTenantId);
+      }
+      if (typeof pQuery.is === 'function') {
+        pQuery = pQuery.is('deleted_at', null);
+      }
+      if (typeof pQuery.maybeSingle === 'function') {
+        const { data: projData } = await pQuery.maybeSingle();
+        if (projData) {
+          scopedProjectId = projData.id;
+          if (!scopedTenantId) scopedTenantId = projData.tenant_id;
+        }
+      }
+    }
+  }
+
+  // 3. Query work item scoped by external_ref_id and tenant/project if provided
   let itemQuery: any = supabaseAdmin
     .from('work_items')
     .select('*')
     .eq('external_ref_id', targetRefId);
+
+  if (scopedTenantId && typeof itemQuery.eq === 'function') {
+    itemQuery = itemQuery.eq('tenant_id', scopedTenantId);
+  }
+  if (scopedProjectId && typeof itemQuery.eq === 'function') {
+    itemQuery = itemQuery.eq('project_id', scopedProjectId);
+  }
 
   if (typeof itemQuery.is === 'function') {
     itemQuery = itemQuery.is('deleted_at', null);
@@ -81,15 +134,75 @@ export async function POST(req: NextRequest) {
 
   const { data: item, error: itemErr } = await itemQuery.maybeSingle();
 
-  if (itemErr || !item) {
+  if (itemErr) {
     return NextResponse.json({
       success: false,
-      message: `Work item "${targetRefId}" not found in tracker database.`,
+      error: `Error querying work item: ${itemErr.message}. If this reference exists in multiple workspaces, specify tenant or repository scope.`,
+    }, { status: 400 });
+  }
+
+  if (!item) {
+    return NextResponse.json({
+      success: false,
+      message: `Work item "${targetRefId}" not found in tracker database${scopedTenantId ? ' for the specified workspace' : ''}.`,
     }, { status: 404 });
   }
 
-  // 3. Determine status transition
+  // 4. Security Check: Only active bounty items can be verified via this endpoint
   const existingMetadata = (item.metadata || {}) as Record<string, any>;
+  if (existingMetadata.bounty_active !== true) {
+    return NextResponse.json({
+      success: false,
+      error: `Work item "${targetRefId}" is not designated as an active bounty.`,
+    }, { status: 403 });
+  }
+
+  // Verify repository match if item defines a target github_repo
+  const targetRepo = pull_request.base?.repo?.full_name || body.repository?.full_name;
+  if (targetRepo && existingMetadata.github_repo) {
+    const expectedRepo = String(existingMetadata.github_repo).toLowerCase();
+    const actualRepo = String(targetRepo).toLowerCase();
+    if (!expectedRepo.endsWith(actualRepo) && !actualRepo.endsWith(expectedRepo)) {
+      return NextResponse.json({
+        success: false,
+        error: `PR repository "${targetRepo}" does not match work item repository "${existingMetadata.github_repo}".`,
+      }, { status: 403 });
+    }
+  }
+
+  // Verify workspace allows public bounties if tenant is loaded
+  if (!scopedTenant && item.tenant_id) {
+    const tAdmin = supabaseAdmin.from('tenants');
+    if (tAdmin && typeof tAdmin.select === 'function') {
+      let tQuery: any = tAdmin
+        .select('id, slug, tier, metadata')
+        .eq('id', item.tenant_id);
+      if (typeof tQuery.is === 'function') {
+        tQuery = tQuery.is('deleted_at', null);
+      }
+      if (typeof tQuery.maybeSingle === 'function') {
+        const { data: tData } = await tQuery.maybeSingle();
+        if (tData) scopedTenant = tData;
+      }
+    }
+  }
+
+  if (scopedTenant) {
+    const isPublicWorkspace =
+      scopedTenant.slug === 'sunshade' ||
+      scopedTenant.tier === 'demo' ||
+      Boolean(scopedTenant.metadata?.is_public) ||
+      Boolean(scopedTenant.metadata?.public_bounties);
+
+    if (!isPublicWorkspace) {
+      return NextResponse.json({
+        success: false,
+        error: `Workspace "${scopedTenant.slug}" is private and does not allow public bounty verification.`,
+      }, { status: 403 });
+    }
+  }
+
+  // 5. Determine status transition
   const updatedMetadata: Record<string, any> = { ...existingMetadata };
 
   if (prUrl) {

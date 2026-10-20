@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST as verifyPrHandler, extractTaskRefId } from '@/app/api/v1/bounties/verify/route';
+import { POST as verifyPrHandler } from '@/app/api/v1/bounties/verify/route';
+import { extractTaskRefId } from '@/lib/bounties/extractRef';
 import PublicBountiesPage from '@/app/(public)/[tenantSlug]/bounties/page';
 import { supabaseAdmin } from '@/lib/db';
 
@@ -103,6 +104,48 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
       });
 
       const jsx = await PublicBountiesPage({ params: Promise.resolve({ tenantSlug: 'secret-corp' }) });
+      expect(jsx).toBeDefined();
+    });
+
+    it('filters out items where bounty_active is false even if reward or points metadata exists', async () => {
+      const inactiveBounty = {
+        id: 'private-task-99',
+        tenant_id: mockTenant.id,
+        external_ref_id: 'TASK-INTERNAL-99',
+        title: 'Secret Internal Architectural Plan',
+        description: 'Confidential internal task.',
+        status: 'in_progress',
+        metadata: {
+          bounty_active: false,
+          bounty_reward: '1000 USDC',
+        },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn().mockResolvedValue({ data: [inactiveBounty, mockBountyTask], error: null }),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const jsx = await PublicBountiesPage({ params: Promise.resolve({ tenantSlug: 'sunshade' }) });
       expect(jsx).toBeDefined();
     });
   });
@@ -240,5 +283,156 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
       const json = await res.json();
       expect(json.action).toBe('ignored');
     });
+
+    it('rejects verification with HTTP 403 when work item is not marked as active bounty', async () => {
+      const inactiveItem = {
+        ...mockBountyTask,
+        metadata: { bounty_active: false },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: inactiveItem, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'opened',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] some change',
+          body: 'resolves ref',
+          head: { sha: '111111', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+        },
+      };
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('not designated as an active bounty');
+    });
+
+    it('rejects verification with HTTP 403 when PR repository does not match item repository', async () => {
+      const repoItem = {
+        ...mockBountyTask,
+        metadata: {
+          bounty_active: true,
+          github_repo: 'sunshade-systems/tracker',
+        },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: repoItem, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'opened',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] malicious hijack attempt',
+          base: { repo: { full_name: 'evil-corp/other-repo' } },
+          head: { sha: '222222', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+        },
+      };
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('does not match work item repository');
+    });
+
+    it('enforces tenant scoping when tenant_slug is provided', async () => {
+      let scopedTenantQueried = false;
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn((field: string, val: string) => {
+                if (field === 'slug' && val === 'sunshade') scopedTenantQueried = true;
+                return {
+                  is: vi.fn(() => ({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+                  })),
+                };
+              }),
+            })),
+          } as any;
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => ({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: mockBountyTask, error: null }),
+                  })),
+                })),
+              })),
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: mockBountyTask, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'opened',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] scoped item',
+          head: { sha: '333333', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+        },
+      };
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify?tenant_slug=sunshade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      expect(res.status).toBe(200);
+      expect(scopedTenantQueried).toBe(true);
+    });
   });
 });
+

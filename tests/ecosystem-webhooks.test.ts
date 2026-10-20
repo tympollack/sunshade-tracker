@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createHmac } from 'node:crypto';
-import { POST as ecosystemWebhookHandler, verifyHmacSignature } from '@/app/api/v1/webhooks/ecosystem/route';
+import { POST as ecosystemWebhookHandler } from '@/app/api/v1/webhooks/ecosystem/route';
+import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
 import { supabaseAdmin } from '@/lib/db';
 
 vi.mock('@/lib/db', () => ({

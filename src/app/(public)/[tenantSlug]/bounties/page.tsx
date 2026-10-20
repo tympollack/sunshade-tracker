@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { ShieldAlert, Award, GitPullRequest, Terminal, CheckCircle2, Clock, PlayCircle } from 'lucide-react';
 
 interface PageProps {
-  params: Promise<{ tenantSlug: string }> | { tenantSlug: string };
+  params: Promise<{ tenantSlug: string }>;
 }
 
 export default async function PublicBountiesPage({ params }: PageProps) {
@@ -65,9 +65,9 @@ export default async function PublicBountiesPage({ params }: PageProps) {
 
   const { data: allItems } = await itemsQuery;
 
-  // Filter for bounty-active items or public tasks
+  // Security: Strictly filter for active bounties to prevent exposing private task details
   const items = (allItems || []).filter((it: any) => {
-    return Boolean(it.metadata?.bounty_active) || it.metadata?.bounty_reward || it.metadata?.bounty_points;
+    return it.metadata?.bounty_active === true;
   });
 
   const columns = [
