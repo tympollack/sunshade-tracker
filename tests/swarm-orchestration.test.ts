@@ -136,6 +136,100 @@ Apply schema migration script and verify TimescaleDB hypertable chunking.
       expect(items[2].external_ref_id).toBe('SUBTASK-AUTH-1-1-1');
       expect(items[2].parent_ref_id).toBe('TASK-AUTH-1-1');
     });
+
+    it('correctly maps parent references when LLM outputs stories out of order', () => {
+      const outOfOrderOutput = [
+        {
+          level: 2,
+          story_index: 2,
+          title: 'Secondary Story',
+          description: 'Story 2 comes first in output',
+          acceptance_criteria: ['Done'],
+        },
+        {
+          level: 3,
+          story_index: 2,
+          task_index: 1,
+          title: 'Task under Secondary Story',
+          description: 'Belongs to Story 2',
+          acceptance_criteria: ['Done'],
+        },
+        {
+          level: 2,
+          story_index: 1,
+          title: 'Primary Story',
+          description: 'Story 1 comes later in output',
+          acceptance_criteria: ['Done'],
+        },
+        {
+          level: 3,
+          story_index: 1,
+          task_index: 1,
+          title: 'Task under Primary Story',
+          description: 'Belongs to Story 1',
+          acceptance_criteria: ['Done'],
+        },
+      ];
+
+      const items = normalizeLlmOutput(outOfOrderOutput, 'SWARM');
+
+      const story2 = items.find((i) => i.title === 'Secondary Story');
+      const task2 = items.find((i) => i.title === 'Task under Secondary Story');
+      const story1 = items.find((i) => i.title === 'Primary Story');
+      const task1 = items.find((i) => i.title === 'Task under Primary Story');
+
+      expect(story2?.external_ref_id).toBe('STORY-SWARM-2');
+      expect(story2?.parent_ref_id).toBeNull();
+      expect(task2?.parent_ref_id).toBe('STORY-SWARM-2');
+
+      expect(story1?.external_ref_id).toBe('STORY-SWARM-1');
+      expect(story1?.parent_ref_id).toBeNull();
+      expect(task1?.parent_ref_id).toBe('STORY-SWARM-1');
+    });
+
+    it('maps items to project taxonomy hierarchy and initial status from settings', () => {
+      const mockItems = [
+        {
+          level: 2 as const,
+          item_type: 'story' as const,
+          title: 'Feature Deliverable',
+          description: 'Feature level',
+          external_ref_id: 'STORY-TEST-1',
+          parent_ref_id: null,
+          metadata: { agent_prompt: '', acceptance_criteria: [] },
+        },
+        {
+          level: 3 as const,
+          item_type: 'task' as const,
+          title: 'Action Step',
+          description: 'Action level',
+          external_ref_id: 'TASK-TEST-1-1',
+          parent_ref_id: 'STORY-TEST-1',
+          metadata: { agent_prompt: '', acceptance_criteria: [] },
+        },
+      ];
+
+      const customSettings = {
+        hierarchy: [
+          { level: 1, type: 'epic' },
+          { level: 2, type: 'feature' },
+          { level: 3, type: 'action' },
+        ],
+        statuses: [
+          { id: 'backlog', order: 0 },
+          { id: 'in_progress', order: 1 },
+          { id: 'done', order: 2 },
+        ],
+      };
+
+      const payloads = toIngestPayloads(mockItems, customSettings);
+
+      expect(payloads[0].item_type).toBe('feature');
+      expect(payloads[0].status).toBe('backlog');
+
+      expect(payloads[1].item_type).toBe('action');
+      expect(payloads[1].status).toBe('backlog');
+    });
   });
 
   describe('Ingestion Integration & 100% Parent Resolution Verification', () => {
@@ -220,8 +314,11 @@ Apply schema migration script and verify TimescaleDB hypertable chunking.
 
       const mockLlmProvider = vi.fn().mockResolvedValue(mockLlmResponse);
 
-      const mockFetch = vi.fn().mockResolvedValue(
-        new Response(
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('/settings')) {
+          return new Response(JSON.stringify({ settings: { hierarchy: [], statuses: [] } }), { status: 200 });
+        }
+        return new Response(
           JSON.stringify({
             success: true,
             count: 2,
@@ -231,8 +328,8 @@ Apply schema migration script and verify TimescaleDB hypertable chunking.
             ],
           }),
           { status: 200 }
-        )
-      );
+        );
+      });
       vi.stubGlobal('fetch', mockFetch);
 
       const result = await executeSwarmDecomposition({

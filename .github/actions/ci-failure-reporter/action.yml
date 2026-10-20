@@ -48,40 +48,62 @@ runs:
         ERROR_MESSAGE: ${{ inputs.error_message }}
         LOG_FILE: ${{ inputs.log_file }}
       run: |
-        STACK_TRACE="No log file provided"
-        if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
-          STACK_TRACE=$(tail -n 40 "$LOG_FILE" | sed 's/"/\\"/g')
-        fi
-        
-        SHORT_SHA="${COMMIT_SHA:0:8}"
-        REF_ID="BUG-CI-${SHORT_SHA}-${JOB_NAME}"
-        
-        BODY=$(cat <<EOF
-        {
-          "project_slug": "$PROJECT_SLUG",
-          "items": [
-            {
-              "external_ref_id": "$REF_ID",
-              "item_type": "bug",
-              "title": "CI Failure: $ERROR_MESSAGE in $JOB_NAME",
-              "description": "### Automated CI Failure Report\n> **Job:** \`$JOB_NAME\`\n> **Commit:** \`$COMMIT_SHA\`\n\n\`\`\`\n$STACK_TRACE\n\`\`\`",
-              "status": "not_started",
-              "metadata": {
-                "ci_job": "$JOB_NAME",
-                "commit_hash": "$COMMIT_SHA",
-                "pr_number": "${PR_NUMBER:-}",
-                "priority": "Critical",
-                "severity": "High",
-                "auto_generated": true,
-                "agent_prompt": "### SYSTEM ROLE & OBJECTIVE\nYou are an Autonomous CI Remediation Specialist. Fix failure in job $JOB_NAME on commit $COMMIT_SHA."
+        node -e '
+          const fs = require("fs");
+          const logFile = process.env.LOG_FILE;
+          let stackTrace = "No log file provided";
+          if (logFile && fs.existsSync(logFile)) {
+            const raw = fs.readFileSync(logFile, "utf8");
+            const lines = raw.split("\n").slice(-50);
+            stackTrace = lines.join("\n");
+          }
+
+          // Redact tokens and credentials from logs
+          const trackerToken = process.env.SUNSHADE_TRACKER_TOKEN;
+          if (trackerToken && trackerToken.length >= 6) {
+            stackTrace = stackTrace.split(trackerToken).join("[REDACTED_TRACKER_TOKEN]");
+          }
+          stackTrace = stackTrace
+            .replace(/(?:ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})/g, "[REDACTED_GITHUB_TOKEN]")
+            .replace(/(?:tk_live_[a-z0-9_]{16,}|tk_test_[a-z0-9_]{16,})/g, "[REDACTED_TRACKER_KEY]")
+            .replace(/(?:Bearer\s+)[A-Za-z0-9_.-]{16,}/gi, "Bearer [REDACTED]")
+            .replace(/(?:password|secret|token|api_key|apikey|private_key)["\s:=]+[^\s",;}\]]{6,}/gi, (m) => {
+              const prefix = m.split(/["\s:=]+/)[0];
+              return `${prefix}: "[REDACTED]"`;
+            });
+
+          const shortSha = (process.env.COMMIT_SHA || "").slice(0, 8) || "unknown";
+          const jobName = (process.env.JOB_NAME || "ci").replace(/[^A-Za-z0-9_-]/g, "_");
+          const refId = `BUG-CI-${shortSha}-${jobName}`;
+          const prNumber = process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null;
+
+          const payload = {
+            project_slug: process.env.PROJECT_SLUG || "sunshade-tracker",
+            items: [
+              {
+                external_ref_id: refId,
+                item_type: "bug",
+                title: `CI Failure: ${process.env.ERROR_MESSAGE || "Failure"} in ${process.env.JOB_NAME || "ci"}`,
+                description: `### Automated CI Failure Report\n> **Job:** \`${process.env.JOB_NAME || "ci"}\`\n> **Commit:** \`${process.env.COMMIT_SHA || ""}\`\n\n\`\`\`\n${stackTrace}\n\`\`\``,
+                status: "not_started",
+                metadata: {
+                  ci_job: process.env.JOB_NAME || "ci",
+                  commit_hash: process.env.COMMIT_SHA || "",
+                  pr_number: prNumber,
+                  priority: "Critical",
+                  severity: "High",
+                  auto_generated: true,
+                  stack_trace: stackTrace,
+                  agent_prompt: `### SYSTEM ROLE & OBJECTIVE\nYou are an Autonomous CI Remediation Specialist. Fix failure in job ${process.env.JOB_NAME || "ci"} on commit ${process.env.COMMIT_SHA || ""}.`
+                }
               }
-            }
-          ]
-        }
-        EOF
-        )
-        
-        curl -s -X POST "${TRACKER_URL}/api/v1/items/ingest" \
+            ]
+          };
+
+          fs.writeFileSync("payload.json", JSON.stringify(payload, null, 2));
+        '
+
+        curl --fail-with-body -s -X POST "${TRACKER_URL}/api/v1/items/ingest" \
           -H "Authorization: Bearer $SUNSHADE_TRACKER_TOKEN" \
           -H "Content-Type: application/json" \
-          -d "$BODY"
+          -d @payload.json

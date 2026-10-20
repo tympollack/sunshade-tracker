@@ -27,6 +27,7 @@ export interface SwarmDecompositionOptions {
   apiKey?: string;
   overrideSprint?: string | null;
   overrideAssignee?: string | null;
+  projectSettings?: any;
 }
 
 export interface SwarmDecompositionResult {
@@ -274,15 +275,42 @@ export function parsePrdHeuristic(prdDocument: string, featurePrefix: string): D
 
 /**
  * Normalizes raw LLM parsed objects into deterministic DecomposedItem hierarchy.
+ * Uses a pre-pass to register LLM story_index values, ensuring out-of-order stories
+ * and tasks preserve correct parent references without orphaned roots.
  */
 export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): DecomposedItem[] {
   const cleanPrefix = featurePrefix.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
   const items: DecomposedItem[] = [];
 
-  const storyRefs = new Map<number, string>();
-  const taskRefs = new Map<string, string>();
+  // Pre-pass: map unique LLM story_index values to deterministic story refs
+  const storyIndexToRef = new Map<number, string>();
+  let nextStoryNum = 1;
 
-  let storyCounter = 0;
+  for (const raw of rawArray) {
+    const level: 2 | 3 | 4 = raw.level === 4 ? 4 : raw.level === 3 ? 3 : 2;
+    if (level === 2) {
+      const rawIdx = typeof raw.story_index === 'number' && raw.story_index > 0 ? raw.story_index : nextStoryNum;
+      if (!storyIndexToRef.has(rawIdx)) {
+        storyIndexToRef.set(rawIdx, `STORY-${cleanPrefix}-${rawIdx}`);
+      }
+      nextStoryNum = Math.max(nextStoryNum, rawIdx + 1);
+    }
+  }
+
+  // Also catch child items pointing to story_index not yet registered
+  for (const raw of rawArray) {
+    if (raw.story_index && !storyIndexToRef.has(Number(raw.story_index))) {
+      const rawIdx = Number(raw.story_index);
+      storyIndexToRef.set(rawIdx, `STORY-${cleanPrefix}-${rawIdx}`);
+    }
+  }
+
+  // Fallback if no stories registered
+  if (storyIndexToRef.size === 0) {
+    storyIndexToRef.set(1, `STORY-${cleanPrefix}-1`);
+  }
+
+  const taskRefs = new Map<string, string>();
   let taskCounter = 0;
   let subtaskCounter = 0;
   let orderIndex = 1000.0;
@@ -297,20 +325,18 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
     let parent_ref_id: string | null = null;
 
     if (level === 2) {
-      storyCounter++;
-      external_ref_id = `STORY-${cleanPrefix}-${storyCounter}`;
-      storyRefs.set(sIdx, external_ref_id);
+      external_ref_id = storyIndexToRef.get(sIdx) || `STORY-${cleanPrefix}-${sIdx}`;
       parent_ref_id = null;
     } else if (level === 3) {
       taskCounter++;
       external_ref_id = `TASK-${cleanPrefix}-${sIdx}-${tIdx}`;
       taskRefs.set(`${sIdx}-${tIdx}`, external_ref_id);
-      parent_ref_id = storyRefs.get(sIdx) || `STORY-${cleanPrefix}-${sIdx}`;
+      parent_ref_id = storyIndexToRef.get(sIdx) || `STORY-${cleanPrefix}-${sIdx}`;
     } else {
       subtaskCounter++;
       const subIdx = raw.subtask_index || subtaskCounter;
       external_ref_id = `SUBTASK-${cleanPrefix}-${sIdx}-${tIdx}-${subIdx}`;
-      parent_ref_id = taskRefs.get(`${sIdx}-${tIdx}`) || storyRefs.get(sIdx) || null;
+      parent_ref_id = taskRefs.get(`${sIdx}-${tIdx}`) || storyIndexToRef.get(sIdx) || null;
     }
 
     const acceptance_criteria: string[] = Array.isArray(raw.acceptance_criteria)
@@ -347,23 +373,71 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
     orderIndex += 1000.0;
   }
 
+  // Pre-dispatch parent verification & repair
+  const allRefIds = new Set(items.map((i) => i.external_ref_id));
+  const defaultParentStory = Array.from(storyIndexToRef.values())[0] || null;
+
+  for (const item of items) {
+    if (item.level > 2 && item.parent_ref_id && !allRefIds.has(item.parent_ref_id)) {
+      if (defaultParentStory && allRefIds.has(defaultParentStory)) {
+        item.parent_ref_id = defaultParentStory;
+      }
+    }
+  }
+
   return items;
 }
 
 /**
- * Transforms DecomposedItems into ingestion payloads compatible with POST /api/v1/items/ingest
+ * Transforms DecomposedItems into ingestion payloads compatible with POST /api/v1/items/ingest.
+ * Respects project taxonomy by mapping dynamic hierarchy levels and initial statuses.
  */
-export function toIngestPayloads(items: DecomposedItem[]): IngestItemPayload[] {
-  return items.map((item) => ({
-    title: item.title,
-    item_type: item.item_type,
-    description: item.description,
-    status: 'not_started',
-    parent_ref_id: item.parent_ref_id || undefined,
-    external_ref_id: item.external_ref_id,
-    order_index: item.order_index,
-    metadata: item.metadata,
-  }));
+export function toIngestPayloads(
+  items: DecomposedItem[],
+  projectSettings?: {
+    hierarchy?: Array<{ level: number; type: string; allowed_parents?: string[] }>;
+    statuses?: Array<{ id: string; order?: number }>;
+  } | null
+): IngestItemPayload[] {
+  // Determine default initial status from project settings if available
+  let initialStatus = 'not_started';
+  if (projectSettings?.statuses && projectSettings.statuses.length > 0) {
+    const sortedStatuses = [...projectSettings.statuses].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    initialStatus = sortedStatuses[0].id;
+  }
+
+  // Build level-to-type mapping if custom hierarchy is provided
+  const levelToType = new Map<number, string>();
+  if (projectSettings?.hierarchy && projectSettings.hierarchy.length > 0) {
+    for (const h of projectSettings.hierarchy) {
+      levelToType.set(h.level, h.type);
+    }
+  }
+
+  return items.map((item) => {
+    let targetType: string = item.item_type;
+    if (levelToType.has(item.level)) {
+      targetType = levelToType.get(item.level)!;
+    } else if (levelToType.size > 0) {
+      const sortedLevels = Array.from(levelToType.keys()).sort((a, b) => a - b);
+      if (item.level === 2 && sortedLevels.length >= 2) {
+        targetType = levelToType.get(sortedLevels[sortedLevels.length - 2]) || item.item_type;
+      } else if (item.level >= 3 && sortedLevels.length > 0) {
+        targetType = levelToType.get(sortedLevels[sortedLevels.length - 1]) || item.item_type;
+      }
+    }
+
+    return {
+      title: item.title,
+      item_type: targetType,
+      description: item.description,
+      status: initialStatus,
+      parent_ref_id: item.parent_ref_id || undefined,
+      external_ref_id: item.external_ref_id,
+      order_index: item.order_index,
+      metadata: item.metadata,
+    };
+  });
 }
 
 /**
@@ -403,12 +477,33 @@ export async function executeSwarmDecomposition(
   const baseUrl = (options.baseUrl || process.env.SUNSHADE_BASE_URL || 'https://track.sunshade.icu').replace(/\/$/, '');
   const apiKey = options.apiKey || process.env.SUNSHADE_API_KEY || process.env.TRACKER_API_KEY || '';
 
+  let settings = options.projectSettings;
+  if (!settings && apiKey) {
+    try {
+      const settingsRes = await globalThis.fetch(
+        `${baseUrl}/api/v1/projects/${encodeURIComponent(projectSlug)}/settings`,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            Accept: 'application/json',
+          },
+        }
+      );
+      if (settingsRes.ok) {
+        const sJson = await settingsRes.json();
+        settings = sJson.settings;
+      }
+    } catch {
+      // Proceed with defaults if network or permissions fail
+    }
+  }
+
   let dispatchResult: any = undefined;
 
   if (apiKey) {
     const ingestPayload = {
       project_slug: projectSlug,
-      items: toIngestPayloads(decomposedItems),
+      items: toIngestPayloads(decomposedItems, settings),
       override_sprint: options.overrideSprint,
       override_assignee: options.overrideAssignee,
     };

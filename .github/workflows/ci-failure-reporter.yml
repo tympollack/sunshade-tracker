@@ -25,13 +25,32 @@ jobs:
 
       - name: Typecheck
         id: typecheck
-        run: npx tsc --noEmit
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee typecheck-output.log
 
       - name: Run Test Suite
         id: test
         if: success() || failure()
+        shell: bash
         run: |
+          set -o pipefail
           npm test 2>&1 | tee test-output.log
+
+      - name: Consolidate Failure Logs
+        if: failure()
+        shell: bash
+        run: |
+          touch ci-failure.log
+          if [ -f typecheck-output.log ] && [ -s typecheck-output.log ]; then
+            echo "=== TypeScript Diagnostics ===" >> ci-failure.log
+            cat typecheck-output.log >> ci-failure.log
+          fi
+          if [ -f test-output.log ] && [ -s test-output.log ]; then
+            echo "=== Test Suite Output ===" >> ci-failure.log
+            cat test-output.log >> ci-failure.log
+          fi
 
       - name: Report CI Failure to SunShade Tracker
         if: failure()
@@ -43,4 +62,4 @@ jobs:
           commit_sha: ${{ github.sha }}
           job_name: 'Test & Typecheck'
           error_message: 'Automated test suite or TypeScript compilation failed'
-          log_file: 'test-output.log'
+          log_file: 'ci-failure.log'

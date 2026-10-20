@@ -239,4 +239,90 @@ describe('TASK-TRK-EVENT-BRIDGES: Cross-Utility Webhook Dispatcher for Ecosystem
       expect(itemsStore.size).toBe(1);
     });
   });
+
+  describe('Cross-Tenant Isolation & Project Routing Safeguards', () => {
+    it('rejects unauthorized tenants with HTTP 403 when ecosystem webhooks are not enabled', async () => {
+      const itemsStore = new Map<string, any>();
+      const privateTenant = { id: 'tenant-private-id', slug: 'acme-corp', name: 'Acme Corp', metadata: { ecosystem_enabled: false } };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            is: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => {
+                if (table === 'tenants') return { data: privateTenant, error: null };
+                return { data: null, error: null };
+              }),
+            })),
+            maybeSingle: vi.fn(async () => {
+              if (table === 'tenants') return { data: privateTenant, error: null };
+              return { data: null, error: null };
+            }),
+          })),
+        })),
+      })) as any);
+
+      const payload = { source: 'patchwork', incident_id: '100' };
+      const bodyStr = JSON.stringify(payload);
+      const sig = signPayload(bodyStr);
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/webhooks/ecosystem', {
+        method: 'POST',
+        headers: {
+          'x-sunshade-signature': sig,
+          'x-tenant-slug': 'acme-corp',
+          'Content-Type': 'application/json',
+        },
+        body: bodyStr,
+      });
+
+      const res = await ecosystemWebhookHandler(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toContain('not authorized');
+    });
+
+    it('rejects with HTTP 404 when target ecosystem project is missing without routing into unrelated project', async () => {
+      const itemsStore = new Map<string, any>();
+      // Mock tenant found, but projects query returns null for patchwork
+      vi.mocked(supabaseAdmin.from).mockImplementation(((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn((field: string, val: string) => ({
+            eq: vi.fn((f2: string, v2: string) => ({
+              is: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => {
+                  if (table === 'projects') return { data: null, error: null };
+                  return { data: null, error: null };
+                }),
+              })),
+            })),
+            is: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => {
+                if (table === 'tenants') return { data: mockTenant, error: null };
+                return { data: null, error: null };
+              }),
+            })),
+          })),
+        })),
+      })) as any);
+
+      const payload = { source: 'patchwork', incident_id: '200' };
+      const bodyStr = JSON.stringify(payload);
+      const sig = signPayload(bodyStr);
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/webhooks/ecosystem', {
+        method: 'POST',
+        headers: {
+          'x-sunshade-signature': sig,
+          'Content-Type': 'application/json',
+        },
+        body: bodyStr,
+      });
+
+      const res = await ecosystemWebhookHandler(req);
+      expect(res.status).toBe(404);
+      const json = await res.json();
+      expect(json.error).toContain('Target project "patchwork" not found');
+    });
+  });
 });
