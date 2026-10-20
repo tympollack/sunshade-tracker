@@ -75,23 +75,51 @@ Analyze and repair the continuous integration failure reported in job "${input.j
 }
 
 /**
+ * Sanitizes and redacts credentials, secrets, and auth tokens from stack traces.
+ */
+export function sanitizeLogSecrets(log: string, additionalSecrets: string[] = []): string {
+  let sanitized = log;
+  for (const secret of additionalSecrets) {
+    if (secret && secret.length >= 6) {
+      sanitized = sanitized.split(secret).join('[REDACTED_SECRET]');
+    }
+  }
+  return sanitized
+    .replace(/(?:ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})/g, '[REDACTED_GITHUB_TOKEN]')
+    .replace(/(?:tk_live_[a-z0-9_]{16,}|tk_test_[a-z0-9_]{16,})/g, '[REDACTED_TRACKER_KEY]')
+    .replace(/(?:Bearer\s+)[A-Za-z0-9_.-]{16,}/gi, 'Bearer [REDACTED]')
+    .replace(/(?:password|secret|token|api_key|apikey|private_key)["\s:=]+(?!(?:\[REDACTED))[^\s",;}\]]{6,}/gi, (match) => {
+      const prefix = match.split(/["\s:=]+/)[0];
+      return `${prefix}: "[REDACTED]"`;
+    });
+}
+
+/**
  * Constructs the structured ingestion payload adhering to the tracker schema.
  */
 export function constructCiFailurePayload(input: CiFailureInput): CiBugItemPayload {
   const projectSlug = input.projectSlug || 'sunshade-tracker';
   const refId = formatCiBugRefId(input.commitSha, input.jobName);
-  const summaryTitle = input.errorMessage
-    ? `CI Failure: ${input.errorMessage.slice(0, 70)}`
+  const additionalSecrets = input.trackerToken ? [input.trackerToken] : [];
+
+  const sanitizedErrorMessage = input.errorMessage
+    ? sanitizeLogSecrets(input.errorMessage, additionalSecrets)
+    : undefined;
+
+  const summaryTitle = sanitizedErrorMessage
+    ? `CI Failure: ${sanitizedErrorMessage.slice(0, 70)}`
     : `CI Failure in ${input.jobName} (${input.commitSha.slice(0, 8)})`;
 
-  const trimmedStack = (input.stackTrace || input.errorMessage || 'No stack trace captured')
+  const rawStack = input.stackTrace || sanitizedErrorMessage || 'No stack trace captured';
+  const sanitizedStack = sanitizeLogSecrets(rawStack, additionalSecrets);
+  const trimmedStack = sanitizedStack
     .split('\n')
     .slice(0, 30)
     .join('\n');
 
   const description = `### Automated CI Failure Report
 > **Job:** \`${input.jobName}\`  
-> **Commit:** \`${input.commitSha}\`${input.prNumber ? `  \n> **PR:** #${input.prNumber}` : ''}${input.failingFilePath ? `  \n> **File:** \`${input.failingFilePath}\`` : ''}${input.errorMessage ? `  \n> **Error:** ${input.errorMessage}` : ''}
+> **Commit:** \`${input.commitSha}\`${input.prNumber ? `  \n> **PR:** #${input.prNumber}` : ''}${input.failingFilePath ? `  \n> **File:** \`${input.failingFilePath}\`` : ''}${sanitizedErrorMessage ? `  \n> **Error:** ${sanitizedErrorMessage}` : ''}
 
 \`\`\`
 ${trimmedStack}
@@ -102,7 +130,7 @@ ${trimmedStack}
     commitSha: input.commitSha,
     jobName: input.jobName,
     failingFilePath: input.failingFilePath,
-    errorMessage: input.errorMessage,
+    errorMessage: sanitizedErrorMessage,
     prNumber: input.prNumber,
   });
 

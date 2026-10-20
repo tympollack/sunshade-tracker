@@ -71,6 +71,43 @@ describe('TASK-TRK-SELF-HEALING-CI: Self-Healing CI/CD Pipeline & Ingest Bridge'
       expect(item.metadata.priority).toBe('Critical');
       expect(item.metadata.agent_prompt).toBeDefined();
     });
+
+    it('redacts tokens, keys, and credentials from stack traces', () => {
+      const sensitiveStack = 'Error: connection failed with Bearer eyJhbGciOiJIUzI1Ni.secret and token=tk_live_1234567890abcdef and ghp_abcdefghijklmnopqrstuvwxyz123456';
+      const payload = constructCiFailurePayload({
+        commitSha: mockSha,
+        jobName: mockJob,
+        errorMessage: 'Connection failed',
+        stackTrace: sensitiveStack,
+        trackerToken: mockToken,
+      });
+
+      const desc = payload.items[0].description;
+      expect(desc).not.toContain('tk_live_1234567890abcdef');
+      expect(desc).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz123456');
+      expect(desc).toContain('[REDACTED_TRACKER_KEY]');
+      expect(desc).toContain('[REDACTED_GITHUB_TOKEN]');
+    });
+
+    it('redacts tokens and credentials from errorMessage in title and agent prompt', () => {
+      const sensitiveError = 'Failed when connecting with token=tk_live_9988776655443322 and ghp_11223344556677889900aabbccddeeff';
+      const payload = constructCiFailurePayload({
+        commitSha: mockSha,
+        jobName: mockJob,
+        errorMessage: sensitiveError,
+      });
+
+      const item = payload.items[0];
+      expect(item.title).not.toContain('tk_live_9988776655443322');
+      expect(item.title).not.toContain('ghp_11223344556677889900aabbccddeeff');
+      expect(item.title).toContain('[REDACTED_TRACKER_KEY]');
+
+      expect(item.description).not.toContain('tk_live_9988776655443322');
+      expect(item.description).toContain('[REDACTED_TRACKER_KEY]');
+
+      expect(item.metadata.agent_prompt).not.toContain('tk_live_9988776655443322');
+      expect(item.metadata.agent_prompt).toContain('[REDACTED_TRACKER_KEY]');
+    });
   });
 
   describe('Ingest Dispatch & Performance SLA (< 10 seconds)', () => {

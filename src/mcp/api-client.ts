@@ -99,7 +99,7 @@ export class TrackerApiClient {
     const querySlug = slug || 'all';
     const slugParam = querySlug !== 'all' ? `project_slug=${encodeURIComponent(querySlug)}` : 'all_projects=true';
     const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
-    const res = await this.fetch(`/api/v1/items?${slugParam}${tenantParam}`);
+    const res = await this.fetch(`/api/v1/items?${slugParam}${tenantParam}&include_cold_archive=true`);
 
     if (Array.isArray(res?.items)) {
       const found = res.items.find(
@@ -313,12 +313,15 @@ export class TrackerApiClient {
     const itemsRes = await this.fetch(`/api/v1/items?project_slug=${encodeURIComponent(project.slug)}${tenantParam}`);
     const items = Array.isArray(itemsRes?.items) ? itemsRes.items : [];
 
-    const epics = items.filter((it: any) => it.item_type === 'epic');
+    const isTerminal = (status?: string) =>
+      Boolean(status && /^(complete|completed|done|closed|finished|approved|published|resolved)$/i.test(status));
+
+    const epics = items.filter((it: any) => it.item_type === 'epic' && !isTerminal(it.status));
     const inFlightPrs = items.filter(
-      (it: any) => Boolean(it.metadata?.pr_url) || Boolean(it.metadata?.pr_urls?.length) || it.status === 'in_review'
+      (it: any) => !isTerminal(it.status) && (Boolean(it.metadata?.pr_url) || Boolean(it.metadata?.pr_urls?.length) || it.status === 'in_review')
     );
     const blockers = items.filter(
-      (it: any) => it.status === 'blocked' || it.metadata?.priority === 'Critical' || it.metadata?.priority === 'High'
+      (it: any) => !isTerminal(it.status) && (it.status === 'blocked' || it.metadata?.priority === 'Critical' || it.metadata?.priority === 'High')
     );
 
     const lines: string[] = [

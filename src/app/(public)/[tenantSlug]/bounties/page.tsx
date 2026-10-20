@@ -63,6 +63,14 @@ export default async function PublicBountiesPage({ params }: PageProps) {
     itemsQuery = itemsQuery.is('deleted_at', null);
   }
 
+  if (typeof itemsQuery.filter === 'function') {
+    itemsQuery = itemsQuery.filter('metadata->>bounty_active', 'eq', 'true');
+  }
+
+  if (typeof itemsQuery.order === 'function') {
+    itemsQuery = itemsQuery.order('created_at', { ascending: false });
+  }
+
   const { data: allItems } = await itemsQuery;
 
   // Security: Strictly filter for active bounties to prevent exposing private task details

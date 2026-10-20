@@ -13,12 +13,12 @@ export interface CliConfig {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function loadCliConfig(overrides: Partial<CliConfig> = {}): CliConfig {
-  let apiKey = overrides.apiKey || process.env.SUNSHADE_API_KEY || process.env.TRACKER_API_KEY || '';
-  let baseUrl = overrides.baseUrl || process.env.SUNSHADE_BASE_URL || process.env.TRACKER_BASE_URL || 'https://track.sunshade.icu';
-  let tenantSlug = overrides.tenantSlug || process.env.TRACKER_TENANT || process.env.SUNSHADE_TENANT || 'pym-energy';
-  let projectSlug = overrides.projectSlug || process.env.TRACKER_PROJECT || 'sunshade-tracker';
+  let apiKey = overrides.apiKey || process.env.SUNSHADE_API_KEY || process.env.TRACKER_API_KEY;
+  let baseUrl = overrides.baseUrl || process.env.SUNSHADE_BASE_URL || process.env.TRACKER_BASE_URL;
+  let tenantSlug = overrides.tenantSlug || process.env.TRACKER_TENANT || process.env.SUNSHADE_TENANT;
+  let projectSlug = overrides.projectSlug || process.env.TRACKER_PROJECT || process.env.SUNSHADE_PROJECT;
 
-  if (!apiKey) {
+  if (!apiKey || !baseUrl || !tenantSlug || !projectSlug) {
     const candidateFiles = ['.env.local', '.env', '.tracker.json'];
     for (const file of candidateFiles) {
       const fullPath = path.resolve(process.cwd(), file);
@@ -26,10 +26,10 @@ export function loadCliConfig(overrides: Partial<CliConfig> = {}): CliConfig {
         try {
           if (file.endsWith('.json')) {
             const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-            if (data.apiKey) apiKey = data.apiKey;
-            if (data.baseUrl) baseUrl = data.baseUrl;
-            if (data.tenantSlug) tenantSlug = data.tenantSlug;
-            if (data.projectSlug) projectSlug = data.projectSlug;
+            if (!apiKey && data.apiKey) apiKey = data.apiKey;
+            if (!baseUrl && data.baseUrl) baseUrl = data.baseUrl;
+            if (!tenantSlug && data.tenantSlug) tenantSlug = data.tenantSlug;
+            if (!projectSlug && data.projectSlug) projectSlug = data.projectSlug;
           } else {
             const lines = fs.readFileSync(fullPath, 'utf8').split('\n');
             for (const line of lines) {
@@ -46,15 +46,15 @@ export function loadCliConfig(overrides: Partial<CliConfig> = {}): CliConfig {
           }
         } catch {}
       }
-      if (apiKey) break;
+      if (apiKey && baseUrl && tenantSlug && projectSlug) break;
     }
   }
 
   return {
-    baseUrl: baseUrl.replace(/\/$/, ''),
-    apiKey,
-    tenantSlug,
-    projectSlug,
+    baseUrl: (baseUrl || 'https://track.sunshade.icu').replace(/\/$/, ''),
+    apiKey: apiKey || '',
+    tenantSlug: tenantSlug || 'pym-energy',
+    projectSlug: projectSlug || 'sunshade-tracker',
   };
 }
 
@@ -146,7 +146,7 @@ export class SunshadeCliApi {
 
     const slugParam = slug ? `project_slug=${encodeURIComponent(slug)}` : 'all_projects=true';
     const tenantParam = this.config.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.config.tenantSlug)}` : '';
-    const res = await this.request(`/api/v1/items?${slugParam}${tenantParam}`);
+    const res = await this.request(`/api/v1/items?${slugParam}${tenantParam}&include_cold_archive=true`);
 
     if (Array.isArray(res?.items)) {
       const found = res.items.find((it: any) => it.external_ref_id === idOrRef || it.id === idOrRef);

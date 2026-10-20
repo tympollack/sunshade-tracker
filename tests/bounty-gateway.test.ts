@@ -190,13 +190,18 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
         },
       };
 
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
       const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
         body: JSON.stringify(webhookBody),
       });
 
       const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
@@ -244,13 +249,18 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
         },
       };
 
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
       const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
         body: JSON.stringify(webhookBody),
       });
 
       const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
@@ -272,13 +282,18 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
         },
       };
 
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
       const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
         body: JSON.stringify(webhookBody),
       });
 
       const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.action).toBe('ignored');
@@ -315,13 +330,18 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
         },
       };
 
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
       const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
         body: JSON.stringify(webhookBody),
       });
 
       const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.error).toContain('not designated as an active bounty');
@@ -361,13 +381,18 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
         },
       };
 
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
       const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
         body: JSON.stringify(webhookBody),
       });
 
       const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.error).toContain('does not match work item repository');
@@ -432,6 +457,328 @@ describe('TASK-TRK-BOUNTY-GATEWAY: Public Roadmap & Agent Bounty Verification Ga
       const res = await verifyPrHandler(req);
       expect(res.status).toBe(200);
       expect(scopedTenantQueried).toBe(true);
+    });
+
+    it('un-strands bounty when PR is closed without merging and restores open status', async () => {
+      let currentItem = {
+        ...mockBountyTask,
+        status: 'in_review',
+        metadata: {
+          bounty_active: true,
+          bounty_status: 'in_progress',
+          pr_url: 'https://github.com/org/repo/pull/77',
+          pr_urls: ['https://github.com/org/repo/pull/77'],
+        },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                currentItem = { ...currentItem, ...patch };
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                  })),
+                };
+              }),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'closed',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] abandoned PR',
+          html_url: 'https://github.com/org/repo/pull/77',
+          head: { sha: 'abcdef123', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+          closed_at: '2026-10-20T12:00:00Z',
+        },
+      };
+
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.action).toBe('reopened');
+      expect(json.status).toBe('not_started');
+      expect(json.item.metadata.bounty_status).toBe('open');
+      expect(json.item.metadata.pr_urls).toHaveLength(0);
+    });
+
+    it('rejects bounty mutation with HTTP 409 when item belongs to a completed/locked sprint', async () => {
+      const lockedSprintItem = {
+        ...mockBountyTask,
+        sprint_id: 'sprint-locked-1',
+        status: 'in_review',
+      };
+
+      const completedSprint = {
+        id: 'sprint-locked-1',
+        status: 'completed',
+        is_active: false,
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: lockedSprintItem, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        if (table === 'sprints') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: completedSprint, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'closed',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] locked sprint test',
+          html_url: 'https://github.com/org/repo/pull/88',
+          head: { sha: 'ffff1111', ref: 'feat/TASK-BOUNTY-42' },
+          merged: true,
+        },
+      };
+
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
+      expect(res.status).toBe(409);
+      const json = await res.json();
+      expect(json.error).toContain('locked sprint');
+    });
+
+    it('enforces HMAC signature when GITHUB_WEBHOOK_SECRET is configured', async () => {
+      const testSecret = 'gh_webhook_secret_key_999';
+      process.env.GITHUB_WEBHOOK_SECRET = testSecret;
+
+      const webhookBody = {
+        action: 'opened',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] signed pr',
+          head: { sha: '555555', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+        },
+      };
+      const bodyStr = JSON.stringify(webhookBody);
+
+      // 1. Missing / invalid signature -> 401
+      const reqInvalid = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-hub-signature-256': 'sha256=invalid_hex_string',
+        },
+        body: bodyStr,
+      });
+
+      const resInvalid = await verifyPrHandler(reqInvalid);
+      expect(resInvalid.status).toBe(401);
+
+      // 2. Valid signature -> 200
+      const { createHmac } = await import('node:crypto');
+      const validSig = 'sha256=' + createHmac('sha256', testSecret).update(bodyStr).digest('hex');
+
+      let currentItem = { ...mockBountyTask };
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                currentItem = { ...currentItem, ...patch };
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                  })),
+                };
+              }),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const reqValid = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-hub-signature-256': validSig,
+        },
+        body: bodyStr,
+      });
+
+      const resValid = await verifyPrHandler(reqValid);
+      expect(resValid.status).toBe(200);
+
+      delete process.env.GITHUB_WEBHOOK_SECRET;
+    });
+
+    it('marks merged PR as pending_verification when unverified and unauthenticated without auto-awarding bounty', async () => {
+      let currentItem = { ...mockBountyTask, status: 'in_review' };
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                currentItem = { ...currentItem, ...patch };
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                  })),
+                };
+              }),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'closed',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] unverified merge attempt',
+          head: { sha: '999999', ref: 'feat/TASK-BOUNTY-42' },
+          merged: true,
+        },
+      };
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.status).toBe('in_review');
+      expect(json.item.metadata.bounty_status).toBe('pending_verification');
+      expect(json.item.metadata.verification_warning).toBeDefined();
+    });
+
+    it('preserves complete status and reward_eligible when an unmerged PR closes on an already completed bounty', async () => {
+      let currentItem = {
+        ...mockBountyTask,
+        status: 'complete',
+        metadata: {
+          bounty_active: true,
+          bounty_status: 'reward_eligible',
+          pr_urls: ['https://github.com/org/repo/pull/77', 'https://github.com/org/repo/pull/78'],
+        },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                currentItem = { ...currentItem, ...patch };
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({ data: currentItem, error: null }),
+                  })),
+                };
+              }),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const webhookBody = {
+        action: 'closed',
+        pull_request: {
+          title: 'feat: [TASK-BOUNTY-42] closed secondary PR',
+          html_url: 'https://github.com/org/repo/pull/78',
+          head: { sha: '888888', ref: 'feat/TASK-BOUNTY-42' },
+          merged: false,
+        },
+      };
+
+      process.env.SUNSHADE_API_KEY = 'test_maintainer_key';
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/bounties/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test_maintainer_key',
+        },
+        body: JSON.stringify(webhookBody),
+      });
+
+      const res = await verifyPrHandler(req);
+      delete process.env.SUNSHADE_API_KEY;
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.status).toBe('complete');
+      expect(json.item.metadata.bounty_status).toBe('reward_eligible');
     });
   });
 });

@@ -36,20 +36,14 @@ export async function POST(req: NextRequest) {
     req.headers.get('x-hub-signature-256') ||
     req.headers.get('x-signature');
 
-  const webhookSecret =
-    process.env.SUNSHADE_ECOSYSTEM_WEBHOOK_SECRET ||
-    process.env.SUNSHADE_WEBHOOK_SECRET ||
-    '';
-
-  // 1. Signature Verification
-  if (!signature || !webhookSecret || !verifyHmacSignature(rawBody, signature, webhookSecret)) {
+  if (!signature) {
     return NextResponse.json(
       { error: 'Unauthorized: Invalid or missing webhook HMAC signature' },
       { status: 401 }
     );
   }
 
-  // 2. Parse Body
+  // 1. Parse Body
   let body: any;
   try {
     body = JSON.parse(rawBody);
@@ -65,25 +59,77 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Resolve Tenant
+  // 2. Resolve Tenant
   const tenantSlug =
     req.headers.get('x-tenant-slug') ||
     body.tenant_slug ||
     process.env.TRACKER_TENANT ||
     'pym-energy';
 
-  let tenantQuery: any = supabaseAdmin
-    .from('tenants')
-    .select('id, slug, name')
-    .eq('slug', tenantSlug);
+  let tenant: any = null;
+  if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    let tenantQuery: any = supabaseAdmin.from('tenants');
+    if (tenantQuery && typeof tenantQuery.select === 'function') {
+      tenantQuery = tenantQuery
+        .select('id, slug, name, tier, metadata')
+        .eq('slug', tenantSlug);
 
-  if (typeof tenantQuery.is === 'function') {
-    tenantQuery = tenantQuery.is('deleted_at', null);
+      if (typeof tenantQuery.is === 'function') {
+        tenantQuery = tenantQuery.is('deleted_at', null);
+      }
+
+      if (typeof tenantQuery.maybeSingle === 'function') {
+        const { data: tData } = await tenantQuery.maybeSingle();
+        tenant = tData;
+      }
+    }
   }
 
-  const { data: tenant } = await tenantQuery.maybeSingle();
+  // 3. Security & Signature Verification
+  const globalSecret =
+    process.env.SUNSHADE_ECOSYSTEM_WEBHOOK_SECRET ||
+    process.env.SUNSHADE_WEBHOOK_SECRET ||
+    '';
+  const tenantSecret = tenant?.metadata?.ecosystem_webhook_secret;
+
+  let isValidSig = false;
+  if (tenantSecret && verifyHmacSignature(rawBody, signature, tenantSecret)) {
+    isValidSig = true;
+  } else if (globalSecret && verifyHmacSignature(rawBody, signature, globalSecret)) {
+    isValidSig = true;
+  }
+
+  if (!isValidSig) {
+    return NextResponse.json(
+      { error: 'Unauthorized: Invalid or missing webhook HMAC signature' },
+      { status: 401 }
+    );
+  }
+
   if (!tenant) {
     return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
+  }
+
+  // Cross-tenant boundary protection: If tenant specifies a custom secret, reject global secret fallback
+  if (tenantSecret && !verifyHmacSignature(rawBody, signature, tenantSecret)) {
+    return NextResponse.json(
+      { error: `Unauthorized: Workspace "${tenant.slug}" requires tenant-specific webhook HMAC signature` },
+      { status: 401 }
+    );
+  }
+
+  // Verify that the destination tenant has ecosystem webhooks enabled
+  const isEcosystemAllowed =
+    tenant.slug === 'pym-energy' ||
+    tenant.slug === 'sunshade' ||
+    tenant.tier === 'demo' ||
+    Boolean(tenant.metadata?.ecosystem_enabled);
+
+  if (!isEcosystemAllowed) {
+    return NextResponse.json(
+      { error: `Workspace "${tenant.slug}" is not authorized to ingest cross-utility ecosystem events.` },
+      { status: 403 }
+    );
   }
 
   // 4. Normalize external payload & generate deterministic external_ref_id
@@ -152,7 +198,7 @@ ${body.description || body.summary || 'Voter research backlog item generated fro
     };
   }
 
-  // 5. Resolve or fallback project
+  // 5. Strictly resolve target project for the ecosystem source
   let projectQuery: any = supabaseAdmin
     .from('projects')
     .select('id, slug, name')
@@ -163,24 +209,11 @@ ${body.description || body.summary || 'Voter research backlog item generated fro
     projectQuery = projectQuery.is('deleted_at', null);
   }
 
-  let { data: project } = await projectQuery.maybeSingle();
-
-  // If specific project not found, fall back to first active project in tenant
-  if (!project) {
-    let fallbackProj: any = supabaseAdmin
-      .from('projects')
-      .select('id, slug, name')
-      .eq('tenant_id', tenant.id);
-    if (typeof fallbackProj.is === 'function') {
-      fallbackProj = fallbackProj.is('deleted_at', null);
-    }
-    const { data: firstProj } = await fallbackProj.limit(1).maybeSingle();
-    project = firstProj;
-  }
+  const { data: project } = await projectQuery.maybeSingle();
 
   if (!project) {
     return NextResponse.json(
-      { error: `No active project found in tenant to receive "${source}" webhooks.` },
+      { error: `Target project "${targetProjectSlug}" not found in tenant "${tenant.slug}". Ecosystem events must not be routed to unrelated projects.` },
       { status: 404 }
     );
   }
