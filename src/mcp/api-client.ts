@@ -253,4 +253,101 @@ export class TrackerApiClient {
       body: patchPayload as any,
     });
   }
+
+  /**
+   * Resolves a project by slug from GET /api/v1/projects
+   */
+  public async getProject(slug: string): Promise<any> {
+    const tenantParam = this.tenantSlug ? `?tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
+    const res = await this.fetch(`/api/v1/projects${tenantParam}`);
+    const projects = Array.isArray(res?.projects) ? res.projects : [];
+    const project = projects.find((p: any) => p.slug === slug || p.id === slug);
+    if (!project) {
+      throw translateHttpError(404, `Project with slug or ID "${slug}" could not be found.`);
+    }
+    return project;
+  }
+
+  /**
+   * getProjectSchema: Queries project settings and formats hierarchy constraints and allowed parents as JSON text.
+   */
+  public async getProjectSchema(slug: string): Promise<{ uri: string; mimeType: string; text: string }> {
+    const project = await this.getProject(slug);
+
+    let settings = project.settings || {};
+    try {
+      const settingsRes = await this.fetch(`/api/v1/projects/${project.id}/settings`);
+      if (settingsRes?.settings) {
+        settings = settingsRes.settings;
+      }
+    } catch {
+      // Use embedded settings from project
+    }
+
+    const schemaData = {
+      project_id: project.id,
+      project_slug: project.slug,
+      project_name: project.name,
+      hierarchy: settings.hierarchy || [],
+      statuses: settings.statuses || [],
+      custom_fields: settings.custom_fields || [],
+      allowed_parents: (settings.hierarchy || []).map((h: any) => ({
+        type: h.type,
+        allowed_parents: h.allowed_parents || [],
+      })),
+    };
+
+    return {
+      uri: `tracker://projects/${slug}/schema`,
+      mimeType: 'application/json',
+      text: JSON.stringify(schemaData, null, 2),
+    };
+  }
+
+  /**
+   * getProjectContext: Aggregates active sprint epics, in-flight PRs, and top-priority blockers into a condensed markdown brief.
+   */
+  public async getProjectContext(slug: string): Promise<{ uri: string; mimeType: string; text: string }> {
+    const project = await this.getProject(slug);
+    const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
+    const itemsRes = await this.fetch(`/api/v1/items?project_slug=${encodeURIComponent(project.slug)}${tenantParam}`);
+    const items = Array.isArray(itemsRes?.items) ? itemsRes.items : [];
+
+    const epics = items.filter((it: any) => it.item_type === 'epic');
+    const inFlightPrs = items.filter(
+      (it: any) => Boolean(it.metadata?.pr_url) || Boolean(it.metadata?.pr_urls?.length) || it.status === 'in_review'
+    );
+    const blockers = items.filter(
+      (it: any) => it.status === 'blocked' || it.metadata?.priority === 'Critical' || it.metadata?.priority === 'High'
+    );
+
+    const lines: string[] = [
+      `# Project Brief: ${project.name} (\`${project.slug}\`)`,
+      '',
+      `## Active Epics (${epics.length})`,
+      ...(epics.length > 0
+        ? epics.map((e: any) => `- **[${e.external_ref_id || e.id.slice(0, 8)}]** ${e.title} (${e.status})`)
+        : ['*No active epics in this project.*']),
+      '',
+      `## In-Flight Pull Requests (${inFlightPrs.length})`,
+      ...(inFlightPrs.length > 0
+        ? inFlightPrs.map((pr: any) => {
+            const url = pr.metadata?.pr_url || (Array.isArray(pr.metadata?.pr_urls) ? pr.metadata.pr_urls[0] : null);
+            return `- **[${pr.external_ref_id || pr.id.slice(0, 8)}]** ${pr.title} - ${url ? `[PR Link](${url})` : 'Status: in_review'}`;
+          })
+        : ['*No in-flight pull requests.*']),
+      '',
+      `## High Priority & Blockers (${blockers.length})`,
+      ...(blockers.length > 0
+        ? blockers.slice(0, 10).map((b: any) => `- **[${b.external_ref_id || b.id.slice(0, 8)}]** [${b.metadata?.priority || 'Blocked'}] ${b.title}`)
+        : ['*No critical blockers.*']),
+      '',
+    ];
+
+    return {
+      uri: `tracker://projects/${slug}/context`,
+      mimeType: 'text/markdown',
+      text: lines.join('\n'),
+    };
+  }
 }

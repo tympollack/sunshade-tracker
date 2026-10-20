@@ -221,6 +221,61 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
         })
       ).rejects.toThrowError();
     });
+
+    it('lists resource templates for schema and context (SUBTASK-TRK-MCP-RESOURCES)', async () => {
+      const templates = await client.listResourceTemplates();
+      expect(templates.resourceTemplates).toHaveLength(2);
+      const uris = templates.resourceTemplates.map((t) => t.uriTemplate);
+      expect(uris).toContain('tracker://projects/{slug}/schema');
+      expect(uris).toContain('tracker://projects/{slug}/context');
+    });
+
+    it('reads project schema resource tracker://projects/{slug}/schema', async () => {
+      vi.spyOn(mockApiClient, 'getProjectSchema').mockResolvedValue({
+        uri: 'tracker://projects/sunshade-tracker/schema',
+        mimeType: 'application/json',
+        text: JSON.stringify({
+          project_slug: 'sunshade-tracker',
+          hierarchy: [{ type: 'epic' }, { type: 'story' }, { type: 'task' }],
+          statuses: [{ id: 'not_started' }, { id: 'complete' }],
+        }),
+      });
+
+      const resource = await client.readResource({
+        uri: 'tracker://projects/sunshade-tracker/schema',
+      });
+
+      expect(resource.contents).toHaveLength(1);
+      expect(resource.contents[0].mimeType).toBe('application/json');
+      const parsed = JSON.parse((resource.contents[0] as any).text);
+      expect(parsed.project_slug).toBe('sunshade-tracker');
+      expect(parsed.hierarchy).toHaveLength(3);
+    });
+
+    it('reads project context brief resource tracker://projects/{slug}/context', async () => {
+      vi.spyOn(mockApiClient, 'getProjectContext').mockResolvedValue({
+        uri: 'tracker://projects/sunshade-tracker/context',
+        mimeType: 'text/markdown',
+        text: '# Project Brief: SunShade Tracker\n## Active Epics (1)\n- **[EPIC-01]** Agent Infrastructure\n',
+      });
+
+      const resource = await client.readResource({
+        uri: 'tracker://projects/sunshade-tracker/context',
+      });
+
+      expect(resource.contents).toHaveLength(1);
+      expect(resource.contents[0].mimeType).toBe('text/markdown');
+      expect((resource.contents[0] as any).text).toContain('Project Brief: SunShade Tracker');
+      expect((resource.contents[0] as any).text).toContain('EPIC-01');
+    });
+
+    it('throws error when reading unknown or invalid resource URI', async () => {
+      await expect(
+        client.readResource({
+          uri: 'tracker://unknown/invalid/path',
+        })
+      ).rejects.toThrowError();
+    });
   });
 
   describe('Stdio Stream Transport Integration', () => {

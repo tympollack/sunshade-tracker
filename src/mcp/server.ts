@@ -2,11 +2,15 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TrackerMcpConfig } from './types';
 import { TRACKER_TOOLS } from './tools';
+import { TRACKER_RESOURCE_TEMPLATES } from './resources';
 import { TrackerApiClient } from './api-client';
 
 export interface TrackerServerOptions {
@@ -25,6 +29,7 @@ export function createTrackerMcpServer(options: TrackerServerOptions = {}): Serv
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     }
   );
@@ -34,6 +39,63 @@ export function createTrackerMcpServer(options: TrackerServerOptions = {}): Serv
     return {
       tools: TRACKER_TOOLS,
     };
+  });
+
+  // Register resource templates list
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    return {
+      resourceTemplates: TRACKER_RESOURCE_TEMPLATES,
+    };
+  });
+
+  // Register static resources list
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return {
+      resources: [],
+    };
+  });
+
+  // Register resource read handler
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    const match = uri.match(/^tracker:\/\/projects\/([^/?#]+)\/(schema|context)(?:\?.*)?$/);
+
+    if (!match) {
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown or invalid resource URI "${uri}".`);
+    }
+
+    const [, slug, resourceType] = match;
+
+    try {
+      if (resourceType === 'schema') {
+        const schemaBlob = await apiClient.getProjectSchema(slug);
+        return {
+          contents: [
+            {
+              uri: schemaBlob.uri,
+              mimeType: schemaBlob.mimeType,
+              text: schemaBlob.text,
+            },
+          ],
+        };
+      } else if (resourceType === 'context') {
+        const contextBlob = await apiClient.getProjectContext(slug);
+        return {
+          contents: [
+            {
+              uri: contextBlob.uri,
+              mimeType: contextBlob.mimeType,
+              text: contextBlob.text,
+            },
+          ],
+        };
+      }
+    } catch (err: any) {
+      if (err instanceof McpError) throw err;
+      throw new McpError(ErrorCode.InvalidRequest, err?.message || `Resource error for project "${slug}".`);
+    }
+
+    throw new McpError(ErrorCode.InvalidRequest, `Resource type "${resourceType}" not supported.`);
   });
 
   // Register tool execution handler
