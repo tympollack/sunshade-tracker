@@ -109,8 +109,8 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
         project_slug: 'sunshade-tracker',
         assignee: 'tymz',
       });
-      expect(result.content).toHaveLength(1);
-      expect(JSON.parse((result.content[0] as any).text)).toEqual(mockTasks);
+      expect((result as any).content).toHaveLength(1);
+      expect(JSON.parse(((result as any).content[0] as any).text)).toEqual(mockTasks);
     });
 
     it('executes get_task_spec and returns comprehensive metadata and agent prompt', async () => {
@@ -140,7 +140,7 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
       });
 
       expect(mockApiClient.getTaskSpec).toHaveBeenCalledWith({ task_id: 'TASK-202' });
-      const parsed = JSON.parse((result.content[0] as any).text);
+      const parsed = JSON.parse(((result as any).content[0] as any).text);
       expect(parsed.agent_prompt).toBe('### SYSTEM ROLE: Secure auth boundary');
       expect(parsed.acceptance_criteria).toContain('Returns 401 on missing token');
       expect(parsed.markdown_prompt).toContain('# Work Item Context: Fix auth boundary');
@@ -173,7 +173,7 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
           { title: 'Subtask 2', item_type: 'task' },
         ],
       });
-      const parsed = JSON.parse((result.content[0] as any).text);
+      const parsed = JSON.parse(((result as any).content[0] as any).text);
       expect(parsed.success).toBe(true);
       expect(parsed.count).toBe(2);
     });
@@ -208,7 +208,7 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
         commit_hash: 'feedface123',
         notes: 'Executed successfully via Antigravity runner',
       });
-      const parsed = JSON.parse((result.content[0] as any).text);
+      const parsed = JSON.parse(((result as any).content[0] as any).text);
       expect(parsed.status).toBe('complete');
       expect(parsed.metadata.pr_url).toBe('https://github.com/org/repo/pull/42');
     });
@@ -257,8 +257,8 @@ describe('TASK-TRK-MCP-SERVER: Model Context Protocol Server for Tracker', () =>
         arguments: { project_slug: 'sunshade-tracker' },
       });
 
-      expect(toolCall.content).toBeDefined();
-      const items = JSON.parse((toolCall.content[0] as any).text);
+      expect((toolCall as any).content).toBeDefined();
+      const items = JSON.parse(((toolCall as any).content[0] as any).text);
       expect(items[0].title).toBe('Stdio Task');
 
       await client.close();
