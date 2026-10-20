@@ -42,8 +42,7 @@ export async function POST(req: NextRequest) {
   const isInternalAuth =
     Boolean(apiKey) &&
     (apiKey === process.env.SUNSHADE_API_KEY ||
-      apiKey === process.env.TRACKER_API_KEY ||
-      apiKey?.startsWith('tk_live_'));
+      apiKey === process.env.TRACKER_API_KEY);
 
   const isSignatureValid = Boolean(signature && webhookSecret && verifyHmacSignature(rawBody, signature, webhookSecret));
 
@@ -294,8 +293,26 @@ export async function POST(req: NextRequest) {
   let newStatus = item.status;
 
   if (action === 'closed' && isMerged) {
-    newStatus = 'complete';
-    updatedMetadata.bounty_status = 'reward_eligible';
+    const isVerifiedSender =
+      isSignatureValid ||
+      isInternalAuth ||
+      Boolean(
+        scopedTenant?.metadata?.github_webhook_secret &&
+          signature &&
+          verifyHmacSignature(rawBody, signature, scopedTenant.metadata.github_webhook_secret)
+      );
+
+    if (isVerifiedSender) {
+      newStatus = 'complete';
+      updatedMetadata.bounty_status = 'reward_eligible';
+      updatedMetadata.verified_merge = true;
+    } else {
+      // Unverified merge event: require maintainer confirmation before releasing rewards
+      newStatus = 'in_review';
+      updatedMetadata.bounty_status = 'pending_verification';
+      updatedMetadata.verification_warning =
+        'Merged event received without verified HMAC signature or maintainer credentials. Manual review required.';
+    }
     updatedMetadata.merged_at = pull_request.merged_at || new Date().toISOString();
   } else if (action === 'closed' && !isMerged) {
     // Handle abandoned / closed unmerged PRs
@@ -308,7 +325,11 @@ export async function POST(req: NextRequest) {
     }
     updatedMetadata.closed_unmerged_at = pull_request.closed_at || new Date().toISOString();
 
-    if (remainingPrs.length > 0) {
+    // Preserve completed state if this bounty was already merged by another PR
+    if (item.status === 'complete' || existingMetadata.bounty_status === 'reward_eligible') {
+      newStatus = 'complete';
+      updatedMetadata.bounty_status = 'reward_eligible';
+    } else if (remainingPrs.length > 0) {
       newStatus = 'in_review';
       updatedMetadata.bounty_status = 'in_progress';
     } else {

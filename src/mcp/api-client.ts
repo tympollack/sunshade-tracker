@@ -313,7 +313,8 @@ export class TrackerApiClient {
     const itemsRes = await this.fetch(`/api/v1/items?project_slug=${encodeURIComponent(project.slug)}${tenantParam}`);
     const items = Array.isArray(itemsRes?.items) ? itemsRes.items : [];
 
-    const isTerminal = (status?: string) => Boolean(status && /^(complete|completed|done|closed|finished)$/i.test(status));
+    const isTerminal = (status?: string) =>
+      Boolean(status && /^(complete|completed|done|closed|finished|approved|published|resolved)$/i.test(status));
 
     const epics = items.filter((it: any) => it.item_type === 'epic' && !isTerminal(it.status));
     const inFlightPrs = items.filter(

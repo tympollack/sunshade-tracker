@@ -110,6 +110,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
   }
 
+  // Cross-tenant boundary protection: If tenant specifies a custom secret, reject global secret fallback
+  if (tenantSecret && !verifyHmacSignature(rawBody, signature, tenantSecret)) {
+    return NextResponse.json(
+      { error: `Unauthorized: Workspace "${tenant.slug}" requires tenant-specific webhook HMAC signature` },
+      { status: 401 }
+    );
+  }
+
   // Verify that the destination tenant has ecosystem webhooks enabled
   const isEcosystemAllowed =
     tenant.slug === 'pym-energy' ||

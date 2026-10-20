@@ -324,5 +324,53 @@ describe('TASK-TRK-EVENT-BRIDGES: Cross-Utility Webhook Dispatcher for Ecosystem
       const json = await res.json();
       expect(json.error).toContain('Target project "patchwork" not found');
     });
+
+    it('rejects global signature with HTTP 401 when tenant defines a custom ecosystem_webhook_secret', async () => {
+      const customSecretTenant = {
+        id: 'tenant-custom-id',
+        slug: 'pym-energy',
+        name: 'Pym Energy',
+        metadata: {
+          ecosystem_enabled: true,
+          ecosystem_webhook_secret: 'custom_secret_9999999999',
+        },
+      };
+
+      vi.mocked(supabaseAdmin.from).mockImplementation(((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            is: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => {
+                if (table === 'tenants') return { data: customSecretTenant, error: null };
+                return { data: null, error: null };
+              }),
+            })),
+            maybeSingle: vi.fn(async () => {
+              if (table === 'tenants') return { data: customSecretTenant, error: null };
+              return { data: null, error: null };
+            }),
+          })),
+        })),
+      })) as any);
+
+      const payload = { source: 'patchwork', incident_id: '300' };
+      const bodyStr = JSON.stringify(payload);
+      // Signed with global mockSecret instead of custom_secret_9999999999
+      const sig = signPayload(bodyStr, mockSecret);
+
+      const req = new NextRequest('https://track.sunshade.icu/api/v1/webhooks/ecosystem', {
+        method: 'POST',
+        headers: {
+          'x-sunshade-signature': sig,
+          'Content-Type': 'application/json',
+        },
+        body: bodyStr,
+      });
+
+      const res = await ecosystemWebhookHandler(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toContain('Unauthorized');
+    });
   });
 });

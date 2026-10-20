@@ -100,12 +100,18 @@ export function sanitizeLogSecrets(log: string, additionalSecrets: string[] = []
 export function constructCiFailurePayload(input: CiFailureInput): CiBugItemPayload {
   const projectSlug = input.projectSlug || 'sunshade-tracker';
   const refId = formatCiBugRefId(input.commitSha, input.jobName);
-  const summaryTitle = input.errorMessage
-    ? `CI Failure: ${input.errorMessage.slice(0, 70)}`
+  const additionalSecrets = input.trackerToken ? [input.trackerToken] : [];
+
+  const sanitizedErrorMessage = input.errorMessage
+    ? sanitizeLogSecrets(input.errorMessage, additionalSecrets)
+    : undefined;
+
+  const summaryTitle = sanitizedErrorMessage
+    ? `CI Failure: ${sanitizedErrorMessage.slice(0, 70)}`
     : `CI Failure in ${input.jobName} (${input.commitSha.slice(0, 8)})`;
 
-  const rawStack = input.stackTrace || input.errorMessage || 'No stack trace captured';
-  const sanitizedStack = sanitizeLogSecrets(rawStack, input.trackerToken ? [input.trackerToken] : []);
+  const rawStack = input.stackTrace || sanitizedErrorMessage || 'No stack trace captured';
+  const sanitizedStack = sanitizeLogSecrets(rawStack, additionalSecrets);
   const trimmedStack = sanitizedStack
     .split('\n')
     .slice(0, 30)
@@ -113,7 +119,7 @@ export function constructCiFailurePayload(input: CiFailureInput): CiBugItemPaylo
 
   const description = `### Automated CI Failure Report
 > **Job:** \`${input.jobName}\`  
-> **Commit:** \`${input.commitSha}\`${input.prNumber ? `  \n> **PR:** #${input.prNumber}` : ''}${input.failingFilePath ? `  \n> **File:** \`${input.failingFilePath}\`` : ''}${input.errorMessage ? `  \n> **Error:** ${input.errorMessage}` : ''}
+> **Commit:** \`${input.commitSha}\`${input.prNumber ? `  \n> **PR:** #${input.prNumber}` : ''}${input.failingFilePath ? `  \n> **File:** \`${input.failingFilePath}\`` : ''}${sanitizedErrorMessage ? `  \n> **Error:** ${sanitizedErrorMessage}` : ''}
 
 \`\`\`
 ${trimmedStack}
@@ -124,7 +130,7 @@ ${trimmedStack}
     commitSha: input.commitSha,
     jobName: input.jobName,
     failingFilePath: input.failingFilePath,
-    errorMessage: input.errorMessage,
+    errorMessage: sanitizedErrorMessage,
     prNumber: input.prNumber,
   });
 

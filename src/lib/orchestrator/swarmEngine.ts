@@ -283,13 +283,19 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
   const items: DecomposedItem[] = [];
 
   // Pre-pass: map unique LLM story_index values to deterministic story refs
+  // Track explicit assigned index for each raw story object so unindexed stories don't collide
+  const rawStoryToIndex = new Map<any, number>();
   const storyIndexToRef = new Map<number, string>();
   let nextStoryNum = 1;
 
   for (const raw of rawArray) {
     const level: 2 | 3 | 4 = raw.level === 4 ? 4 : raw.level === 3 ? 3 : 2;
     if (level === 2) {
-      const rawIdx = typeof raw.story_index === 'number' && raw.story_index > 0 ? raw.story_index : nextStoryNum;
+      let rawIdx = typeof raw.story_index === 'number' && raw.story_index > 0 ? raw.story_index : nextStoryNum;
+      while (storyIndexToRef.has(rawIdx) && (raw.story_index === undefined || raw.story_index === null)) {
+        rawIdx = ++nextStoryNum;
+      }
+      rawStoryToIndex.set(raw, rawIdx);
       if (!storyIndexToRef.has(rawIdx)) {
         storyIndexToRef.set(rawIdx, `STORY-${cleanPrefix}-${rawIdx}`);
       }
@@ -310,6 +316,50 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
     storyIndexToRef.set(1, `STORY-${cleanPrefix}-1`);
   }
 
+  // Detect referenced stories that have no level 2 story object and synthesize them explicitly
+  const existingStoryIndices = new Set(Array.from(rawStoryToIndex.values()));
+  const missingStoryIndices = new Set<number>();
+  for (const raw of rawArray) {
+    if ((raw.level === 3 || raw.level === 4) && raw.story_index) {
+      const sIdx = Number(raw.story_index);
+      if (!existingStoryIndices.has(sIdx)) {
+        missingStoryIndices.add(sIdx);
+      }
+    }
+  }
+
+  // Synthesize missing stories explicitly to prevent tasks attaching to unrelated stories
+  for (const missingSIdx of missingStoryIndices) {
+    const synRef = `STORY-${cleanPrefix}-${missingSIdx}`;
+    storyIndexToRef.set(missingSIdx, synRef);
+    existingStoryIndices.add(missingSIdx);
+
+    items.push({
+      level: 2,
+      item_type: 'story',
+      title: `${featurePrefix} Feature Stream ${missingSIdx} Deliverables`,
+      description: `Synthesized architecture parent story for stream ${missingSIdx}.`,
+      external_ref_id: synRef,
+      parent_ref_id: null,
+      order_index: missingSIdx * 100.0,
+      metadata: {
+        agent_prompt: synthesizeAgentPrompt(
+          {
+            title: `${featurePrefix} Feature Stream ${missingSIdx} Deliverables`,
+            item_type: 'story',
+            description: `Synthesized architecture parent story for stream ${missingSIdx}.`,
+            parent_ref_id: null,
+          },
+          [`Fulfill requirements for feature stream ${missingSIdx}`]
+        ),
+        acceptance_criteria: [`Fulfill requirements for feature stream ${missingSIdx}`],
+        complexity: 3,
+        story_points: 3,
+        priority: 'High',
+      },
+    });
+  }
+
   const taskRefs = new Map<string, string>();
   let taskCounter = 0;
   let subtaskCounter = 0;
@@ -318,7 +368,9 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
   for (const raw of rawArray) {
     const level: 2 | 3 | 4 = raw.level === 4 ? 4 : raw.level === 3 ? 3 : 2;
     const item_type = level === 4 ? 'subtask' : level === 3 ? 'task' : 'story';
-    const sIdx = raw.story_index || 1;
+    const sIdx = level === 2 && rawStoryToIndex.has(raw)
+      ? rawStoryToIndex.get(raw)!
+      : (raw.story_index || 1);
     const tIdx = raw.task_index || 1;
 
     let external_ref_id = '';
@@ -373,24 +425,13 @@ export function normalizeLlmOutput(rawArray: any[], featurePrefix: string): Deco
     orderIndex += 1000.0;
   }
 
-  // Pre-dispatch parent verification & repair
-  const allRefIds = new Set(items.map((i) => i.external_ref_id));
-  const defaultParentStory = Array.from(storyIndexToRef.values())[0] || null;
-
-  for (const item of items) {
-    if (item.level > 2 && item.parent_ref_id && !allRefIds.has(item.parent_ref_id)) {
-      if (defaultParentStory && allRefIds.has(defaultParentStory)) {
-        item.parent_ref_id = defaultParentStory;
-      }
-    }
-  }
-
   return items;
 }
 
 /**
  * Transforms DecomposedItems into ingestion payloads compatible with POST /api/v1/items/ingest.
- * Respects project taxonomy by mapping dynamic hierarchy levels and initial statuses.
+ * Respects project taxonomy by mapping dynamic hierarchy levels, initial statuses, and
+ * validating allowed_parents to prevent invalid parent-child relationships in short hierarchies.
  */
 export function toIngestPayloads(
   items: DecomposedItem[],
@@ -406,15 +447,19 @@ export function toIngestPayloads(
     initialStatus = sortedStatuses[0].id;
   }
 
-  // Build level-to-type mapping if custom hierarchy is provided
+  // Build level-to-type and allowed_parents mapping
   const levelToType = new Map<number, string>();
+  const hierarchyMap = new Map<string, { level: number; allowed_parents: string[] }>();
   if (projectSettings?.hierarchy && projectSettings.hierarchy.length > 0) {
     for (const h of projectSettings.hierarchy) {
       levelToType.set(h.level, h.type);
+      hierarchyMap.set(h.type, { level: h.level, allowed_parents: h.allowed_parents || [] });
     }
   }
 
-  return items.map((item) => {
+  // First pass: compute target types for all items
+  const itemTypeMap = new Map<string, string>();
+  for (const item of items) {
     let targetType: string = item.item_type;
     if (levelToType.has(item.level)) {
       targetType = levelToType.get(item.level)!;
@@ -426,13 +471,42 @@ export function toIngestPayloads(
         targetType = levelToType.get(sortedLevels[sortedLevels.length - 1]) || item.item_type;
       }
     }
+    itemTypeMap.set(item.external_ref_id, targetType);
+  }
+
+  const itemByRef = new Map<string, DecomposedItem>();
+  for (const item of items) {
+    itemByRef.set(item.external_ref_id, item);
+  }
+
+  return items.map((item) => {
+    const targetType = itemTypeMap.get(item.external_ref_id) || item.item_type;
+    let parentRef = item.parent_ref_id || undefined;
+
+    // Validate and enforce allowed_parents constraint
+    if (parentRef && hierarchyMap.has(targetType)) {
+      const allowedParents = hierarchyMap.get(targetType)?.allowed_parents || [];
+      const parentItem = itemByRef.get(parentRef);
+      const parentTargetType = parentRef ? itemTypeMap.get(parentRef) : undefined;
+
+      if (parentTargetType && allowedParents.length > 0 && !allowedParents.includes(parentTargetType)) {
+        // If parent type is not allowed (e.g. deliverable under deliverable), reparent to grandparent
+        if (parentItem?.parent_ref_id) {
+          const grandParentRef = parentItem.parent_ref_id;
+          const grandParentType = itemTypeMap.get(grandParentRef);
+          if (!grandParentType || allowedParents.includes(grandParentType)) {
+            parentRef = grandParentRef;
+          }
+        }
+      }
+    }
 
     return {
       title: item.title,
       item_type: targetType,
       description: item.description,
       status: initialStatus,
-      parent_ref_id: item.parent_ref_id || undefined,
+      parent_ref_id: parentRef,
       external_ref_id: item.external_ref_id,
       order_index: item.order_index,
       metadata: item.metadata,

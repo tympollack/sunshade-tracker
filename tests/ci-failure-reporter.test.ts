@@ -88,6 +88,26 @@ describe('TASK-TRK-SELF-HEALING-CI: Self-Healing CI/CD Pipeline & Ingest Bridge'
       expect(desc).toContain('[REDACTED_TRACKER_KEY]');
       expect(desc).toContain('[REDACTED_GITHUB_TOKEN]');
     });
+
+    it('redacts tokens and credentials from errorMessage in title and agent prompt', () => {
+      const sensitiveError = 'Failed when connecting with token=tk_live_9988776655443322 and ghp_11223344556677889900aabbccddeeff';
+      const payload = constructCiFailurePayload({
+        commitSha: mockSha,
+        jobName: mockJob,
+        errorMessage: sensitiveError,
+      });
+
+      const item = payload.items[0];
+      expect(item.title).not.toContain('tk_live_9988776655443322');
+      expect(item.title).not.toContain('ghp_11223344556677889900aabbccddeeff');
+      expect(item.title).toContain('[REDACTED_TRACKER_KEY]');
+
+      expect(item.description).not.toContain('tk_live_9988776655443322');
+      expect(item.description).toContain('[REDACTED_TRACKER_KEY]');
+
+      expect(item.metadata.agent_prompt).not.toContain('tk_live_9988776655443322');
+      expect(item.metadata.agent_prompt).toContain('[REDACTED_TRACKER_KEY]');
+    });
   });
 
   describe('Ingest Dispatch & Performance SLA (< 10 seconds)', () => {

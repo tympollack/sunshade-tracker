@@ -353,5 +353,108 @@ Apply schema migration script and verify TimescaleDB hypertable chunking.
 
       vi.unstubAllGlobals();
     });
+
+    it('assigns unique reference IDs to multiple unindexed stories without overwriting', () => {
+      const unindexedStories = [
+        {
+          level: 2,
+          title: 'First Story without Index',
+          description: 'No story_index provided',
+          acceptance_criteria: ['Acceptance 1'],
+        },
+        {
+          level: 2,
+          title: 'Second Story without Index',
+          description: 'Also no story_index provided',
+          acceptance_criteria: ['Acceptance 2'],
+        },
+      ];
+
+      const items = normalizeLlmOutput(unindexedStories, 'AUTH');
+      expect(items).toHaveLength(2);
+      expect(items[0].external_ref_id).toBe('STORY-AUTH-1');
+      expect(items[1].external_ref_id).toBe('STORY-AUTH-2');
+      expect(items[0].external_ref_id).not.toBe(items[1].external_ref_id);
+    });
+
+    it('synthesizes missing parent story when a task points to a non-existent story index', () => {
+      const rawWithMissingStory = [
+        {
+          level: 2,
+          story_index: 1,
+          title: 'Primary Core Flow',
+          description: 'Core flow',
+          acceptance_criteria: ['Done'],
+        },
+        {
+          level: 3,
+          story_index: 9, // Story 9 does not exist in output!
+          task_index: 1,
+          title: 'Disjoint Task under Stream 9',
+          description: 'Task under missing story',
+          acceptance_criteria: ['Done'],
+        },
+      ];
+
+      const items = normalizeLlmOutput(rawWithMissingStory, 'FLOW');
+      const synthesizedStory = items.find((i) => i.external_ref_id === 'STORY-FLOW-9');
+      const disjointTask = items.find((i) => i.title === 'Disjoint Task under Stream 9');
+
+      expect(synthesizedStory).toBeDefined();
+      expect(disjointTask?.parent_ref_id).toBe('STORY-FLOW-9');
+      expect(disjointTask?.parent_ref_id).not.toBe('STORY-FLOW-1');
+    });
+
+    it('reparents items in short hierarchies to satisfy allowed_parents constraint', () => {
+      // 3-tier marketing hierarchy: campaign (1) -> initiative (2) -> deliverable (3)
+      // where deliverable only allows parent of type 'initiative'
+      const marketingSettings = {
+        hierarchy: [
+          { level: 1, type: 'campaign', allowed_parents: [] },
+          { level: 2, type: 'initiative', allowed_parents: ['campaign'] },
+          { level: 3, type: 'deliverable', allowed_parents: ['initiative'] },
+        ],
+        statuses: [{ id: 'planned', order: 0 }],
+      };
+
+      const decomposed: any[] = [
+        {
+          level: 2,
+          item_type: 'story',
+          title: 'Brand Refresh Initiative',
+          external_ref_id: 'STORY-MKT-1',
+          parent_ref_id: null,
+          metadata: { agent_prompt: '', acceptance_criteria: [] },
+        },
+        {
+          level: 3,
+          item_type: 'task',
+          title: 'Design New Logo Assets',
+          external_ref_id: 'TASK-MKT-1-1',
+          parent_ref_id: 'STORY-MKT-1',
+          metadata: { agent_prompt: '', acceptance_criteria: [] },
+        },
+        {
+          level: 4,
+          item_type: 'subtask',
+          title: 'Export SVG Variants',
+          external_ref_id: 'SUBTASK-MKT-1-1-1',
+          parent_ref_id: 'TASK-MKT-1-1', // Initially points to Task
+          metadata: { agent_prompt: '', acceptance_criteria: [] },
+        },
+      ];
+
+      const payloads = toIngestPayloads(decomposed, marketingSettings);
+
+      expect(payloads[0].item_type).toBe('initiative');
+      expect(payloads[0].parent_ref_id).toBeUndefined();
+
+      expect(payloads[1].item_type).toBe('deliverable');
+      expect(payloads[1].parent_ref_id).toBe('STORY-MKT-1');
+
+      // Subtask becomes deliverable, and is safely reparented to initiative to satisfy allowed_parents: ['initiative']!
+      expect(payloads[2].item_type).toBe('deliverable');
+      expect(payloads[2].parent_ref_id).toBe('STORY-MKT-1');
+    });
   });
 });
