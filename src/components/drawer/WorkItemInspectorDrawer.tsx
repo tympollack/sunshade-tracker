@@ -27,6 +27,26 @@ import {
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 
+export const RESERVED_METADATA_KEYS = new Set([
+  'sprint',
+  'status',
+  'assignee',
+  'priority',
+  'complexity',
+  'story_points',
+  'points',
+  'parent_id',
+  'project_id',
+]);
+
+export const CORE_ITEM_KEYS = new Set([
+  'sprint',
+  'status',
+  'assignee',
+  'parent_id',
+  'project_id',
+]);
+
 export interface FieldVariance {
   delta: number;
   percentDiff: number | null;
@@ -131,8 +151,11 @@ export function resolveCustomMetadataFields(
     });
   }
 
-  return fields.map((field) => {
-    if (!field.type) {
+  // Filter out top-level core keys so they never duplicate core item controls
+  return fields
+    .filter((field) => !CORE_ITEM_KEYS.has(field.key.toLowerCase()))
+    .map((field) => {
+      if (!field.type) {
       const inferred = inferFieldDefinitionFromKey(field.key);
       return {
         ...field,
@@ -342,10 +365,28 @@ export function WorkItemInspectorDrawer({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const resolvedFields = useMemo(
-    () => resolveCustomMetadataFields(projectSettings, customMetadataFields),
-    [projectSettings, customMetadataFields]
-  );
+  const resolvedFields = useMemo(() => {
+    const configuredFields = resolveCustomMetadataFields(projectSettings, customMetadataFields);
+    const configuredKeys = new Set(configuredFields.map((f) => f.key.toLowerCase()));
+
+    const customProperties = Object.entries(item?.metadata || {}).filter(
+      ([key, val]) =>
+        !RESERVED_METADATA_KEYS.has(key.toLowerCase()) &&
+        !configuredKeys.has(key.toLowerCase()) &&
+        // Only infer editor inputs for scalar primitive types to avoid corrupting structured arrays/objects
+        (typeof val === 'string' ||
+          typeof val === 'number' ||
+          typeof val === 'boolean' ||
+          val === null ||
+          val === undefined)
+    );
+
+    const dynamicFields: CustomMetadataFieldDefinition[] = customProperties.map(([key]) =>
+      inferFieldDefinitionFromKey(key)
+    );
+
+    return [...configuredFields, ...dynamicFields];
+  }, [projectSettings, customMetadataFields, item?.metadata]);
   const hasExplicitPointsField = useMemo(
     () => resolvedFields.some((f) => f.key === 'story_points' || f.key === 'points'),
     [resolvedFields]
@@ -537,6 +578,15 @@ export function WorkItemInspectorDrawer({
   };
 
   const handleCustomFieldCommit = (key: string, value: any) => {
+    const original = item?.metadata?.[key];
+    // Guard against overwriting structured arrays or objects with plain strings
+    if (Array.isArray(original) || (typeof original === 'object' && original !== null)) {
+      return;
+    }
+    // Prevent unneeded writes when value is unchanged
+    if (value === (original ?? null) || (value === '' && (original === null || original === undefined))) {
+      return;
+    }
     const nextMeta = {
       ...(item?.metadata || {}),
       ...localMeta,
@@ -966,6 +1016,9 @@ export function WorkItemInspectorDrawer({
                       onBlur={() => {
                         const raw = localMeta[field.key];
                         const original = item.metadata?.[field.key];
+                        if (Array.isArray(original) || (typeof original === 'object' && original !== null)) {
+                          return;
+                        }
                         let str: any =
                           raw === '' || raw === undefined || raw === null
                             ? null

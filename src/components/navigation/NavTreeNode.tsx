@@ -113,7 +113,7 @@ export function NavTreeNode({
         aria-expanded={hasChildren ? isExpanded : undefined}
         aria-selected={isSelected}
         onClick={handleClickRow}
-        className={`flex items-center gap-1.5 py-1 px-1.5 rounded-md text-xs cursor-pointer transition-colors min-w-0 ${
+        className={`flex items-center gap-1.5 py-1 px-1.5 rounded-md text-xs cursor-pointer transition-colors min-w-0 w-full ${
           isSelected
             ? 'bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30'
             : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
@@ -140,63 +140,82 @@ export function NavTreeNode({
         {renderIcon()}
 
         {/* Node Title with Truncation */}
-        <span className="truncate min-w-0 flex-1 font-mono tracking-tight text-[11px]" title={node.title}>
+        <span
+          className={
+            node.type === 'sprint'
+              ? 'truncate min-w-[125px] max-[220px]:min-w-0 max-[220px]:shrink flex-shrink-0 font-medium text-xs font-mono tracking-tight'
+              : 'truncate min-w-0 flex-1 font-mono tracking-tight text-[11px]'
+          }
+          title={node.title}
+        >
           {node.title}
         </span>
 
-        {/* Sprint Status Badge */}
-        {node.badge && (
-          <span
-            className={`text-[9px] font-medium px-1.5 py-0.2 rounded shrink-0 uppercase tracking-wider ${
-              node.badge === 'Active'
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                : node.badge === 'Planned'
-                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                : 'bg-slate-800 text-slate-400'
-            }`}
-          >
-            {node.badge}
-          </span>
-        )}
+        {/* Right-aligned Metric Badges Container */}
+        {(node.badge ||
+          (node.childCount > 0 && node.type !== 'item') ||
+          node.rollupPoints > 0 ||
+          (node.type === 'sprint' &&
+            node.id !== 'sprint:unassigned' &&
+            node.sprintName !== 'No Sprint' &&
+            node.title !== 'No Sprint' &&
+            onSelectSprint)) && (
+          <div className="shrink-0 ml-auto flex items-center gap-1 text-[11px]">
+            {/* Sprint Status Badge */}
+            {node.badge && (
+              <span
+                className={`text-[9px] font-medium px-1.5 py-0.2 rounded shrink-0 uppercase tracking-wider ${
+                  node.badge.toLowerCase() === 'active'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : node.badge.toLowerCase() === 'planned'
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {node.badge}
+              </span>
+            )}
 
-        {/* Nested Child Count Badge */}
-        {node.childCount > 0 && node.type !== 'item' && (
-          <span
-            className="text-[10px] text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800 shrink-0 font-mono"
-            title={`${node.childCount} items`}
-          >
-            {node.childCount}
-          </span>
-        )}
+            {/* Nested Child Count Badge */}
+            {node.childCount > 0 && node.type !== 'item' && (
+              <span
+                className="text-[10px] text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800 shrink-0 font-mono hidden min-[240px]:inline-flex"
+                title={`${node.childCount} items`}
+              >
+                {node.childCount}
+              </span>
+            )}
 
-        {/* Story Point Rollup Badge */}
-        {node.rollupPoints > 0 && (
-          <span
-            className="text-[10px] font-medium text-emerald-400/90 bg-emerald-950/40 px-1 py-0.2 rounded border border-emerald-800/40 shrink-0 font-mono"
-            title={`${node.rollupPoints} ${unit}`}
-          >
-            {node.rollupPoints} {unit}
-          </span>
-        )}
+            {/* Story Point Rollup Badge */}
+            {node.rollupPoints > 0 && (
+              <span
+                className="text-[10px] font-medium text-emerald-400/90 bg-emerald-950/40 px-1 py-0.2 rounded border border-emerald-800/40 shrink-0 font-mono whitespace-nowrap"
+                title={`${node.rollupPoints} ${unit}`}
+              >
+                {node.rollupPoints} {unit}
+              </span>
+            )}
 
-        {/* Sprint Lifecycle Inspector Trigger */}
-        {node.type === 'sprint' &&
-          node.id !== 'sprint:unassigned' &&
-          node.sprintName !== 'No Sprint' &&
-          node.title !== 'No Sprint' &&
-          onSelectSprint && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectSprint(node.sprintName || node.title);
-            }}
-            className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-colors"
-            title="Open Sprint Lifecycle Settings"
-            aria-label="Sprint Settings"
-          >
-            <Settings className="w-3 h-3" />
-          </button>
+            {/* Sprint Lifecycle Inspector Trigger */}
+            {node.type === 'sprint' &&
+              node.id !== 'sprint:unassigned' &&
+              node.sprintName !== 'No Sprint' &&
+              node.title !== 'No Sprint' &&
+              onSelectSprint && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSprint(node.sprintName || node.title);
+                }}
+                className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-colors"
+                title="Open Sprint Lifecycle Settings"
+                aria-label="Sprint Settings"
+              >
+                <Settings className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         )}
       </div>
 
