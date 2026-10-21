@@ -168,7 +168,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {/* Project Badge for All Projects mode */}
           {isAllProjects && (
             <span
-              className="shrink-0 inline-flex items-center text-xs px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px] whitespace-nowrap"
+              className="shrink-0 inline-flex items-center text-xs px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[80px] sm:max-w-[100px] whitespace-nowrap"
               title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
             >
               {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
@@ -179,13 +179,13 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {item.external_ref_id && (
             <CopyableRefId
               id={item.external_ref_id}
-              className="shrink-0 inline-flex items-center text-xs font-medium max-w-[90px] sm:max-w-none truncate whitespace-nowrap"
+              className="shrink-0 inline-flex items-center text-xs font-medium max-w-[70px] sm:max-w-none truncate whitespace-nowrap"
             />
           )}
 
           {/* Title */}
           <span
-            className="text-sm font-medium text-slate-200 truncate min-w-0 flex-1 cursor-pointer hover:text-white"
+            className="text-sm font-medium text-slate-200 truncate min-w-0 min-w-[60px] sm:min-w-[100px] flex-1 cursor-pointer hover:text-white"
             onClick={() => onEditItem(item)}
             title={item.title}
           >

@@ -39,6 +39,14 @@ export const RESERVED_METADATA_KEYS = new Set([
   'project_id',
 ]);
 
+export const CORE_ITEM_KEYS = new Set([
+  'sprint',
+  'status',
+  'assignee',
+  'parent_id',
+  'project_id',
+]);
+
 export interface FieldVariance {
   delta: number;
   percentDiff: number | null;
@@ -143,8 +151,9 @@ export function resolveCustomMetadataFields(
     });
   }
 
+  // Filter out top-level core keys so they never duplicate core item controls
   return fields
-    .filter((field) => field.key.toLowerCase() !== 'sprint')
+    .filter((field) => !CORE_ITEM_KEYS.has(field.key.toLowerCase()))
     .map((field) => {
       if (!field.type) {
       const inferred = inferFieldDefinitionFromKey(field.key);
@@ -361,7 +370,15 @@ export function WorkItemInspectorDrawer({
     const configuredKeys = new Set(configuredFields.map((f) => f.key.toLowerCase()));
 
     const customProperties = Object.entries(item?.metadata || {}).filter(
-      ([key]) => !RESERVED_METADATA_KEYS.has(key.toLowerCase()) && !configuredKeys.has(key.toLowerCase())
+      ([key, val]) =>
+        !RESERVED_METADATA_KEYS.has(key.toLowerCase()) &&
+        !configuredKeys.has(key.toLowerCase()) &&
+        // Only infer editor inputs for scalar primitive types to avoid corrupting structured arrays/objects
+        (typeof val === 'string' ||
+          typeof val === 'number' ||
+          typeof val === 'boolean' ||
+          val === null ||
+          val === undefined)
     );
 
     const dynamicFields: CustomMetadataFieldDefinition[] = customProperties.map(([key]) =>
@@ -561,6 +578,15 @@ export function WorkItemInspectorDrawer({
   };
 
   const handleCustomFieldCommit = (key: string, value: any) => {
+    const original = item?.metadata?.[key];
+    // Guard against overwriting structured arrays or objects with plain strings
+    if (Array.isArray(original) || (typeof original === 'object' && original !== null)) {
+      return;
+    }
+    // Prevent unneeded writes when value is unchanged
+    if (value === (original ?? null) || (value === '' && (original === null || original === undefined))) {
+      return;
+    }
     const nextMeta = {
       ...(item?.metadata || {}),
       ...localMeta,
@@ -990,6 +1016,9 @@ export function WorkItemInspectorDrawer({
                       onBlur={() => {
                         const raw = localMeta[field.key];
                         const original = item.metadata?.[field.key];
+                        if (Array.isArray(original) || (typeof original === 'object' && original !== null)) {
+                          return;
+                        }
                         let str: any =
                           raw === '' || raw === undefined || raw === null
                             ? null

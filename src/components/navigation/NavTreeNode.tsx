@@ -143,7 +143,7 @@ export function NavTreeNode({
         <span
           className={
             node.type === 'sprint'
-              ? 'truncate min-w-[125px] flex-shrink-0 font-medium text-xs font-mono tracking-tight'
+              ? 'truncate min-w-[125px] max-[220px]:min-w-0 max-[220px]:shrink flex-shrink-0 font-medium text-xs font-mono tracking-tight'
               : 'truncate min-w-0 flex-1 font-mono tracking-tight text-[11px]'
           }
           title={node.title}
@@ -179,7 +179,7 @@ export function NavTreeNode({
             {/* Nested Child Count Badge */}
             {node.childCount > 0 && node.type !== 'item' && (
               <span
-                className="text-[10px] text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800 shrink-0 font-mono"
+                className="text-[10px] text-slate-500 bg-slate-900 px-1 py-0.2 rounded border border-slate-800 shrink-0 font-mono hidden min-[240px]:inline-flex"
                 title={`${node.childCount} items`}
               >
                 {node.childCount}

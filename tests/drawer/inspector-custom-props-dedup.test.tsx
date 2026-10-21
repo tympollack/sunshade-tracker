@@ -106,6 +106,65 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
     expect(resolved.some((f) => f.key.toLowerCase() === 'client_name')).toBe(true);
   });
 
+  it('filters all top-level core keys (status, assignee, sprint, parent_id, project_id) from resolveCustomMetadataFields', () => {
+    const fieldsWithCoreKeys: CustomMetadataFieldDefinition[] = [
+      { key: 'status', label: 'Status', type: 'string' },
+      { key: 'assignee', label: 'Assignee', type: 'string' },
+      { key: 'parent_id', label: 'Parent Id', type: 'string' },
+      { key: 'project_id', label: 'Project Id', type: 'string' },
+      { key: 'priority', label: 'Priority', type: 'enum' },
+      { key: 'custom_note', label: 'Custom Note', type: 'string' },
+    ];
+
+    const resolved = resolveCustomMetadataFields(null, fieldsWithCoreKeys);
+    expect(resolved.some((f) => f.key.toLowerCase() === 'status')).toBe(false);
+    expect(resolved.some((f) => f.key.toLowerCase() === 'assignee')).toBe(false);
+    expect(resolved.some((f) => f.key.toLowerCase() === 'parent_id')).toBe(false);
+    expect(resolved.some((f) => f.key.toLowerCase() === 'project_id')).toBe(false);
+    // Configured priority and custom_note must be preserved
+    expect(resolved.some((f) => f.key.toLowerCase() === 'priority')).toBe(true);
+    expect(resolved.some((f) => f.key.toLowerCase() === 'custom_note')).toBe(true);
+  });
+
+  it('does not infer string inputs for structured arrays like acceptance_criteria and does not overwrite on blur', () => {
+    const onUpdate = vi.fn();
+    const structuredItem: WorkItem = {
+      id: 'item-structured-1',
+      tenant_id: 't-1',
+      project_id: 'p-1',
+      external_ref_id: 'TASK-STRUCT-1',
+      item_type: 'task',
+      status: 'in_progress',
+      title: 'Item with Structured Metadata',
+      order_index: 3000,
+      metadata: {
+        sprint: 'Sprint 2026-Q4',
+        acceptance_criteria: ['API passes', 'Tests pass'],
+        nested_config: { key: 'value' },
+        scalar_note: 'Plain text note',
+      },
+      created_at: '2026-10-21T00:00:00Z',
+      updated_at: '2026-10-21T00:00:00Z',
+    };
+
+    render(
+      <WorkItemInspectorDrawer
+        item={structuredItem}
+        isOpen={true}
+        onClose={vi.fn()}
+        onUpdateItem={onUpdate}
+        tenantSlug="pym-energy"
+      />
+    );
+
+    // acceptance_criteria array and nested_config object must NOT be inferred as string editors
+    expect(screen.queryByLabelText('Acceptance Criteria')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Nested Config')).not.toBeInTheDocument();
+    // scalar_note should be rendered
+    expect(screen.getByLabelText('Scalar Note')).toBeInTheDocument();
+    expect(screen.getByLabelText('Scalar Note')).toHaveValue('Plain text note');
+  });
+
   it('modifying custom properties updates metadata without corrupting primary item columns', () => {
     const onUpdate = vi.fn();
     const mockItem: WorkItem = {
