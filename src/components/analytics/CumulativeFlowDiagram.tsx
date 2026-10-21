@@ -7,4 +7,5 @@ export {
   formatCfdDate,
   type CumulativeFlowChartProps,
   type CfdTimeWindow,
+  type CfdScopeMode,
 } from './CumulativeFlowChart';
