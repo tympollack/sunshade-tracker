@@ -32,8 +32,62 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   const [endDate, setEndDate] = useState(defaultEnd);
   const [sprints, setSprints] = useState<SprintOption[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('');
+  const [isCustomDateRange, setIsCustomDateRange] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Sync state from URL query parameters on initial client mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      const urlSprintId = url.searchParams.get('sprintId');
+      const urlStart = url.searchParams.get('startDate');
+      const urlEnd = url.searchParams.get('endDate');
+
+      if (urlSprintId) {
+        setSelectedSprintId(urlSprintId);
+      }
+      if (urlStart) {
+        setStartDate(urlStart);
+        setIsCustomDateRange(true);
+      }
+      if (urlEnd) {
+        setEndDate(urlEnd);
+        setIsCustomDateRange(true);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
+  // Synchronize URL parameters shallowly
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      let modified = false;
+
+      if (selectedSprintId && url.searchParams.get('sprintId') !== selectedSprintId) {
+        url.searchParams.set('sprintId', selectedSprintId);
+        modified = true;
+      }
+      if (startDate && url.searchParams.get('startDate') !== startDate) {
+        url.searchParams.set('startDate', startDate);
+        modified = true;
+      }
+      if (endDate && url.searchParams.get('endDate') !== endDate) {
+        url.searchParams.set('endDate', endDate);
+        modified = true;
+      }
+
+      if (modified) {
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch {
+      // Ignore
+    }
+  }, [selectedSprintId, startDate, endDate]);
 
   // Telemetry Data States
   const [kpiMetrics, setKpiMetrics] = useState<KpiMetrics>({
@@ -76,6 +130,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
               name: s.name,
               is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
               status: s.status,
+              start_date: s.start_date || s.startDate || null,
+              end_date: s.end_date || s.endDate || null,
             });
           }
         }
@@ -99,6 +155,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
+                start_date: s.start_date || s.startDate || null,
+                end_date: s.end_date || s.endDate || null,
               });
             }
           }
@@ -125,6 +183,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
+                start_date: s.start_date || s.startDate || null,
+                end_date: s.end_date || s.endDate || null,
               });
             }
           }
@@ -136,11 +196,23 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       setSprints(mergedOptions);
       if (mergedOptions.length > 0) {
         setSelectedSprintId((prev) => {
-          if (prev && mergedOptions.some((s) => s.id === prev || s.name === prev)) {
-            return prev;
+          let chosenId = prev;
+          if (!prev || !mergedOptions.some((s) => s.id === prev || s.name === prev)) {
+            const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
+            chosenId = active.id;
           }
-          const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
-          return active.id;
+          const chosenSprint = mergedOptions.find((s) => s.id === chosenId || s.name === chosenId);
+          if (chosenSprint?.start_date && chosenSprint?.end_date) {
+            setStartDate((currStart) => {
+              if (!isCustomDateRange) return chosenSprint.start_date!.split('T')[0];
+              return currStart;
+            });
+            setEndDate((currEnd) => {
+              if (!isCustomDateRange) return chosenSprint.end_date!.split('T')[0];
+              return currEnd;
+            });
+          }
+          return chosenId;
         });
       }
     } catch (err) {
@@ -148,14 +220,52 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     }
   }, [tenantSlug, projectSlug]);
 
+  // Synchronized Sprint & Date Range Handlers
+  const handleSelectSprint = useCallback(
+    (id: string) => {
+      setSelectedSprintId(id);
+      const targetSprint = sprints.find((s) => s.id === id || s.name === id);
+      if (targetSprint?.start_date && targetSprint?.end_date) {
+        setStartDate(targetSprint.start_date.split('T')[0]);
+        setEndDate(targetSprint.end_date.split('T')[0]);
+        setIsCustomDateRange(false);
+      }
+    },
+    [sprints]
+  );
+
+  const handleChangeStartDate = useCallback((date: string) => {
+    setStartDate(date);
+    setIsCustomDateRange(true);
+  }, []);
+
+  const handleChangeEndDate = useCallback((date: string) => {
+    setEndDate(date);
+    setIsCustomDateRange(true);
+  }, []);
+
+  const handleResetToSprintDates = useCallback(() => {
+    const targetSprint = sprints.find((s) => s.id === selectedSprintId || s.name === selectedSprintId);
+    if (targetSprint?.start_date && targetSprint?.end_date) {
+      setStartDate(targetSprint.start_date.split('T')[0]);
+      setEndDate(targetSprint.end_date.split('T')[0]);
+    } else {
+      const now = new Date();
+      setStartDate(new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      setEndDate(now.toISOString().split('T')[0]);
+    }
+    setIsCustomDateRange(false);
+  }, [sprints, selectedSprintId]);
+
   // Fetch telemetry endpoints
   const fetchTelemetry = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      // 1. Fetch Sprint Health & Metrics
+      // 1. Fetch Sprint Health & Metrics (propagating custom date bounds)
       let sprintQuery = selectedSprintId ? `&sprint_id=${encodeURIComponent(selectedSprintId)}` : '';
+      const dateParams = `&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
       const sprintRes = await fetch(
-        `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}${sprintQuery}`
+        `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}${sprintQuery}${dateParams}`
       );
 
       let committedPts = 0;
@@ -234,12 +344,16 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         const snapRes = await fetch(
           `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
             selectedSprintId
-          )}&tenant_slug=${encodeURIComponent(tenantSlug)}`
+          )}&tenant_slug=${encodeURIComponent(tenantSlug)}${dateParams}`
         );
         if (snapRes.ok) {
           const snapJson = await snapRes.json();
           if (Array.isArray(snapJson.burndownData)) {
-            setBurndownData(snapJson.burndownData);
+            const filteredBurndown = snapJson.burndownData.filter((b: any) => {
+              if (!b.date) return true;
+              return b.date >= startDate && b.date <= endDate;
+            });
+            setBurndownData(filteredBurndown.length > 0 ? filteredBurndown : snapJson.burndownData);
           } else {
             setBurndownData([]);
           }
@@ -306,13 +420,15 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         projectSlug={projectSlug}
         sprints={sprints}
         selectedSprintId={selectedSprintId}
-        onSelectSprint={(id) => setSelectedSprintId(id)}
+        onSelectSprint={handleSelectSprint}
         startDate={startDate}
         endDate={endDate}
-        onChangeStartDate={(d) => setStartDate(d)}
-        onChangeEndDate={(d) => setEndDate(d)}
+        onChangeStartDate={handleChangeStartDate}
+        onChangeEndDate={handleChangeEndDate}
         onRefresh={fetchTelemetry}
         isRefreshing={isRefreshing}
+        isCustomDateRange={isCustomDateRange}
+        onResetToSprintDates={handleResetToSprintDates}
       />
 
       {/* Main Content Dashboard */}
