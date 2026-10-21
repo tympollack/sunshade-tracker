@@ -27,6 +27,18 @@ import {
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 
+export const RESERVED_METADATA_KEYS = new Set([
+  'sprint',
+  'status',
+  'assignee',
+  'priority',
+  'complexity',
+  'story_points',
+  'points',
+  'parent_id',
+  'project_id',
+]);
+
 export interface FieldVariance {
   delta: number;
   percentDiff: number | null;
@@ -131,8 +143,10 @@ export function resolveCustomMetadataFields(
     });
   }
 
-  return fields.map((field) => {
-    if (!field.type) {
+  return fields
+    .filter((field) => field.key.toLowerCase() !== 'sprint')
+    .map((field) => {
+      if (!field.type) {
       const inferred = inferFieldDefinitionFromKey(field.key);
       return {
         ...field,
@@ -342,10 +356,20 @@ export function WorkItemInspectorDrawer({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const resolvedFields = useMemo(
-    () => resolveCustomMetadataFields(projectSettings, customMetadataFields),
-    [projectSettings, customMetadataFields]
-  );
+  const resolvedFields = useMemo(() => {
+    const configuredFields = resolveCustomMetadataFields(projectSettings, customMetadataFields);
+    const configuredKeys = new Set(configuredFields.map((f) => f.key.toLowerCase()));
+
+    const customProperties = Object.entries(item?.metadata || {}).filter(
+      ([key]) => !RESERVED_METADATA_KEYS.has(key.toLowerCase()) && !configuredKeys.has(key.toLowerCase())
+    );
+
+    const dynamicFields: CustomMetadataFieldDefinition[] = customProperties.map(([key]) =>
+      inferFieldDefinitionFromKey(key)
+    );
+
+    return [...configuredFields, ...dynamicFields];
+  }, [projectSettings, customMetadataFields, item?.metadata]);
   const hasExplicitPointsField = useMemo(
     () => resolvedFields.some((f) => f.key === 'story_points' || f.key === 'points'),
     [resolvedFields]
