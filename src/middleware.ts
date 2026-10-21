@@ -105,9 +105,13 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Allow unauthenticated access strictly to the public bounties board route: /:tenantSlug/bounties
+  const isBountiesRoute = /^\/[^/]+\/bounties\/?$/.test(pathname);
+
   const isPublicRoute =
     pathname === '/' ||
     isDemoGuestRoute ||
+    isBountiesRoute ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth/') ||
     pathname.startsWith('/api/') || // All API routes handle their own auth (dual: session or API key)

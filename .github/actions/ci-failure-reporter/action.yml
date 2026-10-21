@@ -1,0 +1,129 @@
+name: 'SunShade CI Failure Reporter'
+description: 'Ingests build, lint, and test failures directly into SunShade Tracker as actionable bug items.'
+inputs:
+  tracker_token:
+    description: 'Bearer token for SunShade Tracker API (repository secret SUNSHADE_TRACKER_TOKEN)'
+    required: true
+  tracker_url:
+    description: 'Base URL for SunShade Tracker'
+    required: false
+    default: 'https://track.sunshade.icu'
+  project_slug:
+    description: 'Project slug in SunShade Tracker'
+    required: false
+    default: 'sunshade-tracker'
+  commit_sha:
+    description: 'Commit SHA that failed'
+    required: false
+    default: ${{ github.sha }}
+  job_name:
+    description: 'Name of the failing job'
+    required: false
+    default: ${{ github.job }}
+  pr_number:
+    description: 'Pull request number if applicable'
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  error_message:
+    description: 'Concise summary of the error'
+    required: false
+    default: 'CI check failed'
+  log_file:
+    description: 'Optional path to log file containing stack trace'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Ingest Failure into SunShade Tracker
+      shell: bash
+      env:
+        SUNSHADE_TRACKER_TOKEN: ${{ inputs.tracker_token }}
+        TRACKER_URL: ${{ inputs.tracker_url }}
+        PROJECT_SLUG: ${{ inputs.project_slug }}
+        COMMIT_SHA: ${{ inputs.commit_sha }}
+        JOB_NAME: ${{ inputs.job_name }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        ERROR_MESSAGE: ${{ inputs.error_message }}
+        LOG_FILE: ${{ inputs.log_file }}
+      run: |
+        PAYLOAD_FILE="${RUNNER_TEMP:-/tmp}/sunshade-ci-failure-payload.json"
+        export PAYLOAD_FILE
+
+        node -e '
+          const fs = require("fs");
+          const logFile = process.env.LOG_FILE;
+          let stackTrace = "No log file provided";
+          if (logFile && fs.existsSync(logFile)) {
+            const raw = fs.readFileSync(logFile, "utf8");
+            const lines = raw.split("\n");
+            // Preserve TypeScript compiler errors if present earlier in the log
+            const tsErrors = lines.filter(l => /error TS\d+:|Cannot find module|Type .* is not assignable/.test(l));
+            const tailLines = lines.slice(-50);
+            if (tsErrors.length > 0) {
+              stackTrace = [...tsErrors.slice(0, 20), "...", ...tailLines.slice(-30)].join("\n");
+            } else {
+              stackTrace = tailLines.join("\n");
+            }
+          }
+
+          // Redact tokens and credentials from logs and error message
+          const trackerToken = process.env.SUNSHADE_TRACKER_TOKEN;
+          const redactSecrets = (text) => {
+            if (!text) return "";
+            let s = text;
+            if (trackerToken && trackerToken.length >= 6) {
+              s = s.split(trackerToken).join("[REDACTED_TRACKER_TOKEN]");
+            }
+            return s
+              .replace(/(?:ghp_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})/g, "[REDACTED_GITHUB_TOKEN]")
+              .replace(/(?:tk_live_[a-z0-9_]{16,}|tk_test_[a-z0-9_]{16,})/g, "[REDACTED_TRACKER_KEY]")
+              .replace(/(?:Bearer\s+)[A-Za-z0-9_.-]{16,}/gi, "Bearer [REDACTED]")
+              .replace(/(?:password|secret|token|api_key|apikey|private_key)["\s:=]+(?!(?:\[REDACTED))[^\s",;}\]]{6,}/gi, (m) => {
+                const prefix = m.split(/["\s:=]+/)[0];
+                return `${prefix}: "[REDACTED]"`;
+              });
+          };
+
+          stackTrace = redactSecrets(stackTrace);
+          const cleanErrorMessage = redactSecrets(process.env.ERROR_MESSAGE || "Failure");
+
+          const shortSha = (process.env.COMMIT_SHA || "").slice(0, 8) || "unknown";
+          const jobName = (process.env.JOB_NAME || "ci").replace(/[^A-Za-z0-9_-]/g, "_");
+          const refId = `BUG-CI-${shortSha}-${jobName}`;
+          const prNumber = process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null;
+
+          const payload = {
+            project_slug: process.env.PROJECT_SLUG || "sunshade-tracker",
+            items: [
+              {
+                external_ref_id: refId,
+                item_type: "bug",
+                title: `CI Failure: ${cleanErrorMessage} in ${process.env.JOB_NAME || "ci"}`,
+                description: `### Automated CI Failure Report\n> **Job:** \`${process.env.JOB_NAME || "ci"}\`\n> **Commit:** \`${process.env.COMMIT_SHA || ""}\`\n\n\`\`\`\n${stackTrace}\n\`\`\``,
+                status: "not_started",
+                metadata: {
+                  ci_job: process.env.JOB_NAME || "ci",
+                  commit_hash: process.env.COMMIT_SHA || "",
+                  pr_number: prNumber,
+                  priority: "Critical",
+                  severity: "High",
+                  auto_generated: true,
+                  stack_trace: stackTrace,
+                  agent_prompt: `### SYSTEM ROLE & OBJECTIVE\nYou are an Autonomous CI Remediation Specialist. Fix failure in job ${process.env.JOB_NAME || "ci"} on commit ${process.env.COMMIT_SHA || ""}.`
+                }
+              }
+            ]
+          };
+
+          const targetPath = process.env.PAYLOAD_FILE || "payload.json";
+          fs.writeFileSync(targetPath, JSON.stringify(payload, null, 2));
+        '
+
+        curl --fail-with-body -s -X POST "${TRACKER_URL}/api/v1/items/ingest" \
+          -H "Authorization: Bearer $SUNSHADE_TRACKER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d @"$PAYLOAD_FILE"
+
+        rm -f "$PAYLOAD_FILE" payload.json

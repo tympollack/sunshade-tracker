@@ -1,0 +1,65 @@
+name: CI & Self-Healing Failure Bridge
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  verify:
+    name: Test & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Typecheck
+        id: typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee typecheck-output.log
+
+      - name: Run Test Suite
+        id: test
+        if: success() || failure()
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.log
+
+      - name: Consolidate Failure Logs
+        if: failure()
+        shell: bash
+        run: |
+          touch ci-failure.log
+          if [ -f typecheck-output.log ] && [ -s typecheck-output.log ]; then
+            echo "=== TypeScript Diagnostics ===" >> ci-failure.log
+            cat typecheck-output.log >> ci-failure.log
+          fi
+          if [ -f test-output.log ] && [ -s test-output.log ]; then
+            echo "=== Test Suite Output ===" >> ci-failure.log
+            cat test-output.log >> ci-failure.log
+          fi
+
+      - name: Report CI Failure to SunShade Tracker
+        if: failure()
+        uses: ./.github/actions/ci-failure-reporter
+        with:
+          tracker_token: ${{ secrets.SUNSHADE_TRACKER_TOKEN }}
+          tracker_url: 'https://track.sunshade.icu'
+          project_slug: 'sunshade-tracker'
+          commit_sha: ${{ github.sha }}
+          job_name: 'Test & Typecheck'
+          error_message: 'Automated test suite or TypeScript compilation failed'
+          log_file: 'ci-failure.log'

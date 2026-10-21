@@ -19,7 +19,11 @@
     "verify:mcp": "node --experimental-strip-types scripts/verify-supabase-mcp.ts",
     "verify:mcp:synthetic": "node --experimental-strip-types scripts/verify-supabase-mcp.ts --synthetic",
     "audit:db": "node --experimental-strip-types scripts/audit-db-pre-renewal.ts",
-    "verify:context": "node --experimental-strip-types scripts/verify-context-trim.ts"
+    "verify:context": "node --experimental-strip-types scripts/verify-context-trim.ts",
+    "cli": "node --experimental-strip-types bin/sunshade-cli.ts"
+  },
+  "bin": {
+    "sunshade-cli": "./bin/sunshade-cli.ts"
   },
   "dependencies": {
     "@digitalcanopy/supabase": "^0.1.0",
@@ -27,9 +31,11 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@supabase/ssr": "^0.12.6",
     "@supabase/supabase-js": "^2.49.1",
     "clsx": "^2.1.1",
+    "commander": "^15.0.0",
     "json5": "^2.2.3",
     "lucide-react": "^0.475.0",
     "next": "^15.1.7",
