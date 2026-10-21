@@ -3,6 +3,7 @@
 import React from 'react';
 import { Skeleton } from '@digitalcanopy/ui';
 import { Activity, Award, TrendingDown, TrendingUp, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 export interface KpiMetrics {
   rollingVelocity: number;
@@ -55,9 +56,14 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
       <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
         <div className="flex items-center justify-between text-slate-400 mb-2">
           <span className="text-xs font-medium uppercase tracking-wider">3-Sprint Velocity</span>
-          <div className="p-2 rounded-lg bg-cyan-950/40 text-cyan-400 border border-cyan-800/40">
-            <Activity className="w-4 h-4" />
-          </div>
+          <Tooltip
+            content="Weighted average (50/30/20) of completed story points across the last three closed sprints"
+            data-testid="tooltip-velocity-icon"
+          >
+            <div className="p-2 rounded-lg bg-cyan-950/40 text-cyan-400 border border-cyan-800/40 cursor-help">
+              <Activity className="w-4 h-4" />
+            </div>
+          </Tooltip>
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold text-slate-100 font-mono tracking-tight">
@@ -94,9 +100,14 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
       <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
         <div className="flex items-center justify-between text-slate-400 mb-2">
           <span className="text-xs font-medium uppercase tracking-wider">Scope Volatility</span>
-          <div className="p-2 rounded-lg bg-amber-950/40 text-amber-400 border border-amber-800/40">
-            <AlertTriangle className="w-4 h-4" />
-          </div>
+          <Tooltip
+            content="Percentage change in total sprint scope after Day 1 activation: (+Added - Dropped) / Baseline * 100"
+            data-testid="tooltip-volatility-icon"
+          >
+            <div className="p-2 rounded-lg bg-amber-950/40 text-amber-400 border border-amber-800/40 cursor-help">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+          </Tooltip>
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold text-slate-100 font-mono tracking-tight">
@@ -118,9 +129,14 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
       <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
         <div className="flex items-center justify-between text-slate-400 mb-2">
           <span className="text-xs font-medium uppercase tracking-wider">Uncompleted Scope</span>
-          <div className="p-2 rounded-lg bg-blue-950/40 text-blue-400 border border-blue-800/40">
-            <Clock className="w-4 h-4" />
-          </div>
+          <Tooltip
+            content="Story points remaining across not_started, in_progress, and in_review tasks"
+            data-testid="tooltip-uncompleted-icon"
+          >
+            <div className="p-2 rounded-lg bg-blue-950/40 text-blue-400 border border-blue-800/40 cursor-help">
+              <Clock className="w-4 h-4" />
+            </div>
+          </Tooltip>
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold text-cyan-400 font-mono tracking-tight">
