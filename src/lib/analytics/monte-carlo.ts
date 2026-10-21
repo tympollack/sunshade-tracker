@@ -3,6 +3,124 @@
  * Simulates delivery trajectories by sampling with replacement from historical velocities.
  */
 
+export type MonteCarloCadenceUnit =
+  | 'day'
+  | 'week'
+  | '2-week'
+  | 'month'
+  | 'quarter'
+  | 'year'
+  | 'sprint';
+
+export interface CadenceOption {
+  unit: MonteCarloCadenceUnit;
+  label: string;
+}
+
+export const CADENCE_OPTIONS: CadenceOption[] = [
+  { unit: 'sprint', label: 'Sprints (Default)' },
+  { unit: 'day', label: 'Days' },
+  { unit: 'week', label: 'Weeks' },
+  { unit: '2-week', label: '2 Weeks (Bi-weekly)' },
+  { unit: 'month', label: 'Months' },
+  { unit: 'quarter', label: 'Quarters' },
+  { unit: 'year', label: 'Years' },
+];
+
+export interface ConvertedCadenceDuration {
+  value: number | null;
+  unit: MonteCarloCadenceUnit;
+  label: string;
+}
+
+/**
+ * Converts a sprint count into the selected cadence duration and formatted display string.
+ *
+ * @param sprints Number of sprints simulated (or null if exceeded horizon)
+ * @param unit Selected cadence unit
+ * @param sprintLengthDays Length of a sprint in days (default 14)
+ */
+export function convertSprintsToCadence(
+  sprints: number | null,
+  unit: MonteCarloCadenceUnit = 'sprint',
+  sprintLengthDays: number = 14
+): ConvertedCadenceDuration {
+  if (sprints === null) {
+    return {
+      value: null,
+      unit,
+      label: '> 500 sprints',
+    };
+  }
+
+  const days = sprints * Math.max(1, sprintLengthDays);
+
+  switch (unit) {
+    case 'day': {
+      // Round to nearest 0.5 or integer day
+      const val = Math.round(days * 2) / 2;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'day' : 'days'}`,
+      };
+    }
+    case 'week': {
+      // Fractional weeks to 1 decimal place
+      const val = Math.round((days / 7) * 10) / 10;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'week' : 'weeks'}`,
+      };
+    }
+    case '2-week': {
+      // Bi-weekly increments to 1 decimal place
+      const val = Math.round((days / 14) * 10) / 10;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'bi-week' : 'bi-weeks'}`,
+      };
+    }
+    case 'month': {
+      // Calendar month equivalent (30.4375 avg days/month in Gregorian calendar)
+      const val = Math.round((days / 30.4375) * 10) / 10;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'month' : 'months'}`,
+      };
+    }
+    case 'quarter': {
+      // Fractional quarters (365.25 / 4 = 91.3125 days/quarter)
+      const val = Math.round((days / 91.3125) * 10) / 10;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'quarter' : 'quarters'}`,
+      };
+    }
+    case 'year': {
+      // Fractional years (365.25 days/year)
+      const val = Math.round((days / 365.25) * 10) / 10;
+      return {
+        value: val,
+        unit,
+        label: `${val} ${val === 1 ? 'year' : 'years'}`,
+      };
+    }
+    case 'sprint':
+    default: {
+      return {
+        value: sprints,
+        unit: 'sprint',
+        label: `${sprints} ${sprints === 1 ? 'sprint' : 'sprints'}`,
+      };
+    }
+  }
+}
+
 export interface MonteCarloSimulationInput {
   remainingStoryPoints: number;
   historicalVelocities: number[];

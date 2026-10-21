@@ -6,6 +6,7 @@ import { KpiMetricCards, KpiMetrics } from '@/components/analytics/KpiMetricCard
 import { BurndownChart, BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnWaterfall, ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
 import { CumulativeFlowChart } from '@/components/analytics/CumulativeFlowChart';
+import { MonteCarloSimulator } from '@/components/analytics/MonteCarloSimulator';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 import { calculateRollingVelocity, calculateSayDoRatio, calculateSprintVolatility } from '@/lib/analytics/velocity-forecaster';
 import { runMonteCarloSimulation, MonteCarloSimulationResult } from '@/lib/analytics/monte-carlo';
@@ -340,65 +341,15 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         </section>
 
         {/* Monte Carlo Release Forecasting */}
-        {monteCarlo && (
-          <section className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-100">
-                    Monte Carlo Milestone Simulator
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Probabilistic completion forecasting over {monteCarlo.iterations.toLocaleString()} trials ({monteCarlo.executionTimeMs}ms)
-                    {!monteCarlo.deliveredWithinHorizon && monteCarlo.censoredTrials > 0 && (
-                      <span className="text-amber-400 ml-2">({monteCarlo.censoredTrials} trials exceeded 500 sprints)</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="text-xs text-slate-400 font-mono">
-                Target: {monteCarlo.remainingStoryPoints} remaining pts
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
-                <div className="text-xl font-bold text-emerald-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p50 !== null ? `${monteCarlo.percentiles.p50} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p50 ? monteCarlo.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
-                <div className="text-xl font-bold text-cyan-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p85 !== null ? `${monteCarlo.percentiles.p85} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p85 ? monteCarlo.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
-                <div className="text-xl font-bold text-amber-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p95 !== null ? `${monteCarlo.percentiles.p95} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p95 ? monteCarlo.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-            </div>
-          </section>
+        {(monteCarlo || isLoading) && (
+          <MonteCarloSimulator
+            simulation={monteCarlo}
+            isLoading={isLoading}
+            projectId={projectSlug}
+            sprintId={selectedSprintId}
+            remainingStoryPoints={kpiMetrics.remainingPoints}
+            sprintLengthDays={14}
+          />
         )}
       </main>
     </div>
