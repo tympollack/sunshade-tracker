@@ -96,8 +96,8 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
     >
       {/* Primary Row (Tier 1 on mobile, left section on desktop) */}
       <div className="flex items-center justify-between w-full md:w-auto md:flex-1 min-w-0 gap-2">
-        {/* Left group: Tree connector, Checkbox, type badge, deviations, project, ref, github, title, lock, and desktop subtasks */}
-        <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+        {/* Left Section: Selection checkbox, type indicator, ref, title, lock */}
+        <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
           {/* Tree Branch Connector */}
           {isTreeMode && depth > 0 && (
             <div
@@ -143,7 +143,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {/* Level Badge */}
           <span
             title={item.item_type}
-            className={`text-[10px] font-mono font-semibold rounded px-2 py-0.5 border shrink-0 whitespace-nowrap max-w-[130px] sm:max-w-[160px] truncate ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
+            className={`shrink-0 inline-flex items-center text-xs font-mono font-semibold rounded px-2 py-0.5 border whitespace-nowrap max-w-[130px] sm:max-w-[160px] truncate ${lvlColor.badgeBg} ${lvlColor.badgeText} ${lvlColor.badgeBorder}`}
           >
             {item.item_type}
           </span>
@@ -156,7 +156,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
                 e.stopPropagation();
                 onOpenReconciliation?.(itemDevs[0]);
               }}
-              className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors shrink-0 cursor-pointer"
+              className="shrink-0 inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-colors cursor-pointer whitespace-nowrap"
               title={itemDevs.map((d) => d.message).join('\n') + ' (Click to reconcile)'}
               data-testid="sprint-item-deviation-badge"
             >
@@ -168,7 +168,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {/* Project Badge for All Projects mode */}
           {isAllProjects && (
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[100px]"
+              className="shrink-0 inline-flex items-center text-xs px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/50 font-sans truncate max-w-[80px] sm:max-w-[100px] whitespace-nowrap"
               title={allProjects.find((p) => p.id === item.project_id)?.name || item.project_id}
             >
               {allProjects.find((p) => p.id === item.project_id)?.name || 'Project'}
@@ -179,17 +179,13 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {item.external_ref_id && (
             <CopyableRefId
               id={item.external_ref_id}
-              className="text-xs shrink-0 font-medium max-w-[90px] sm:max-w-none truncate"
+              className="shrink-0 inline-flex items-center text-xs font-medium max-w-[70px] sm:max-w-none truncate whitespace-nowrap"
             />
           )}
 
-          {/* GitHub Badges */}
-          {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} />}
-          {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} />}
-
           {/* Title */}
           <span
-            className="text-sm font-medium text-slate-200 truncate cursor-pointer hover:text-white min-w-0 min-w-[60px] sm:min-w-[100px] flex-1"
+            className="text-sm font-medium text-slate-200 truncate min-w-0 min-w-[60px] sm:min-w-[100px] flex-1 cursor-pointer hover:text-white"
             onClick={() => onEditItem(item)}
             title={item.title}
           >
@@ -199,7 +195,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           {/* Immutability Lock Badge */}
           {isImmutable && (
             <span
-              className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 font-sans"
+              className="shrink-0 inline-flex items-center space-x-1 text-xs px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 font-sans whitespace-nowrap"
               title="Completed item in closed sprint (immutable)"
               data-testid="immutable-lock-badge"
             >
@@ -207,18 +203,18 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
               <span>Locked</span>
             </span>
           )}
-
-          {/* Desktop Subtasks Pill */}
-          {isTreeMode && childCount > 0 && (
-            <span
-              className="hidden md:inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 shrink-0"
-              title={`${childCount} child item(s)`}
-              data-testid="tree-child-count-badge"
-            >
-              {childCount} {childCount === 1 ? 'subtask' : 'subtasks'}
-            </span>
-          )}
         </div>
+
+        {/* Git Metadata Cluster */}
+        {(prUrl || commitHash) && (
+          <div
+            className="shrink-0 flex items-center gap-1.5 whitespace-nowrap"
+            data-testid="git-metadata-cluster"
+          >
+            {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
+            {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
+          </div>
+        )}
 
         {/* Right group (Mobile Only): discreet (n) subtask count & edit icon button */}
         <div className="flex items-center space-x-1.5 shrink-0 md:hidden">
@@ -243,16 +239,27 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         </div>
       </div>
 
-      {/* Secondary Row (Tier 2 - Mobile Only: pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1; Desktop: standard horizontal inline) */}
+      {/* Secondary Row (Tier 2 - Mobile Only: pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1; Desktop: standard horizontal inline flush right) */}
       <div
-        className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:gap-0 md:space-x-2.5 md:shrink-0"
+        className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:shrink-0 md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
       >
+        {/* Desktop Subtasks Pill */}
+        {isTreeMode && childCount > 0 && (
+          <span
+            className="hidden md:inline-flex shrink-0 items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 whitespace-nowrap"
+            title={`${childCount} child item(s)`}
+            data-testid="tree-child-count-badge"
+          >
+            {childCount} {childCount === 1 ? 'subtask' : 'subtasks'}
+          </span>
+        )}
+
         {/* Consolidated Point Badge */}
         {isTreeMode && rollupPoints > 0 ? (
           <span
             data-testid="tree-rollup-points-badge"
-            className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap select-none"
+            className="shrink-0 inline-flex items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 whitespace-nowrap select-none"
             title={
               points !== undefined
                 ? `Intrinsic: ${points} pts | Rollup: ${rollupPoints} pts`
@@ -273,14 +280,14 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         ) : points !== undefined ? (
           <span
             data-testid="sprint-points-badge"
-            className="text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none shrink-0"
+            className="shrink-0 inline-flex items-center text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none whitespace-nowrap"
           >
             {String(points)} pts
           </span>
         ) : null}
 
         {/* Assignee avatar/name pill */}
-        <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono shrink-0 bg-slate-950/40 px-1.5 py-0.5 rounded border border-slate-800/60 md:bg-transparent md:px-0 md:py-0 md:border-0">
+        <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono shrink-0 bg-slate-950/40 px-1.5 py-0.5 rounded border border-slate-800/60 md:bg-transparent md:px-0 md:py-0 md:border-0 whitespace-nowrap">
           <User className="w-3 h-3 text-slate-500 shrink-0" />
           <span className="truncate max-w-[100px] md:max-w-none">{item.assignee || 'Unassigned'}</span>
         </span>
@@ -299,7 +306,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           value={currentSprintName || item.metadata?.sprint || '__none__'}
           onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
           disabled={isImmutable}
-          className="bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 text-xs md:py-1 md:px-3 md:text-sm text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] truncate"
+          className="bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 text-xs md:py-1 md:px-3 md:text-sm text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] truncate shrink-0"
           title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}
           data-testid={`sprint-reassign-select-${item.id}`}
         >
@@ -315,7 +322,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         <button
           type="button"
           onClick={() => onEditItem(item)}
-          className="p-1 rounded text-slate-500 hover:text-white transition-colors hidden md:inline-flex"
+          className="p-1 rounded text-slate-500 hover:text-white transition-colors hidden md:inline-flex shrink-0"
           title="Edit work item"
           data-testid={`edit-item-desktop-${item.id}`}
         >
