@@ -33,6 +33,98 @@ export interface ConvertedCadenceDuration {
   label: string;
 }
 
+// In-memory simulation cache for instant sub-millisecond retrieval
+const memoryCache = new Map<string, MonteCarloSimulationResult>();
+
+/**
+ * Deterministic hash for historical velocity distributions.
+ */
+export function hashVelocities(velocities: number[]): string {
+  if (!velocities || velocities.length === 0) return 'v0';
+  let hash = 0;
+  for (let i = 0; i < velocities.length; i++) {
+    hash = (hash * 31 + velocities[i]) | 0;
+  }
+  return `v_${velocities.length}_${hash}`;
+}
+
+export interface MonteCarloCacheKeyParams {
+  projectId?: string;
+  sprintId?: string;
+  targetPts: number;
+  cadenceUnit: MonteCarloCadenceUnit;
+  trialCount: number;
+  historicalVelocities: number[];
+}
+
+/**
+ * Builds a deterministic cache key adhering to the format:
+ * `mc_${projectId}_${sprintId}_${targetPts}_${cadenceUnit}_${trialCount}_${historyHash}`
+ */
+export function generateMonteCarloCacheKey(params: MonteCarloCacheKeyParams): string {
+  const pId = params.projectId || 'proj';
+  const sId = params.sprintId || 'sprint';
+  const hash = hashVelocities(params.historicalVelocities);
+  return `mc_${pId}_${sId}_${params.targetPts}_${params.cadenceUnit}_${params.trialCount}_${hash}`;
+}
+
+/**
+ * Retrieves a simulation result from memory or sessionStorage.
+ */
+export function getCachedMonteCarlo(key: string): MonteCarloSimulationResult | null {
+  if (memoryCache.has(key)) {
+    return memoryCache.get(key)!;
+  }
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const item = window.sessionStorage.getItem(key);
+      if (item) {
+        const parsed = JSON.parse(item) as MonteCarloSimulationResult;
+        memoryCache.set(key, parsed);
+        return parsed;
+      }
+    } catch {
+      // Ignore sessionStorage exceptions
+    }
+  }
+  return null;
+}
+
+/**
+ * Stores a simulation result into memory and sessionStorage.
+ */
+export function setCachedMonteCarlo(key: string, result: MonteCarloSimulationResult): void {
+  memoryCache.set(key, result);
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(result));
+    } catch {
+      // Ignore quota/access errors
+    }
+  }
+}
+
+/**
+ * Clears the simulation caches (useful for testing or project resets).
+ */
+export function clearMonteCarloCache(): void {
+  memoryCache.clear();
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const k = window.sessionStorage.key(i);
+        if (k && k.startsWith('mc_')) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+    } catch {
+      // Ignore
+    }
+  }
+}
+
 /**
  * Converts a sprint count into the selected cadence duration and formatted display string.
  *

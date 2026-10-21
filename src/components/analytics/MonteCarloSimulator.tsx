@@ -1,38 +1,60 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Calendar, Sparkles } from 'lucide-react';
 import {
   MonteCarloSimulationResult,
   MonteCarloCadenceUnit,
   CADENCE_OPTIONS,
   convertSprintsToCadence,
+  generateMonteCarloCacheKey,
+  getCachedMonteCarlo,
+  setCachedMonteCarlo,
+  runMonteCarloSimulation,
 } from '@/lib/analytics/monte-carlo';
 
 export interface MonteCarloSimulatorProps {
-  simulation: MonteCarloSimulationResult | null;
+  simulation?: MonteCarloSimulationResult | null;
   isLoading?: boolean;
+  isCalculating?: boolean;
   projectId?: string;
   sprintId?: string;
   remainingStoryPoints?: number;
   historicalVelocities?: number[];
+  iterations?: number;
   sprintLengthDays?: number;
+  startDate?: Date | string;
   onCadenceChange?: (unit: MonteCarloCadenceUnit) => void;
 }
 
 const LOCAL_STORAGE_CADENCE_KEY = 'trk_mc_cadence_unit';
 
 export function MonteCarloSimulator({
-  simulation,
+  simulation: propSimulation,
   isLoading = false,
+  isCalculating: propIsCalculating = false,
   projectId,
   sprintId,
   remainingStoryPoints,
   historicalVelocities = [],
+  iterations = 1000,
   sprintLengthDays = 14,
+  startDate,
   onCadenceChange,
 }: MonteCarloSimulatorProps) {
   const [cadenceUnit, setCadenceUnit] = useState<MonteCarloCadenceUnit>('sprint');
+  const [internalIsCalculating, setInternalIsCalculating] = useState(false);
+  const [simResult, setSimResult] = useState<MonteCarloSimulationResult | null>(propSimulation ?? null);
+
+  const effectiveRemainingPts = remainingStoryPoints ?? propSimulation?.remainingStoryPoints ?? 0;
+  const effectiveSprintLength = propSimulation?.sprintLengthDays ?? sprintLengthDays;
+  const effectiveHistoricalVelocities = useMemo(() => {
+    if (historicalVelocities.length > 0) return historicalVelocities;
+    if (propSimulation && propSimulation.distribution.length > 0) {
+      return [];
+    }
+    return [];
+  }, [historicalVelocities, propSimulation]);
 
   // Load user preference from localStorage on mount
   useEffect(() => {
@@ -42,27 +64,96 @@ export function MonteCarloSimulator({
         setCadenceUnit(savedUnit);
         onCadenceChange?.(savedUnit);
       }
-    } catch (e) {
-      // LocalStorage access may fail in restricted sandbox / privacy mode
+    } catch {
+      // Ignore localStorage access issues in sandbox
     }
   }, [onCadenceChange]);
+
+  // Generate deterministic cache key
+  const cacheKey = useMemo(() => {
+    return generateMonteCarloCacheKey({
+      projectId,
+      sprintId,
+      targetPts: effectiveRemainingPts,
+      cadenceUnit,
+      trialCount: iterations,
+      historicalVelocities: effectiveHistoricalVelocities,
+    });
+  }, [projectId, sprintId, effectiveRemainingPts, cadenceUnit, iterations, effectiveHistoricalVelocities]);
+
+  // Effect to resolve simulation using Cache -> Prop -> Background Computation
+  const activeCalcRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // 1. Check local browser cache first
+    const cached = getCachedMonteCarlo(cacheKey);
+    if (cached) {
+      setSimResult(cached);
+      setInternalIsCalculating(false);
+      return;
+    }
+
+    // 2. If prop simulation is provided and matches target points
+    if (propSimulation && propSimulation.remainingStoryPoints === effectiveRemainingPts) {
+      setSimResult(propSimulation);
+      setCachedMonteCarlo(cacheKey, propSimulation);
+      setInternalIsCalculating(false);
+      return;
+    }
+
+    // 3. If zero remaining points or no valid velocities, don't execute
+    const hasProgress = effectiveHistoricalVelocities.some((v) => v > 0);
+    if (effectiveRemainingPts <= 0 || !hasProgress) {
+      setSimResult(propSimulation ?? null);
+      setInternalIsCalculating(false);
+      return;
+    }
+
+    // 4. Non-blocking computation: execute trial loops via setTimeout(..., 0)
+    // to yield to browser paint and display skeleton loader
+    setInternalIsCalculating(true);
+    if (activeCalcRef.current) {
+      clearTimeout(activeCalcRef.current);
+    }
+
+    activeCalcRef.current = window.setTimeout(() => {
+      try {
+        const computed = runMonteCarloSimulation({
+          remainingStoryPoints: effectiveRemainingPts,
+          historicalVelocities: effectiveHistoricalVelocities,
+          iterations,
+          sprintLengthDays: effectiveSprintLength,
+          startDate,
+        });
+        setCachedMonteCarlo(cacheKey, computed);
+        setSimResult(computed);
+      } finally {
+        setInternalIsCalculating(false);
+      }
+    }, 0);
+
+    return () => {
+      if (activeCalcRef.current) {
+        clearTimeout(activeCalcRef.current);
+      }
+    };
+  }, [cacheKey, propSimulation, effectiveRemainingPts, effectiveHistoricalVelocities, iterations, effectiveSprintLength, startDate]);
 
   const handleCadenceChange = (newUnit: MonteCarloCadenceUnit) => {
     setCadenceUnit(newUnit);
     try {
       localStorage.setItem(LOCAL_STORAGE_CADENCE_KEY, newUnit);
-    } catch (e) {
+    } catch {
       // Ignore
     }
     onCadenceChange?.(newUnit);
   };
 
-  const effectiveRemainingPts = remainingStoryPoints ?? simulation?.remainingStoryPoints ?? 0;
-  const effectiveSprintLength = simulation?.sprintLengthDays ?? sprintLengthDays;
+  const isCalculating = propIsCalculating || internalIsCalculating;
 
-  // If loading or calculating, render skeleton cards
-  if (isLoading || !simulation) {
-    if (isLoading) {
+  // Render skeleton loading UI when loading or actively computing
+  if (isLoading || isCalculating || !simResult) {
+    if (isLoading || isCalculating) {
       return (
         <section
           aria-label="Monte Carlo Milestone Simulator"
@@ -101,9 +192,9 @@ export function MonteCarloSimulator({
     return null;
   }
 
-  const p50Display = convertSprintsToCadence(simulation.percentiles.p50, cadenceUnit, effectiveSprintLength);
-  const p85Display = convertSprintsToCadence(simulation.percentiles.p85, cadenceUnit, effectiveSprintLength);
-  const p95Display = convertSprintsToCadence(simulation.percentiles.p95, cadenceUnit, effectiveSprintLength);
+  const p50Display = convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength);
+  const p85Display = convertSprintsToCadence(simResult.percentiles.p85, cadenceUnit, effectiveSprintLength);
+  const p95Display = convertSprintsToCadence(simResult.percentiles.p95, cadenceUnit, effectiveSprintLength);
 
   return (
     <section
@@ -121,9 +212,9 @@ export function MonteCarloSimulator({
               Monte Carlo Milestone Simulator
             </h3>
             <p className="text-xs text-slate-400">
-              Probabilistic completion forecasting over {simulation.iterations.toLocaleString()} trials ({simulation.executionTimeMs}ms)
-              {!simulation.deliveredWithinHorizon && simulation.censoredTrials > 0 && (
-                <span className="text-amber-400 ml-2">({simulation.censoredTrials} trials exceeded 500 sprints)</span>
+              Probabilistic completion forecasting over {simResult.iterations.toLocaleString()} trials ({simResult.executionTimeMs}ms)
+              {!simResult.deliveredWithinHorizon && simResult.censoredTrials > 0 && (
+                <span className="text-amber-400 ml-2">({simResult.censoredTrials} trials exceeded 500 sprints)</span>
               )}
             </p>
           </div>
@@ -164,7 +255,7 @@ export function MonteCarloSimulator({
           </div>
           <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p50-date">
             <Calendar className="w-3 h-3 text-slate-500" />
-            {simulation.projectedDates.p50 ? simulation.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
+            {simResult.projectedDates.p50 ? simResult.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
           </div>
         </div>
 
@@ -176,7 +267,7 @@ export function MonteCarloSimulator({
           </div>
           <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p85-date">
             <Calendar className="w-3 h-3 text-slate-500" />
-            {simulation.projectedDates.p85 ? simulation.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
+            {simResult.projectedDates.p85 ? simResult.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
           </div>
         </div>
 
@@ -188,7 +279,7 @@ export function MonteCarloSimulator({
           </div>
           <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p95-date">
             <Calendar className="w-3 h-3 text-slate-500" />
-            {simulation.projectedDates.p95 ? simulation.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
+            {simResult.projectedDates.p95 ? simResult.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
           </div>
         </div>
       </div>
