@@ -481,6 +481,7 @@ export function CumulativeFlowChart({
                   width="40"
                   height={plotHeight}
                   fill="transparent"
+                  data-testid={`cfd-hover-column-${i}`}
                   onMouseEnter={() => setHoveredIndex(i)}
                   onMouseLeave={() => setHoveredIndex(null)}
                 />
@@ -502,34 +503,44 @@ export function CumulativeFlowChart({
           >
             <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1 mb-1.5 flex items-center justify-between gap-4">
               <span>{activePoint.date}</span>
-              <span className="text-slate-400 font-mono text-[11px]">
-                Total: {totals[hoveredIndex]} items
+              <span className="text-slate-400 font-mono text-[11px]" data-testid="cfd-tooltip-total">
+                {hiddenLayers.size > 0 ? 'Visible Total:' : 'Total:'} {totals[hoveredIndex]} items
               </span>
             </div>
 
             <div className="space-y-1">
-              <div className="flex justify-between gap-4 text-emerald-400 font-medium">
-                <span>Complete:</span>
-                <span className="font-mono">{activePoint.complete}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-purple-400">
-                <span>In Review:</span>
-                <span className="font-mono">{activePoint.in_review}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-cyan-400">
-                <span>In Progress:</span>
-                <span className="font-mono">{activePoint.in_progress}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-slate-400">
-                <span>Not Started:</span>
-                <span className="font-mono">{activePoint.not_started}</span>
-              </div>
-              {activePoint.unplanned > 0 && (
-                <div className="flex justify-between gap-4 text-amber-400">
-                  <span>Unplanned:</span>
-                  <span className="font-mono">+{activePoint.unplanned}</span>
+              {activeLayers.map((layer) => {
+                const count = activePoint[layer.key] || 0;
+                let textColor = 'text-slate-300';
+                if (layer.key === 'complete') textColor = 'text-emerald-400 font-medium';
+                else if (layer.key === 'in_review') textColor = 'text-purple-400';
+                else if (layer.key === 'in_progress') textColor = 'text-cyan-400';
+                else if (layer.key === 'not_started') textColor = 'text-slate-400';
+                else if (layer.key === 'unplanned') textColor = 'text-amber-400';
+
+                return (
+                  <div key={layer.key} className={`flex justify-between gap-4 ${textColor}`}>
+                    <span>{layer.label}:</span>
+                    <span className="font-mono">{layer.key === 'unplanned' && count > 0 ? `+${count}` : count}</span>
+                  </div>
+                );
+              })}
+
+              {hiddenLayers.size > 0 && (
+                <div className="pt-1 mt-1 border-t border-slate-800/60 space-y-0.5">
+                  <div className="text-[10px] uppercase font-semibold text-slate-500">Hidden from Chart</div>
+                  {STATUS_LAYERS.filter((l) => hiddenLayers.has(l.key)).map((layer) => {
+                    const count = activePoint[layer.key] || 0;
+                    return (
+                      <div key={layer.key} className="flex justify-between gap-4 text-slate-500 line-through text-[11px]">
+                        <span>{layer.label}:</span>
+                        <span className="font-mono">{count}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
+
               <div className="mt-1.5 pt-1 border-t border-slate-800 flex justify-between gap-4 text-slate-300 font-semibold">
                 <span>Active WIP:</span>
                 <span className="font-mono text-cyan-300">

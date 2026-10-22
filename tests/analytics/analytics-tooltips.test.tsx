@@ -132,7 +132,7 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         vi.advanceTimersByTime(160);
       });
       expect(
-        screen.getByText('Triggers when net injected scope exceeds configured runway tolerance (current: >15%)')
+        screen.getByText(/Triggers when net injected scope exceeds configured runway tolerance \(current: >20%\)/)
       ).toBeInTheDocument();
     });
   });

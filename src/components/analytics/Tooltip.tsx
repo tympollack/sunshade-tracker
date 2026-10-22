@@ -65,6 +65,7 @@ export function Tooltip({
       onBlur={hide}
       onKeyDown={handleKeyDown}
       data-testid={testId}
+      data-tooltip-content={typeof content === 'string' ? content : undefined}
     >
       <div
         tabIndex={0}

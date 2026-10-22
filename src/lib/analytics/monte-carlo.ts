@@ -38,12 +38,15 @@ const memoryCache = new Map<string, MonteCarloSimulationResult>();
 
 /**
  * Deterministic hash for historical velocity distributions.
+ * Captures fractional values by scaling to 1000x integer space before hashing.
  */
 export function hashVelocities(velocities: number[]): string {
   if (!velocities || velocities.length === 0) return 'v0';
   let hash = 0;
   for (let i = 0; i < velocities.length; i++) {
-    hash = (hash * 31 + velocities[i]) | 0;
+    const v = velocities[i];
+    const scaled = Math.round((Number.isFinite(v) ? v : 0) * 1000);
+    hash = (Math.imul(hash, 31) + scaled) | 0;
   }
   return `v_${velocities.length}_${hash}`;
 }
@@ -52,20 +55,33 @@ export interface MonteCarloCacheKeyParams {
   projectId?: string;
   sprintId?: string;
   targetPts: number;
-  cadenceUnit: MonteCarloCadenceUnit;
-  trialCount: number;
+  cadenceUnit?: MonteCarloCadenceUnit;
+  trialCount?: number;
   historicalVelocities: number[];
+  sprintLengthDays?: number;
+  startDate?: Date | string;
 }
 
 /**
  * Builds a deterministic cache key adhering to the format:
  * `mc_${projectId}_${sprintId}_${targetPts}_${cadenceUnit}_${trialCount}_${historyHash}`
+ * with optional sprint length and start date bounds when supplied.
  */
 export function generateMonteCarloCacheKey(params: MonteCarloCacheKeyParams): string {
   const pId = params.projectId || 'proj';
   const sId = params.sprintId || 'sprint';
+  const unit = params.cadenceUnit || 'sprint';
+  const trials = params.trialCount || 1000;
   const hash = hashVelocities(params.historicalVelocities);
-  return `mc_${pId}_${sId}_${params.targetPts}_${params.cadenceUnit}_${params.trialCount}_${hash}`;
+  let key = `mc_${pId}_${sId}_${params.targetPts}_${unit}_${trials}_${hash}`;
+  if (params.sprintLengthDays !== undefined && params.sprintLengthDays !== 14) {
+    key += `_l${params.sprintLengthDays}`;
+  }
+  if (params.startDate !== undefined) {
+    const sDate = (params.startDate instanceof Date ? params.startDate.toISOString() : String(params.startDate)).split('T')[0];
+    key += `_d${sDate}`;
+  }
+  return key;
 }
 
 /**

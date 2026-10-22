@@ -264,4 +264,31 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     // Tree child count badge on parent
     expect(screen.getByTestId('tree-child-count-badge')).toHaveTextContent('1 subtask');
   });
+
+  it('renders Git metadata cluster in Tier 1 for desktop (max-sm:hidden) and Tier 2 for mobile (sm:hidden)', () => {
+    const itemWithGit = createItem({
+      metadata: {
+        pr_url: 'https://github.com/sunshade-systems/sunshade-tracker/pull/119',
+        commit_hash: '49827746b50fd71750998a66f9ebbe4cad17bcd1',
+      },
+    });
+
+    render(
+      <SprintItemRow
+        item={itemWithGit}
+        isSelected={false}
+        onToggleSelect={vi.fn()}
+        isImmutable={false}
+        onEditItem={vi.fn()}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+      />
+    );
+
+    const desktopCluster = screen.getByTestId('git-metadata-cluster');
+    expect(desktopCluster).toHaveClass('max-sm:hidden');
+
+    const mobileCluster = screen.getByTestId('git-metadata-cluster-mobile');
+    expect(mobileCluster).toHaveClass('sm:hidden');
+  });
 });

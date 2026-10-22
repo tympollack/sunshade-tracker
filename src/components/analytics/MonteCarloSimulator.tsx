@@ -48,13 +48,13 @@ export function MonteCarloSimulator({
 
   const effectiveRemainingPts = remainingStoryPoints ?? propSimulation?.remainingStoryPoints ?? 0;
   const effectiveSprintLength = propSimulation?.sprintLengthDays ?? sprintLengthDays;
-  const effectiveHistoricalVelocities = useMemo(() => {
-    if (historicalVelocities.length > 0) return historicalVelocities;
-    if (propSimulation && propSimulation.distribution.length > 0) {
-      return [];
+
+  // Sync propSimulation changes to local state
+  useEffect(() => {
+    if (propSimulation) {
+      setSimResult(propSimulation);
     }
-    return [];
-  }, [historicalVelocities, propSimulation]);
+  }, [propSimulation]);
 
   // Load user preference from localStorage on mount
   useEffect(() => {
@@ -69,7 +69,7 @@ export function MonteCarloSimulator({
     }
   }, [onCadenceChange]);
 
-  // Generate deterministic cache key
+  // Generate deterministic cache key with full simulation input space
   const cacheKey = useMemo(() => {
     return generateMonteCarloCacheKey({
       projectId,
@@ -77,23 +77,26 @@ export function MonteCarloSimulator({
       targetPts: effectiveRemainingPts,
       cadenceUnit,
       trialCount: iterations,
-      historicalVelocities: effectiveHistoricalVelocities,
+      historicalVelocities,
+      sprintLengthDays: effectiveSprintLength,
+      startDate,
     });
-  }, [projectId, sprintId, effectiveRemainingPts, cadenceUnit, iterations, effectiveHistoricalVelocities]);
+  }, [
+    projectId,
+    sprintId,
+    effectiveRemainingPts,
+    cadenceUnit,
+    iterations,
+    historicalVelocities,
+    effectiveSprintLength,
+    startDate,
+  ]);
 
-  // Effect to resolve simulation using Cache -> Prop -> Background Computation
+  // Effect to resolve simulation using Prop -> Cache -> Background Computation
   const activeCalcRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // 1. Check local browser cache first
-    const cached = getCachedMonteCarlo(cacheKey);
-    if (cached) {
-      setSimResult(cached);
-      setInternalIsCalculating(false);
-      return;
-    }
-
-    // 2. If prop simulation is provided and matches target points
+    // 1. If prop simulation is provided and matches target points, prioritize it over stale cache
     if (propSimulation && propSimulation.remainingStoryPoints === effectiveRemainingPts) {
       setSimResult(propSimulation);
       setCachedMonteCarlo(cacheKey, propSimulation);
@@ -101,8 +104,16 @@ export function MonteCarloSimulator({
       return;
     }
 
+    // 2. Check local browser cache next
+    const cached = getCachedMonteCarlo(cacheKey);
+    if (cached) {
+      setSimResult(cached);
+      setInternalIsCalculating(false);
+      return;
+    }
+
     // 3. If zero remaining points or no valid velocities, don't execute
-    const hasProgress = effectiveHistoricalVelocities.some((v) => v > 0);
+    const hasProgress = historicalVelocities.some((v) => v > 0);
     if (effectiveRemainingPts <= 0 || !hasProgress) {
       setSimResult(propSimulation ?? null);
       setInternalIsCalculating(false);
@@ -120,7 +131,7 @@ export function MonteCarloSimulator({
       try {
         const computed = runMonteCarloSimulation({
           remainingStoryPoints: effectiveRemainingPts,
-          historicalVelocities: effectiveHistoricalVelocities,
+          historicalVelocities,
           iterations,
           sprintLengthDays: effectiveSprintLength,
           startDate,
@@ -137,7 +148,15 @@ export function MonteCarloSimulator({
         clearTimeout(activeCalcRef.current);
       }
     };
-  }, [cacheKey, propSimulation, effectiveRemainingPts, effectiveHistoricalVelocities, iterations, effectiveSprintLength, startDate]);
+  }, [
+    cacheKey,
+    propSimulation,
+    effectiveRemainingPts,
+    historicalVelocities,
+    iterations,
+    effectiveSprintLength,
+    startDate,
+  ]);
 
   const handleCadenceChange = (newUnit: MonteCarloCadenceUnit) => {
     setCadenceUnit(newUnit);

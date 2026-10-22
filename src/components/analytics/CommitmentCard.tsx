@@ -73,7 +73,7 @@ export function CommitmentCard({
         <Tooltip
           content={
             badge.label === 'Scope Volatile'
-              ? 'Triggers when net injected scope exceeds configured runway tolerance (current: >15%)'
+              ? `Triggers when net injected scope exceeds configured runway tolerance (current: >${volatilityThreshold}%)`
               : 'Sprint commitment reliability classification'
           }
           data-testid="tooltip-commitment-badge"

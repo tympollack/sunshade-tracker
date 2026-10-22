@@ -137,4 +137,22 @@ describe('TASK-TRK-CFD-WIP-SCALE-TOGGLE: CFD WIP Scaling and Backlog Toggle', ()
 
     expect(screen.getByTestId('cfd-legend-not_started')).toHaveClass('line-through');
   });
+
+  it('displays Visible Total and separates hidden layers in hover tooltip when a layer is hidden', () => {
+    const { container } = render(
+      <CumulativeFlowChart data={mockTelemetry} initialHideUnstarted={true} />
+    );
+
+    // Hover over the first data point column in the chart SVG
+    const hoverColumn = container.querySelector('rect[data-testid="cfd-hover-column-0"]');
+    expect(hoverColumn).toBeInTheDocument();
+    fireEvent.mouseEnter(hoverColumn!);
+
+    // Tooltip should be visible with "Visible Total: 40 items" (20 complete + 5 in review + 15 in progress)
+    const totalEl = screen.getByTestId('cfd-tooltip-total');
+    expect(totalEl).toHaveTextContent('Visible Total: 40 items');
+
+    // And "Hidden from Chart" section lists Not Started: 200
+    expect(screen.getByText('Hidden from Chart')).toBeInTheDocument();
+  });
 });

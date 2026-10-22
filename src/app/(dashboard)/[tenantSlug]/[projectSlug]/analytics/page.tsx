@@ -42,19 +42,17 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     try {
       const url = new URL(window.location.href);
       const urlSprintId = url.searchParams.get('sprintId');
+      const isCustom = url.searchParams.get('custom') === 'true';
       const urlStart = url.searchParams.get('startDate');
       const urlEnd = url.searchParams.get('endDate');
 
       if (urlSprintId) {
         setSelectedSprintId(urlSprintId);
       }
-      if (urlStart) {
-        setStartDate(urlStart);
+      if (isCustom && (urlStart || urlEnd)) {
         setIsCustomDateRange(true);
-      }
-      if (urlEnd) {
-        setEndDate(urlEnd);
-        setIsCustomDateRange(true);
+        if (urlStart) setStartDate(urlStart);
+        if (urlEnd) setEndDate(urlEnd);
       }
     } catch {
       // Ignore URL parsing errors
@@ -72,13 +70,32 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         url.searchParams.set('sprintId', selectedSprintId);
         modified = true;
       }
-      if (startDate && url.searchParams.get('startDate') !== startDate) {
-        url.searchParams.set('startDate', startDate);
-        modified = true;
-      }
-      if (endDate && url.searchParams.get('endDate') !== endDate) {
-        url.searchParams.set('endDate', endDate);
-        modified = true;
+      if (isCustomDateRange) {
+        if (url.searchParams.get('custom') !== 'true') {
+          url.searchParams.set('custom', 'true');
+          modified = true;
+        }
+        if (startDate && url.searchParams.get('startDate') !== startDate) {
+          url.searchParams.set('startDate', startDate);
+          modified = true;
+        }
+        if (endDate && url.searchParams.get('endDate') !== endDate) {
+          url.searchParams.set('endDate', endDate);
+          modified = true;
+        }
+      } else {
+        if (url.searchParams.has('custom')) {
+          url.searchParams.delete('custom');
+          modified = true;
+        }
+        if (url.searchParams.has('startDate')) {
+          url.searchParams.delete('startDate');
+          modified = true;
+        }
+        if (url.searchParams.has('endDate')) {
+          url.searchParams.delete('endDate');
+          modified = true;
+        }
       }
 
       if (modified) {
@@ -87,7 +104,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     } catch {
       // Ignore
     }
-  }, [selectedSprintId, startDate, endDate]);
+  }, [selectedSprintId, isCustomDateRange, startDate, endDate]);
 
   // Telemetry Data States
   const [kpiMetrics, setKpiMetrics] = useState<KpiMetrics>({
@@ -96,6 +113,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     scopeVolatility: 0,
     remainingPoints: 0,
   });
+  const [simulationVelocities, setSimulationVelocities] = useState<number[]>([]);
   const [burndownData, setBurndownData] = useState<BurndownDataPoint[]>([]);
   const [churnData, setChurnData] = useState<ScopeChurnData>({
     baselineCommitted: 0,
@@ -155,8 +173,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
-                start_date: s.start_date || s.startDate || null,
-                end_date: s.end_date || s.endDate || null,
+                start_date: s.started_at || s.start_date || s.startDate || null,
+                end_date: s.ends_at || s.end_date || s.endDate || null,
               });
             }
           }
@@ -183,8 +201,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
-                start_date: s.start_date || s.startDate || null,
-                end_date: s.end_date || s.endDate || null,
+                start_date: s.started_at || s.start_date || s.startDate || null,
+                end_date: s.ends_at || s.end_date || s.endDate || null,
               });
             }
           }
@@ -353,7 +371,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
               if (!b.date) return true;
               return b.date >= startDate && b.date <= endDate;
             });
-            setBurndownData(filteredBurndown.length > 0 ? filteredBurndown : snapJson.burndownData);
+            setBurndownData(filteredBurndown);
           } else {
             setBurndownData([]);
           }
@@ -376,21 +394,23 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       }
 
       // 4. Run Monte Carlo simulation for milestone projection (zero fake data fallback)
-      const simulationVelocities =
+      const simVelocities =
         historicalVelocities.length > 0
           ? historicalVelocities
           : rollingVelocity > 0
           ? [rollingVelocity]
           : [];
+      setSimulationVelocities(simVelocities);
 
-      const hasPositiveVelocity = simulationVelocities.some((v) => v > 0);
+      const hasPositiveVelocity = simVelocities.some((v) => v > 0);
 
       if (remainingPts > 0 && hasPositiveVelocity) {
         const simulation = runMonteCarloSimulation({
           remainingStoryPoints: remainingPts,
-          historicalVelocities: simulationVelocities,
+          historicalVelocities: simVelocities,
           iterations: 1000,
           sprintLengthDays: 14,
+          startDate,
         });
         setMonteCarlo(simulation);
       } else {
@@ -436,6 +456,12 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         {/* KPI Metric Cards */}
         <section aria-label="Sprint Key Performance Indicators">
           <KpiMetricCards metrics={kpiMetrics} isLoading={isLoading} />
+          {isCustomDateRange && (
+            <div className="mt-2 text-[11px] text-amber-400/80 flex items-center gap-1.5 px-1 font-mono">
+              <span className="font-semibold uppercase tracking-wider">Note:</span>
+              Sprint KPI metrics reflect the entire selected sprint; charts reflect the custom date window.
+            </div>
+          )}
         </section>
 
         {/* Analytics Visualizations Grid */}
@@ -464,6 +490,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
             projectId={projectSlug}
             sprintId={selectedSprintId}
             remainingStoryPoints={kpiMetrics.remainingPoints}
+            historicalVelocities={simulationVelocities}
+            startDate={startDate}
             sprintLengthDays={14}
           />
         )}

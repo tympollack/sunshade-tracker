@@ -6,6 +6,7 @@ import {
   getCachedMonteCarlo,
   setCachedMonteCarlo,
   clearMonteCarloCache,
+  hashVelocities,
   MonteCarloSimulationResult,
 } from '@/lib/analytics/monte-carlo';
 import { MonteCarloSimulator } from '@/components/analytics/MonteCarloSimulator';
@@ -68,6 +69,28 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       expect(retrieved?.percentiles.p50).toBe(2);
       expect(retrieved?.percentiles.p85).toBe(3);
     });
+
+    it('generates distinct velocity hashes for fractional velocity variations', () => {
+      const hash1 = hashVelocities([10.1]);
+      const hash2 = hashVelocities([10.9]);
+      expect(hash1).not.toBe(hash2);
+      expect(hash1).toMatch(/^v_1_-?\d+$/);
+      expect(hash2).toMatch(/^v_1_-?\d+$/);
+    });
+
+    it('incorporates startDate and non-default sprint length in cache keys', () => {
+      const keyWithDate = generateMonteCarloCacheKey({
+        projectId: 'prj-alpha',
+        sprintId: 'sp-101',
+        targetPts: 45,
+        historicalVelocities: [10],
+        startDate: '2026-10-01T00:00:00.000Z',
+        sprintLengthDays: 7,
+      });
+
+      expect(keyWithDate).toContain('_l7');
+      expect(keyWithDate).toContain('_d2026-10-01');
+    });
   });
 
   describe('Skeleton Pulse Cards UI', () => {
@@ -126,6 +149,44 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       expect(screen.getByTestId('mc-p50-value')).toHaveTextContent('2 sprints');
 
       vi.useRealTimers();
+    });
+
+    it('prioritizes updated propSimulation over an existing stale cache entry', () => {
+      const key = generateMonteCarloCacheKey({
+        projectId: 'proj-gamma',
+        sprintId: 'sp-1',
+        targetPts: 40,
+        cadenceUnit: 'sprint',
+        trialCount: 1000,
+        historicalVelocities: [10],
+        sprintLengthDays: 14,
+      });
+
+      // Populate stale cache with 4 sprints forecast
+      const staleSim: MonteCarloSimulationResult = {
+        ...sampleSimulation,
+        percentiles: { p50: 4, p85: 5, p95: 6 },
+      };
+      setCachedMonteCarlo(key, staleSim);
+
+      // Parent now provides fresh propSimulation reflecting updated velocity (2 sprints)
+      const freshSim: MonteCarloSimulationResult = {
+        ...sampleSimulation,
+        percentiles: { p50: 2, p85: 2.5, p95: 3 },
+      };
+
+      render(
+        <MonteCarloSimulator
+          projectId="proj-gamma"
+          sprintId="sp-1"
+          remainingStoryPoints={40}
+          historicalVelocities={[10]}
+          simulation={freshSim}
+        />
+      );
+
+      // Must display the fresh prop value (2 sprints), NOT the stale cached value (4 sprints)
+      expect(screen.getByTestId('mc-p50-value')).toHaveTextContent('2 sprints');
     });
   });
 });
