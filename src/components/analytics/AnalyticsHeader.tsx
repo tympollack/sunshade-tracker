@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Calendar, ChevronLeft, Layers, RefreshCw } from 'lucide-react';
+import { Calendar, ChevronLeft, Layers, RefreshCw, RotateCcw } from 'lucide-react';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
 
 export interface SprintOption {
@@ -10,9 +10,11 @@ export interface SprintOption {
   name: string;
   is_active?: boolean;
   status?: string;
+  start_date?: string | null;
+  end_date?: string | null;
 }
 
-interface AnalyticsHeaderProps {
+export interface AnalyticsHeaderProps {
   tenantSlug: string;
   projectSlug: string;
   projectName?: string;
@@ -26,6 +28,8 @@ interface AnalyticsHeaderProps {
   onRefresh?: () => void;
   isRefreshing?: boolean;
   onSelectTab?: (tab: string) => void;
+  isCustomDateRange?: boolean;
+  onResetToSprintDates?: () => void;
 }
 
 export function AnalyticsHeader({
@@ -42,6 +46,8 @@ export function AnalyticsHeader({
   onRefresh,
   isRefreshing = false,
   onSelectTab,
+  isCustomDateRange = false,
+  onResetToSprintDates,
 }: AnalyticsHeaderProps) {
   return (
     <header className="bg-slate-900/90 border-b border-slate-800 backdrop-blur sticky top-0 z-30 px-4 sm:px-6 py-4">
@@ -82,6 +88,7 @@ export function AnalyticsHeader({
               value={selectedSprintId}
               onChange={(e) => onSelectSprint(e.target.value)}
               className="bg-transparent text-slate-100 text-sm font-medium focus:outline-none cursor-pointer"
+              data-testid="sprint-select"
             >
               {sprints.map((s) => (
                 <option key={s.id} value={s.id} className="bg-slate-800 text-slate-100">
@@ -94,9 +101,17 @@ export function AnalyticsHeader({
                 </option>
               )}
             </select>
+            {isCustomDateRange && (
+              <span
+                className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-950/60 text-amber-400 border border-amber-800/60 whitespace-nowrap"
+                data-testid="custom-dates-active-badge"
+              >
+                Custom Dates Active
+              </span>
+            )}
           </div>
 
-          {/* Date Range Controls */}
+          {/* Date Range Controls with Sync and Reset */}
           <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-slate-300">
             <Calendar className="w-4 h-4 text-cyan-400" />
             <input
@@ -104,6 +119,7 @@ export function AnalyticsHeader({
               value={startDate}
               onChange={(e) => onChangeStartDate(e.target.value)}
               aria-label="Start date"
+              data-testid="analytics-start-date"
               className="bg-transparent text-slate-100 text-xs focus:outline-none cursor-pointer"
             />
             <span className="text-slate-500">to</span>
@@ -112,8 +128,21 @@ export function AnalyticsHeader({
               value={endDate}
               onChange={(e) => onChangeEndDate(e.target.value)}
               aria-label="End date"
+              data-testid="analytics-end-date"
               className="bg-transparent text-slate-100 text-xs focus:outline-none cursor-pointer"
             />
+            {isCustomDateRange && onResetToSprintDates && (
+              <button
+                type="button"
+                onClick={onResetToSprintDates}
+                className="ml-1 p-1 rounded hover:bg-slate-700/80 text-slate-400 hover:text-cyan-300 transition-colors"
+                title="Reset to Sprint Dates"
+                aria-label="Reset to Sprint Dates"
+                data-testid="reset-sprint-dates-btn"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Refresh Action */}

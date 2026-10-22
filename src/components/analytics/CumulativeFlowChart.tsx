@@ -5,11 +5,13 @@ import { AreaChart, HelpCircle } from 'lucide-react';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 
 export type CfdTimeWindow = '14D' | '30D' | 'Full Sprint';
+export type CfdScopeMode = 'all' | 'wip_only';
 
 export interface CumulativeFlowChartProps {
   data: CfdDataPoint[];
   isLoading?: boolean;
   initialTimeWindow?: CfdTimeWindow;
+  initialHideUnstarted?: boolean;
   dateFormat?: 'MMM DD' | 'MM/DD';
 }
 
@@ -118,14 +120,72 @@ export function getAdaptiveTickIndices(dataLength: number, maxTicks: number = 8)
   return indices;
 }
 
+const LOCAL_STORAGE_HIDE_UNSTARTED_KEY = 'trk_cfd_hide_unstarted';
+
 export function CumulativeFlowChart({
   data,
   isLoading = false,
   initialTimeWindow = 'Full Sprint',
+  initialHideUnstarted = false,
   dateFormat = 'MMM DD',
 }: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<CfdTimeWindow>(initialTimeWindow);
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(LOCAL_STORAGE_HIDE_UNSTARTED_KEY);
+        if (saved !== null) {
+          return saved === 'true' ? new Set(['not_started']) : new Set();
+        }
+      } catch {
+        // Ignore
+      }
+    }
+    return initialHideUnstarted ? new Set(['not_started']) : new Set();
+  });
+
+  const isHideUnstarted = hiddenLayers.has('not_started');
+
+  const toggleScopeMode = (mode: CfdScopeMode) => {
+    setHiddenLayers((prev) => {
+      const next = new Set(prev);
+      if (mode === 'wip_only') {
+        next.add('not_started');
+        try {
+          localStorage.setItem(LOCAL_STORAGE_HIDE_UNSTARTED_KEY, 'true');
+        } catch {}
+      } else {
+        next.delete('not_started');
+        try {
+          localStorage.setItem(LOCAL_STORAGE_HIDE_UNSTARTED_KEY, 'false');
+        } catch {}
+      }
+      return next;
+    });
+  };
+
+  const toggleLayer = (layerKey: string) => {
+    setHiddenLayers((prev) => {
+      const next = new Set(prev);
+      if (next.has(layerKey)) {
+        next.delete(layerKey);
+        if (layerKey === 'not_started') {
+          try {
+            localStorage.setItem(LOCAL_STORAGE_HIDE_UNSTARTED_KEY, 'false');
+          } catch {}
+        }
+      } else {
+        next.add(layerKey);
+        if (layerKey === 'not_started') {
+          try {
+            localStorage.setItem(LOCAL_STORAGE_HIDE_UNSTARTED_KEY, 'true');
+          } catch {}
+        }
+      }
+      return next;
+    });
+  };
 
   // Slices the telemetry series based on selected quick-filter preset:
   // - '14D' and '30D' filter down to the most recent 14 or 30 days of data.
@@ -158,6 +218,9 @@ export function CumulativeFlowChart({
     );
   }
 
+  // Filter active layers based on hiddenLayers toggle state
+  const activeLayers = STATUS_LAYERS.filter((layer) => !hiddenLayers.has(layer.key));
+
   // Dimensions & Coordinate Scaling
   const svgWidth = 800;
   const svgHeight = 360;
@@ -166,12 +229,12 @@ export function CumulativeFlowChart({
   const plotHeight = svgHeight - padding.top - padding.bottom;
   const tickIndicesSet = new Set(getAdaptiveTickIndices(displayData.length));
 
-  // Calculate totals and maximum ceiling
-  const totals = displayData.map(
-    (d) => d.complete + d.in_review + d.in_progress + d.not_started + d.unplanned
+  // Calculate totals and maximum ceiling based strictly on active visible layers
+  const totals = displayData.map((d) =>
+    activeLayers.reduce((sum, layer) => sum + (d[layer.key] || 0), 0)
   );
   const maxTotal = Math.max(10, ...totals);
-  const yCeiling = Math.ceil(maxTotal / 5) * 5;
+  const yCeiling = Math.ceil((maxTotal + 5) / 5) * 5;
 
   const getX = (index: number) => {
     if (displayData.length <= 1) return padding.left + plotWidth / 2;
@@ -182,16 +245,15 @@ export function CumulativeFlowChart({
     return padding.top + (1 - val / yCeiling) * plotHeight;
   };
 
-  // Build stacked areas
-  // For each layer k, we compute top values and bottom values across all dates
-  const layerPaths = STATUS_LAYERS.map((layer, layerIdx) => {
+  // Build stacked areas for active layers
+  const layerPaths = activeLayers.map((layer, layerIdx) => {
     const topPoints: string[] = [];
     const bottomPoints: string[] = [];
 
     displayData.forEach((d, i) => {
       let cumulativeBottom = 0;
       for (let prevIdx = 0; prevIdx < layerIdx; prevIdx++) {
-        cumulativeBottom += d[STATUS_LAYERS[prevIdx].key];
+        cumulativeBottom += d[activeLayers[prevIdx].key];
       }
       const cumulativeTop = cumulativeBottom + d[layer.key];
 
@@ -223,8 +285,40 @@ export function CumulativeFlowChart({
           </p>
         </div>
 
-        {/* Right Controls: Filter Pills & Pinned Legend */}
-        <div className="flex flex-wrap items-center gap-4 ml-auto">
+        {/* Right Controls: Scope Toggle, Range Filter & Pinned Legend */}
+        <div className="flex flex-wrap items-center gap-3 ml-auto">
+          {/* Segmented Scope Toggle: All Scope vs WIP & Delivery Only */}
+          <div
+            className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
+            role="group"
+            aria-label="CFD scope toggle"
+          >
+            <button
+              type="button"
+              onClick={() => toggleScopeMode('all')}
+              className={`px-2 py-0.5 text-xs font-medium rounded-md transition-colors ${
+                !isHideUnstarted
+                  ? 'bg-slate-700 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+              data-testid="cfd-scope-all"
+            >
+              All Scope
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleScopeMode('wip_only')}
+              className={`px-2 py-0.5 text-xs font-medium rounded-md transition-colors ${
+                isHideUnstarted
+                  ? 'bg-cyan-700/80 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+              data-testid="cfd-scope-wip-only"
+            >
+              WIP & Delivery Only
+            </button>
+          </div>
+
           {/* Quick-Select Range Filter */}
           <div
             className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
@@ -251,17 +345,33 @@ export function CumulativeFlowChart({
             ))}
           </div>
 
-          {/* Legend: Pinned to top right without wrapping into chart plot area */}
+          {/* Legend: Clickable toggles pinned to top right */}
           <div className="flex flex-wrap items-center justify-end gap-2.5 text-xs text-slate-300">
-            {[...STATUS_LAYERS].reverse().map((layer) => (
-              <div key={layer.key} className="flex items-center gap-1.5 whitespace-nowrap">
-                <span
-                  className="w-2.5 h-2.5 rounded-sm shrink-0"
-                  style={{ backgroundColor: layer.color }}
-                />
-                <span>{layer.label}</span>
-              </div>
-            ))}
+            {[...STATUS_LAYERS].reverse().map((layer) => {
+              const isHidden = hiddenLayers.has(layer.key);
+              return (
+                <button
+                  key={layer.key}
+                  type="button"
+                  onClick={() => toggleLayer(layer.key)}
+                  className={`flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-all ${
+                    isHidden
+                      ? 'opacity-40 line-through text-slate-500 hover:opacity-60'
+                      : 'hover:text-white'
+                  }`}
+                  data-testid={`cfd-legend-${layer.key}`}
+                  title={`Click to ${isHidden ? 'show' : 'hide'} ${layer.label}`}
+                >
+                  <span
+                    className={`w-2.5 h-2.5 rounded-sm shrink-0 transition-opacity ${
+                      isHidden ? 'opacity-40' : ''
+                    }`}
+                    style={{ backgroundColor: layer.color }}
+                  />
+                  <span>{layer.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -371,6 +481,7 @@ export function CumulativeFlowChart({
                   width="40"
                   height={plotHeight}
                   fill="transparent"
+                  data-testid={`cfd-hover-column-${i}`}
                   onMouseEnter={() => setHoveredIndex(i)}
                   onMouseLeave={() => setHoveredIndex(null)}
                 />
@@ -392,34 +503,44 @@ export function CumulativeFlowChart({
           >
             <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1 mb-1.5 flex items-center justify-between gap-4">
               <span>{activePoint.date}</span>
-              <span className="text-slate-400 font-mono text-[11px]">
-                Total: {totals[hoveredIndex]} items
+              <span className="text-slate-400 font-mono text-[11px]" data-testid="cfd-tooltip-total">
+                {hiddenLayers.size > 0 ? 'Visible Total:' : 'Total:'} {totals[hoveredIndex]} items
               </span>
             </div>
 
             <div className="space-y-1">
-              <div className="flex justify-between gap-4 text-emerald-400 font-medium">
-                <span>Complete:</span>
-                <span className="font-mono">{activePoint.complete}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-purple-400">
-                <span>In Review:</span>
-                <span className="font-mono">{activePoint.in_review}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-cyan-400">
-                <span>In Progress:</span>
-                <span className="font-mono">{activePoint.in_progress}</span>
-              </div>
-              <div className="flex justify-between gap-4 text-slate-400">
-                <span>Not Started:</span>
-                <span className="font-mono">{activePoint.not_started}</span>
-              </div>
-              {activePoint.unplanned > 0 && (
-                <div className="flex justify-between gap-4 text-amber-400">
-                  <span>Unplanned:</span>
-                  <span className="font-mono">+{activePoint.unplanned}</span>
+              {activeLayers.map((layer) => {
+                const count = activePoint[layer.key] || 0;
+                let textColor = 'text-slate-300';
+                if (layer.key === 'complete') textColor = 'text-emerald-400 font-medium';
+                else if (layer.key === 'in_review') textColor = 'text-purple-400';
+                else if (layer.key === 'in_progress') textColor = 'text-cyan-400';
+                else if (layer.key === 'not_started') textColor = 'text-slate-400';
+                else if (layer.key === 'unplanned') textColor = 'text-amber-400';
+
+                return (
+                  <div key={layer.key} className={`flex justify-between gap-4 ${textColor}`}>
+                    <span>{layer.label}:</span>
+                    <span className="font-mono">{layer.key === 'unplanned' && count > 0 ? `+${count}` : count}</span>
+                  </div>
+                );
+              })}
+
+              {hiddenLayers.size > 0 && (
+                <div className="pt-1 mt-1 border-t border-slate-800/60 space-y-0.5">
+                  <div className="text-[10px] uppercase font-semibold text-slate-500">Hidden from Chart</div>
+                  {STATUS_LAYERS.filter((l) => hiddenLayers.has(l.key)).map((layer) => {
+                    const count = activePoint[layer.key] || 0;
+                    return (
+                      <div key={layer.key} className="flex justify-between gap-4 text-slate-500 line-through text-[11px]">
+                        <span>{layer.label}:</span>
+                        <span className="font-mono">{count}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
+
               <div className="mt-1.5 pt-1 border-t border-slate-800 flex justify-between gap-4 text-slate-300 font-semibold">
                 <span>Active WIP:</span>
                 <span className="font-mono text-cyan-300">

@@ -80,6 +80,7 @@ describe('BUG-TRK-SPRINT-ROW-BADGE-COLLISION: Sprint Planning Tree Row Layout & 
     expect(gitCluster).toBeInTheDocument();
     expect(gitCluster).toHaveClass('shrink-0');
     expect(gitCluster).toHaveClass('flex');
+    expect(gitCluster).toHaveClass('max-sm:hidden');
     expect(gitCluster).toHaveClass('items-center');
     expect(gitCluster).toHaveClass('gap-1.5');
     expect(gitCluster).toHaveClass('whitespace-nowrap');

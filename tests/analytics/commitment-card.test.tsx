@@ -107,17 +107,21 @@ describe('BUG-TRK-ANALYTICS-FLOAT-PRECISION: Say/Do precision & formatting suite
       expect(screen.getByTestId('commitment-badge')).toHaveTextContent('Over-Delivered');
     });
 
-    it('flags high scope volatility', () => {
+    it('flags high scope volatility and displays configured threshold in tooltip', () => {
       render(
         <CommitmentCard
           committedPoints={100}
           deliveredPoints={95}
           scopeVolatility={28}
-          volatilityThreshold={20}
+          volatilityThreshold={25}
         />
       );
       expect(screen.getByTestId('commitment-say-do-value')).toHaveTextContent('95%');
       expect(screen.getByTestId('commitment-badge')).toHaveTextContent('Scope Volatile');
+      expect(screen.getByTestId('tooltip-commitment-badge')).toHaveAttribute(
+        'data-tooltip-content',
+        expect.stringContaining('>25%')
+      );
     });
   });
 });

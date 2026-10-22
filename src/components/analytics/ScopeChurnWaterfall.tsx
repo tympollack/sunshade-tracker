@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { GitPullRequest, Plus, Minus, CheckCircle, Target } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 export interface ScopeChurnData {
   baselineCommitted: number;
@@ -58,9 +59,14 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </div>
 
         {baseline > 0 && (
-          <div className="text-xs text-slate-400 font-mono">
-            Net Scope: <span className="text-slate-200 font-bold">{netTarget} pts</span>
-          </div>
+          <Tooltip
+            content="Current total sprint commitment (Baseline + Added Creep - Dropped)"
+            data-testid="tooltip-net-scope-pill"
+          >
+            <div className="text-xs text-slate-400 font-mono cursor-help">
+              Net Scope: <span className="text-slate-200 font-bold">{netTarget} pts</span>
+            </div>
+          </Tooltip>
         )}
       </div>
 
@@ -113,72 +119,96 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </svg>
 
         {/* Baseline Bar */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end group z-10">
-          <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
-            {baseline} pts
-          </span>
-          <div
-            className="w-full max-w-[64px] bg-gradient-to-t from-blue-700/80 to-blue-500/80 border border-blue-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
-            style={{ height: `${Math.max(8, baselineHeightPct)}%` }}
-          />
-        </div>
+        <Tooltip
+          content="Total story points locked in when the sprint was formally activated"
+          className="flex-1 h-full flex flex-col justify-end"
+          data-testid="tooltip-baseline-bar"
+        >
+          <div className="flex flex-col items-center w-full h-full justify-end group z-10 cursor-help">
+            <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
+              {baseline} pts
+            </span>
+            <div
+              className="w-full max-w-[64px] bg-gradient-to-t from-blue-700/80 to-blue-500/80 border border-blue-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
+              style={{ height: `${Math.max(8, baselineHeightPct)}%` }}
+            />
+          </div>
+        </Tooltip>
 
         {/* (+) Added Scope Bar (Floating) */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end relative group z-10">
-          {added > 0 ? (
-            <>
-              <span
-                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                style={{ bottom: `${addedBottomPct + addedHeightPct}%` }}
-              >
-                +{added} pts
-              </span>
-              <div
-                className="absolute w-full max-w-[64px] bg-gradient-to-t from-amber-600/80 to-amber-400/80 border border-amber-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
-                style={{
-                  height: `${Math.max(6, addedHeightPct)}%`,
-                  bottom: `${addedBottomPct}%`,
-                }}
-              />
-            </>
-          ) : (
-            <div className="text-xs text-slate-500 italic mb-4">0 added</div>
-          )}
-        </div>
+        <Tooltip
+          content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
+          className="flex-1 h-full flex flex-col justify-end"
+          data-testid="tooltip-added-bar"
+        >
+          <div className="flex flex-col items-center w-full h-full justify-end relative group z-10 cursor-help">
+            {added > 0 ? (
+              <>
+                <span
+                  className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
+                  style={{ bottom: `${addedBottomPct + addedHeightPct}%` }}
+                >
+                  +{added} pts
+                </span>
+                <div
+                  className="absolute w-full max-w-[64px] bg-gradient-to-t from-amber-600/80 to-amber-400/80 border border-amber-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
+                  style={{
+                    height: `${Math.max(6, addedHeightPct)}%`,
+                    bottom: `${addedBottomPct}%`,
+                  }}
+                />
+              </>
+            ) : (
+              <div className="text-xs text-slate-500 italic mb-4">0 added</div>
+            )}
+          </div>
+        </Tooltip>
 
         {/* (-) Dropped Scope Bar (Floating) */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end relative group z-10">
-          {dropped > 0 ? (
-            <>
-              <span
-                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                style={{ bottom: `${droppedBottomPct + droppedHeightPct}%` }}
-              >
-                -{dropped} pts
-              </span>
-              <div
-                className="absolute w-full max-w-[64px] bg-gradient-to-t from-red-600/80 to-red-400/80 border border-red-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
-                style={{
-                  height: `${Math.max(6, droppedHeightPct)}%`,
-                  bottom: `${droppedBottomPct}%`,
-                }}
-              />
-            </>
-          ) : (
-            <div className="text-xs text-slate-500 italic mb-4">0 dropped</div>
-          )}
-        </div>
+        <Tooltip
+          content="Scope removed or deferred back to backlog during active sprint execution"
+          className="flex-1 h-full flex flex-col justify-end"
+          data-testid="tooltip-dropped-bar"
+        >
+          <div className="flex flex-col items-center w-full h-full justify-end relative group z-10 cursor-help">
+            {dropped > 0 ? (
+              <>
+                <span
+                  className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
+                  style={{ bottom: `${droppedBottomPct + droppedHeightPct}%` }}
+                >
+                  -{dropped} pts
+                </span>
+                <div
+                  className="absolute w-full max-w-[64px] bg-gradient-to-t from-red-600/80 to-red-400/80 border border-red-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
+                  style={{
+                    height: `${Math.max(6, droppedHeightPct)}%`,
+                    bottom: `${droppedBottomPct}%`,
+                  }}
+                />
+              </>
+            ) : (
+              <div className="text-xs text-slate-500 italic mb-4">0 dropped</div>
+            )}
+          </div>
+        </Tooltip>
 
         {/* (=) Final Delivered Points Bar */}
-        <div className="flex flex-col items-center flex-1 h-full justify-end group z-10">
-          <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
-            {delivered} pts
-          </span>
-          <div
-            className="w-full max-w-[64px] bg-gradient-to-t from-emerald-700/80 to-emerald-500/80 border border-emerald-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
-            style={{ height: `${Math.max(8, deliveredHeightPct)}%` }}
-          />
-        </div>
+        <Tooltip
+          content="Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline"
+          className="flex-1 h-full flex flex-col justify-end"
+          data-testid="tooltip-delivered-bar"
+        >
+          <div className="flex flex-col items-center w-full h-full justify-end group z-10 cursor-help">
+            <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10">
+              {delivered} pts
+            </span>
+            <div
+              className="w-full max-w-[64px] bg-gradient-to-t from-emerald-700/80 to-emerald-500/80 border border-emerald-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
+              style={{ height: `${Math.max(8, deliveredHeightPct)}%` }}
+            />
+          </div>
+        </Tooltip>
       </div>
 
       {/* Step Labels Footer */}

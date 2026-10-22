@@ -14,19 +14,25 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
       'sprint',
       'status',
       'assignee',
-      'priority',
-      'complexity',
       'story_points',
       'points',
       'parent_id',
       'project_id',
+      'completed_at',
+      'created_at',
+      'updated_at',
+      'closed_at',
+      'deleted_at',
     ];
     for (const key of requiredKeys) {
       expect(RESERVED_METADATA_KEYS.has(key)).toBe(true);
     }
+    // Priority and complexity are not reserved so unconfigured projects still display them
+    expect(RESERVED_METADATA_KEYS.has('priority')).toBe(false);
+    expect(RESERVED_METADATA_KEYS.has('complexity')).toBe(false);
   });
 
-  it('renders Sprint exactly once under core attributes and filters reserved keys from Custom Properties', () => {
+  it('renders Sprint exactly once under core attributes and filters reserved keys from Custom Properties while displaying unconfigured priority and complexity', () => {
     const mockItem: WorkItem = {
       id: 'item-dedup-1',
       tenant_id: 't-1',
@@ -48,6 +54,7 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
         points: 5,
         parent_id: null,
         project_id: 'p-1',
+        completed_at: '2026-10-21T15:30:00Z',
         commit_hash: '1e610f7',
         pr_url: 'https://github.com/tympollack/sunshade-tracker/pull/114',
         agent_prompt: 'Resolve layout collisions',
@@ -75,7 +82,14 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
     // 2. Custom Properties section is present
     expect(screen.getByTestId('dynamic-custom-fields-section')).toBeInTheDocument();
 
-    // 3. Legitimate custom properties are rendered
+    // 3. Unconfigured priority and complexity are rendered
+    expect(screen.getByLabelText('Priority')).toBeInTheDocument();
+    expect(screen.getByLabelText('Priority')).toHaveValue('Critical');
+
+    expect(screen.getByLabelText('Complexity')).toBeInTheDocument();
+    expect(screen.getByLabelText('Complexity')).toHaveValue(3);
+
+    // 4. Legitimate custom properties are rendered
     expect(screen.getByLabelText('Commit Hash')).toBeInTheDocument();
     expect(screen.getByLabelText('Commit Hash')).toHaveValue('1e610f7');
 
@@ -90,9 +104,10 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
     expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Type')).toHaveValue('ui_defect');
 
-    // 4. Verify reserved keys are NOT rendered under Custom Properties
+    // 5. Verify system reserved keys are NOT rendered under Custom Properties
     expect(screen.queryByLabelText('Parent Id')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Project Id')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Completed At')).not.toBeInTheDocument();
   });
 
   it('filters sprint from configured schema fields so Sprint is never duplicated', () => {
@@ -207,6 +222,53 @@ describe('BUG-TRK-INSPECTOR-CUSTOM-PROPS-DEDUP: Filter Core Reserved Keys from I
         metadata: expect.objectContaining({
           sprint: 'Sprint 2026-Q4',
           commit_hash: 'fedcba9',
+        }),
+      })
+    );
+  });
+
+  it('preserves existing time component when modifying date fields on custom metadata timestamps', () => {
+    const onUpdate = vi.fn();
+    const mockItem: WorkItem = {
+      id: 'item-dedup-3',
+      tenant_id: 't-1',
+      project_id: 'p-1',
+      external_ref_id: 'TASK-DEDUP-3',
+      item_type: 'task',
+      status: 'in_progress',
+      title: 'Timestamp Preservation Test',
+      order_index: 3000,
+      assignee: 'tympollack',
+      metadata: {
+        target_date: '2026-10-21T15:30:00Z',
+      },
+      created_at: '2026-10-21T00:00:00Z',
+      updated_at: '2026-10-21T00:00:00Z',
+    };
+
+    render(
+      <WorkItemInspectorDrawer
+        item={mockItem}
+        isOpen={true}
+        onClose={vi.fn()}
+        onUpdateItem={onUpdate}
+        tenantSlug="pym-energy"
+      />
+    );
+
+    const dateInput = screen.getByLabelText('Target Date');
+    expect(dateInput).toHaveValue('2026-10-21');
+
+    act(() => {
+      fireEvent.change(dateInput, { target: { value: '2026-10-22' } });
+    });
+
+    // Time component T15:30:00Z must be preserved!
+    expect(onUpdate).toHaveBeenCalledWith(
+      'item-dedup-3',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          target_date: '2026-10-22T15:30:00Z',
         }),
       })
     );
