@@ -244,17 +244,6 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:shrink-0 md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
       >
-        {/* Git Metadata Cluster (Mobile Tier 2: surfaced here to preserve GitHub shortcuts without cramping title) */}
-        {(prUrl || commitHash) && (
-          <div
-            className="shrink-0 flex sm:hidden items-center gap-1.5 whitespace-nowrap"
-            data-testid="git-metadata-cluster-mobile"
-          >
-            {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
-            {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
-          </div>
-        )}
-
         {/* Desktop Subtasks Pill */}
         {isTreeMode && childCount > 0 && (
           <span

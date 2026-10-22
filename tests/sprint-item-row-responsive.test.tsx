@@ -265,7 +265,7 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     expect(screen.getByTestId('tree-child-count-badge')).toHaveTextContent('1 subtask');
   });
 
-  it('renders Git metadata cluster in Tier 1 for desktop (max-sm:hidden) and Tier 2 for mobile (sm:hidden)', () => {
+  it('renders Git metadata cluster with max-sm:hidden to protect title width on narrow screens', () => {
     const itemWithGit = createItem({
       metadata: {
         pr_url: 'https://github.com/sunshade-systems/sunshade-tracker/pull/119',
@@ -286,9 +286,7 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     );
 
     const desktopCluster = screen.getByTestId('git-metadata-cluster');
+    expect(desktopCluster).toBeInTheDocument();
     expect(desktopCluster).toHaveClass('max-sm:hidden');
-
-    const mobileCluster = screen.getByTestId('git-metadata-cluster-mobile');
-    expect(mobileCluster).toHaveClass('sm:hidden');
   });
 });
