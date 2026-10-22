@@ -143,7 +143,7 @@ export function NavTreeNode({
         <span
           className={
             node.type === 'sprint'
-              ? 'truncate min-w-[125px] max-[220px]:min-w-0 max-[220px]:shrink flex-shrink-0 font-medium text-xs font-mono tracking-tight'
+              ? 'truncate min-w-0 flex-1 font-medium text-xs font-mono tracking-tight'
               : 'truncate min-w-0 flex-1 font-mono tracking-tight text-[11px]'
           }
           title={node.title}

@@ -31,12 +31,15 @@ export const RESERVED_METADATA_KEYS = new Set([
   'sprint',
   'status',
   'assignee',
-  'priority',
-  'complexity',
   'story_points',
   'points',
   'parent_id',
   'project_id',
+  'completed_at',
+  'created_at',
+  'updated_at',
+  'closed_at',
+  'deleted_at',
 ]);
 
 export const CORE_ITEM_KEYS = new Set([
@@ -83,8 +86,7 @@ export function inferFieldDefinitionFromKey(key: string): CustomMetadataFieldDef
     normalized.startsWith('date_') ||
     normalized === 'date' ||
     normalized === 'due_date' ||
-    normalized === 'target_date' ||
-    normalized === 'completed_at'
+    normalized === 'target_date'
   ) {
     type = 'date';
   } else if (
@@ -989,9 +991,15 @@ export function WorkItemInspectorDrawer({
                         type="date"
                         value={dateStr}
                         onChange={(e) => {
-                          const nextVal = e.target.value;
+                          const dateOnly = e.target.value;
+                          let nextVal: string | null = dateOnly || null;
+                          // If original value had a time component (e.g. ISO timestamp), preserve it
+                          if (nextVal && typeof val === 'string' && val.includes('T')) {
+                            const timeComponent = val.split('T')[1];
+                            nextVal = `${nextVal}T${timeComponent}`;
+                          }
                           handleCustomFieldChange(field.key, nextVal);
-                          handleCustomFieldCommit(field.key, nextVal || null);
+                          handleCustomFieldCommit(field.key, nextVal);
                         }}
                         disabled={isReadOnly}
                         aria-label={fieldLabel}
