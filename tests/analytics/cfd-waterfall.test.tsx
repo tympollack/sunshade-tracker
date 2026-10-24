@@ -257,6 +257,8 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
       expect(droppedBridge).toBeInTheDocument();
       expect(droppedBridge).toHaveAttribute('stroke-dasharray', '2 2');
+      // Bridge connects at net scope post-removal (100 - droppedBottomPct)
+      expect(droppedBridge?.getAttribute('y1')).toBe('21%');
     });
 
     it('renders high-contrast white text with subtle dark pill backdrop on bar value callouts', () => {

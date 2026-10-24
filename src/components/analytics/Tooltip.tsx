@@ -112,24 +112,21 @@ export function Tooltip({
       }
     }
 
-    const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
-    const scrollX = typeof window !== 'undefined' ? window.scrollX : 0;
-
     let calcTop = 0;
     let calcLeft = 0;
 
     if (effectiveSide === 'bottom') {
-      calcTop = scrollY + rect.bottom + sideOffset;
-      calcLeft = scrollX + rect.left + rect.width / 2;
+      calcTop = rect.bottom + sideOffset;
+      calcLeft = rect.left + rect.width / 2;
     } else if (effectiveSide === 'top') {
-      calcTop = scrollY + rect.top - sideOffset;
-      calcLeft = scrollX + rect.left + rect.width / 2;
+      calcTop = rect.top - sideOffset;
+      calcLeft = rect.left + rect.width / 2;
     } else if (effectiveSide === 'left') {
-      calcTop = scrollY + rect.top + rect.height / 2;
-      calcLeft = scrollX + rect.left - sideOffset;
+      calcTop = rect.top + rect.height / 2;
+      calcLeft = rect.left - sideOffset;
     } else if (effectiveSide === 'right') {
-      calcTop = scrollY + rect.top + rect.height / 2;
-      calcLeft = scrollX + rect.right + sideOffset;
+      calcTop = rect.top + rect.height / 2;
+      calcLeft = rect.right + sideOffset;
     }
 
     setCoords({

@@ -97,8 +97,15 @@ export function MonteCarloSimulator({
   const activeCalcRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // 1. If prop simulation is provided and matches target points, prioritize it over stale cache
-    if (propSimulation && propSimulation.remainingStoryPoints === effectiveRemainingPts) {
+    const hasProgress = historicalVelocities.some((v) => v > 0);
+
+    // 1. If prop simulation is provided and matches target points, prioritize it for sprint cadence
+    // or when no historical velocities exist to recompute alternative cadences
+    if (
+      propSimulation &&
+      propSimulation.remainingStoryPoints === effectiveRemainingPts &&
+      (cadenceUnit === 'sprint' || !hasProgress)
+    ) {
       setSimResult(propSimulation);
       setCachedMonteCarlo(cacheKey, propSimulation);
       setInternalIsCalculating(false);
@@ -114,7 +121,6 @@ export function MonteCarloSimulator({
     }
 
     // 3. If zero remaining points or no valid velocities, don't execute
-    const hasProgress = historicalVelocities.some((v) => v > 0);
     if (effectiveRemainingPts <= 0 || !hasProgress) {
       setSimResult(propSimulation ?? null);
       setInternalIsCalculating(false);
@@ -252,6 +258,11 @@ export function MonteCarloSimulator({
     );
   }
 
+  // If not loading, not computing, and no valid simulation (e.g. 0 target points or no historical progress)
+  if (!isCalculating && !simResult) {
+    return null;
+  }
+
   const p50Display = simResult
     ? convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength)
     : { label: '--', value: 0, unit: cadenceUnit };
@@ -324,7 +335,7 @@ export function MonteCarloSimulator({
       </div>
 
       {/* Confidence Panels: Shimmer Skeletons during Execution vs Rendered Results */}
-      {isCalculating || !simResult ? (
+      {isCalculating ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="mc-skeleton-grid">
           {[
             { label: '50% Confidence (Aggressive)' },
@@ -352,7 +363,7 @@ export function MonteCarloSimulator({
             </div>
             <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p50-date">
               <Calendar className="w-3 h-3 text-slate-500" />
-              {simResult.projectedDates.p50 ? simResult.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
+              {simResult?.projectedDates.p50 ? simResult.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
             </div>
           </div>
 
@@ -364,7 +375,7 @@ export function MonteCarloSimulator({
             </div>
             <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p85-date">
               <Calendar className="w-3 h-3 text-slate-500" />
-              {simResult.projectedDates.p85 ? simResult.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
+              {simResult?.projectedDates.p85 ? simResult.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
             </div>
           </div>
 
@@ -376,7 +387,7 @@ export function MonteCarloSimulator({
             </div>
             <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p95-date">
               <Calendar className="w-3 h-3 text-slate-500" />
-              {simResult.projectedDates.p95 ? simResult.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
+              {simResult?.projectedDates.p95 ? simResult.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
             </div>
           </div>
         </div>

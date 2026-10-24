@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
+import { runMonteCarloSimulation, deriveDailyThroughputBins } from '@/lib/analytics/monte-carlo';
 
 describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
   it('executes 1,000 iterations in < 50ms with valid percentiles', () => {
@@ -136,6 +136,20 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       // Verify business day advancement: 1 business day from Friday Oct 23 is Monday Oct 26
       expect(result.projectedDates.p50).toBe('2026-10-26T00:00:00.000Z');
       expect(result.projectedDates.p85).toBe('2026-10-26T00:00:00.000Z');
+
+      // Distribution array contains values in consistent sprint units
+      expect(result.distribution[0]).toBeGreaterThan(0);
+      expect(result.distribution[0]).toBeLessThan(1);
+    });
+
+    it('emits equal bins for zero and positive historical velocities to maintain unbiased sprint weighting', () => {
+      // 1 idle sprint (0 pts), 1 active sprint (140 pts)
+      const bins = deriveDailyThroughputBins([0, 140], 14);
+      // Both sprints contribute 9 bins each (18 total)
+      expect(bins).toHaveLength(18);
+      // Idle sprint contributed 9 zeros, active sprint contributed 1 zero + 8 positive values -> 10 zeros total
+      const zeroBins = bins.filter((b) => b === 0);
+      expect(zeroBins).toHaveLength(10);
     });
   });
 });

@@ -59,14 +59,19 @@ export function addBusinessDays(startDate: Date | string, days: number): Date {
 export function deriveDailyThroughputBins(velocities: number[], sprintLengthDays: number = 14): number[] {
   const bins: number[] = [];
   const validLength = Math.max(1, sprintLengthDays);
+  // Business working days in sprint (e.g. 10 days for a 14-day 2-week sprint)
+  const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));
 
   for (const v of velocities) {
     if (v <= 0) {
-      bins.push(0);
+      // Emit equal number of bins (9) for an idle sprint to preserve uniform historical sprint weighting
+      for (let i = 0; i < 9; i++) {
+        bins.push(0);
+      }
       continue;
     }
-    const avgDaily = v / validLength;
-    // Intra-sprint variance distribution:
+    const avgDaily = v / activeWorkDays;
+    // Intra-sprint variance distribution across working days:
     // ~11% zero-burn days (impediments, kickoff/retro days)
     // ~67% standard progress days (0.7x - 1.2x)
     // ~22% high-burst progress days (1.4x - 1.6x)
@@ -385,7 +390,8 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
         censoredTrials++;
         distribution[i] = Number.POSITIVE_INFINITY;
       } else {
-        distribution[i] = daysElapsed;
+        // Store duration in sprint units consistent with percentiles
+        distribution[i] = daysElapsed / sprintLengthDays;
       }
     }
 
@@ -394,18 +400,16 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
     const getDailyPercentile = (pct: number): number | null => {
       const index = Math.ceil((pct / 100) * distribution.length) - 1;
       const val = distribution[Math.max(0, Math.min(distribution.length - 1, index))];
-      return !isFinite(val) || val > MAX_DAYS_LIMIT ? null : val;
+      return !isFinite(val) || val > MAX_SPRINTS_LIMIT ? null : val;
     };
 
-    const p50Days = getDailyPercentile(50);
-    const p85Days = getDailyPercentile(85);
-    const p95Days = getDailyPercentile(95);
+    const p50 = getDailyPercentile(50);
+    const p85 = getDailyPercentile(85);
+    const p95 = getDailyPercentile(95);
 
-    // Convert days to sprint equivalent for percentiles: sprints = days / sprintLengthDays
-    // convertSprintsToCadence(p50, 'day', sprintLengthDays) will resolve back to exactly p50Days
-    const p50 = p50Days !== null ? p50Days / sprintLengthDays : null;
-    const p85 = p85Days !== null ? p85Days / sprintLengthDays : null;
-    const p95 = p95Days !== null ? p95Days / sprintLengthDays : null;
+    const p50Days = p50 !== null ? Math.max(1, Math.round(p50 * sprintLengthDays)) : null;
+    const p85Days = p85 !== null ? Math.max(1, Math.round(p85 * sprintLengthDays)) : null;
+    const p95Days = p95 !== null ? Math.max(1, Math.round(p95 * sprintLengthDays)) : null;
 
     const calculateDailyProjectedDate = (days: number | null): string | null => {
       if (days === null) return null;

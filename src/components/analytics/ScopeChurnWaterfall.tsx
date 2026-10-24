@@ -110,9 +110,9 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           {dropped > 0 && (
             <line
               x1="62.5%"
-              y1={`${Math.max(2, Math.min(98, 100 - (droppedBottomPct + droppedHeightPct)))}%`}
+              y1={`${Math.max(2, Math.min(98, 100 - droppedBottomPct))}%`}
               x2="87.5%"
-              y2={`${Math.max(2, Math.min(98, 100 - (droppedBottomPct + droppedHeightPct)))}%`}
+              y2={`${Math.max(2, Math.min(98, 100 - droppedBottomPct))}%`}
               stroke="#475569"
               strokeDasharray="2 2"
               strokeWidth="1.5"

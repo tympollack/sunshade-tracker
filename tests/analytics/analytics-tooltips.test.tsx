@@ -116,6 +116,43 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       }
     });
+
+    it('uses viewport-relative fixed coordinates without adding page scroll offset', () => {
+      const mockRect = {
+        top: 200,
+        bottom: 240,
+        left: 100,
+        right: 150,
+        width: 50,
+        height: 40,
+      };
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue(mockRect);
+      window.scrollY = 600;
+
+      try {
+        render(
+          <Tooltip content="Scroll invariant" position="bottom" sideOffset={8}>
+            <button type="button">Scroll Target</button>
+          </Tooltip>
+        );
+
+        const btn = screen.getByText('Scroll Target');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+        // Top should be bottom (240) + sideOffset (8) = 248px, NOT 600 + 248 = 848px
+        expect(popover.style.top).toBe('248px');
+      } finally {
+        window.scrollY = 0;
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      }
+    });
   });
 
   describe('KPI Cards Hover Tooltips', () => {

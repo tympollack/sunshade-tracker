@@ -230,5 +230,20 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
 
       vi.useRealTimers();
     });
+
+    it('does not render perpetual skeletons for empty forecasts with no progress or zero points', () => {
+      const { container } = render(
+        <MonteCarloSimulator
+          remainingStoryPoints={30}
+          historicalVelocities={[]}
+          isLoading={false}
+          isCalculating={false}
+        />
+      );
+
+      // Should not render skeletons indefinitely
+      expect(screen.queryByTestId('mc-skeleton-card')).toBeNull();
+      expect(container.firstChild).toBeNull();
+    });
   });
 });
