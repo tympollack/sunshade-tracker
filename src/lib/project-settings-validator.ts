@@ -172,11 +172,14 @@ export function validateProjectSettings(settings: any): ValidationResult {
             path: `${basePath}.trigger`,
             message: 'Malformed trigger: trigger object is required',
           });
-        } else if (typeof rule.trigger.type !== 'string' || !rule.trigger.type.trim()) {
-          errors.push({
-            path: `${basePath}.trigger.type`,
-            message: 'Malformed trigger: trigger.type is required and must be a non-empty string',
-          });
+        } else {
+          const triggerType = rule.trigger.event ?? rule.trigger.type;
+          if (!triggerType || typeof triggerType !== 'string' || !triggerType.trim()) {
+            errors.push({
+              path: `${basePath}.trigger.type`,
+              message: 'Malformed trigger: trigger.type or trigger.event is required and must be a non-empty string',
+            });
+          }
         }
 
         // Validate actions / action
@@ -215,6 +218,7 @@ export function validateProjectSettings(settings: any): ValidationResult {
               action.type === 'apply_template' ||
               action.type === 'template' ||
               action.type === 'execute_template' ||
+              action.type === 'expand_children_template' ||
               Boolean(action.template);
 
             if (isTemplateAction) {
@@ -223,6 +227,14 @@ export function validateProjectSettings(settings: any): ValidationResult {
                 errors.push({
                   path: `${actionPath}.target`,
                   message: 'Missing template action target: target is required for template actions',
+                });
+              }
+            } else if (action.type === 'dispatch_webhook') {
+              const url = action.url ?? action.target;
+              if (url === undefined || url === null || (typeof url === 'string' && !url.trim())) {
+                errors.push({
+                  path: `${actionPath}.url`,
+                  message: 'Missing webhook action url: url is required for dispatch_webhook',
                 });
               }
             } else if ('target' in action) {

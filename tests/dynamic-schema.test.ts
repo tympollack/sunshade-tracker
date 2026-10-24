@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as getSettingsHandler, PUT as putSettingsHandler } from '@/app/api/v1/projects/[projectId]/settings/route';
 import { supabaseAdmin } from '@/lib/db';
+import { validateProjectSettings } from '@/lib/dynamic-schema';
+import type { AutomationRule, ProjectSettings } from '@/types/tracker';
 
 vi.mock('@/lib/db', () => {
   return {
@@ -269,6 +271,127 @@ describe('Dynamic Schema Settings Endpoint (/api/v1/projects/[projectId]/setting
     expect(json.error).toContain('Unprocessable Entity');
     expect(json.errors).toBeDefined();
     expect(json.errors.some((e: any) => e.path.includes('automations[0].actions[0].target'))).toBe(true);
+  });
+
+  describe('Runtime Schema Validator (validateProjectSettings)', () => {
+    const baseValidSettings: ProjectSettings = {
+      schema_version: '1.0',
+      hierarchy: [
+        { type: 'story', label: 'Story', level: 1, allowed_parents: [] },
+        { type: 'task', label: 'Task', level: 2, allowed_parents: ['story'] },
+      ],
+      statuses: [
+        { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
+        { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+      ],
+      custom_fields: ['priority'],
+    };
+
+    it('validates compliant automation payloads and item templates', () => {
+      const compliantSettings: ProjectSettings = {
+        ...baseValidSettings,
+        automations: [
+          {
+            id: 'rule-auto-scaffold',
+            name: 'Auto-scaffold subtasks',
+            enabled: true,
+            trigger: {
+              event: 'item_created',
+              item_type: 'story',
+              'metadata.company_domain': 'acme.com',
+            },
+            actions: [
+              {
+                type: 'expand_children_template',
+                template_id: 'standard-onboarding-tasks',
+              },
+              {
+                type: 'dispatch_webhook',
+                url: 'https://api.acme.com/webhooks/ingest',
+                include_parent_context: true,
+              },
+            ],
+          },
+        ],
+        templates: {
+          'standard-onboarding-tasks': [
+            {
+              title: 'Provision domain {{metadata.company_domain}}',
+              item_type: 'task',
+              status: 'not_started',
+            },
+          ],
+        },
+      };
+
+      expect(validateProjectSettings(compliantSettings)).toBe(true);
+    });
+
+    it('rejects malformed action with missing template_id on expand_children_template', () => {
+      const invalidSettings = {
+        ...baseValidSettings,
+        automations: [
+          {
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'expand_children_template',
+                // missing template_id
+              },
+            ],
+          },
+        ],
+      };
+
+      expect(validateProjectSettings(invalidSettings)).toBe(false);
+    });
+
+    it('rejects malformed action with missing url on dispatch_webhook', () => {
+      const invalidSettings = {
+        ...baseValidSettings,
+        automations: [
+          {
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'dispatch_webhook',
+                // missing url
+              },
+            ],
+          },
+        ],
+      };
+
+      expect(validateProjectSettings(invalidSettings)).toBe(false);
+    });
+
+    it('rejects malformed trigger missing both event and type', () => {
+      const invalidSettings = {
+        ...baseValidSettings,
+        automations: [
+          {
+            trigger: {
+              item_type: 'task',
+            },
+            actions: [
+              {
+                type: 'dispatch_webhook',
+                url: 'https://example.com',
+              },
+            ],
+          },
+        ],
+      };
+
+      expect(validateProjectSettings(invalidSettings)).toBe(false);
+    });
+
+    it('rejects null or non-object settings', () => {
+      expect(validateProjectSettings(null)).toBe(false);
+      expect(validateProjectSettings(undefined)).toBe(false);
+      expect(validateProjectSettings('not-an-object')).toBe(false);
+      expect(validateProjectSettings([1, 2, 3])).toBe(false);
+    });
   });
 });
 
