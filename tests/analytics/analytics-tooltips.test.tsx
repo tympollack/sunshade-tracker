@@ -64,6 +64,95 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
       fireEvent.keyDown(triggerWrapper, { key: 'Escape' });
       expect(screen.queryByRole('tooltip')).toBeNull();
     });
+
+    it('BUG-TRK-TOOLTIP-VIEWPORT-COLLISION: portals directly into document.body with collision flipping and arrow', () => {
+      // Simulate trigger positioned near top of viewport (top: 30px < 80px)
+      const mockRect = {
+        top: 30,
+        bottom: 54,
+        left: 100,
+        right: 150,
+        width: 50,
+        height: 24,
+      };
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue(mockRect);
+
+      try {
+        const { baseElement } = render(
+          <div id="nested-container" style={{ transform: 'scale(0.8)' }}>
+            <Tooltip content="Collision handled tooltip" position="top">
+              <button type="button">Top Row KPI Button</button>
+            </Tooltip>
+          </div>
+        );
+
+        const btn = screen.getByText('Top Row KPI Button');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+
+        // Must be portaled directly to document.body, escaping #nested-container
+        expect(document.body).toContainElement(popover);
+        const nestedContainer = baseElement.querySelector('#nested-container');
+        expect(nestedContainer).not.toContainElement(popover);
+
+        // Auto-flipped to bottom because top clearance (30px) is < 80px
+        expect(popover).toHaveAttribute('data-side', 'bottom');
+
+        // Anchored arrow rendered with fill-slate-900
+        const arrow = screen.getByTestId('tooltip-arrow');
+        expect(arrow).toBeInTheDocument();
+        expect(arrow).toHaveClass('fill-slate-900');
+
+        // Stacking invariants
+        expect(popover).toHaveClass('z-50', 'pointer-events-none');
+      } finally {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      }
+    });
+
+    it('uses viewport-relative fixed coordinates without adding page scroll offset', () => {
+      const mockRect = {
+        top: 200,
+        bottom: 240,
+        left: 100,
+        right: 150,
+        width: 50,
+        height: 40,
+      };
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue(mockRect);
+      window.scrollY = 600;
+
+      try {
+        render(
+          <Tooltip content="Scroll invariant" position="bottom" sideOffset={8}>
+            <button type="button">Scroll Target</button>
+          </Tooltip>
+        );
+
+        const btn = screen.getByText('Scroll Target');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+        // Top should be bottom (240) + sideOffset (8) = 248px, NOT 600 + 248 = 848px
+        expect(popover.style.top).toBe('248px');
+      } finally {
+        window.scrollY = 0;
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      }
+    });
   });
 
   describe('KPI Cards Hover Tooltips', () => {

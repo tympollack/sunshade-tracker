@@ -188,5 +188,62 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       // Must display the fresh prop value (2 sprints), NOT the stale cached value (4 sprints)
       expect(screen.getByTestId('mc-p50-value')).toHaveTextContent('2 sprints');
     });
+
+    it('TASK-TRK-MC-SKELETON-PANELS & ASYNC-WORKER-INDICATOR: shows calculation header badge and dimension-locked skeleton panels', () => {
+      vi.useFakeTimers();
+
+      render(
+        <MonteCarloSimulator
+          projectId="proj-delta"
+          sprintId="sp-loading"
+          remainingStoryPoints={25}
+          historicalVelocities={[12, 18]}
+          iterations={1000}
+        />
+      );
+
+      // Calculating header badge should be rendered
+      const calculatingBadge = screen.getByTestId('mc-calculating-badge');
+      expect(calculatingBadge).toBeInTheDocument();
+      expect(calculatingBadge).toHaveTextContent('Simulating 1,000 runs...');
+
+      // Skeletons should be present with min-h-[108px]
+      const skeletonCards = screen.getAllByTestId('mc-skeleton-card');
+      expect(skeletonCards).toHaveLength(3);
+      skeletonCards.forEach((card) => {
+        expect(card).toHaveClass('min-h-[108px]');
+        expect(card).toHaveClass('animate-pulse');
+      });
+
+      // Complete execution
+      act(() => {
+        vi.runAllTimers();
+      });
+
+      // Calculation indicator should transition to completed time
+      expect(screen.queryByTestId('mc-calculating-badge')).toBeNull();
+      expect(screen.getByTestId('mc-header-status')).toHaveTextContent(/Completed in \d+(\.\d+)?ms/);
+
+      // Results rendered with matched dimensions
+      const p50Card = screen.getByTestId('mc-p50-card');
+      expect(p50Card).toHaveClass('min-h-[108px]');
+
+      vi.useRealTimers();
+    });
+
+    it('does not render perpetual skeletons for empty forecasts with no progress or zero points', () => {
+      const { container } = render(
+        <MonteCarloSimulator
+          remainingStoryPoints={30}
+          historicalVelocities={[]}
+          isLoading={false}
+          isCalculating={false}
+        />
+      );
+
+      // Should not render skeletons indefinitely
+      expect(screen.queryByTestId('mc-skeleton-card')).toBeNull();
+      expect(container.firstChild).toBeNull();
+    });
   });
 });

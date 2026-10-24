@@ -31,8 +31,12 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
   const dropped = Math.max(0, data?.droppedPoints || 0);
   const delivered = Math.max(0, data?.finalDelivered || 0);
 
-  const peak = Math.max(10, baseline + added, delivered);
   const netTarget = Math.max(0, baseline + added - dropped);
+  const currentTotal = baseline + added;
+
+  // Y-axis ceiling calculation with 15% headroom to prevent bar clipping/collapse
+  const rawPeak = Math.max(delivered, currentTotal, netTarget, baseline);
+  const peak = Math.max(10, Math.ceil(rawPeak * 1.15));
 
   // Height percentages relative to peak
   const baselineHeightPct = Math.round((baseline / peak) * 100);
@@ -42,7 +46,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
 
   // Floating bottom offsets for waterfall steps
   const addedBottomPct = baselineHeightPct;
-  const droppedBottomPct = Math.max(0, baselineHeightPct + addedHeightPct - droppedHeightPct);
+  const droppedBottomPct = Math.max(0, Math.round((netTarget / peak) * 100));
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm">
@@ -71,7 +75,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
       </div>
 
       {/* Waterfall Visualization Canvas */}
-      <div className="flex-1 flex items-end justify-around gap-4 px-4 pb-4 pt-8 border-b border-slate-800/80 relative">
+      <div className="w-full h-64 min-h-[250px] relative overflow-hidden flex-1 flex items-end justify-around gap-4 px-4 pb-4 pt-8 border-b border-slate-800/80">
         {/* Subtle Horizontal Dashed Bridge Lines */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-0"
@@ -129,8 +133,8 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
               {baseline} pts
             </span>
             <div
-              className="w-full max-w-[64px] bg-gradient-to-t from-blue-700/80 to-blue-500/80 border border-blue-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
-              style={{ height: `${Math.max(8, baselineHeightPct)}%` }}
+              className="w-full max-w-[64px] bg-gradient-to-t from-sky-700/80 to-sky-500/80 border border-sky-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
+              style={{ height: `${baseline > 0 ? Math.max(4, baselineHeightPct) : 0}%` }}
             />
           </div>
         </Tooltip>
@@ -153,7 +157,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
                 <div
                   className="absolute w-full max-w-[64px] bg-gradient-to-t from-amber-600/80 to-amber-400/80 border border-amber-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
                   style={{
-                    height: `${Math.max(6, addedHeightPct)}%`,
+                    height: `${Math.max(4, addedHeightPct)}%`,
                     bottom: `${addedBottomPct}%`,
                   }}
                 />
@@ -180,9 +184,9 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
                   -{dropped} pts
                 </span>
                 <div
-                  className="absolute w-full max-w-[64px] bg-gradient-to-t from-red-600/80 to-red-400/80 border border-red-300/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
+                  className="absolute w-full max-w-[64px] bg-gradient-to-t from-rose-600/80 to-red-500/80 border border-rose-400/50 rounded-md transition-all group-hover:brightness-110 shadow-lg"
                   style={{
-                    height: `${Math.max(6, droppedHeightPct)}%`,
+                    height: `${Math.max(4, droppedHeightPct)}%`,
                     bottom: `${droppedBottomPct}%`,
                   }}
                 />
@@ -205,7 +209,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
             </span>
             <div
               className="w-full max-w-[64px] bg-gradient-to-t from-emerald-700/80 to-emerald-500/80 border border-emerald-400/50 rounded-t-md transition-all group-hover:brightness-110 shadow-lg"
-              style={{ height: `${Math.max(8, deliveredHeightPct)}%` }}
+              style={{ height: `${delivered > 0 ? Math.max(4, deliveredHeightPct) : 0}%` }}
             />
           </div>
         </Tooltip>

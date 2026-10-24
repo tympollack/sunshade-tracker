@@ -11,6 +11,7 @@ import {
   getCachedMonteCarlo,
   setCachedMonteCarlo,
   runMonteCarloSimulation,
+  MonteCarloSimulationInput,
 } from '@/lib/analytics/monte-carlo';
 
 export interface MonteCarloSimulatorProps {
@@ -92,19 +93,26 @@ export function MonteCarloSimulator({
     startDate,
   ]);
 
-  // Effect to resolve simulation using Prop -> Cache -> Background Computation
+  // Effect to resolve simulation using Prop -> Cache -> Background Web Worker / Async Chunker
   const activeCalcRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // 1. If prop simulation is provided and matches target points, prioritize it over stale cache
-    if (propSimulation && propSimulation.remainingStoryPoints === effectiveRemainingPts) {
+    const hasProgress = historicalVelocities.some((v) => v > 0);
+
+    // 1. If prop simulation is provided and matches target points, prioritize it for sprint cadence
+    // or when no historical velocities exist to recompute alternative cadences
+    if (
+      propSimulation &&
+      propSimulation.remainingStoryPoints === effectiveRemainingPts &&
+      (cadenceUnit === 'sprint' || !hasProgress)
+    ) {
       setSimResult(propSimulation);
       setCachedMonteCarlo(cacheKey, propSimulation);
       setInternalIsCalculating(false);
       return;
     }
 
-    // 2. Check local browser cache next
+    // 2. Check local browser cache next (instant 0ms)
     const cached = getCachedMonteCarlo(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -113,37 +121,78 @@ export function MonteCarloSimulator({
     }
 
     // 3. If zero remaining points or no valid velocities, don't execute
-    const hasProgress = historicalVelocities.some((v) => v > 0);
     if (effectiveRemainingPts <= 0 || !hasProgress) {
       setSimResult(propSimulation ?? null);
       setInternalIsCalculating(false);
       return;
     }
 
-    // 4. Non-blocking computation: execute trial loops via setTimeout(..., 0)
-    // to yield to browser paint and display skeleton loader
+    // 4. Offload trial computation to Web Worker or async timer chunking
     setInternalIsCalculating(true);
+    let cancelled = false;
+
     if (activeCalcRef.current) {
       clearTimeout(activeCalcRef.current);
     }
 
+    const inputPayload: MonteCarloSimulationInput = {
+      remainingStoryPoints: effectiveRemainingPts,
+      historicalVelocities,
+      iterations,
+      sprintLengthDays: effectiveSprintLength,
+      startDate,
+      cadenceUnit,
+    };
+
+    // Attempt Web Worker execution if available in browser
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+      try {
+        const worker = new Worker(new URL('../../workers/monteCarlo.worker.ts', import.meta.url));
+        worker.onmessage = (event: MessageEvent<MonteCarloSimulationResult & { error?: string }>) => {
+          worker.terminate();
+          if (!cancelled) {
+            const computed = event.data?.error ? runMonteCarloSimulation(inputPayload) : event.data;
+            setCachedMonteCarlo(cacheKey, computed);
+            setSimResult(computed);
+            setInternalIsCalculating(false);
+          }
+        };
+        worker.onerror = () => {
+          worker.terminate();
+          if (!cancelled) {
+            const computed = runMonteCarloSimulation(inputPayload);
+            setCachedMonteCarlo(cacheKey, computed);
+            setSimResult(computed);
+            setInternalIsCalculating(false);
+          }
+        };
+        worker.postMessage(inputPayload);
+        return () => {
+          cancelled = true;
+          worker.terminate();
+        };
+      } catch {
+        // Fall back to timer chunking
+      }
+    }
+
+    // Fallback: asynchronous timer chunker (compatible with SSR and headless test suites)
     activeCalcRef.current = window.setTimeout(() => {
       try {
-        const computed = runMonteCarloSimulation({
-          remainingStoryPoints: effectiveRemainingPts,
-          historicalVelocities,
-          iterations,
-          sprintLengthDays: effectiveSprintLength,
-          startDate,
-        });
-        setCachedMonteCarlo(cacheKey, computed);
-        setSimResult(computed);
+        const computed = runMonteCarloSimulation(inputPayload);
+        if (!cancelled) {
+          setCachedMonteCarlo(cacheKey, computed);
+          setSimResult(computed);
+        }
       } finally {
-        setInternalIsCalculating(false);
+        if (!cancelled) {
+          setInternalIsCalculating(false);
+        }
       }
     }, 0);
 
     return () => {
+      cancelled = true;
       if (activeCalcRef.current) {
         clearTimeout(activeCalcRef.current);
       }
@@ -156,6 +205,7 @@ export function MonteCarloSimulator({
     iterations,
     effectiveSprintLength,
     startDate,
+    cadenceUnit,
   ]);
 
   const handleCadenceChange = (newUnit: MonteCarloCadenceUnit) => {
@@ -170,50 +220,58 @@ export function MonteCarloSimulator({
 
   const isCalculating = propIsCalculating || internalIsCalculating;
 
-  // Render skeleton loading UI when loading or actively computing
-  if (isLoading || isCalculating || !simResult) {
-    if (isLoading || isCalculating) {
-      return (
-        <section
-          aria-label="Monte Carlo Milestone Simulator"
-          className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm"
-          data-testid="mc-simulator-loading"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-                <Sparkles className="w-4 h-4 animate-spin" />
-              </div>
-              <div className="space-y-1">
-                <div className="h-4 w-48 bg-slate-800 rounded animate-pulse" />
-                <div className="h-3 w-64 bg-slate-800/60 rounded animate-pulse" />
-              </div>
+  // Render initial loading skeleton container when entire section is fetching data
+  if (isLoading) {
+    return (
+      <section
+        aria-label="Monte Carlo Milestone Simulator"
+        className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm"
+        data-testid="mc-simulator-loading"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
+              <Sparkles className="w-4 h-4 animate-spin" />
             </div>
-            <div className="h-6 w-28 bg-slate-800 rounded animate-pulse" />
+            <div className="space-y-1">
+              <div className="h-4 w-48 bg-slate-800 rounded animate-pulse" />
+              <div className="h-3 w-64 bg-slate-800/60 rounded animate-pulse" />
+            </div>
           </div>
+          <div className="h-6 w-28 bg-slate-800 rounded animate-pulse" />
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {[1, 2, 3].map((idx) => (
-              <div
-                key={idx}
-                className="bg-slate-900/60 border border-slate-800 animate-pulse rounded-lg p-4 h-24 flex flex-col justify-between"
-                data-testid="mc-skeleton-card"
-              >
-                <div className="h-3 w-32 bg-slate-800 rounded" />
-                <div className="h-6 w-24 bg-slate-800/80 rounded" />
-                <div className="h-3 w-28 bg-slate-800/50 rounded" />
-              </div>
-            ))}
-          </div>
-        </section>
-      );
-    }
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[1, 2, 3].map((idx) => (
+            <div
+              key={idx}
+              className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 animate-pulse min-h-[108px] flex flex-col justify-between"
+              data-testid="mc-skeleton-card"
+            >
+              <div className="h-3 w-28 bg-slate-800 rounded" />
+              <div className="h-7 w-20 bg-slate-800 rounded mt-2" />
+              <div className="h-3.5 w-24 bg-slate-800/70 rounded mt-1" />
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  // If not loading, not computing, and no valid simulation (e.g. 0 target points or no historical progress)
+  if (!isCalculating && !simResult) {
     return null;
   }
 
-  const p50Display = convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength);
-  const p85Display = convertSprintsToCadence(simResult.percentiles.p85, cadenceUnit, effectiveSprintLength);
-  const p95Display = convertSprintsToCadence(simResult.percentiles.p95, cadenceUnit, effectiveSprintLength);
+  const p50Display = simResult
+    ? convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength)
+    : { label: '--', value: 0, unit: cadenceUnit };
+  const p85Display = simResult
+    ? convertSprintsToCadence(simResult.percentiles.p85, cadenceUnit, effectiveSprintLength)
+    : { label: '--', value: 0, unit: cadenceUnit };
+  const p95Display = simResult
+    ? convertSprintsToCadence(simResult.percentiles.p95, cadenceUnit, effectiveSprintLength)
+    : { label: '--', value: 0, unit: cadenceUnit };
 
   return (
     <section
@@ -224,16 +282,27 @@ export function MonteCarloSimulator({
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-            <Sparkles className="w-4 h-4" />
+            <Sparkles className={`w-4 h-4 ${isCalculating ? 'animate-spin' : ''}`} />
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100">
               Monte Carlo Milestone Simulator
             </h3>
-            <p className="text-xs text-slate-400">
-              Probabilistic completion forecasting over {simResult.iterations.toLocaleString()} trials ({simResult.executionTimeMs}ms)
-              {!simResult.deliveredWithinHorizon && simResult.censoredTrials > 0 && (
-                <span className="text-amber-400 ml-2">({simResult.censoredTrials} trials exceeded 500 sprints)</span>
+            <p className="text-xs text-slate-400 flex items-center gap-1.5" data-testid="mc-header-status">
+              {isCalculating ? (
+                <span className="inline-flex items-center gap-1.5 text-cyan-400 font-medium animate-pulse" data-testid="mc-calculating-badge">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping inline-block" />
+                  Simulating {iterations.toLocaleString()} runs...
+                </span>
+              ) : simResult ? (
+                <>
+                  Probabilistic completion forecasting over {simResult.iterations.toLocaleString()} trials (Completed in {simResult.executionTimeMs}ms)
+                  {!simResult.deliveredWithinHorizon && simResult.censoredTrials > 0 && (
+                    <span className="text-amber-400 ml-2">({simResult.censoredTrials} trials exceeded 500 sprints)</span>
+                  )}
+                </>
+              ) : (
+                'Probabilistic completion forecasting'
               )}
             </p>
           </div>
@@ -265,43 +334,64 @@ export function MonteCarloSimulator({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* 50% Confidence Card */}
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3" data-testid="mc-p50-card">
-          <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
-          <div className="text-xl font-bold text-emerald-400 font-mono mt-1" data-testid="mc-p50-value">
-            {p50Display.label}
-          </div>
-          <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p50-date">
-            <Calendar className="w-3 h-3 text-slate-500" />
-            {simResult.projectedDates.p50 ? simResult.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
-          </div>
+      {/* Confidence Panels: Shimmer Skeletons during Execution vs Rendered Results */}
+      {isCalculating ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="mc-skeleton-grid">
+          {[
+            { label: '50% Confidence (Aggressive)' },
+            { label: '85% Confidence (Commitment)' },
+            { label: '95% Confidence (Conservative)' },
+          ].map((_, idx) => (
+            <div
+              key={idx}
+              className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 animate-pulse min-h-[108px] flex flex-col justify-between"
+              data-testid="mc-skeleton-card"
+            >
+              <div className="h-3 w-28 bg-slate-800 rounded" />
+              <div className="h-7 w-20 bg-slate-800 rounded mt-2" />
+              <div className="h-3.5 w-24 bg-slate-800/70 rounded mt-1" />
+            </div>
+          ))}
         </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 transition-opacity duration-200" data-testid="mc-results-grid">
+          {/* 50% Confidence Card */}
+          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p50-card">
+            <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
+            <div className="text-xl font-bold text-emerald-400 font-mono mt-1" data-testid="mc-p50-value">
+              {p50Display.label}
+            </div>
+            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p50-date">
+              <Calendar className="w-3 h-3 text-slate-500" />
+              {simResult?.projectedDates.p50 ? simResult.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
+            </div>
+          </div>
 
-        {/* 85% Confidence Card */}
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3" data-testid="mc-p85-card">
-          <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
-          <div className="text-xl font-bold text-cyan-400 font-mono mt-1" data-testid="mc-p85-value">
-            {p85Display.label}
+          {/* 85% Confidence Card */}
+          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p85-card">
+            <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
+            <div className="text-xl font-bold text-cyan-400 font-mono mt-1" data-testid="mc-p85-value">
+              {p85Display.label}
+            </div>
+            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p85-date">
+              <Calendar className="w-3 h-3 text-slate-500" />
+              {simResult?.projectedDates.p85 ? simResult.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
+            </div>
           </div>
-          <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p85-date">
-            <Calendar className="w-3 h-3 text-slate-500" />
-            {simResult.projectedDates.p85 ? simResult.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
-          </div>
-        </div>
 
-        {/* 95% Confidence Card */}
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3" data-testid="mc-p95-card">
-          <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
-          <div className="text-xl font-bold text-amber-400 font-mono mt-1" data-testid="mc-p95-value">
-            {p95Display.label}
-          </div>
-          <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p95-date">
-            <Calendar className="w-3 h-3 text-slate-500" />
-            {simResult.projectedDates.p95 ? simResult.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
+          {/* 95% Confidence Card */}
+          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p95-card">
+            <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
+            <div className="text-xl font-bold text-amber-400 font-mono mt-1" data-testid="mc-p95-value">
+              {p95Display.label}
+            </div>
+            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1" data-testid="mc-p95-date">
+              <Calendar className="w-3 h-3 text-slate-500" />
+              {simResult?.projectedDates.p95 ? simResult.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
