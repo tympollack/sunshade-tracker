@@ -21,16 +21,20 @@ export interface TooltipProps {
 export interface TooltipArrowProps {
   className?: string;
   side?: 'top' | 'bottom' | 'left' | 'right';
+  offset?: number;
 }
 
-export function TooltipArrow({ className = '', side = 'top' }: TooltipArrowProps) {
+export function TooltipArrow({ className = '', side = 'top', offset = 0 }: TooltipArrowProps) {
   const isBottom = side === 'bottom';
   const isTop = side === 'top';
+
+  const style: React.CSSProperties = offset !== 0 ? { left: `calc(50% + ${offset}px)` } : {};
 
   if (isBottom) {
     return (
       <svg
         className={`absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-1.5 fill-slate-900 pointer-events-none ${className}`}
+        style={style}
         viewBox="0 0 12 6"
         aria-hidden="true"
         data-testid="tooltip-arrow"
@@ -44,6 +48,7 @@ export function TooltipArrow({ className = '', side = 'top' }: TooltipArrowProps
     return (
       <svg
         className={`absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-1.5 fill-slate-900 pointer-events-none ${className}`}
+        style={style}
         viewBox="0 0 12 6"
         aria-hidden="true"
         data-testid="tooltip-arrow"
@@ -85,14 +90,21 @@ export function Tooltip({
   'data-testid': testId,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number; side: 'top' | 'bottom' | 'left' | 'right' }>({
+  const [coords, setCoords] = useState<{
+    top: number;
+    left: number;
+    side: 'top' | 'bottom' | 'left' | 'right';
+    arrowOffset?: number;
+  }>({
     top: 0,
     left: 0,
     side: side || position || 'top',
+    arrowOffset: 0,
   });
 
   const timerRef = useRef<number | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const id = useId();
 
   const updateCoordinates = useCallback(() => {
@@ -100,20 +112,41 @@ export function Tooltip({
     const rect = triggerRef.current.getBoundingClientRect();
     let effectiveSide: 'top' | 'bottom' | 'left' | 'right' = side || position || 'top';
 
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024;
     const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
-    const topClearance = rect.top;
-    const isInTopThird = rect.top < viewportHeight / 3;
+
+    // Read rendered popover dimensions if available, or fall back to standard defaults
+    const popoverRect = popoverRef.current ? popoverRef.current.getBoundingClientRect() : null;
+    const tooltipWidth = popoverRect && popoverRect.width > 0 ? popoverRect.width : 200;
+    const tooltipHeight = popoverRect && popoverRect.height > 0 ? popoverRect.height : 40;
 
     if (avoidCollisions) {
-      if (effectiveSide === 'top' && (topClearance < 80 || isInTopThird)) {
-        effectiveSide = 'bottom';
-      } else if (effectiveSide === 'bottom' && (viewportHeight - rect.bottom < 80)) {
-        effectiveSide = 'top';
+      if (effectiveSide === 'top') {
+        const topSpace = rect.top - sideOffset - tooltipHeight;
+        if (topSpace < collisionPadding) {
+          effectiveSide = 'bottom';
+        }
+      } else if (effectiveSide === 'bottom') {
+        const bottomSpace = viewportHeight - (rect.bottom + sideOffset + tooltipHeight);
+        if (bottomSpace < collisionPadding) {
+          effectiveSide = 'top';
+        }
+      } else if (effectiveSide === 'left') {
+        const leftSpace = rect.left - sideOffset - tooltipWidth;
+        if (leftSpace < collisionPadding) {
+          effectiveSide = 'right';
+        }
+      } else if (effectiveSide === 'right') {
+        const rightSpace = viewportWidth - (rect.right + sideOffset + tooltipWidth);
+        if (rightSpace < collisionPadding) {
+          effectiveSide = 'left';
+        }
       }
     }
 
     let calcTop = 0;
     let calcLeft = 0;
+    let arrowOffset = 0;
 
     if (effectiveSide === 'bottom') {
       calcTop = rect.bottom + sideOffset;
@@ -129,12 +162,43 @@ export function Tooltip({
       calcLeft = rect.right + sideOffset;
     }
 
+    // Apply viewport collision constraints using collisionPadding
+    if (avoidCollisions) {
+      if (effectiveSide === 'top' || effectiveSide === 'bottom') {
+        const idealLeft = calcLeft;
+        const minLeft = collisionPadding + tooltipWidth / 2;
+        const maxLeft = Math.max(minLeft, viewportWidth - collisionPadding - tooltipWidth / 2);
+        calcLeft = Math.max(minLeft, Math.min(maxLeft, calcLeft));
+
+        // Arrow offset relative to popover center so it continues pointing at trigger center
+        const maxArrowOffset = Math.max(0, tooltipWidth / 2 - 12);
+        arrowOffset = Math.max(-maxArrowOffset, Math.min(maxArrowOffset, idealLeft - calcLeft));
+
+        if (effectiveSide === 'top') {
+          calcTop = Math.max(collisionPadding + tooltipHeight, calcTop);
+        } else {
+          calcTop = Math.min(viewportHeight - collisionPadding - tooltipHeight, calcTop);
+        }
+      } else {
+        const minTop = collisionPadding + tooltipHeight / 2;
+        const maxTop = Math.max(minTop, viewportHeight - collisionPadding - tooltipHeight / 2);
+        calcTop = Math.max(minTop, Math.min(maxTop, calcTop));
+
+        if (effectiveSide === 'left') {
+          calcLeft = Math.max(collisionPadding + tooltipWidth, calcLeft);
+        } else {
+          calcLeft = Math.min(viewportWidth - collisionPadding - tooltipWidth, calcLeft);
+        }
+      }
+    }
+
     setCoords({
       top: calcTop,
       left: calcLeft,
       side: effectiveSide,
+      arrowOffset,
     });
-  }, [side, position, sideOffset, avoidCollisions]);
+  }, [side, position, sideOffset, collisionPadding, avoidCollisions]);
 
   const show = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -163,6 +227,26 @@ export function Tooltip({
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
+
+  // Keep tooltip attached to trigger during page/container scroll and window resize
+  useEffect(() => {
+    if (!isVisible) return;
+
+    // Immediate reposition to measure rendered popover dimensions
+    updateCoordinates();
+
+    const handleUpdate = () => {
+      updateCoordinates();
+    };
+
+    window.addEventListener('scroll', handleUpdate, { capture: true, passive: true });
+    window.addEventListener('resize', handleUpdate, { passive: true });
+
+    return () => {
+      window.removeEventListener('scroll', handleUpdate, { capture: true });
+      window.removeEventListener('resize', handleUpdate);
+    };
+  }, [isVisible, updateCoordinates]);
 
   // Determine transform offset classes based on side
   let transformClasses = '-translate-x-1/2 -translate-y-full';
@@ -197,6 +281,7 @@ export function Tooltip({
       {isVisible && content && (
         <TooltipPortal>
           <div
+            ref={popoverRef}
             id={id}
             role="tooltip"
             data-side={coords.side}
@@ -208,7 +293,7 @@ export function Tooltip({
             data-testid="tooltip-popover"
           >
             {content}
-            {showArrow && <TooltipArrow className="fill-slate-900" side={coords.side} />}
+            {showArrow && <TooltipArrow className="fill-slate-900" side={coords.side} offset={coords.arrowOffset} />}
           </div>
         </TooltipPortal>
       )}

@@ -153,6 +153,92 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       }
     });
+
+    it('updates fixed coordinates when window or container scrolls while tooltip is visible', () => {
+      let currentTop = 200;
+      const getMockRect = () => ({
+        top: currentTop,
+        bottom: currentTop + 40,
+        left: 100,
+        right: 150,
+        width: 50,
+        height: 40,
+      });
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn().mockImplementation(getMockRect);
+
+      try {
+        render(
+          <Tooltip content="Dynamic scroll attached" position="bottom" sideOffset={8}>
+            <button type="button">Scroll Target</button>
+          </Tooltip>
+        );
+
+        const btn = screen.getByText('Scroll Target');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+        expect(popover.style.top).toBe('248px');
+
+        // Trigger scrolls upwards by 50px (simulating page or container scroll)
+        currentTop = 150;
+        act(() => {
+          window.dispatchEvent(new Event('scroll'));
+        });
+
+        // Tooltip follows trigger immediately: 150 + 40 + 8 = 198px
+        expect(popover.style.top).toBe('198px');
+      } finally {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      }
+    });
+
+    it('enforces collisionPadding against viewport boundaries to avoid overflowing', () => {
+      // Trigger placed near right edge of 400px viewport: left: 350, width: 40 (center 370)
+      const mockRect = {
+        top: 200,
+        bottom: 240,
+        left: 350,
+        right: 390,
+        width: 40,
+        height: 40,
+      };
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue(mockRect);
+      const originalInnerWidth = window.innerWidth;
+      Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 400 });
+
+      try {
+        render(
+          <Tooltip content="Edge clamped" position="top" collisionPadding={40}>
+            <button type="button">Right Edge Button</button>
+          </Tooltip>
+        );
+
+        const btn = screen.getByText('Right Edge Button');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+
+        // With tooltip width (mockRect.width = 40):
+        // maxLeft = 400 - 40 - 20 = 340px. Center cannot exceed 340px
+        const leftValue = parseFloat(popover.style.left);
+        expect(leftValue).toBeLessThanOrEqual(340);
+      } finally {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: originalInnerWidth });
+      }
+    });
   });
 
   describe('KPI Cards Hover Tooltips', () => {

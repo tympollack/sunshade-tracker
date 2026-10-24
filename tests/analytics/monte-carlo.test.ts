@@ -151,5 +151,20 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       const zeroBins = bins.filter((b) => b === 0);
       expect(zeroBins).toHaveLength(10);
     });
+
+    it('censors daily simulation when working days exceed 500 sprints horizon (e.g. 5,500 pts with 10 pts/sprint)', () => {
+      const result = runMonteCarloSimulation({
+        remainingStoryPoints: 5500,
+        historicalVelocities: [10],
+        iterations: 100,
+        sprintLengthDays: 14,
+        cadenceUnit: 'day',
+      });
+
+      expect(result.deliveredWithinHorizon).toBe(false);
+      expect(result.censoredTrials).toBe(100);
+      expect(result.percentiles.p50).toBeNull();
+      expect(result.projectedDates.p50).toBeNull();
+    });
   });
 });
