@@ -443,16 +443,18 @@ export async function POST(req: NextRequest) {
       Array.isArray(automations) && automations.some((r: any) => r && r.enabled !== false);
 
     if (hasActiveAutomations && insertedItems.length > 0) {
-      const runAutomations = () => {
+      const runAutomations = () =>
         executeProjectAutomations({
           tenantId: tenant.id,
           projectId: project.id,
           settings: project.settings,
           items: insertedItems,
+          itemMutationSnapshots,
+          actorId: auth.context.userId || null,
+          actorName: auth.context.userName || (auth.context.userId ? 'User' : 'Ingest Pipeline'),
         }).catch((autoErr) => {
           console.error('[tracker:ingest:automations] Background execution error:', autoErr);
         });
-      };
 
       try {
         if (typeof after === 'function') {

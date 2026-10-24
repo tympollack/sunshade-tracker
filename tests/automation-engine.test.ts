@@ -334,5 +334,91 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
 
       vi.unstubAllGlobals();
     });
+
+    it('does not fire item_created trigger on item_updated mutations', async () => {
+      const upsertMock = vi.fn().mockReturnValue({
+        select: vi.fn().mockResolvedValue({ data: [], error: null }),
+      });
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        upsert: upsertMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-create-only',
+            enabled: true,
+            trigger: { event: 'item_created', item_type: 'feature' },
+            actions: [{ type: 'expand_children_template', template_id: 'tmpl-1' }],
+          },
+        ],
+        templates: {
+          'tmpl-1': [{ title: 'Task 1' }],
+        },
+      };
+
+      const existingItem: WorkItem = {
+        id: 'item-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        external_ref_id: 'FEAT-1',
+        item_type: 'feature',
+        status: 'not_started',
+        title: 'Updated Feature',
+        order_index: 100,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        settings,
+        items: [existingItem],
+        itemMutationSnapshots: [{ item: existingItem, prior: { id: 'item-1', deleted_at: null } }],
+      });
+
+      // Since prior existed without deleted_at, it is an update, so item_created trigger does NOT fire
+      expect(upsertMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Taxonomy Resolution in buildTemplateRecords', () => {
+    it('resolves item_type and status from project settings taxonomy when omitted', () => {
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [
+          { type: 'campaign', label: 'Campaign', level: 1, allowed_parents: [] },
+          { type: 'deliverable', label: 'Deliverable', level: 2, allowed_parents: ['campaign'] },
+        ],
+        statuses: [
+          { id: 'drafting', label: 'Drafting', color: '#888', order: 1 },
+          { id: 'published', label: 'Published', color: '#0f0', order: 2 },
+        ],
+        custom_fields: [],
+      };
+
+      const parentItem = {
+        id: 'campaign-1',
+        external_ref_id: 'CAMP-1',
+        item_type: 'campaign',
+      };
+
+      const records = buildTemplateRecords({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [{ title: 'Child Deliverable' }],
+        parentItem,
+        settings,
+      });
+
+      expect(records[0].item_type).toBe('deliverable');
+      expect(records[0].status).toBe('drafting');
+    });
   });
 });

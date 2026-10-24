@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/db';
+import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import type {
   AutomationAction,
   AutomationRule,
@@ -14,12 +15,16 @@ import type {
  * Checks if a given work item matches the criteria defined in an automation trigger.
  * Matches top-level fields (e.g. item_type, status) and nested metadata paths.
  */
-export function matchesTrigger(trigger: AutomationTrigger | null | undefined, item: any): boolean {
+export function matchesTrigger(
+  trigger: AutomationTrigger | null | undefined,
+  item: any,
+  eventType: string = 'item_created'
+): boolean {
   if (!trigger || !item) return false;
 
   // 1. Verify event if explicitly specified
-  if (trigger.event && trigger.event !== 'item_created' && trigger.event !== trigger.type) {
-    // If event is specified and not item_created (the current ingestion event), do not match
+  const expectedEvent = trigger.event || trigger.type;
+  if (expectedEvent && expectedEvent !== eventType) {
     return false;
   }
 
@@ -104,6 +109,40 @@ export interface ExpandTemplateOptions {
   template: ProjectTemplateItem[];
   parentItem: WorkItem | any;
   settings?: ProjectSettings;
+  actorId?: string | null;
+  actorName?: string | null;
+}
+
+/**
+ * Resolves the default item_type compliant with project settings hierarchy.
+ */
+function resolveDefaultChildType(parentItem: any, settings?: ProjectSettings): string {
+  if (!settings?.hierarchy || settings.hierarchy.length === 0) {
+    return 'task';
+  }
+
+  const hierarchy = settings.hierarchy;
+  const parentType = parentItem?.item_type;
+
+  // 1. Look for a child type that explicitly allows parentItem.item_type as an allowed parent
+  if (parentType) {
+    const directChild = hierarchy.find((h) => Array.isArray(h.allowed_parents) && h.allowed_parents.includes(parentType));
+    if (directChild) return directChild.type;
+  }
+
+  // 2. Otherwise default to the deepest level leaf
+  const sorted = [...hierarchy].sort((a, b) => (b.level ?? 0) - (a.level ?? 0));
+  return sorted[0]?.type || 'task';
+}
+
+/**
+ * Resolves the default status compliant with project settings statuses.
+ */
+function resolveDefaultChildStatus(settings?: ProjectSettings): string {
+  if (settings?.statuses && settings.statuses.length > 0) {
+    return settings.statuses[0].id;
+  }
+  return 'not_started';
 }
 
 /**
@@ -111,9 +150,14 @@ export interface ExpandTemplateOptions {
  * to parentItem.id and generating deterministic external_ref_ids.
  */
 export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
-  const { tenantId, projectId, template, parentItem } = options;
+  const { tenantId, projectId, template, parentItem, settings } = options;
   const parentRef = parentItem.external_ref_id || parentItem.id || 'ITEM';
   const baseOrder = typeof parentItem.order_index === 'number' ? parentItem.order_index : 1000.0;
+
+  const defaultType = resolveDefaultChildType(parentItem, settings);
+  const defaultStatus = resolveDefaultChildStatus(settings);
+
+  const seenRefs = new Set<string>();
 
   return template.map((tmplItem, index) => {
     let childRefId: string | null = null;
@@ -124,6 +168,12 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
     } else {
       childRefId = `${parentRef}-SUB-${index + 1}`;
     }
+
+    // Ensure uniqueness within batch to avoid PostgreSQL upsert conflict collisions
+    if (seenRefs.has(childRefId)) {
+      childRefId = `${childRefId}-${index + 1}`;
+    }
+    seenRefs.add(childRefId);
 
     const title = interpolate(tmplItem.title, parentItem);
     const description = tmplItem.description ? interpolate(tmplItem.description, parentItem) : null;
@@ -140,8 +190,8 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
       project_id: projectId,
       parent_id: parentItem.id,
       external_ref_id: childRefId,
-      item_type: tmplItem.item_type || 'task',
-      status: tmplItem.status || 'not_started',
+      item_type: tmplItem.item_type || defaultType,
+      status: tmplItem.status || defaultStatus,
       title,
       description,
       assignee: tmplItem.assignee ?? null,
@@ -154,12 +204,36 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
 }
 
 /**
- * Expands and persists child template tasks into tracker.work_items.
+ * Expands and persists child template tasks into tracker.work_items,
+ * maintaining full audit trail history.
  */
 export async function expandTemplate(options: ExpandTemplateOptions): Promise<WorkItem[]> {
   const records = buildTemplateRecords(options);
   if (records.length === 0) return [];
 
+  // 1. Fetch prior child records to determine audit create vs update vs restore
+  const extRefIds = records.map((r) => r.external_ref_id).filter(Boolean) as string[];
+  const priorChildMap = new Map<string, any>();
+
+  if (extRefIds.length > 0) {
+    try {
+      const { data: priors } = await supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('project_id', options.projectId)
+        .in('external_ref_id', extRefIds);
+
+      (priors || []).forEach((p: any) => {
+        if (p?.external_ref_id) {
+          priorChildMap.set(p.external_ref_id, p);
+        }
+      });
+    } catch {
+      // Non-blocking query failure
+    }
+  }
+
+  // 2. Upsert child records
   const { data, error } = await supabaseAdmin
     .from('work_items')
     .upsert(records, { onConflict: 'project_id, external_ref_id' })
@@ -169,7 +243,102 @@ export async function expandTemplate(options: ExpandTemplateOptions): Promise<Wo
     throw error;
   }
 
-  return (data || []) as WorkItem[];
+  const upsertedItems = (data || []) as WorkItem[];
+
+  // 3. Record audit logs for child items
+  const auditEntries: any[] = [];
+  for (const item of upsertedItems) {
+    if (!item.external_ref_id) continue;
+    const prior = priorChildMap.get(item.external_ref_id);
+
+    let action: 'create' | 'update' | 'restore' = 'create';
+    let changed_fields: Record<string, any> = {};
+
+    if (!prior) {
+      action = 'create';
+      changed_fields = { created: { before: null, after: item } };
+    } else if (prior.deleted_at !== null) {
+      action = 'restore';
+      changed_fields = {
+        deleted_at: { before: prior.deleted_at, after: null },
+        ...computeChangedFields(prior, item),
+      };
+    } else {
+      action = 'update';
+      changed_fields = computeChangedFields(prior, item);
+    }
+
+    auditEntries.push({
+      tenant_id: options.tenantId,
+      project_id: options.projectId,
+      item_id: item.id,
+      actor_id: options.actorId || null,
+      actor_name: options.actorName || 'Ingest Pipeline: Automation',
+      action,
+      changed_fields,
+    });
+  }
+
+  if (auditEntries.length > 0) {
+    await recordBulkAuditLogs(auditEntries).catch(() => {});
+  }
+
+  return upsertedItems;
+}
+
+/**
+ * Validates that webhook URLs do not target loopback or private networks (SSRF prevention).
+ */
+export function isAllowedWebhookUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+
+    if (process.env.NODE_ENV === 'test' || process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
+      return true;
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host === '169.254.169.254' ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sanitizes work item payload before transmitting to external webhook targets.
+ */
+export function sanitizeItemForWebhook(item: any): Record<string, any> {
+  if (!item || typeof item !== 'object') return {};
+  return {
+    id: item.id,
+    external_ref_id: item.external_ref_id,
+    item_type: item.item_type,
+    status: item.status,
+    title: item.title,
+    description: item.description,
+    assignee: item.assignee,
+    parent_id: item.parent_id,
+    order_index: item.order_index,
+    metadata: item.metadata,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  };
 }
 
 /**
@@ -180,9 +349,13 @@ export async function dispatchWebhook(
   payload: any,
   secret?: string
 ): Promise<Response> {
-  const webhookUrl = action.url;
+  const webhookUrl = action.url || (action as any).target;
   if (!webhookUrl) {
     throw new Error('Missing webhook URL in dispatch_webhook action');
+  }
+
+  if (!isAllowedWebhookUrl(webhookUrl)) {
+    throw new Error(`Webhook URL cannot target private/loopback addresses: ${webhookUrl}`);
   }
 
   const rawPayload = JSON.stringify(payload);
@@ -212,6 +385,9 @@ export interface ExecuteAutomationsOptions {
   projectId: string;
   settings: ProjectSettings;
   items: WorkItem[];
+  itemMutationSnapshots?: Array<{ item: any; prior: any }>;
+  actorId?: string | null;
+  actorName?: string | null;
 }
 
 /**
@@ -219,7 +395,7 @@ export interface ExecuteAutomationsOptions {
  * and triggers templates or webhooks accordingly.
  */
 export async function executeProjectAutomations(options: ExecuteAutomationsOptions): Promise<void> {
-  const { tenantId, projectId, settings, items } = options;
+  const { tenantId, projectId, settings, items, itemMutationSnapshots, actorId, actorName } = options;
   if (!settings?.automations || !Array.isArray(settings.automations) || settings.automations.length === 0) {
     return;
   }
@@ -227,11 +403,32 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
     return;
   }
 
+  // Map each item to its mutation event type
+  const itemEventMap = new Map<string, 'item_created' | 'item_updated' | 'item_restored'>();
+  if (Array.isArray(itemMutationSnapshots)) {
+    for (const snap of itemMutationSnapshots) {
+      if (!snap?.item) continue;
+      const key = snap.item.id || snap.item.external_ref_id;
+      if (!key) continue;
+
+      if (!snap.prior) {
+        itemEventMap.set(key, 'item_created');
+      } else if (snap.prior.deleted_at !== null) {
+        itemEventMap.set(key, 'item_restored');
+      } else {
+        itemEventMap.set(key, 'item_updated');
+      }
+    }
+  }
+
   for (const rule of settings.automations) {
     if (rule.enabled === false) continue;
 
     for (const item of items) {
-      if (!matchesTrigger(rule.trigger, item)) continue;
+      const key = item.id || item.external_ref_id;
+      const eventType = (key && itemEventMap.get(key)) || 'item_created';
+
+      if (!matchesTrigger(rule.trigger, item, eventType)) continue;
 
       const actionsList: AutomationAction[] = Array.isArray(rule.actions)
         ? rule.actions
@@ -270,6 +467,8 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
                 template: templateItems,
                 parentItem: item,
                 settings,
+                actorId,
+                actorName,
               });
             }
           } else if (actionType === 'dispatch_webhook') {
@@ -283,15 +482,15 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
                   .select('*')
                   .eq('id', item.parent_id)
                   .single();
-                parentContext = parentData || null;
+                parentContext = parentData ? sanitizeItemForWebhook(parentData) : null;
               } catch {
                 // Ignore failure to fetch parent context
               }
             }
 
             const payload = {
-              event: rule.trigger.event || 'item_created',
-              item,
+              event: rule.trigger.event || eventType,
+              item: sanitizeItemForWebhook(item),
               parent: parentContext,
               timestamp: new Date().toISOString(),
             };
