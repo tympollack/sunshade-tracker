@@ -33,6 +33,57 @@ export interface ConvertedCadenceDuration {
   label: string;
 }
 
+/**
+ * Adds business days (excluding Saturday and Sunday) to a start date.
+ */
+export function addBusinessDays(startDate: Date | string, days: number): Date {
+  const date = new Date(startDate);
+  let remainingDays = Math.round(days);
+  if (remainingDays <= 0) return date;
+
+  while (remainingDays > 0) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    const dayOfWeek = date.getUTCDay();
+    // 0 = Sunday, 6 = Saturday (UTC)
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      remainingDays--;
+    }
+  }
+  return date;
+}
+
+/**
+ * Derives daily completion throughput bins from historical sprint velocities.
+ * Decomposes sprint velocity into discrete daily samples accounting for intra-sprint delivery dynamics.
+ */
+export function deriveDailyThroughputBins(velocities: number[], sprintLengthDays: number = 14): number[] {
+  const bins: number[] = [];
+  const validLength = Math.max(1, sprintLengthDays);
+
+  for (const v of velocities) {
+    if (v <= 0) {
+      bins.push(0);
+      continue;
+    }
+    const avgDaily = v / validLength;
+    // Intra-sprint variance distribution:
+    // ~11% zero-burn days (impediments, kickoff/retro days)
+    // ~67% standard progress days (0.7x - 1.2x)
+    // ~22% high-burst progress days (1.4x - 1.6x)
+    bins.push(0);
+    bins.push(avgDaily * 0.7);
+    bins.push(avgDaily * 0.9);
+    bins.push(avgDaily * 1.0);
+    bins.push(avgDaily * 1.0);
+    bins.push(avgDaily * 1.1);
+    bins.push(avgDaily * 1.2);
+    bins.push(avgDaily * 1.4);
+    bins.push(avgDaily * 1.6);
+  }
+
+  return bins.length > 0 ? bins : [0];
+}
+
 // In-memory simulation cache for instant sub-millisecond retrieval
 const memoryCache = new Map<string, MonteCarloSimulationResult>();
 
@@ -235,6 +286,7 @@ export interface MonteCarloSimulationInput {
   iterations?: number;
   sprintLengthDays?: number;
   startDate?: Date | string;
+  cadenceUnit?: MonteCarloCadenceUnit;
 }
 
 export interface MonteCarloSimulationResult {
@@ -312,6 +364,80 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
   const MAX_SPRINTS_LIMIT = 500;
   let censoredTrials = 0;
 
+  // Day-level discrete event simulation when cadenceUnit === 'day'
+  if (input.cadenceUnit === 'day') {
+    const dailyBins = deriveDailyThroughputBins(velocities, sprintLengthDays);
+    const numDailyBins = dailyBins.length;
+    const MAX_DAYS_LIMIT = MAX_SPRINTS_LIMIT * sprintLengthDays;
+
+    for (let i = 0; i < iterations; i++) {
+      let currentRemaining = remainingStoryPoints;
+      let daysElapsed = 0;
+
+      while (currentRemaining > 0 && daysElapsed < MAX_DAYS_LIMIT) {
+        const randomIndex = Math.floor(Math.random() * numDailyBins);
+        const sampledDaily = dailyBins[randomIndex];
+        currentRemaining -= sampledDaily;
+        daysElapsed++;
+      }
+
+      if (currentRemaining > 0) {
+        censoredTrials++;
+        distribution[i] = Number.POSITIVE_INFINITY;
+      } else {
+        distribution[i] = daysElapsed;
+      }
+    }
+
+    distribution.sort((a, b) => a - b);
+
+    const getDailyPercentile = (pct: number): number | null => {
+      const index = Math.ceil((pct / 100) * distribution.length) - 1;
+      const val = distribution[Math.max(0, Math.min(distribution.length - 1, index))];
+      return !isFinite(val) || val > MAX_DAYS_LIMIT ? null : val;
+    };
+
+    const p50Days = getDailyPercentile(50);
+    const p85Days = getDailyPercentile(85);
+    const p95Days = getDailyPercentile(95);
+
+    // Convert days to sprint equivalent for percentiles: sprints = days / sprintLengthDays
+    // convertSprintsToCadence(p50, 'day', sprintLengthDays) will resolve back to exactly p50Days
+    const p50 = p50Days !== null ? p50Days / sprintLengthDays : null;
+    const p85 = p85Days !== null ? p85Days / sprintLengthDays : null;
+    const p95 = p95Days !== null ? p95Days / sprintLengthDays : null;
+
+    const calculateDailyProjectedDate = (days: number | null): string | null => {
+      if (days === null) return null;
+      return addBusinessDays(startDate, days).toISOString();
+    };
+
+    const executionTimeMs = Math.round((performance.now() - startTime) * 100) / 100;
+    const deliveredWithinHorizon = censoredTrials === 0;
+
+    return {
+      remainingStoryPoints,
+      iterations,
+      sprintLengthDays,
+      startDate: startDate.toISOString(),
+      deliveredWithinHorizon,
+      censoredTrials,
+      percentiles: {
+        p50,
+        p85,
+        p95,
+      },
+      projectedDates: {
+        p50: calculateDailyProjectedDate(p50Days),
+        p85: calculateDailyProjectedDate(p85Days),
+        p95: calculateDailyProjectedDate(p95Days),
+      },
+      distribution,
+      executionTimeMs,
+    };
+  }
+
+  // Standard sprint-level simulation loop
   for (let i = 0; i < iterations; i++) {
     let currentRemaining = remainingStoryPoints;
     let sprintsNeeded = 0;

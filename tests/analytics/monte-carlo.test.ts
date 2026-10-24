@@ -109,4 +109,33 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
     expect(result.percentiles.p95).toBeNull();
     expect(result.projectedDates.p50).toBeNull();
   });
+
+  describe('BUG-TRK-MC-DAILY-THROUGHPUT-SIM: Daily Throughput Discrete Simulation', () => {
+    it('simulates low remaining scope (5 pts) against high velocity (472 pts/sprint) into 1-2 days rather than 14 days', () => {
+      const startDate = '2026-10-23T00:00:00.000Z'; // Friday
+      const result = runMonteCarloSimulation({
+        remainingStoryPoints: 5,
+        historicalVelocities: [472],
+        iterations: 1000,
+        sprintLengthDays: 14,
+        startDate,
+        cadenceUnit: 'day',
+      });
+
+      // 5 pts with ~33.7 pts/day velocity:
+      // p50 and p85 resolve to 1 day (~0.071 sprints)
+      const p50Days = Math.round(result.percentiles.p50! * 14);
+      const p85Days = Math.round(result.percentiles.p85! * 14);
+      const p95Days = Math.round(result.percentiles.p95! * 14);
+
+      expect(p50Days).toBe(1);
+      expect(p85Days).toBe(1);
+      expect(p95Days).toBeGreaterThanOrEqual(1);
+      expect(p95Days).toBeLessThanOrEqual(3);
+
+      // Verify business day advancement: 1 business day from Friday Oct 23 is Monday Oct 26
+      expect(result.projectedDates.p50).toBe('2026-10-26T00:00:00.000Z');
+      expect(result.projectedDates.p85).toBe('2026-10-26T00:00:00.000Z');
+    });
+  });
 });

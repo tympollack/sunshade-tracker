@@ -135,6 +135,7 @@ export function MonteCarloSimulator({
           iterations,
           sprintLengthDays: effectiveSprintLength,
           startDate,
+          cadenceUnit,
         });
         setCachedMonteCarlo(cacheKey, computed);
         setSimResult(computed);
