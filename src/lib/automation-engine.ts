@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
+import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
 import type {
   AutomationAction,
   AutomationRule,
@@ -127,7 +128,7 @@ export function isAllowedChildType(
   }
   const childLevel = settings.hierarchy.find((h) => h.type === childType);
   if (!childLevel) return false;
-  if (Array.isArray(childLevel.allowed_parents) && childLevel.allowed_parents.length > 0) {
+  if (Array.isArray(childLevel.allowed_parents)) {
     return childLevel.allowed_parents.includes(parentType);
   }
   return true;
@@ -187,9 +188,7 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
   const defaultType = resolveDefaultChildType(parentItem, settings);
   const defaultStatus = resolveDefaultChildStatus(settings);
 
-  const parentSprint = parentItem.metadata?.sprint;
-  const parentSprintId = parentItem.sprint_id || parentItem.metadata?.sprint_id;
-
+  const projectSprints: any[] = settings?.sprint_settings?.sprints || [];
   const seenRefs = new Set<string>();
   const records: any[] = [];
 
@@ -227,15 +226,106 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
       }
     }
 
-    // Inherit parent's sprint if not explicitly specified by child template
-    if (childMetadata.sprint === undefined && parentSprint) {
-      childMetadata.sprint = parentSprint;
-    }
-    if (childMetadata.sprint_id === undefined && parentSprintId) {
-      childMetadata.sprint_id = parentSprintId;
-    }
+    // Sprint assignment: if child template provides ANY sprint information, override completely.
+    // Otherwise, inherit from parent.
+    const tmplHasSprint =
+      tmplItem.sprint_id !== undefined ||
+      (tmplItem.metadata &&
+        (tmplItem.metadata.sprint !== undefined || tmplItem.metadata.sprint_id !== undefined));
 
-    const resolvedSprintId = tmplItem.sprint_id || childMetadata.sprint_id || parentSprintId || null;
+    let resolvedRelationalSprintId: string | null = null;
+
+    if (tmplHasSprint) {
+      // Child template explicitly overrides sprint assignment
+      const rawSprintName = tmplItem.metadata?.sprint;
+      const rawSprintId = tmplItem.sprint_id ?? tmplItem.metadata?.sprint_id;
+
+      if (rawSprintName) {
+        const matched = projectSprints.find((s) => s.name === rawSprintName || s.id === rawSprintName);
+        childMetadata.sprint = matched?.name || rawSprintName;
+        if (matched?.id && isUuid(matched.id)) {
+          childMetadata.sprint_id = matched.id;
+          resolvedRelationalSprintId = matched.id;
+        } else if (rawSprintId && isUuid(rawSprintId)) {
+          childMetadata.sprint_id = rawSprintId;
+          resolvedRelationalSprintId = rawSprintId;
+        } else if (rawSprintId) {
+          childMetadata.sprint_id = rawSprintId;
+          resolvedRelationalSprintId = null;
+        } else {
+          delete childMetadata.sprint_id;
+        }
+      } else if (rawSprintId) {
+        const matched = projectSprints.find((s) => s.id === rawSprintId || s.name === rawSprintId);
+        if (matched) {
+          childMetadata.sprint = matched.name || null;
+          if (matched.id && isUuid(matched.id)) {
+            childMetadata.sprint_id = matched.id;
+            resolvedRelationalSprintId = matched.id;
+          } else if (isUuid(rawSprintId)) {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = rawSprintId;
+          } else {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        } else {
+          delete childMetadata.sprint;
+          if (isUuid(rawSprintId)) {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = rawSprintId;
+          } else {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        }
+      } else {
+        // Explicit null / cleared sprint
+        delete childMetadata.sprint;
+        delete childMetadata.sprint_id;
+      }
+    } else {
+      // Inherit parent's sprint assignment
+      const rawParentSprint = parentItem.metadata?.sprint;
+      const rawParentSprintId = parentItem.sprint_id || parentItem.metadata?.sprint_id;
+
+      if (rawParentSprint) {
+        const matched = projectSprints.find((s) => s.name === rawParentSprint || s.id === rawParentSprint);
+        childMetadata.sprint = matched?.name || rawParentSprint;
+        if (matched?.id && isUuid(matched.id)) {
+          childMetadata.sprint_id = matched.id;
+          resolvedRelationalSprintId = matched.id;
+        } else if (rawParentSprintId && isUuid(rawParentSprintId)) {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = rawParentSprintId;
+        } else if (rawParentSprintId) {
+          // Legacy sprint identifier kept in metadata only
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = null;
+        }
+      } else if (rawParentSprintId) {
+        const matched = projectSprints.find((s) => s.id === rawParentSprintId || s.name === rawParentSprintId);
+        if (matched) {
+          childMetadata.sprint = matched.name;
+          if (matched.id && isUuid(matched.id)) {
+            childMetadata.sprint_id = matched.id;
+            resolvedRelationalSprintId = matched.id;
+          } else if (isUuid(rawParentSprintId)) {
+            childMetadata.sprint_id = rawParentSprintId;
+            resolvedRelationalSprintId = rawParentSprintId;
+          } else {
+            childMetadata.sprint_id = rawParentSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        } else if (isUuid(rawParentSprintId)) {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = rawParentSprintId;
+        } else {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = null;
+        }
+      }
+    }
 
     records.push({
       tenant_id: tenantId,
@@ -248,7 +338,7 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
       description,
       assignee: tmplItem.assignee ?? null,
       order_index: tmplItem.order_index ?? baseOrder + (index + 1) * 100.0,
-      sprint_id: resolvedSprintId,
+      sprint_id: resolvedRelationalSprintId,
       metadata: childMetadata,
       deleted_at: null,
       updated_at: new Date().toISOString(),
@@ -302,10 +392,25 @@ export async function expandTemplate(options: ExpandTemplateOptions): Promise<Wo
   }
 
   // 2. Upsert child records
-  const { data, error } = await supabaseAdmin
+  let { data, error } = await supabaseAdmin
     .from('work_items')
     .upsert(recordsToUpsert, { onConflict: 'project_id, external_ref_id' })
     .select();
+
+  if (error && isMissingSprintIdColumnError(error)) {
+    // Relational sprint_id column missing from PostgREST schema cache: retry without sprint_id column
+    const fallbackRecords = recordsToUpsert.map((rec) => {
+      const copy = { ...rec };
+      delete copy.sprint_id;
+      return copy;
+    });
+    const retry = await supabaseAdmin
+      .from('work_items')
+      .upsert(fallbackRecords, { onConflict: 'project_id, external_ref_id' })
+      .select();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     throw error;

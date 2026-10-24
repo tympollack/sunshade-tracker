@@ -166,20 +166,22 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
 
       expect(records).toHaveLength(2);
 
-      // Child 1: custom ref suffix & inherited sprint
+      // Child 1: custom ref suffix & inherited sprint (legacy non-UUID ID stored in metadata, null in relational column)
       expect(records[0].parent_id).toBe('parent-uuid-999');
       expect(records[0].external_ref_id).toBe('STORY-ONBOARD-TASK-DNS');
       expect(records[0].title).toBe('Provision domain acme.io');
       expect(records[0].metadata.target_domain).toBe('acme.io');
       expect(records[0].metadata.sprint).toBe('Sprint 2026-Q4');
-      expect(records[0].sprint_id).toBe('sprint-q4');
+      expect(records[0].metadata.sprint_id).toBe('sprint-q4');
+      expect(records[0].sprint_id).toBeNull();
 
       // Child 2: default sequential subtask suffix & inherited sprint
       expect(records[1].parent_id).toBe('parent-uuid-999');
       expect(records[1].external_ref_id).toBe('STORY-ONBOARD-SUB-2');
       expect(records[1].title).toBe('Deploy sandbox for acme.io');
       expect(records[1].metadata.sprint).toBe('Sprint 2026-Q4');
-      expect(records[1].sprint_id).toBe('sprint-q4');
+      expect(records[1].metadata.sprint_id).toBe('sprint-q4');
+      expect(records[1].sprint_id).toBeNull();
     });
 
     it('persists only missing child tasks and preserves user edits on existing children', async () => {
@@ -502,6 +504,181 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
 
       // Disallowed nesting is skipped to prevent invalid hierarchy persistence
       expect(records).toHaveLength(0);
+    });
+
+    it('rejects root-only types (allowed_parents: []) from becoming template children', () => {
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [
+          { type: 'epic', label: 'Epic', level: 0, allowed_parents: [] },
+          { type: 'story', label: 'Story', level: 1, allowed_parents: ['epic'] },
+          { type: 'task', label: 'Task', level: 2, allowed_parents: ['story'] },
+        ],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#888', order: 1 }],
+        custom_fields: [],
+      };
+
+      const storyParentItem = {
+        id: 'story-1',
+        external_ref_id: 'STORY-1',
+        item_type: 'story',
+      };
+
+      // Template specifies 'epic', which is a root-only type (allowed_parents: [])
+      const records = buildTemplateRecords({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [{ title: 'Nested Epic', item_type: 'epic' }],
+        parentItem: storyParentItem,
+        settings,
+      });
+
+      // Root-only types must be rejected from becoming children
+      expect(records).toHaveLength(0);
+    });
+
+    it('populates relational sprint_id column only when ID is a verified UUID', () => {
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#888', order: 1 }],
+        custom_fields: [],
+        sprint_settings: {
+          sprints: [
+            {
+              id: 'a0000000-0000-0000-0000-000000000001',
+              name: 'Sprint Alpha',
+              status: 'active',
+            },
+          ],
+        },
+      };
+
+      const parentItem = {
+        id: 'p-1',
+        external_ref_id: 'STORY-1',
+        item_type: 'story',
+        metadata: { sprint: 'Sprint Alpha' },
+      };
+
+      const records = buildTemplateRecords({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [{ title: 'Subtask' }],
+        parentItem,
+        settings,
+      });
+
+      expect(records).toHaveLength(1);
+      expect(records[0].sprint_id).toBe('a0000000-0000-0000-0000-000000000001');
+      expect(records[0].metadata.sprint_id).toBe('a0000000-0000-0000-0000-000000000001');
+      expect(records[0].metadata.sprint).toBe('Sprint Alpha');
+    });
+
+    it('completely overrides sprint assignment when child template specifies its own sprint', () => {
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#888', order: 1 }],
+        custom_fields: [],
+        sprint_settings: {
+          sprints: [
+            {
+              id: '11111111-1111-1111-1111-111111111111',
+              name: 'Sprint Oct',
+              status: 'completed',
+            },
+            {
+              id: '22222222-2222-2222-2222-222222222222',
+              name: 'Sprint Nov',
+              status: 'active',
+            },
+          ],
+        },
+      };
+
+      const parentItem = {
+        id: 'p-1',
+        external_ref_id: 'STORY-1',
+        sprint_id: '11111111-1111-1111-1111-111111111111',
+        item_type: 'story',
+        metadata: {
+          sprint: 'Sprint Oct',
+          sprint_id: '11111111-1111-1111-1111-111111111111',
+        },
+      };
+
+      const records = buildTemplateRecords({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [
+          {
+            title: 'Child with November Sprint Override',
+            metadata: { sprint: 'Sprint Nov' },
+          },
+        ],
+        parentItem,
+        settings,
+      });
+
+      expect(records).toHaveLength(1);
+      // Child overrides completely: receives Sprint Nov and 22222222... without retaining parent's Sprint Oct
+      expect(records[0].metadata.sprint).toBe('Sprint Nov');
+      expect(records[0].metadata.sprint_id).toBe('22222222-2222-2222-2222-222222222222');
+      expect(records[0].sprint_id).toBe('22222222-2222-2222-2222-222222222222');
+    });
+
+    it('retries upsert without sprint_id when PostgREST schema cache lacks sprint_id column', async () => {
+      const parentItem = {
+        id: 'p-1',
+        external_ref_id: 'STORY-1',
+        sprint_id: '11111111-1111-1111-1111-111111111111',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+      };
+
+      const selectMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      });
+
+      // First call fails with missing sprint_id column in schema cache; second call succeeds
+      const upsertMock = vi
+        .fn()
+        .mockReturnValueOnce({
+          select: vi.fn().mockResolvedValue({
+            data: null,
+            error: {
+              code: 'PGRST204',
+              message: "Could not find the 'sprint_id' column in the schema cache",
+            },
+          }),
+        })
+        .mockReturnValueOnce({
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'child-1', external_ref_id: 'STORY-1-SUB-1' }],
+            error: null,
+          }),
+        });
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: selectMock,
+        upsert: upsertMock,
+      } as any);
+
+      const result = await expandTemplate({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [{ title: 'Subtask' }],
+        parentItem,
+      });
+
+      expect(result).toHaveLength(1);
+      expect(upsertMock).toHaveBeenCalledTimes(2);
+      // The second upsert call omitted sprint_id
+      const secondCallPayload = upsertMock.mock.calls[1][0];
+      expect(secondCallPayload[0]).not.toHaveProperty('sprint_id');
     });
   });
 });

@@ -195,13 +195,20 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
 
       // 3. Supplement/merge from sprint analytics route (which queries DB sprints)
       try {
+        const sprintListParam = currentProjectId
+          ? `project_id=${encodeURIComponent(currentProjectId)}`
+          : `project_slug=${encodeURIComponent(projectSlug)}`;
         const sprintListRes = await fetch(
-          `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}`
+          `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&${sprintListParam}`
         );
         if (sprintListRes.ok) {
           const dbSprintData = await sprintListRes.json();
           const dbSprints: any[] = dbSprintData.sprints || [];
           for (const s of dbSprints) {
+            // Guard against cross-project sprint pollution
+            if (currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+              continue;
+            }
             const existing = mergedOptions.find(
               (opt) => opt.id === s.id || opt.name === s.name
             );
