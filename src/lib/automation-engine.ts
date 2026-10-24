@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
+import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
 import type {
   AutomationAction,
   AutomationRule,
@@ -114,9 +115,30 @@ export interface ExpandTemplateOptions {
 }
 
 /**
- * Resolves the default item_type compliant with project settings hierarchy.
+ * Checks if a child item type is permitted under a given parent item type
+ * based on project hierarchy definition.
  */
-function resolveDefaultChildType(parentItem: any, settings?: ProjectSettings): string {
+export function isAllowedChildType(
+  parentType: string | undefined,
+  childType: string,
+  settings?: ProjectSettings
+): boolean {
+  if (!settings?.hierarchy || settings.hierarchy.length === 0 || !parentType) {
+    return true;
+  }
+  const childLevel = settings.hierarchy.find((h) => h.type === childType);
+  if (!childLevel) return false;
+  if (Array.isArray(childLevel.allowed_parents)) {
+    return childLevel.allowed_parents.includes(parentType);
+  }
+  return true;
+}
+
+/**
+ * Resolves the default item_type compliant with project settings hierarchy.
+ * Returns null if the parent is a leaf type that cannot have children.
+ */
+export function resolveDefaultChildType(parentItem: any, settings?: ProjectSettings): string | null {
   if (!settings?.hierarchy || settings.hierarchy.length === 0) {
     return 'task';
   }
@@ -124,13 +146,22 @@ function resolveDefaultChildType(parentItem: any, settings?: ProjectSettings): s
   const hierarchy = settings.hierarchy;
   const parentType = parentItem?.item_type;
 
-  // 1. Look for a child type that explicitly allows parentItem.item_type as an allowed parent
   if (parentType) {
-    const directChild = hierarchy.find((h) => Array.isArray(h.allowed_parents) && h.allowed_parents.includes(parentType));
+    // 1. Look for a child type that explicitly allows parentItem.item_type as an allowed parent
+    const directChild = hierarchy.find(
+      (h) => Array.isArray(h.allowed_parents) && h.allowed_parents.includes(parentType)
+    );
     if (directChild) return directChild.type;
+
+    // 2. Check if parent is at deepest level (leaf)
+    const sorted = [...hierarchy].sort((a, b) => (b.level ?? 0) - (a.level ?? 0));
+    const deepestLevel = sorted[0]?.level ?? 0;
+    const parentLevelObj = hierarchy.find((h) => h.type === parentType);
+    if (parentLevelObj && parentLevelObj.level >= deepestLevel) {
+      return null;
+    }
   }
 
-  // 2. Otherwise default to the deepest level leaf
   const sorted = [...hierarchy].sort((a, b) => (b.level ?? 0) - (a.level ?? 0));
   return sorted[0]?.type || 'task';
 }
@@ -157,9 +188,19 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
   const defaultType = resolveDefaultChildType(parentItem, settings);
   const defaultStatus = resolveDefaultChildStatus(settings);
 
+  const projectSprints: any[] = settings?.sprint_settings?.sprints || [];
   const seenRefs = new Set<string>();
+  const records: any[] = [];
 
-  return template.map((tmplItem, index) => {
+  for (let index = 0; index < template.length; index++) {
+    const tmplItem = template[index];
+    const targetType = tmplItem.item_type || defaultType;
+
+    // Hierarchy validation: skip if target child type is disallowed under parent
+    if (!targetType || !isAllowedChildType(parentItem?.item_type, targetType, settings)) {
+      continue;
+    }
+
     let childRefId: string | null = null;
     if (tmplItem.external_ref_id) {
       const interpolatedSuffix = interpolate(tmplItem.external_ref_id, parentItem);
@@ -185,27 +226,131 @@ export function buildTemplateRecords(options: ExpandTemplateOptions): any[] {
       }
     }
 
-    return {
+    // Sprint assignment: if child template provides ANY sprint information, override completely.
+    // Otherwise, inherit from parent.
+    const tmplHasSprint =
+      tmplItem.sprint_id !== undefined ||
+      (tmplItem.metadata &&
+        (tmplItem.metadata.sprint !== undefined || tmplItem.metadata.sprint_id !== undefined));
+
+    let resolvedRelationalSprintId: string | null = null;
+
+    if (tmplHasSprint) {
+      // Child template explicitly overrides sprint assignment
+      const rawSprintName = tmplItem.metadata?.sprint;
+      const rawSprintId = tmplItem.sprint_id ?? tmplItem.metadata?.sprint_id;
+
+      if (rawSprintName) {
+        const matched = projectSprints.find((s) => s.name === rawSprintName || s.id === rawSprintName);
+        childMetadata.sprint = matched?.name || rawSprintName;
+        if (matched?.id && isUuid(matched.id)) {
+          childMetadata.sprint_id = matched.id;
+          resolvedRelationalSprintId = matched.id;
+        } else if (rawSprintId && isUuid(rawSprintId)) {
+          childMetadata.sprint_id = rawSprintId;
+          resolvedRelationalSprintId = rawSprintId;
+        } else if (rawSprintId) {
+          childMetadata.sprint_id = rawSprintId;
+          resolvedRelationalSprintId = null;
+        } else {
+          delete childMetadata.sprint_id;
+        }
+      } else if (rawSprintId) {
+        const matched = projectSprints.find((s) => s.id === rawSprintId || s.name === rawSprintId);
+        if (matched) {
+          childMetadata.sprint = matched.name || null;
+          if (matched.id && isUuid(matched.id)) {
+            childMetadata.sprint_id = matched.id;
+            resolvedRelationalSprintId = matched.id;
+          } else if (isUuid(rawSprintId)) {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = rawSprintId;
+          } else {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        } else {
+          delete childMetadata.sprint;
+          if (isUuid(rawSprintId)) {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = rawSprintId;
+          } else {
+            childMetadata.sprint_id = rawSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        }
+      } else {
+        // Explicit null / cleared sprint
+        delete childMetadata.sprint;
+        delete childMetadata.sprint_id;
+      }
+    } else {
+      // Inherit parent's sprint assignment
+      const rawParentSprint = parentItem.metadata?.sprint;
+      const rawParentSprintId = parentItem.sprint_id || parentItem.metadata?.sprint_id;
+
+      if (rawParentSprint) {
+        const matched = projectSprints.find((s) => s.name === rawParentSprint || s.id === rawParentSprint);
+        childMetadata.sprint = matched?.name || rawParentSprint;
+        if (matched?.id && isUuid(matched.id)) {
+          childMetadata.sprint_id = matched.id;
+          resolvedRelationalSprintId = matched.id;
+        } else if (rawParentSprintId && isUuid(rawParentSprintId)) {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = rawParentSprintId;
+        } else if (rawParentSprintId) {
+          // Legacy sprint identifier kept in metadata only
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = null;
+        }
+      } else if (rawParentSprintId) {
+        const matched = projectSprints.find((s) => s.id === rawParentSprintId || s.name === rawParentSprintId);
+        if (matched) {
+          childMetadata.sprint = matched.name;
+          if (matched.id && isUuid(matched.id)) {
+            childMetadata.sprint_id = matched.id;
+            resolvedRelationalSprintId = matched.id;
+          } else if (isUuid(rawParentSprintId)) {
+            childMetadata.sprint_id = rawParentSprintId;
+            resolvedRelationalSprintId = rawParentSprintId;
+          } else {
+            childMetadata.sprint_id = rawParentSprintId;
+            resolvedRelationalSprintId = null;
+          }
+        } else if (isUuid(rawParentSprintId)) {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = rawParentSprintId;
+        } else {
+          childMetadata.sprint_id = rawParentSprintId;
+          resolvedRelationalSprintId = null;
+        }
+      }
+    }
+
+    records.push({
       tenant_id: tenantId,
       project_id: projectId,
       parent_id: parentItem.id,
       external_ref_id: childRefId,
-      item_type: tmplItem.item_type || defaultType,
+      item_type: targetType,
       status: tmplItem.status || defaultStatus,
       title,
       description,
       assignee: tmplItem.assignee ?? null,
       order_index: tmplItem.order_index ?? baseOrder + (index + 1) * 100.0,
+      sprint_id: resolvedRelationalSprintId,
       metadata: childMetadata,
       deleted_at: null,
       updated_at: new Date().toISOString(),
-    };
-  });
+    });
+  }
+
+  return records;
 }
 
 /**
  * Expands and persists child template tasks into tracker.work_items,
- * maintaining full audit trail history.
+ * maintaining full audit trail history and preserving existing child edits.
  */
 export async function expandTemplate(options: ExpandTemplateOptions): Promise<WorkItem[]> {
   const records = buildTemplateRecords(options);
@@ -233,11 +378,39 @@ export async function expandTemplate(options: ExpandTemplateOptions): Promise<Wo
     }
   }
 
+  // Preserve user edits on existing children: only persist missing children or restore soft-deleted
+  const recordsToUpsert = records.filter((rec) => {
+    if (!rec.external_ref_id) return true;
+    const prior = priorChildMap.get(rec.external_ref_id);
+    if (!prior) return true; // Newly created child
+    if (prior.deleted_at !== null) return true; // Restoring soft-deleted child
+    return false; // Active existing child; do not overwrite user modifications
+  });
+
+  if (recordsToUpsert.length === 0) {
+    return Array.from(priorChildMap.values());
+  }
+
   // 2. Upsert child records
-  const { data, error } = await supabaseAdmin
+  let { data, error } = await supabaseAdmin
     .from('work_items')
-    .upsert(records, { onConflict: 'project_id, external_ref_id' })
+    .upsert(recordsToUpsert, { onConflict: 'project_id, external_ref_id' })
     .select();
+
+  if (error && isMissingSprintIdColumnError(error)) {
+    // Relational sprint_id column missing from PostgREST schema cache: retry without sprint_id column
+    const fallbackRecords = recordsToUpsert.map((rec) => {
+      const copy = { ...rec };
+      delete copy.sprint_id;
+      return copy;
+    });
+    const retry = await supabaseAdmin
+      .from('work_items')
+      .upsert(fallbackRecords, { onConflict: 'project_id, external_ref_id' })
+      .select();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     throw error;
@@ -245,7 +418,7 @@ export async function expandTemplate(options: ExpandTemplateOptions): Promise<Wo
 
   const upsertedItems = (data || []) as WorkItem[];
 
-  // 3. Record audit logs for child items
+  // 3. Record audit logs for modified/inserted child items
   const auditEntries: any[] = [];
   for (const item of upsertedItems) {
     if (!item.external_ref_id) continue;
@@ -342,7 +515,8 @@ export function sanitizeItemForWebhook(item: any): Record<string, any> {
 }
 
 /**
- * Dispatches an HTTP webhook with standard 5000ms timeout and optional HMAC signature.
+ * Dispatches an HTTP webhook with standard 5000ms timeout, redirect: 'manual' (preventing SSRF redirection),
+ * and optional HMAC signature.
  */
 export async function dispatchWebhook(
   action: DispatchWebhookAction,
@@ -376,6 +550,7 @@ export async function dispatchWebhook(
     method: 'POST',
     headers,
     body: rawPayload,
+    redirect: 'manual', // Prevent SSRF redirection to internal/private services
     signal: AbortSignal.timeout(5000),
   });
 }
@@ -403,31 +578,25 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
     return;
   }
 
-  // Map each item to its mutation event type
-  const itemEventMap = new Map<string, 'item_created' | 'item_updated' | 'item_restored'>();
-  if (Array.isArray(itemMutationSnapshots)) {
-    for (const snap of itemMutationSnapshots) {
-      if (!snap?.item) continue;
-      const key = snap.item.id || snap.item.external_ref_id;
-      if (!key) continue;
+  const pendingWebhooks: Promise<any>[] = [];
 
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const snap = itemMutationSnapshots?.[i];
+
+    let eventType: 'item_created' | 'item_updated' | 'item_restored' = 'item_created';
+    if (snap) {
       if (!snap.prior) {
-        itemEventMap.set(key, 'item_created');
+        eventType = 'item_created';
       } else if (snap.prior.deleted_at !== null) {
-        itemEventMap.set(key, 'item_restored');
+        eventType = 'item_restored';
       } else {
-        itemEventMap.set(key, 'item_updated');
+        eventType = 'item_updated';
       }
     }
-  }
 
-  for (const rule of settings.automations) {
-    if (rule.enabled === false) continue;
-
-    for (const item of items) {
-      const key = item.id || item.external_ref_id;
-      const eventType = (key && itemEventMap.get(key)) || 'item_created';
-
+    for (const rule of settings.automations) {
+      if (rule.enabled === false) continue;
       if (!matchesTrigger(rule.trigger, item, eventType)) continue;
 
       const actionsList: AutomationAction[] = Array.isArray(rule.actions)
@@ -495,12 +664,21 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
               timestamp: new Date().toISOString(),
             };
 
-            await dispatchWebhook(webhookAction, payload, webhookAction.secret);
+            pendingWebhooks.push(
+              dispatchWebhook(webhookAction, payload, webhookAction.secret).catch((actionErr) => {
+                console.error(`[tracker:automation] Webhook dispatch error in rule "${rule.name || rule.id}":`, actionErr);
+              })
+            );
           }
         } catch (actionErr) {
           console.error(`[tracker:automation] Error executing action in rule "${rule.name || rule.id}":`, actionErr);
         }
       }
     }
+  }
+
+  // Await concurrent webhook deliveries so batches do not accumulate sequential 5s timeouts
+  if (pendingWebhooks.length > 0) {
+    await Promise.allSettled(pendingWebhooks);
   }
 }
