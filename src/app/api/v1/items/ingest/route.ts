@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { IngestItemPayload } from '@/types/tracker';
 import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
+import { executeProjectAutomations } from '@/lib/automation-engine';
 
 
 export async function POST(req: NextRequest) {
@@ -200,7 +201,7 @@ export async function POST(req: NextRequest) {
     let currentOrder = lastItem?.order_index ? lastItem.order_index + 1000.0 : 1000.0;
 
     // 4. Batch Process Items
-    const insertedItems = [];
+    const insertedItems: any[] = [];
     const itemMutationSnapshots: Array<{ item: any; prior: any }> = [];
     // Track batch external_ref_ids mapped to their resolved internal UUIDs for same-batch parent-child chaining
     const batchRefMap = new Map<string, string>();
@@ -433,6 +434,36 @@ export async function POST(req: NextRequest) {
         }
       } catch (notifErr) {
         console.warn('[tracker:ingest] Notification dispatch error:', notifErr);
+      }
+    }
+
+    // Evaluate declarative post-ingestion automations asynchronously
+    const automations = project.settings?.automations;
+    const hasActiveAutomations =
+      Array.isArray(automations) && automations.some((r: any) => r && r.enabled !== false);
+
+    if (hasActiveAutomations && insertedItems.length > 0) {
+      const runAutomations = () =>
+        executeProjectAutomations({
+          tenantId: tenant.id,
+          projectId: project.id,
+          settings: project.settings,
+          items: insertedItems,
+          itemMutationSnapshots,
+          actorId: auth.context.userId || null,
+          actorName: auth.context.userName || (auth.context.userId ? 'User' : 'Ingest Pipeline'),
+        }).catch((autoErr) => {
+          console.error('[tracker:ingest:automations] Background execution error:', autoErr);
+        });
+
+      try {
+        if (typeof after === 'function') {
+          after(runAutomations);
+        } else {
+          queueMicrotask(runAutomations);
+        }
+      } catch {
+        queueMicrotask(runAutomations);
       }
     }
 

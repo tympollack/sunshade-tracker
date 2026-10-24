@@ -205,6 +205,75 @@ export function getWorkMetricConfig(settings?: ProjectSettings | null): WorkMetr
   return DEFAULT_WORK_METRIC_CONFIG;
 }
 
+export interface AutomationTrigger {
+  event?: 'item_created' | string;
+  type?: string;
+  item_type?: string;
+  status?: string;
+  metadata?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface ExpandChildrenTemplateAction {
+  type: 'expand_children_template';
+  template_id: string;
+  [key: string]: any;
+}
+
+export interface DispatchWebhookAction {
+  type: 'dispatch_webhook';
+  url: string;
+  include_parent_context?: boolean;
+  secret?: string;
+  [key: string]: any;
+}
+
+export interface LegacyTemplateAction {
+  type: 'apply_template' | 'template' | 'execute_template';
+  target?: string;
+  template_id?: string;
+  [key: string]: any;
+}
+
+export interface GenericAutomationAction {
+  type: string;
+  target?: string;
+  template_id?: string;
+  url?: string;
+  include_parent_context?: boolean;
+  [key: string]: any;
+}
+
+export type AutomationAction =
+  | ExpandChildrenTemplateAction
+  | DispatchWebhookAction
+  | LegacyTemplateAction
+  | GenericAutomationAction;
+
+export interface AutomationRule {
+  id?: string;
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  trigger: AutomationTrigger;
+  actions?: AutomationAction[];
+  action?: AutomationAction;
+  [key: string]: any;
+}
+
+export interface ProjectTemplateItem {
+  external_ref_id?: string;
+  title: string;
+  description?: string;
+  item_type?: string;
+  status?: string;
+  parent_ref_id?: string;
+  assignee?: string;
+  order_index?: number;
+  metadata?: Record<string, any>;
+  [key: string]: any;
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
@@ -218,6 +287,8 @@ export interface ProjectSettings {
   metric_rules?: MetricRules;
   github_repo?: string;
   repository_url?: string;
+  automations?: AutomationRule[];
+  templates?: Record<string, ProjectTemplateItem[]> | any;
   [key: string]: any;
 }
 
