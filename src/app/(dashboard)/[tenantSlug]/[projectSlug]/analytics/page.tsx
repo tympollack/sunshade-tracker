@@ -1,11 +1,12 @@
 'use client';
 
-import React, { use, useState, useEffect, useCallback } from 'react';
+import React, { use, useState, useEffect, useCallback, useMemo } from 'react';
 import { AnalyticsHeader, SprintOption } from '@/components/analytics/AnalyticsHeader';
 import { KpiMetricCards, KpiMetrics } from '@/components/analytics/KpiMetricCards';
 import { BurndownChart, BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnWaterfall, ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
 import { CumulativeFlowChart } from '@/components/analytics/CumulativeFlowChart';
+import { MonteCarloSimulator } from '@/components/analytics/MonteCarloSimulator';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 import { calculateRollingVelocity, calculateSayDoRatio, calculateSprintVolatility } from '@/lib/analytics/velocity-forecaster';
 import { runMonteCarloSimulation, MonteCarloSimulationResult } from '@/lib/analytics/monte-carlo';
@@ -31,8 +32,79 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   const [endDate, setEndDate] = useState(defaultEnd);
   const [sprints, setSprints] = useState<SprintOption[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('');
+  const [isCustomDateRange, setIsCustomDateRange] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Sync state from URL query parameters on initial client mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      const urlSprintId = url.searchParams.get('sprintId');
+      const isCustom = url.searchParams.get('custom') === 'true';
+      const urlStart = url.searchParams.get('startDate');
+      const urlEnd = url.searchParams.get('endDate');
+
+      if (urlSprintId) {
+        setSelectedSprintId(urlSprintId);
+      }
+      if (isCustom && (urlStart || urlEnd)) {
+        setIsCustomDateRange(true);
+        if (urlStart) setStartDate(urlStart);
+        if (urlEnd) setEndDate(urlEnd);
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
+  // Synchronize URL parameters shallowly
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      let modified = false;
+
+      if (selectedSprintId && url.searchParams.get('sprintId') !== selectedSprintId) {
+        url.searchParams.set('sprintId', selectedSprintId);
+        modified = true;
+      }
+      if (isCustomDateRange) {
+        if (url.searchParams.get('custom') !== 'true') {
+          url.searchParams.set('custom', 'true');
+          modified = true;
+        }
+        if (startDate && url.searchParams.get('startDate') !== startDate) {
+          url.searchParams.set('startDate', startDate);
+          modified = true;
+        }
+        if (endDate && url.searchParams.get('endDate') !== endDate) {
+          url.searchParams.set('endDate', endDate);
+          modified = true;
+        }
+      } else {
+        if (url.searchParams.has('custom')) {
+          url.searchParams.delete('custom');
+          modified = true;
+        }
+        if (url.searchParams.has('startDate')) {
+          url.searchParams.delete('startDate');
+          modified = true;
+        }
+        if (url.searchParams.has('endDate')) {
+          url.searchParams.delete('endDate');
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        window.history.replaceState(null, '', url.toString());
+      }
+    } catch {
+      // Ignore
+    }
+  }, [selectedSprintId, isCustomDateRange, startDate, endDate]);
 
   // Telemetry Data States
   const [kpiMetrics, setKpiMetrics] = useState<KpiMetrics>({
@@ -41,6 +113,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     scopeVolatility: 0,
     remainingPoints: 0,
   });
+  const [simulationVelocities, setSimulationVelocities] = useState<number[]>([]);
   const [burndownData, setBurndownData] = useState<BurndownDataPoint[]>([]);
   const [churnData, setChurnData] = useState<ScopeChurnData>({
     baselineCommitted: 0,
@@ -50,6 +123,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   });
   const [cfdData, setCfdData] = useState<CfdDataPoint[]>([]);
   const [monteCarlo, setMonteCarlo] = useState<MonteCarloSimulationResult | null>(null);
+  // Anchor remaining-work forecast to current date so projections do not land in the past
+  const forecastStartDate = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   // Load project sprints & initial data (merging DB sprints and project settings)
   const loadSprintList = useCallback(async () => {
@@ -75,6 +150,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
               name: s.name,
               is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
               status: s.status,
+              start_date: s.start_date || s.startDate || null,
+              end_date: s.end_date || s.endDate || null,
             });
           }
         }
@@ -89,16 +166,26 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         if (sprintsRes.ok) {
           const sData = await sprintsRes.json();
           for (const s of sData.sprints || []) {
-            const exists = mergedOptions.some(
+            const existing = mergedOptions.find(
               (opt) => opt.id === s.id || opt.name === s.name
             );
-            if (!exists) {
+            if (!existing) {
               mergedOptions.push({
                 id: s.id || s.name,
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
+                start_date: s.started_at || s.start_date || s.startDate || null,
+                end_date: s.ends_at || s.end_date || s.endDate || null,
               });
+            } else {
+              // Fill canonical dates from relational record if settings omitted them
+              if (!existing.start_date) {
+                existing.start_date = s.started_at || s.start_date || s.startDate || null;
+              }
+              if (!existing.end_date) {
+                existing.end_date = s.ends_at || s.end_date || s.endDate || null;
+              }
             }
           }
         }
@@ -108,23 +195,39 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
 
       // 3. Supplement/merge from sprint analytics route (which queries DB sprints)
       try {
+        const sprintListParam = currentProjectId
+          ? `project_id=${encodeURIComponent(currentProjectId)}`
+          : `project_slug=${encodeURIComponent(projectSlug)}`;
         const sprintListRes = await fetch(
-          `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}`
+          `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&${sprintListParam}`
         );
         if (sprintListRes.ok) {
           const dbSprintData = await sprintListRes.json();
           const dbSprints: any[] = dbSprintData.sprints || [];
           for (const s of dbSprints) {
-            const exists = mergedOptions.some(
+            // Guard against cross-project sprint pollution
+            if (currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+              continue;
+            }
+            const existing = mergedOptions.find(
               (opt) => opt.id === s.id || opt.name === s.name
             );
-            if (!exists) {
+            if (!existing) {
               mergedOptions.push({
                 id: s.id || s.name,
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
+                start_date: s.started_at || s.start_date || s.startDate || null,
+                end_date: s.ends_at || s.end_date || s.endDate || null,
               });
+            } else {
+              if (!existing.start_date) {
+                existing.start_date = s.started_at || s.start_date || s.startDate || null;
+              }
+              if (!existing.end_date) {
+                existing.end_date = s.ends_at || s.end_date || s.endDate || null;
+              }
             }
           }
         }
@@ -135,11 +238,23 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       setSprints(mergedOptions);
       if (mergedOptions.length > 0) {
         setSelectedSprintId((prev) => {
-          if (prev && mergedOptions.some((s) => s.id === prev || s.name === prev)) {
-            return prev;
+          let chosenId = prev;
+          if (!prev || !mergedOptions.some((s) => s.id === prev || s.name === prev)) {
+            const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
+            chosenId = active.id;
           }
-          const active = mergedOptions.find((s) => s.is_active) || mergedOptions[0];
-          return active.id;
+          const chosenSprint = mergedOptions.find((s) => s.id === chosenId || s.name === chosenId);
+          if (chosenSprint?.start_date && chosenSprint?.end_date) {
+            setStartDate((currStart) => {
+              if (!isCustomDateRange) return chosenSprint.start_date!.split('T')[0];
+              return currStart;
+            });
+            setEndDate((currEnd) => {
+              if (!isCustomDateRange) return chosenSprint.end_date!.split('T')[0];
+              return currEnd;
+            });
+          }
+          return chosenId;
         });
       }
     } catch (err) {
@@ -147,14 +262,52 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     }
   }, [tenantSlug, projectSlug]);
 
+  // Synchronized Sprint & Date Range Handlers
+  const handleSelectSprint = useCallback(
+    (id: string) => {
+      setSelectedSprintId(id);
+      const targetSprint = sprints.find((s) => s.id === id || s.name === id);
+      if (targetSprint?.start_date && targetSprint?.end_date) {
+        setStartDate(targetSprint.start_date.split('T')[0]);
+        setEndDate(targetSprint.end_date.split('T')[0]);
+        setIsCustomDateRange(false);
+      }
+    },
+    [sprints]
+  );
+
+  const handleChangeStartDate = useCallback((date: string) => {
+    setStartDate(date);
+    setIsCustomDateRange(true);
+  }, []);
+
+  const handleChangeEndDate = useCallback((date: string) => {
+    setEndDate(date);
+    setIsCustomDateRange(true);
+  }, []);
+
+  const handleResetToSprintDates = useCallback(() => {
+    const targetSprint = sprints.find((s) => s.id === selectedSprintId || s.name === selectedSprintId);
+    if (targetSprint?.start_date && targetSprint?.end_date) {
+      setStartDate(targetSprint.start_date.split('T')[0]);
+      setEndDate(targetSprint.end_date.split('T')[0]);
+    } else {
+      const now = new Date();
+      setStartDate(new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      setEndDate(now.toISOString().split('T')[0]);
+    }
+    setIsCustomDateRange(false);
+  }, [sprints, selectedSprintId]);
+
   // Fetch telemetry endpoints
   const fetchTelemetry = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      // 1. Fetch Sprint Health & Metrics
+      // 1. Fetch Sprint Health & Metrics (propagating custom date bounds)
       let sprintQuery = selectedSprintId ? `&sprint_id=${encodeURIComponent(selectedSprintId)}` : '';
+      const dateParams = `&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
       const sprintRes = await fetch(
-        `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}${sprintQuery}`
+        `/api/v1/sprints/analytics?tenant_slug=${tenantSlug}&project_slug=${projectSlug}${sprintQuery}${dateParams}`
       );
 
       let committedPts = 0;
@@ -233,12 +386,16 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         const snapRes = await fetch(
           `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
             selectedSprintId
-          )}&tenant_slug=${encodeURIComponent(tenantSlug)}`
+          )}&tenant_slug=${encodeURIComponent(tenantSlug)}${dateParams}`
         );
         if (snapRes.ok) {
           const snapJson = await snapRes.json();
           if (Array.isArray(snapJson.burndownData)) {
-            setBurndownData(snapJson.burndownData);
+            const filteredBurndown = snapJson.burndownData.filter((b: any) => {
+              if (!b.date) return true;
+              return b.date >= startDate && b.date <= endDate;
+            });
+            setBurndownData(filteredBurndown);
           } else {
             setBurndownData([]);
           }
@@ -261,21 +418,23 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       }
 
       // 4. Run Monte Carlo simulation for milestone projection (zero fake data fallback)
-      const simulationVelocities =
+      const simVelocities =
         historicalVelocities.length > 0
           ? historicalVelocities
           : rollingVelocity > 0
           ? [rollingVelocity]
           : [];
+      setSimulationVelocities(simVelocities);
 
-      const hasPositiveVelocity = simulationVelocities.some((v) => v > 0);
+      const hasPositiveVelocity = simVelocities.some((v) => v > 0);
 
       if (remainingPts > 0 && hasPositiveVelocity) {
         const simulation = runMonteCarloSimulation({
           remainingStoryPoints: remainingPts,
-          historicalVelocities: simulationVelocities,
+          historicalVelocities: simVelocities,
           iterations: 1000,
           sprintLengthDays: 14,
+          startDate: forecastStartDate,
         });
         setMonteCarlo(simulation);
       } else {
@@ -305,13 +464,15 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         projectSlug={projectSlug}
         sprints={sprints}
         selectedSprintId={selectedSprintId}
-        onSelectSprint={(id) => setSelectedSprintId(id)}
+        onSelectSprint={handleSelectSprint}
         startDate={startDate}
         endDate={endDate}
-        onChangeStartDate={(d) => setStartDate(d)}
-        onChangeEndDate={(d) => setEndDate(d)}
+        onChangeStartDate={handleChangeStartDate}
+        onChangeEndDate={handleChangeEndDate}
         onRefresh={fetchTelemetry}
         isRefreshing={isRefreshing}
+        isCustomDateRange={isCustomDateRange}
+        onResetToSprintDates={handleResetToSprintDates}
       />
 
       {/* Main Content Dashboard */}
@@ -319,6 +480,12 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         {/* KPI Metric Cards */}
         <section aria-label="Sprint Key Performance Indicators">
           <KpiMetricCards metrics={kpiMetrics} isLoading={isLoading} />
+          {isCustomDateRange && (
+            <div className="mt-2 text-[11px] text-amber-400/80 flex items-center gap-1.5 px-1 font-mono">
+              <span className="font-semibold uppercase tracking-wider">Note:</span>
+              Sprint KPI metrics reflect the entire selected sprint; charts reflect the custom date window.
+            </div>
+          )}
         </section>
 
         {/* Analytics Visualizations Grid */}
@@ -340,65 +507,17 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         </section>
 
         {/* Monte Carlo Release Forecasting */}
-        {monteCarlo && (
-          <section className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-100">
-                    Monte Carlo Milestone Simulator
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Probabilistic completion forecasting over {monteCarlo.iterations.toLocaleString()} trials ({monteCarlo.executionTimeMs}ms)
-                    {!monteCarlo.deliveredWithinHorizon && monteCarlo.censoredTrials > 0 && (
-                      <span className="text-amber-400 ml-2">({monteCarlo.censoredTrials} trials exceeded 500 sprints)</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="text-xs text-slate-400 font-mono">
-                Target: {monteCarlo.remainingStoryPoints} remaining pts
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
-                <div className="text-xl font-bold text-emerald-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p50 !== null ? `${monteCarlo.percentiles.p50} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p50 ? monteCarlo.projectedDates.p50.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
-                <div className="text-xl font-bold text-cyan-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p85 !== null ? `${monteCarlo.percentiles.p85} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p85 ? monteCarlo.projectedDates.p85.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-
-              <div className="bg-slate-800/50 border border-slate-700/60 rounded-lg p-3">
-                <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
-                <div className="text-xl font-bold text-amber-400 font-mono mt-1">
-                  {monteCarlo.percentiles.p95 !== null ? `${monteCarlo.percentiles.p95} sprints` : '> 500 sprints'}
-                </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  {monteCarlo.projectedDates.p95 ? monteCarlo.projectedDates.p95.split('T')[0] : 'Exceeds horizon'}
-                </div>
-              </div>
-            </div>
-          </section>
+        {(monteCarlo || isLoading) && (
+          <MonteCarloSimulator
+            simulation={monteCarlo}
+            isLoading={isLoading}
+            projectId={projectSlug}
+            sprintId={selectedSprintId}
+            remainingStoryPoints={kpiMetrics.remainingPoints}
+            historicalVelocities={simulationVelocities}
+            startDate={forecastStartDate}
+            sprintLengthDays={14}
+          />
         )}
       </main>
     </div>

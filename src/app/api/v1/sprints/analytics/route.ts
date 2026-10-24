@@ -46,36 +46,24 @@ export async function GET(req: NextRequest) {
       searchParams.get('project');
 
     if (!sprintId) {
-      const sprintOptions: Array<{ id: string; name: string; is_active: boolean; status?: string }> = [];
+      const sprintOptions: Array<{
+        id: string;
+        name: string;
+        is_active: boolean;
+        status?: string;
+        started_at?: string | null;
+        ends_at?: string | null;
+        start_date?: string | null;
+        end_date?: string | null;
+        project_id?: string | null;
+      }> = [];
 
-      try {
-        let sprintQuery: any = supabaseAdmin
-          .from('sprints')
-          .select('id, name, status, is_active, started_at, ends_at, committed_points, project_id')
-          .eq('tenant_id', tenant.id);
-
-        if (projectIdOrSlug) {
-          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectIdOrSlug);
-          if (isUuid && typeof sprintQuery.eq === 'function') {
-            sprintQuery = sprintQuery.eq('project_id', projectIdOrSlug);
-          }
-        }
-
-        const { data: dbSprints } = await sprintQuery;
-        if (dbSprints && Array.isArray(dbSprints)) {
-          for (const s of dbSprints) {
-            sprintOptions.push({
-              id: s.id || s.name,
-              name: s.name,
-              is_active: Boolean(s.is_active || s.status === 'active' || s.status === 'in_progress'),
-              status: s.status,
-            });
-          }
-        }
-      } catch {
-        // Table query fallback
+      let targetProjectId: string | null = null;
+      if (projectIdOrSlug && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectIdOrSlug)) {
+        targetProjectId = projectIdOrSlug;
       }
 
+      let projData: any[] = [];
       try {
         let projQuery = supabaseAdmin
           .from('projects')
@@ -92,7 +80,55 @@ export async function GET(req: NextRequest) {
           }
         }
 
-        const { data: projData } = await projQuery;
+        const pRes = await projQuery;
+        projData = pRes.data || [];
+        if (projData.length > 0 && !targetProjectId) {
+          targetProjectId = projData[0].id || null;
+        }
+      } catch {
+        // Project settings fallback
+      }
+
+      try {
+
+        let sprintQuery: any = supabaseAdmin
+          .from('sprints')
+          .select('id, name, status, is_active, started_at, ends_at, committed_points, project_id')
+          .eq('tenant_id', tenant.id);
+
+        if (targetProjectId && typeof sprintQuery.eq === 'function') {
+          try {
+            const filtered = sprintQuery.eq('project_id', targetProjectId);
+            if (filtered && typeof filtered.then === 'function') {
+              sprintQuery = filtered;
+            }
+          } catch {
+            // Keep base query if chaining not supported on mock
+          }
+        }
+
+        const { data: dbSprints } = await sprintQuery;
+        if (dbSprints && Array.isArray(dbSprints)) {
+          for (const s of dbSprints) {
+            if (targetProjectId && s.project_id && s.project_id !== targetProjectId) {
+              continue;
+            }
+            sprintOptions.push({
+              id: s.id || s.name,
+              name: s.name,
+              is_active: Boolean(s.is_active || s.status === 'active' || s.status === 'in_progress'),
+              status: s.status,
+              started_at: s.started_at || null,
+              ends_at: s.ends_at || null,
+              project_id: s.project_id || null,
+            });
+          }
+        }
+      } catch {
+        // Table query fallback
+      }
+
+      try {
         for (const p of projData || []) {
           const settingsSprints = p.settings?.sprint_settings?.sprints || [];
           for (const s of settingsSprints) {
@@ -102,6 +138,9 @@ export async function GET(req: NextRequest) {
                 name: s.name,
                 is_active: Boolean(s.is_active || s.status === 'active' || s.is_current),
                 status: s.status,
+                start_date: s.start_date || s.startDate || null,
+                end_date: s.end_date || s.endDate || null,
+                project_id: p.id,
               });
             }
           }

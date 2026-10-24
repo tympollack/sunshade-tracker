@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Award, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 import {
   calculateSayDoPercentage,
   formatSayDoPercentage,
@@ -51,9 +52,14 @@ export function CommitmentCard({
     <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
       <div className="flex items-center justify-between text-slate-400 mb-2">
         <span className="text-xs font-medium uppercase tracking-wider">Commitment (Say/Do)</span>
-        <div className="p-2 rounded-lg bg-purple-950/40 text-purple-400 border border-purple-800/40">
-          <Award className="w-4 h-4" />
-        </div>
+        <Tooltip
+          content="Ratio of delivered points relative to Day 1 committed scope (Delivered / Committed * 100)"
+          data-testid="tooltip-say-do-icon"
+        >
+          <div className="p-2 rounded-lg bg-purple-950/40 text-purple-400 border border-purple-800/40 cursor-help">
+            <Award className="w-4 h-4" />
+          </div>
+        </Tooltip>
       </div>
       <div className="flex items-baseline gap-2">
         <span
@@ -64,13 +70,22 @@ export function CommitmentCard({
         </span>
       </div>
       <div className="mt-3">
-        <span
-          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${badge.colorClasses}`}
-          data-testid="commitment-badge"
+        <Tooltip
+          content={
+            badge.label === 'Scope Volatile'
+              ? `Triggers when net injected scope exceeds configured runway tolerance (current: >${volatilityThreshold}%)`
+              : 'Sprint commitment reliability classification'
+          }
+          data-testid="tooltip-commitment-badge"
         >
-          <BadgeIcon className="w-3 h-3" />
-          <span>{badge.label}</span>
-        </span>
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border cursor-help ${badge.colorClasses}`}
+            data-testid="commitment-badge"
+          >
+            <BadgeIcon className="w-3 h-3" />
+            <span>{badge.label}</span>
+          </span>
+        </Tooltip>
       </div>
     </div>
   );

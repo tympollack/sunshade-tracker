@@ -205,10 +205,10 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           )}
         </div>
 
-        {/* Git Metadata Cluster */}
+        {/* Git Metadata Cluster (Desktop / Tablet Tier 1: hidden on narrow mobile to preserve title room) */}
         {(prUrl || commitHash) && (
           <div
-            className="shrink-0 flex items-center gap-1.5 whitespace-nowrap"
+            className="shrink-0 flex max-sm:hidden items-center gap-1.5 whitespace-nowrap"
             data-testid="git-metadata-cluster"
           >
             {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}

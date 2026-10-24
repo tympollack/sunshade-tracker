@@ -36,7 +36,7 @@ describe('BUG-TRK-LHN-SPRINT-HEADER-TRUNCATION: Prevent Premature Sprint Title E
     expect(row).toHaveClass('w-full');
   });
 
-  it('allocates min-w-[125px] flex-shrink-0 font-medium text-xs to sprint title span', () => {
+  it('allocates flexible min-w-0 flex-1 font-medium text-xs to sprint title span to avoid clipping controls at narrow widths', () => {
     const node: PivotTreeNode = {
       id: 'sprint:sprint-2026-q4',
       title: 'Sprint 2026-Q4',
@@ -63,8 +63,8 @@ describe('BUG-TRK-LHN-SPRINT-HEADER-TRUNCATION: Prevent Premature Sprint Title E
     const titleSpan = screen.getByText('Sprint 2026-Q4');
     expect(titleSpan).toBeInTheDocument();
     expect(titleSpan).toHaveClass('truncate');
-    expect(titleSpan).toHaveClass('min-w-[125px]');
-    expect(titleSpan).toHaveClass('flex-shrink-0');
+    expect(titleSpan).toHaveClass('min-w-0');
+    expect(titleSpan).toHaveClass('flex-1');
     expect(titleSpan).toHaveClass('font-medium');
     expect(titleSpan).toHaveClass('text-xs');
     expect(titleSpan).toHaveAttribute('title', 'Sprint 2026-Q4');
