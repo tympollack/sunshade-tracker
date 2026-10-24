@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { POST as ingestHandler } from '@/app/api/v1/items/ingest/route';
 import { supabaseAdmin } from '@/lib/db';
 import { dispatchItemNotifications } from '@/lib/notifications';
+import * as automationEngine from '@/lib/automation-engine';
 
 vi.mock('@/lib/db', () => {
   return {
@@ -484,5 +485,123 @@ describe('Headless Ingest API Endpoint (POST /api/v1/items/ingest)', () => {
     expect(json.success).toBe(true);
     expect(upsertedPayload.metadata.sprint).toBeUndefined();
     expect(upsertedPayload.metadata.priority).toBe('High');
+  });
+
+  it('triggers project automations asynchronously post-upsert under 150ms without blocking response', async () => {
+    // Delay automation execution intentionally to verify non-blocking behavior
+    const executeSpy = vi
+      .spyOn(automationEngine, 'executeProjectAutomations')
+      .mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      });
+
+    const mockTenant = { id: '00000000-0000-0000-0000-000000000000', slug: 'sunshade' };
+    const mockProject = {
+      id: 'proj-auto-1',
+      tenant_id: mockTenant.id,
+      slug: 'auto-proj',
+      settings: {
+        schema_version: '1.0',
+        hierarchy: [{ type: 'task', label: 'Task', level: 1, allowed_parents: [] }],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 }],
+        automations: [
+          {
+            id: 'rule-auto-1',
+            enabled: true,
+            trigger: { event: 'item_created', item_type: 'task' },
+            actions: [{ type: 'dispatch_webhook', url: 'https://example.com/webhook' }],
+          },
+        ],
+      },
+    };
+
+    const fromMock = vi.mocked(supabaseAdmin.from);
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+              })),
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+          upsert: vi.fn((payload: any) => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: { id: 'created-auto-item', ...payload }, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'auto-proj',
+        items: [
+          {
+            external_ref_id: 'TASK-AUTO-TEST',
+            title: 'Automated Ingest Task',
+            item_type: 'task',
+          },
+        ],
+      }),
+    });
+
+    const startTime = Date.now();
+    const res = await ingestHandler(req);
+    const duration = Date.now() - startTime;
+
+    expect(res.status).toBe(200);
+    // Verified non-blocking: completes well under the 300ms simulated automation duration and under 150ms target
+    expect(duration).toBeLessThan(150);
+
+    const json = await res.json();
+    expect(json.success).toBe(true);
+
+    // Allow microtasks to fire
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(executeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: mockTenant.id,
+        projectId: mockProject.id,
+        settings: mockProject.settings,
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            external_ref_id: 'TASK-AUTO-TEST',
+          }),
+        ]),
+      })
+    );
   });
 });
