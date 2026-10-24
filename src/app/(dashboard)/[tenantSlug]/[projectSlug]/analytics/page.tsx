@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use, useState, useEffect, useCallback } from 'react';
+import React, { use, useState, useEffect, useCallback, useMemo } from 'react';
 import { AnalyticsHeader, SprintOption } from '@/components/analytics/AnalyticsHeader';
 import { KpiMetricCards, KpiMetrics } from '@/components/analytics/KpiMetricCards';
 import { BurndownChart, BurndownDataPoint } from '@/components/analytics/BurndownChart';
@@ -123,6 +123,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   });
   const [cfdData, setCfdData] = useState<CfdDataPoint[]>([]);
   const [monteCarlo, setMonteCarlo] = useState<MonteCarloSimulationResult | null>(null);
+  // Anchor remaining-work forecast to current date so projections do not land in the past
+  const forecastStartDate = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   // Load project sprints & initial data (merging DB sprints and project settings)
   const loadSprintList = useCallback(async () => {
@@ -164,10 +166,10 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         if (sprintsRes.ok) {
           const sData = await sprintsRes.json();
           for (const s of sData.sprints || []) {
-            const exists = mergedOptions.some(
+            const existing = mergedOptions.find(
               (opt) => opt.id === s.id || opt.name === s.name
             );
-            if (!exists) {
+            if (!existing) {
               mergedOptions.push({
                 id: s.id || s.name,
                 name: s.name,
@@ -176,6 +178,14 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 start_date: s.started_at || s.start_date || s.startDate || null,
                 end_date: s.ends_at || s.end_date || s.endDate || null,
               });
+            } else {
+              // Fill canonical dates from relational record if settings omitted them
+              if (!existing.start_date) {
+                existing.start_date = s.started_at || s.start_date || s.startDate || null;
+              }
+              if (!existing.end_date) {
+                existing.end_date = s.ends_at || s.end_date || s.endDate || null;
+              }
             }
           }
         }
@@ -192,10 +202,10 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           const dbSprintData = await sprintListRes.json();
           const dbSprints: any[] = dbSprintData.sprints || [];
           for (const s of dbSprints) {
-            const exists = mergedOptions.some(
+            const existing = mergedOptions.find(
               (opt) => opt.id === s.id || opt.name === s.name
             );
-            if (!exists) {
+            if (!existing) {
               mergedOptions.push({
                 id: s.id || s.name,
                 name: s.name,
@@ -204,6 +214,13 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
                 start_date: s.started_at || s.start_date || s.startDate || null,
                 end_date: s.ends_at || s.end_date || s.endDate || null,
               });
+            } else {
+              if (!existing.start_date) {
+                existing.start_date = s.started_at || s.start_date || s.startDate || null;
+              }
+              if (!existing.end_date) {
+                existing.end_date = s.ends_at || s.end_date || s.endDate || null;
+              }
             }
           }
         }
@@ -410,7 +427,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           historicalVelocities: simVelocities,
           iterations: 1000,
           sprintLengthDays: 14,
-          startDate,
+          startDate: forecastStartDate,
         });
         setMonteCarlo(simulation);
       } else {
@@ -491,7 +508,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
             sprintId={selectedSprintId}
             remainingStoryPoints={kpiMetrics.remainingPoints}
             historicalVelocities={simulationVelocities}
-            startDate={startDate}
+            startDate={forecastStartDate}
             sprintLengthDays={14}
           />
         )}

@@ -6,6 +6,8 @@ import {
   expandTemplate,
   dispatchWebhook,
   executeProjectAutomations,
+  isAllowedChildType,
+  resolveDefaultChildType,
 } from '@/lib/automation-engine';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
@@ -15,6 +17,11 @@ vi.mock('@/lib/db', () => ({
   supabaseAdmin: {
     from: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/audit-log', () => ({
+  recordBulkAuditLogs: vi.fn().mockResolvedValue(undefined),
+  computeChangedFields: vi.fn().mockReturnValue({}),
 }));
 
 describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)', () => {
@@ -119,6 +126,7 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       id: 'parent-uuid-999',
       tenant_id: 'tenant-123',
       project_id: 'proj-456',
+      sprint_id: 'sprint-q4',
       external_ref_id: 'STORY-ONBOARD',
       item_type: 'story',
       status: 'not_started',
@@ -126,6 +134,7 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       order_index: 2000,
       metadata: {
         company_domain: 'acme.io',
+        sprint: 'Sprint 2026-Q4',
       },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -147,7 +156,7 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       },
     ];
 
-    it('builds template records correctly linked to parent_id with hydrated variables', () => {
+    it('builds template records correctly linked to parent_id with hydrated variables and inherited sprint', () => {
       const records = buildTemplateRecords({
         tenantId: parentItem.tenant_id,
         projectId: parentItem.project_id,
@@ -157,23 +166,42 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
 
       expect(records).toHaveLength(2);
 
-      // Child 1: custom ref suffix
+      // Child 1: custom ref suffix & inherited sprint
       expect(records[0].parent_id).toBe('parent-uuid-999');
       expect(records[0].external_ref_id).toBe('STORY-ONBOARD-TASK-DNS');
       expect(records[0].title).toBe('Provision domain acme.io');
       expect(records[0].metadata.target_domain).toBe('acme.io');
+      expect(records[0].metadata.sprint).toBe('Sprint 2026-Q4');
+      expect(records[0].sprint_id).toBe('sprint-q4');
 
-      // Child 2: default sequential subtask suffix
+      // Child 2: default sequential subtask suffix & inherited sprint
       expect(records[1].parent_id).toBe('parent-uuid-999');
       expect(records[1].external_ref_id).toBe('STORY-ONBOARD-SUB-2');
       expect(records[1].title).toBe('Deploy sandbox for acme.io');
+      expect(records[1].metadata.sprint).toBe('Sprint 2026-Q4');
+      expect(records[1].sprint_id).toBe('sprint-q4');
     });
 
-    it('persists child tasks into tracker.work_items via supabaseAdmin upsert', async () => {
+    it('persists only missing child tasks and preserves user edits on existing children', async () => {
+      // Mock existing child in DB that has been edited by a user
+      const existingEditedChild = {
+        id: 'child-1',
+        parent_id: parentItem.id,
+        external_ref_id: 'STORY-ONBOARD-TASK-DNS',
+        status: 'in_progress', // user edited from 'not_started' to 'in_progress'
+        assignee: 'Alice',     // user assigned to Alice
+        deleted_at: null,
+      };
+
+      const selectMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: [existingEditedChild], error: null }),
+        }),
+      });
+
       const upsertMock = vi.fn().mockReturnValue({
         select: vi.fn().mockResolvedValue({
           data: [
-            { id: 'child-1', parent_id: parentItem.id, external_ref_id: 'STORY-ONBOARD-TASK-DNS' },
             { id: 'child-2', parent_id: parentItem.id, external_ref_id: 'STORY-ONBOARD-SUB-2' },
           ],
           error: null,
@@ -181,33 +209,32 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       });
 
       vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: selectMock,
         upsert: upsertMock,
       } as any);
 
-      const inserted = await expandTemplate({
+      const result = await expandTemplate({
         tenantId: parentItem.tenant_id,
         projectId: parentItem.project_id,
         template,
         parentItem,
       });
 
+      // Crucial: Only child 2 is upserted; existing edited child 1 is NOT overwritten!
       expect(upsertMock).toHaveBeenCalledWith(
-        expect.arrayContaining([
+        [
           expect.objectContaining({
-            parent_id: 'parent-uuid-999',
-            project_id: 'proj-456',
-            external_ref_id: 'STORY-ONBOARD-TASK-DNS',
+            external_ref_id: 'STORY-ONBOARD-SUB-2',
           }),
-        ]),
+        ],
         { onConflict: 'project_id, external_ref_id' }
       );
-      expect(inserted).toHaveLength(2);
-      expect(inserted[0].parent_id).toBe('parent-uuid-999');
+      expect(result).toHaveLength(1);
     });
   });
 
   describe('dispatchWebhook', () => {
-    it('dispatches webhook with HMAC signature header and structured payload', async () => {
+    it('dispatches webhook with HMAC signature header, structured payload, and redirect: manual', async () => {
       let capturedUrl = '';
       let capturedOptions: any = null;
 
@@ -236,6 +263,7 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       expect(res.status).toBe(200);
       expect(capturedUrl).toBe('https://webhook.site/test-endpoint');
       expect(capturedOptions.method).toBe('POST');
+      expect(capturedOptions.redirect).toBe('manual');
       expect(capturedOptions.headers['Content-Type']).toBe('application/json');
 
       const sigHeader = capturedOptions.headers['X-Tracker-Signature'];
@@ -254,6 +282,12 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       vi.stubGlobal('fetch', mockFetch);
 
+      const selectMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      });
+
       const upsertMock = vi.fn().mockReturnValue({
         select: vi.fn().mockResolvedValue({
           data: [{ id: 'child-101', title: 'Scaffold domain demo.org' }],
@@ -262,6 +296,7 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       });
 
       vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: selectMock,
         upsert: upsertMock,
       } as any);
 
@@ -335,11 +370,19 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       vi.unstubAllGlobals();
     });
 
-    it('does not fire item_created trigger on item_updated mutations', async () => {
-      const upsertMock = vi.fn().mockReturnValue({
-        select: vi.fn().mockResolvedValue({ data: [], error: null }),
+    it('evaluates batch duplicate items preserving individual snapshot creation vs update events', async () => {
+      const selectMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
       });
+
+      const upsertMock = vi.fn().mockReturnValue({
+        select: vi.fn().mockResolvedValue({ data: [{ id: 'child-1' }], error: null }),
+      });
+
       vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: selectMock,
         upsert: upsertMock,
       } as any);
 
@@ -361,30 +404,39 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
         },
       };
 
-      const existingItem: WorkItem = {
+      // Batch contains FEAT-1 twice: first row is a create (prior: null), second is an update (prior: existing)
+      const itemCreate: WorkItem = {
         id: 'item-1',
         tenant_id: 't-1',
         project_id: 'p-1',
         external_ref_id: 'FEAT-1',
         item_type: 'feature',
         status: 'not_started',
-        title: 'Updated Feature',
+        title: 'Initial Feature',
         order_index: 100,
         metadata: {},
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
+      const itemUpdate: WorkItem = {
+        ...itemCreate,
+        title: 'Updated Feature In Same Batch',
+      };
+
       await executeProjectAutomations({
         tenantId: 't-1',
         projectId: 'p-1',
         settings,
-        items: [existingItem],
-        itemMutationSnapshots: [{ item: existingItem, prior: { id: 'item-1', deleted_at: null } }],
+        items: [itemCreate, itemUpdate],
+        itemMutationSnapshots: [
+          { item: itemCreate, prior: null }, // Created!
+          { item: itemUpdate, prior: { id: 'item-1', deleted_at: null } }, // Updated!
+        ],
       });
 
-      // Since prior existed without deleted_at, it is an update, so item_created trigger does NOT fire
-      expect(upsertMock).not.toHaveBeenCalled();
+      // The creation rule fires exactly once (for the creation snapshot), not suppressed by the subsequent update!
+      expect(upsertMock).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -417,8 +469,39 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
         settings,
       });
 
+      expect(records).toHaveLength(1);
       expect(records[0].item_type).toBe('deliverable');
       expect(records[0].status).toBe('drafting');
+    });
+
+    it('rejects/skips template items with disallowed parent-child hierarchy combinations', () => {
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [
+          { type: 'story', label: 'Story', level: 1, allowed_parents: [] },
+          { type: 'task', label: 'Task', level: 2, allowed_parents: ['story'] },
+        ],
+        statuses: [{ id: 'not_started', label: 'Not Started', color: '#888', order: 1 }],
+        custom_fields: [],
+      };
+
+      // Task is a leaf and cannot have task children
+      const leafParentItem = {
+        id: 'task-1',
+        external_ref_id: 'TASK-1',
+        item_type: 'task',
+      };
+
+      const records = buildTemplateRecords({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        template: [{ title: 'Disallowed Sub-task', item_type: 'task' }],
+        parentItem: leafParentItem,
+        settings,
+      });
+
+      // Disallowed nesting is skipped to prevent invalid hierarchy persistence
+      expect(records).toHaveLength(0);
     });
   });
 });
