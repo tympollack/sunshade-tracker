@@ -2,6 +2,7 @@
 
 import React, { use, useState, useEffect, useCallback, useMemo } from 'react';
 import { AnalyticsHeader, SprintOption } from '@/components/analytics/AnalyticsHeader';
+import { SprintAnalyticsView } from '@/components/analytics/SprintAnalyticsView';
 import { KpiMetricCards, KpiMetrics } from '@/components/analytics/KpiMetricCards';
 import { BurndownChart, BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnWaterfall, ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
@@ -477,45 +478,18 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
 
       {/* Main Content Dashboard */}
       <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-        {/* KPI Metric Cards */}
-        <section aria-label="Sprint Key Performance Indicators">
-          <KpiMetricCards metrics={kpiMetrics} isLoading={isLoading} />
-          {isCustomDateRange && (
-            <div className="mt-2 text-[11px] text-amber-400/80 flex items-center gap-1.5 px-1 font-mono">
-              <span className="font-semibold uppercase tracking-wider">Note:</span>
-              Sprint KPI metrics reflect the entire selected sprint; charts reflect the custom date window.
-            </div>
-          )}
-        </section>
-
-        {/* Analytics Visualizations Grid */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Burndown Slot */}
-          <div className="w-full">
-            <BurndownChart data={burndownData} isLoading={isLoading} />
-          </div>
-
-          {/* Scope Churn Waterfall Slot */}
-          <div className="w-full">
-            <ScopeChurnWaterfall data={churnData} isLoading={isLoading} />
-          </div>
-        </section>
-
-        {/* Cumulative Flow Diagram Slot */}
-        <section className="w-full">
-          <CumulativeFlowChart data={cfdData} isLoading={isLoading} />
-        </section>
-
-        {/* Monte Carlo Release Forecasting */}
-        <MonteCarloSimulator
-          simulation={monteCarlo}
+        <SprintAnalyticsView
           isLoading={isLoading}
-          projectId={projectSlug}
-          sprintId={selectedSprintId}
-          remainingStoryPoints={kpiMetrics.remainingPoints}
-          historicalVelocities={simulationVelocities}
-          startDate={forecastStartDate}
-          sprintLengthDays={14}
+          kpiMetrics={kpiMetrics}
+          burndownData={burndownData}
+          churnData={churnData}
+          cfdData={cfdData}
+          monteCarlo={monteCarlo}
+          projectSlug={projectSlug}
+          selectedSprintId={selectedSprintId}
+          simulationVelocities={simulationVelocities}
+          forecastStartDate={forecastStartDate}
+          isCustomDateRange={isCustomDateRange}
         />
       </main>
     </div>
