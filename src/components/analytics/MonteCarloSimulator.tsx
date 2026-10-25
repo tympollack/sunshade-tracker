@@ -30,6 +30,19 @@ export interface MonteCarloSimulatorProps {
 
 const LOCAL_STORAGE_CADENCE_KEY = 'trk_mc_cadence_unit';
 
+export function SkeletonConfidenceCard() {
+  return (
+    <div
+      className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 animate-pulse h-[104px] min-h-[108px] flex flex-col justify-between"
+      data-testid="mc-skeleton-card"
+    >
+      <div className="h-3 w-28 bg-slate-800 rounded" />
+      <div className="h-7 w-20 bg-slate-800 rounded mt-2" />
+      <div className="h-3.5 w-24 bg-slate-800/70 rounded mt-1" />
+    </div>
+  );
+}
+
 export function MonteCarloSimulator({
   simulation: propSimulation,
   isLoading = false,
@@ -219,47 +232,10 @@ export function MonteCarloSimulator({
   };
 
   const isCalculating = propIsCalculating || internalIsCalculating;
-
-  // Render initial loading skeleton container when entire section is fetching data
-  if (isLoading) {
-    return (
-      <section
-        aria-label="Monte Carlo Milestone Simulator"
-        className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-sm"
-        data-testid="mc-simulator-loading"
-      >
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-              <Sparkles className="w-4 h-4 animate-spin" />
-            </div>
-            <div className="space-y-1">
-              <div className="h-4 w-48 bg-slate-800 rounded animate-pulse" />
-              <div className="h-3 w-64 bg-slate-800/60 rounded animate-pulse" />
-            </div>
-          </div>
-          <div className="h-6 w-28 bg-slate-800 rounded animate-pulse" />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {[1, 2, 3].map((idx) => (
-            <div
-              key={idx}
-              className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 animate-pulse min-h-[108px] flex flex-col justify-between"
-              data-testid="mc-skeleton-card"
-            >
-              <div className="h-3 w-28 bg-slate-800 rounded" />
-              <div className="h-7 w-20 bg-slate-800 rounded mt-2" />
-              <div className="h-3.5 w-24 bg-slate-800/70 rounded mt-1" />
-            </div>
-          ))}
-        </div>
-      </section>
-    );
-  }
+  const isComputing = isLoading || isCalculating;
 
   // If not loading, not computing, and no valid simulation (e.g. 0 target points or no historical progress)
-  if (!isCalculating && !simResult) {
+  if (!isComputing && !simResult) {
     return null;
   }
 
@@ -283,17 +259,17 @@ export function MonteCarloSimulator({
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <div className="p-2 rounded-lg bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-            <Sparkles className={`w-4 h-4 ${isCalculating ? 'animate-spin' : ''}`} />
+            <Sparkles className={`w-4 h-4 ${isComputing ? 'animate-spin' : ''}`} />
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100">
               Monte Carlo Milestone Simulator
             </h3>
             <p className="text-xs text-slate-400 flex items-center gap-1.5" data-testid="mc-header-status">
-              {isCalculating ? (
+              {isComputing ? (
                 <span className="inline-flex items-center gap-1.5 text-cyan-400 font-medium animate-pulse" data-testid="mc-calculating-badge">
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping inline-block" />
-                  Simulating {iterations.toLocaleString()} runs...
+                  Simulating {iterations.toLocaleString()} trials...
                 </span>
               ) : simResult ? (
                 <>
@@ -310,7 +286,7 @@ export function MonteCarloSimulator({
         </div>
 
         {/* Right Controls: Cadence Selector & Target Pts */}
-        <div className="flex flex-wrap items-center gap-3 ml-auto">
+        <div className={`flex flex-wrap items-center gap-3 ml-auto ${isComputing ? 'opacity-80' : ''}`}>
           <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2.5 py-1 text-xs">
             <label htmlFor="mc-cadence-select" className="text-slate-400 font-medium">
               Cadence:
@@ -336,28 +312,16 @@ export function MonteCarloSimulator({
       </div>
 
       {/* Confidence Panels: Shimmer Skeletons during Execution vs Rendered Results */}
-      {isCalculating ? (
+      {isComputing ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="mc-skeleton-grid">
-          {[
-            { label: '50% Confidence (Aggressive)' },
-            { label: '85% Confidence (Commitment)' },
-            { label: '95% Confidence (Conservative)' },
-          ].map((_, idx) => (
-            <div
-              key={idx}
-              className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 animate-pulse min-h-[108px] flex flex-col justify-between"
-              data-testid="mc-skeleton-card"
-            >
-              <div className="h-3 w-28 bg-slate-800 rounded" />
-              <div className="h-7 w-20 bg-slate-800 rounded mt-2" />
-              <div className="h-3.5 w-24 bg-slate-800/70 rounded mt-1" />
-            </div>
+          {[1, 2, 3].map((idx) => (
+            <SkeletonConfidenceCard key={idx} />
           ))}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 transition-opacity duration-200" data-testid="mc-results-grid">
           {/* 50% Confidence Card */}
-          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p50-card">
+          <div className="h-[104px] min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p50-card">
             <div className="text-xs text-slate-400 font-medium">50% Confidence (Aggressive)</div>
             <div className="text-xl font-bold text-emerald-400 font-mono mt-1" data-testid="mc-p50-value">
               {p50Display.label}
@@ -369,7 +333,7 @@ export function MonteCarloSimulator({
           </div>
 
           {/* 85% Confidence Card */}
-          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p85-card">
+          <div className="h-[104px] min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p85-card">
             <div className="text-xs text-slate-400 font-medium">85% Confidence (Commitment)</div>
             <div className="text-xl font-bold text-cyan-400 font-mono mt-1" data-testid="mc-p85-value">
               {p85Display.label}
@@ -381,7 +345,7 @@ export function MonteCarloSimulator({
           </div>
 
           {/* 95% Confidence Card */}
-          <div className="min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p95-card">
+          <div className="h-[104px] min-h-[108px] bg-slate-800/50 border border-slate-700/60 rounded-lg p-4 flex flex-col justify-between" data-testid="mc-p95-card">
             <div className="text-xs text-slate-400 font-medium">95% Confidence (Conservative)</div>
             <div className="text-xl font-bold text-amber-400 font-mono mt-1" data-testid="mc-p95-value">
               {p95Display.label}
