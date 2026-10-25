@@ -203,11 +203,13 @@ export function clearMonteCarloCache(): void {
  * @param sprints Number of sprints simulated (or null if exceeded horizon)
  * @param unit Selected cadence unit
  * @param sprintLengthDays Length of a sprint in days (default 14)
+ * @param isDailySimulation Whether the simulation was run in daily discrete event mode
  */
 export function convertSprintsToCadence(
   sprints: number | null,
   unit: MonteCarloCadenceUnit = 'sprint',
-  sprintLengthDays: number = 14
+  sprintLengthDays: number = 14,
+  isDailySimulation: boolean = false
 ): ConvertedCadenceDuration {
   if (sprints === null) {
     return {
@@ -217,7 +219,13 @@ export function convertSprintsToCadence(
     };
   }
 
-  const days = sprints * Math.max(1, sprintLengthDays);
+  const validLength = Math.max(1, sprintLengthDays);
+  const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));
+  // For daily discrete event simulation, 'day' cadence unit maps directly to business working days
+  const days =
+    unit === 'day' && isDailySimulation
+      ? sprints * activeWorkDays
+      : sprints * validLength;
 
   switch (unit) {
     case 'day': {
@@ -313,6 +321,7 @@ export interface MonteCarloSimulationResult {
   };
   distribution: number[];
   executionTimeMs: number;
+  cadenceUnit?: MonteCarloCadenceUnit;
 }
 
 export function runMonteCarloSimulation(input: MonteCarloSimulationInput): MonteCarloSimulationResult {
@@ -359,6 +368,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       projectedDates: { p50: null, p85: null, p95: null },
       distribution: new Array(iterations).fill(Number.POSITIVE_INFINITY),
       executionTimeMs: Math.round((performance.now() - startTime) * 100) / 100,
+      cadenceUnit: input.cadenceUnit,
     };
   }
 
@@ -443,6 +453,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       },
       distribution,
       executionTimeMs,
+      cadenceUnit: input.cadenceUnit,
     };
   }
 
@@ -509,5 +520,6 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
     },
     distribution,
     executionTimeMs,
+    cadenceUnit: input.cadenceUnit,
   };
 }

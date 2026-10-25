@@ -200,7 +200,7 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
 
     it('enforces collisionPadding against viewport boundaries to avoid overflowing', () => {
       // Trigger placed near right edge of 400px viewport: left: 350, width: 40 (center 370)
-      const mockRect = {
+      const mockTriggerRect = {
         top: 200,
         bottom: 240,
         left: 350,
@@ -209,8 +209,22 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         height: 40,
       };
 
+      const mockPopoverRect = {
+        top: 0,
+        bottom: 50,
+        left: 0,
+        right: 120,
+        width: 120,
+        height: 50,
+      };
+
       const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
-      Element.prototype.getBoundingClientRect = vi.fn().mockReturnValue(mockRect);
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.getAttribute('data-testid') === 'tooltip-popover') {
+          return mockPopoverRect as DOMRect;
+        }
+        return mockTriggerRect as DOMRect;
+      };
       const originalInnerWidth = window.innerWidth;
       Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 400 });
 
@@ -230,13 +244,66 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         const popover = screen.getByTestId('tooltip-popover');
         expect(popover).toBeInTheDocument();
 
-        // With tooltip width (mockRect.width = 40):
-        // maxLeft = 400 - 40 - 20 = 340px. Center cannot exceed 340px
+        // Popover width: 120px. Viewport width: 400px. collisionPadding: 40px.
+        // maxLeft = 400 - 40 - 60 = 300px.
+        // Trigger center is 370px, which exceeds 300px, so it must be clamped to 300px.
         const leftValue = parseFloat(popover.style.left);
-        expect(leftValue).toBeLessThanOrEqual(340);
+        expect(leftValue).toBeLessThanOrEqual(300);
       } finally {
         Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
         Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: originalInnerWidth });
+      }
+    });
+
+    it('flips placement from bottom to top on first open when rendered popover height exceeds bottom clearance', () => {
+      // Trigger placed near bottom of 800px viewport: top: 720, bottom: 750 (clearance 50px)
+      const mockTriggerRect = {
+        top: 720,
+        bottom: 750,
+        left: 200,
+        right: 250,
+        width: 50,
+        height: 30,
+      };
+
+      // Tall tooltip content: 80px height
+      const mockPopoverRect = {
+        top: 0,
+        bottom: 80,
+        left: 0,
+        right: 150,
+        width: 150,
+        height: 80,
+      };
+
+      const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if (this.getAttribute('data-testid') === 'tooltip-popover') {
+          return mockPopoverRect as DOMRect;
+        }
+        return mockTriggerRect as DOMRect;
+      };
+
+      try {
+        render(
+          <Tooltip content="Tall multiline tooltip description" position="bottom" collisionPadding={16}>
+            <button type="button">Near Bottom Trigger</button>
+          </Tooltip>
+        );
+
+        const btn = screen.getByText('Near Bottom Trigger');
+        fireEvent.mouseEnter(btn);
+        act(() => {
+          vi.advanceTimersByTime(160);
+        });
+
+        const popover = screen.getByTestId('tooltip-popover');
+        expect(popover).toBeInTheDocument();
+        // Since bottom clearance (50px) is less than sideOffset (8) + tooltipHeight (80) + collisionPadding (16) = 104px,
+        // it must auto-flip to top on first open!
+        expect(popover).toHaveAttribute('data-side', 'top');
+      } finally {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       }
     });
   });

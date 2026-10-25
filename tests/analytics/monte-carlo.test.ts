@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runMonteCarloSimulation, deriveDailyThroughputBins } from '@/lib/analytics/monte-carlo';
+import { runMonteCarloSimulation, deriveDailyThroughputBins, convertSprintsToCadence } from '@/lib/analytics/monte-carlo';
 
 describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
   it('executes 1,000 iterations in < 50ms with valid percentiles', () => {
@@ -140,6 +140,11 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       // Distribution array contains values in consistent sprint units
       expect(result.distribution[0]).toBeGreaterThan(0);
       expect(result.distribution[0]).toBeLessThan(1);
+
+      // Verify cadence conversion with isDailySimulation maps 0.1 sprints (1 working day) to 1 day
+      const cadenceDayConversion = convertSprintsToCadence(result.percentiles.p50, 'day', 14, true);
+      expect(cadenceDayConversion.value).toBe(1);
+      expect(cadenceDayConversion.label).toBe('1 day');
     });
 
     it('emits equal bins for zero and positive historical velocities to maintain unbiased sprint weighting', () => {

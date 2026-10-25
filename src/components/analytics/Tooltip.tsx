@@ -62,13 +62,7 @@ export function TooltipArrow({ className = '', side = 'top', offset = 0 }: Toolt
 }
 
 export function TooltipPortal({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted || typeof document === 'undefined') {
+  if (typeof document === 'undefined') {
     return null;
   }
 
@@ -104,7 +98,7 @@ export function Tooltip({
 
   const timerRef = useRef<number | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const id = useId();
 
   const updateCoordinates = useCallback(() => {
@@ -208,6 +202,16 @@ export function Tooltip({
     }, delay);
   }, [delay, updateCoordinates]);
 
+  const setPopoverRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      popoverRef.current = el;
+      if (el) {
+        updateCoordinates();
+      }
+    },
+    [updateCoordinates]
+  );
+
   const hide = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setIsVisible(false);
@@ -281,7 +285,7 @@ export function Tooltip({
       {isVisible && content && (
         <TooltipPortal>
           <div
-            ref={popoverRef}
+            ref={setPopoverRef}
             id={id}
             role="tooltip"
             data-side={coords.side}
