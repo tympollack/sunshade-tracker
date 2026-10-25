@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runMonteCarloSimulation, deriveDailyThroughputBins } from '@/lib/analytics/monte-carlo';
+import { runMonteCarloSimulation, deriveDailyThroughputBins, convertSprintsToCadence } from '@/lib/analytics/monte-carlo';
 
 describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
   it('executes 1,000 iterations in < 50ms with valid percentiles', () => {
@@ -140,6 +140,11 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       // Distribution array contains values in consistent sprint units
       expect(result.distribution[0]).toBeGreaterThan(0);
       expect(result.distribution[0]).toBeLessThan(1);
+
+      // Verify cadence conversion with isDailySimulation maps 0.1 sprints (1 working day) to 1 day
+      const cadenceDayConversion = convertSprintsToCadence(result.percentiles.p50, 'day', 14, true);
+      expect(cadenceDayConversion.value).toBe(1);
+      expect(cadenceDayConversion.label).toBe('1 day');
     });
 
     it('emits equal bins for zero and positive historical velocities to maintain unbiased sprint weighting', () => {
@@ -150,6 +155,21 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       // Idle sprint contributed 9 zeros, active sprint contributed 1 zero + 8 positive values -> 10 zeros total
       const zeroBins = bins.filter((b) => b === 0);
       expect(zeroBins).toHaveLength(10);
+    });
+
+    it('censors daily simulation when working days exceed 500 sprints horizon (e.g. 5,500 pts with 10 pts/sprint)', () => {
+      const result = runMonteCarloSimulation({
+        remainingStoryPoints: 5500,
+        historicalVelocities: [10],
+        iterations: 100,
+        sprintLengthDays: 14,
+        cadenceUnit: 'day',
+      });
+
+      expect(result.deliveredWithinHorizon).toBe(false);
+      expect(result.censoredTrials).toBe(100);
+      expect(result.percentiles.p50).toBeNull();
+      expect(result.projectedDates.p50).toBeNull();
     });
   });
 });

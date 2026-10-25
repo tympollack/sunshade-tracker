@@ -263,14 +263,15 @@ export function MonteCarloSimulator({
     return null;
   }
 
+  const isDailySim = simResult?.cadenceUnit === 'day';
   const p50Display = simResult
-    ? convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength)
+    ? convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength, isDailySim)
     : { label: '--', value: 0, unit: cadenceUnit };
   const p85Display = simResult
-    ? convertSprintsToCadence(simResult.percentiles.p85, cadenceUnit, effectiveSprintLength)
+    ? convertSprintsToCadence(simResult.percentiles.p85, cadenceUnit, effectiveSprintLength, isDailySim)
     : { label: '--', value: 0, unit: cadenceUnit };
   const p95Display = simResult
-    ? convertSprintsToCadence(simResult.percentiles.p95, cadenceUnit, effectiveSprintLength)
+    ? convertSprintsToCadence(simResult.percentiles.p95, cadenceUnit, effectiveSprintLength, isDailySim)
     : { label: '--', value: 0, unit: cadenceUnit };
 
   return (

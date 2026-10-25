@@ -203,11 +203,13 @@ export function clearMonteCarloCache(): void {
  * @param sprints Number of sprints simulated (or null if exceeded horizon)
  * @param unit Selected cadence unit
  * @param sprintLengthDays Length of a sprint in days (default 14)
+ * @param isDailySimulation Whether the simulation was run in daily discrete event mode
  */
 export function convertSprintsToCadence(
   sprints: number | null,
   unit: MonteCarloCadenceUnit = 'sprint',
-  sprintLengthDays: number = 14
+  sprintLengthDays: number = 14,
+  isDailySimulation: boolean = false
 ): ConvertedCadenceDuration {
   if (sprints === null) {
     return {
@@ -217,7 +219,13 @@ export function convertSprintsToCadence(
     };
   }
 
-  const days = sprints * Math.max(1, sprintLengthDays);
+  const validLength = Math.max(1, sprintLengthDays);
+  const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));
+  // For daily discrete event simulation, 'day' cadence unit maps directly to business working days
+  const days =
+    unit === 'day' && isDailySimulation
+      ? sprints * activeWorkDays
+      : sprints * validLength;
 
   switch (unit) {
     case 'day': {
@@ -313,6 +321,7 @@ export interface MonteCarloSimulationResult {
   };
   distribution: number[];
   executionTimeMs: number;
+  cadenceUnit?: MonteCarloCadenceUnit;
 }
 
 export function runMonteCarloSimulation(input: MonteCarloSimulationInput): MonteCarloSimulationResult {
@@ -359,6 +368,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       projectedDates: { p50: null, p85: null, p95: null },
       distribution: new Array(iterations).fill(Number.POSITIVE_INFINITY),
       executionTimeMs: Math.round((performance.now() - startTime) * 100) / 100,
+      cadenceUnit: input.cadenceUnit,
     };
   }
 
@@ -371,9 +381,13 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
 
   // Day-level discrete event simulation when cadenceUnit === 'day'
   if (input.cadenceUnit === 'day') {
+    const validLength = Math.max(1, sprintLengthDays);
+    const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));
     const dailyBins = deriveDailyThroughputBins(velocities, sprintLengthDays);
     const numDailyBins = dailyBins.length;
-    const MAX_DAYS_LIMIT = MAX_SPRINTS_LIMIT * sprintLengthDays;
+    const MAX_DAYS_LIMIT = MAX_SPRINTS_LIMIT * activeWorkDays;
+
+    const workingDaysDistribution: number[] = new Array(iterations);
 
     for (let i = 0; i < iterations; i++) {
       let currentRemaining = remainingStoryPoints;
@@ -389,27 +403,28 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       if (currentRemaining > 0) {
         censoredTrials++;
         distribution[i] = Number.POSITIVE_INFINITY;
+        workingDaysDistribution[i] = Number.POSITIVE_INFINITY;
       } else {
-        // Store duration in sprint units consistent with percentiles
-        distribution[i] = daysElapsed / sprintLengthDays;
+        // Convert working-day elapsed time into sprint duration
+        distribution[i] = daysElapsed / activeWorkDays;
+        workingDaysDistribution[i] = daysElapsed;
       }
     }
 
     distribution.sort((a, b) => a - b);
+    workingDaysDistribution.sort((a, b) => a - b);
 
-    const getDailyPercentile = (pct: number): number | null => {
+    const getDailyPercentile = (pct: number): { sprintVal: number | null; workDaysVal: number | null } => {
       const index = Math.ceil((pct / 100) * distribution.length) - 1;
-      const val = distribution[Math.max(0, Math.min(distribution.length - 1, index))];
-      return !isFinite(val) || val > MAX_SPRINTS_LIMIT ? null : val;
+      const clampedIndex = Math.max(0, Math.min(distribution.length - 1, index));
+      const sprintVal = distribution[clampedIndex];
+      const workDaysVal = workingDaysDistribution[clampedIndex];
+      return !isFinite(sprintVal) || sprintVal > MAX_SPRINTS_LIMIT ? { sprintVal: null, workDaysVal: null } : { sprintVal, workDaysVal };
     };
 
-    const p50 = getDailyPercentile(50);
-    const p85 = getDailyPercentile(85);
-    const p95 = getDailyPercentile(95);
-
-    const p50Days = p50 !== null ? Math.max(1, Math.round(p50 * sprintLengthDays)) : null;
-    const p85Days = p85 !== null ? Math.max(1, Math.round(p85 * sprintLengthDays)) : null;
-    const p95Days = p95 !== null ? Math.max(1, Math.round(p95 * sprintLengthDays)) : null;
+    const p50Data = getDailyPercentile(50);
+    const p85Data = getDailyPercentile(85);
+    const p95Data = getDailyPercentile(95);
 
     const calculateDailyProjectedDate = (days: number | null): string | null => {
       if (days === null) return null;
@@ -427,17 +442,18 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       deliveredWithinHorizon,
       censoredTrials,
       percentiles: {
-        p50,
-        p85,
-        p95,
+        p50: p50Data.sprintVal,
+        p85: p85Data.sprintVal,
+        p95: p95Data.sprintVal,
       },
       projectedDates: {
-        p50: calculateDailyProjectedDate(p50Days),
-        p85: calculateDailyProjectedDate(p85Days),
-        p95: calculateDailyProjectedDate(p95Days),
+        p50: calculateDailyProjectedDate(p50Data.workDaysVal),
+        p85: calculateDailyProjectedDate(p85Data.workDaysVal),
+        p95: calculateDailyProjectedDate(p95Data.workDaysVal),
       },
       distribution,
       executionTimeMs,
+      cadenceUnit: input.cadenceUnit,
     };
   }
 
@@ -504,5 +520,6 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
     },
     distribution,
     executionTimeMs,
+    cadenceUnit: input.cadenceUnit,
   };
 }
