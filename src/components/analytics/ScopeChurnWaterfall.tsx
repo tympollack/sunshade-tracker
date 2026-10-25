@@ -118,17 +118,18 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 600, height: 250 }}>
             <BarChart
               data={waterfallData}
-              margin={{ top: 25, right: 30, left: 30, bottom: 10 }}
+              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
             >
               <CartesianGrid strokeDasharray="2 2" stroke="#334155" vertical={false} />
               <XAxis dataKey="name" hide />
               <YAxis domain={[0, peak]} hide />
-              <Bar dataKey="spacer" stackId="waterfall" fill="transparent" isAnimationActive={false} />
+              <Bar dataKey="spacer" stackId="waterfall" fill="transparent" isAnimationActive={false} maxBarSize={48} />
               <Bar
                 dataKey="value"
                 stackId="waterfall"
                 isAnimationActive={process.env.NODE_ENV === 'test' ? false : true}
                 radius={[4, 4, 0, 0]}
+                maxBarSize={48}
               >
                 {waterfallData.map((entry) => (
                   <Cell key={entry.name} fill={entry.fill} />
@@ -185,11 +186,11 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         </svg>
 
         {/* Value Callout Labels & Tooltip Hit Areas */}
-        <div className="absolute inset-0 flex items-end justify-around gap-4 px-4 pb-4 pt-8 pointer-events-none z-20">
+        <div className="absolute inset-0 grid grid-cols-4 pointer-events-none z-20">
           {/* Baseline Bar */}
           <Tooltip
             content="Total story points locked in when the sprint was formally activated"
-            className="flex-1 h-full flex flex-col justify-end pointer-events-auto"
+            className="h-full flex flex-col justify-end pointer-events-auto"
             data-testid="tooltip-baseline-bar"
           >
             <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
@@ -205,7 +206,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           {/* (+) Added Scope Bar (Floating) */}
           <Tooltip
             content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
-            className="flex-1 h-full flex flex-col justify-end pointer-events-auto"
+            className="h-full flex flex-col justify-end pointer-events-auto"
             data-testid="tooltip-added-bar"
           >
             <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
@@ -225,7 +226,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           {/* (-) Dropped Scope Bar (Floating) */}
           <Tooltip
             content="Scope removed or deferred back to backlog during active sprint execution"
-            className="flex-1 h-full flex flex-col justify-end pointer-events-auto"
+            className="h-full flex flex-col justify-end pointer-events-auto"
             data-testid="tooltip-dropped-bar"
           >
             <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
@@ -245,7 +246,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           {/* (=) Final Delivered Points Bar */}
           <Tooltip
             content="Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline"
-            className="flex-1 h-full flex flex-col justify-end pointer-events-auto"
+            className="h-full flex flex-col justify-end pointer-events-auto"
             data-testid="tooltip-delivered-bar"
           >
             <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
@@ -261,29 +262,29 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
       </div>
 
       {/* Step Labels Footer */}
-      <div className="flex items-center justify-around gap-4 pt-3 text-xs text-slate-300 text-center font-medium">
-        <div className="flex-1 flex flex-col items-center">
+      <div className="grid grid-cols-4 pt-3 text-xs text-slate-300 text-center font-medium">
+        <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-blue-400 font-semibold mb-0.5">
             <Target className="w-3.5 h-3.5" /> Baseline
           </div>
           <span className="text-[11px] text-slate-400">Day 1 Commitment</span>
         </div>
 
-        <div className="flex-1 flex flex-col items-center">
+        <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-amber-400 font-semibold mb-0.5">
             <Plus className="w-3.5 h-3.5" /> Added Creep
           </div>
           <span className="text-[11px] text-slate-400">Injected Scope</span>
         </div>
 
-        <div className="flex-1 flex flex-col items-center">
+        <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-red-400 font-semibold mb-0.5">
             <Minus className="w-3.5 h-3.5" /> Dropped
           </div>
           <span className="text-[11px] text-slate-400">Backlog Return</span>
         </div>
 
-        <div className="flex-1 flex flex-col items-center">
+        <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-emerald-400 font-semibold mb-0.5">
             <CheckCircle className="w-3.5 h-3.5" /> Delivered
           </div>

@@ -1,8 +1,10 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, renderHook, waitFor } from '@testing-library/react';
 import { AnalyticsDashboardSkeleton } from '@/components/analytics/AnalyticsDashboardSkeleton';
 import { SprintAnalyticsView } from '@/components/analytics/SprintAnalyticsView';
+import { ScopeChurnWaterfall } from '@/components/analytics/ScopeChurnWaterfall';
+import { useSprintTelemetry } from '@/hooks/useSprintTelemetry';
 
 describe('BUG-TRK-INITIAL-LOAD-DUMMY-DEFAULTS: Dashboard-Wide Loading Skeletons', () => {
   describe('AnalyticsDashboardSkeleton component', () => {
@@ -93,6 +95,80 @@ describe('BUG-TRK-INITIAL-LOAD-DUMMY-DEFAULTS: Dashboard-Wide Loading Skeletons'
       expect(screen.getByText('3-Sprint Velocity')).toBeInTheDocument();
       expect(screen.getByText('Scope Churn Waterfall')).toBeInTheDocument();
       expect(screen.getByText('Monte Carlo Milestone Simulator')).toBeInTheDocument();
+    });
+  });
+
+  describe('useSprintTelemetry hook loading coordination', () => {
+    it('holds isLoading = true while isSprintDiscoveryPending is true and defers fetch', async () => {
+      const fetchSpy = vi.spyOn(global, 'fetch');
+
+      const { result, rerender } = renderHook(
+        (props: { isSprintDiscoveryPending: boolean; selectedSprintId: string }) =>
+          useSprintTelemetry({
+            tenantSlug: 'sunshade',
+            projectSlug: 'tracker',
+            selectedSprintId: props.selectedSprintId,
+            startDate: '2026-10-01',
+            endDate: '2026-10-15',
+            isSprintDiscoveryPending: props.isSprintDiscoveryPending,
+          }),
+        {
+          initialProps: {
+            isSprintDiscoveryPending: true,
+            selectedSprintId: '',
+          },
+        }
+      );
+
+      // Loading remains true while sprint discovery is pending
+      expect(result.current.isLoading).toBe(true);
+      // Premature telemetry fetch is prevented
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          committedPoints: 40,
+          completedPoints: 35,
+          remainingPoints: 5,
+        }),
+      } as any);
+
+      // Discovery completes and selects active sprint
+      rerender({
+        isSprintDiscoveryPending: false,
+        selectedSprintId: 'sprint-active-1',
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.kpiMetrics.committedPoints).toBe(40);
+      fetchSpy.mockRestore();
+    });
+  });
+
+  describe('ScopeChurnWaterfall margin and grid alignment', () => {
+    it('aligns waterfall BarChart with zero margins and grid-cols-4 overlay to eliminate annotation drift', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 40,
+            addedPoints: 10,
+            droppedPoints: 5,
+            finalDelivered: 45,
+          }}
+        />
+      );
+
+      // Labels container uses grid grid-cols-4 for exact 1-to-1 bar center alignment
+      const labelsContainer = container.querySelector('.grid.grid-cols-4.absolute.inset-0');
+      expect(labelsContainer).toBeInTheDocument();
+
+      // Footer labels use matching grid grid-cols-4
+      const footerGrid = container.querySelector('.grid.grid-cols-4.pt-3');
+      expect(footerGrid).toBeInTheDocument();
     });
   });
 });

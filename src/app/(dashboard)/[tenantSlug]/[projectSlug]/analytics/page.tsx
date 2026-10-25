@@ -26,6 +26,12 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
   const [sprints, setSprints] = useState<SprintOption[]>([]);
   const [selectedSprintId, setSelectedSprintId] = useState<string>('');
   const [isCustomDateRange, setIsCustomDateRange] = useState(false);
+  const [isDiscoveringSprints, setIsDiscoveringSprints] = useState(true);
+
+  const isCustomDateRangeRef = React.useRef(isCustomDateRange);
+  useEffect(() => {
+    isCustomDateRangeRef.current = isCustomDateRange;
+  }, [isCustomDateRange]);
 
   // Synchronized Sprint Telemetry Data Hook
   const {
@@ -45,6 +51,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     selectedSprintId,
     startDate,
     endDate,
+    isSprintDiscoveryPending: isDiscoveringSprints,
   });
 
   // Sync state from URL query parameters on initial client mount
@@ -119,6 +126,7 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
 
   // Load project sprints & initial data (merging DB sprints and project settings)
   const loadSprintList = useCallback(async () => {
+    setIsDiscoveringSprints(true);
     try {
       const mergedOptions: SprintOption[] = [];
 
@@ -237,11 +245,11 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           const chosenSprint = mergedOptions.find((s) => s.id === chosenId || s.name === chosenId);
           if (chosenSprint?.start_date && chosenSprint?.end_date) {
             setStartDate((currStart) => {
-              if (!isCustomDateRange) return chosenSprint.start_date!.split('T')[0];
+              if (!isCustomDateRangeRef.current) return chosenSprint.start_date!.split('T')[0];
               return currStart;
             });
             setEndDate((currEnd) => {
-              if (!isCustomDateRange) return chosenSprint.end_date!.split('T')[0];
+              if (!isCustomDateRangeRef.current) return chosenSprint.end_date!.split('T')[0];
               return currEnd;
             });
           }
@@ -250,8 +258,10 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
       }
     } catch (err) {
       console.error('[Analytics] Failed to fetch project sprints:', err);
+    } finally {
+      setIsDiscoveringSprints(false);
     }
-  }, [tenantSlug, projectSlug, isCustomDateRange]);
+  }, [tenantSlug, projectSlug]);
 
   // Synchronized Sprint & Date Range Handlers
   const handleSelectSprint = useCallback(
