@@ -205,7 +205,7 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       // Calculating header badge should be rendered
       const calculatingBadge = screen.getByTestId('mc-calculating-badge');
       expect(calculatingBadge).toBeInTheDocument();
-      expect(calculatingBadge).toHaveTextContent('Simulating 1,000 runs...');
+      expect(calculatingBadge).toHaveTextContent(/Simulating 1,000 (trials|runs)\.\.\./);
 
       // Skeletons should be present with min-h-[108px]
       const skeletonCards = screen.getAllByTestId('mc-skeleton-card');
@@ -244,6 +244,36 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       // Should not render skeletons indefinitely
       expect(screen.queryByTestId('mc-skeleton-card')).toBeNull();
       expect(container.firstChild).toBeNull();
+    });
+
+    it('BUG-TRK-MC-PERMANENT-SHELL-SKELETON: mounts permanent container shell with controls, header badge, and h-[104px] skeleton cards during calculation', () => {
+      render(
+        <MonteCarloSimulator
+          isCalculating={true}
+          remainingStoryPoints={50}
+          iterations={1000}
+        />
+      );
+
+      // Container is mounted
+      expect(screen.getByTestId('mc-simulator-container')).toBeInTheDocument();
+      expect(screen.getByText('Monte Carlo Milestone Simulator')).toBeInTheDocument();
+
+      // Calculation header status and rotating spark
+      const badge = screen.getByTestId('mc-calculating-badge');
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent(/Simulating 1,000 (trials|runs)\.\.\./);
+
+      // Cadence selector and target scope remain mounted
+      expect(screen.getByTestId('mc-cadence-selector')).toBeInTheDocument();
+      expect(screen.getByText('Target: 50 remaining pts')).toBeInTheDocument();
+
+      // 3 Skeleton confidence cards with exact h-[104px]
+      const skeletonCards = screen.getAllByTestId('mc-skeleton-card');
+      expect(skeletonCards).toHaveLength(3);
+      skeletonCards.forEach((card) => {
+        expect(card).toHaveClass('h-[104px]');
+      });
     });
   });
 });

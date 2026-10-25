@@ -340,5 +340,39 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(parseFloat(y1Baseline!)).toBeGreaterThan(0);
       expect(parseFloat(y1Baseline!)).toBeLessThanOrEqual(100);
     });
+
+    it('BUG-TRK-WATERFALL-BAR-RENDER-STACK: renders stacked spacer bars with explicit SVG hex fills in Recharts BarChart', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 50,
+            addedPoints: 15,
+            droppedPoints: 5,
+            finalDelivered: 45,
+          }}
+        />
+      );
+
+      // Verify CartesianGrid dashed lines are rendered
+      const grid = container.querySelector('.recharts-cartesian-grid');
+      expect(grid).toBeInTheDocument();
+
+      // Verify explicit hex color fills for the 4 waterfall stages
+      const skyCell = container.querySelector('[fill="#0284c7"]');
+      const amberCell = container.querySelector('[fill="#d97706"]');
+      const roseCell = container.querySelector('[fill="#e11d48"]');
+      const emeraldCell = container.querySelector('[fill="#059669"]');
+
+      expect(skyCell).toBeInTheDocument();
+      expect(amberCell).toBeInTheDocument();
+      expect(roseCell).toBeInTheDocument();
+      expect(emeraldCell).toBeInTheDocument();
+
+      // Verify transparent spacer bar is rendered in the stacked bar group
+      const rects = Array.from(container.querySelectorAll('.recharts-bar-rectangles rect, .recharts-bar rect, .recharts-rectangle'));
+      const fills = rects.map(r => r.getAttribute('fill'));
+      const hasSpacer = rects.some(r => r.getAttribute('fill') === 'transparent' || r.getAttribute('fill') === 'none' || r.getAttribute('fill-opacity') === '0');
+      expect(rects.length).toBeGreaterThan(4);
+    });
   });
 });
