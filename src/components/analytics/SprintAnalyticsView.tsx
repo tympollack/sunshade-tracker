@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import { KpiMetricCards, KpiMetrics } from './KpiMetricCards';
 import { BurndownChart, BurndownDataPoint } from './BurndownChart';
 import { ScopeChurnWaterfall, ScopeChurnData } from './ScopeChurnWaterfall';
@@ -24,8 +24,7 @@ export interface SprintAnalyticsViewProps {
   isCustomDateRange?: boolean;
 }
 
-export function SprintAnalyticsView({
-  isLoading = false,
+function SprintAnalyticsViewContent({
   kpiMetrics,
   burndownData = [],
   churnData,
@@ -36,11 +35,7 @@ export function SprintAnalyticsView({
   simulationVelocities = [],
   forecastStartDate,
   isCustomDateRange = false,
-}: SprintAnalyticsViewProps) {
-  if (isLoading) {
-    return <AnalyticsDashboardSkeleton />;
-  }
-
+}: Omit<SprintAnalyticsViewProps, 'isLoading'>) {
   const effectiveMetrics: KpiMetrics = kpiMetrics ?? {
     rollingVelocity: 0,
     sayDoRatio: 0,
@@ -98,6 +93,41 @@ export function SprintAnalyticsView({
         sprintLengthDays={14}
       />
     </div>
+  );
+}
+
+export function SprintAnalyticsView({
+  isLoading = false,
+  kpiMetrics,
+  burndownData = [],
+  churnData,
+  cfdData = [],
+  monteCarlo = null,
+  projectSlug,
+  selectedSprintId,
+  simulationVelocities = [],
+  forecastStartDate,
+  isCustomDateRange = false,
+}: SprintAnalyticsViewProps) {
+  if (isLoading) {
+    return <AnalyticsDashboardSkeleton />;
+  }
+
+  return (
+    <Suspense fallback={<AnalyticsDashboardSkeleton />}>
+      <SprintAnalyticsViewContent
+        kpiMetrics={kpiMetrics}
+        burndownData={burndownData}
+        churnData={churnData}
+        cfdData={cfdData}
+        monteCarlo={monteCarlo}
+        projectSlug={projectSlug}
+        selectedSprintId={selectedSprintId}
+        simulationVelocities={simulationVelocities}
+        forecastStartDate={forecastStartDate}
+        isCustomDateRange={isCustomDateRange}
+      />
+    </Suspense>
   );
 }
 
