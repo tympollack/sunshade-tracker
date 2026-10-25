@@ -507,18 +507,16 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
         </section>
 
         {/* Monte Carlo Release Forecasting */}
-        {(monteCarlo || isLoading) && (
-          <MonteCarloSimulator
-            simulation={monteCarlo}
-            isLoading={isLoading}
-            projectId={projectSlug}
-            sprintId={selectedSprintId}
-            remainingStoryPoints={kpiMetrics.remainingPoints}
-            historicalVelocities={simulationVelocities}
-            startDate={forecastStartDate}
-            sprintLengthDays={14}
-          />
-        )}
+        <MonteCarloSimulator
+          simulation={monteCarlo}
+          isLoading={isLoading}
+          projectId={projectSlug}
+          sprintId={selectedSprintId}
+          remainingStoryPoints={kpiMetrics.remainingPoints}
+          historicalVelocities={simulationVelocities}
+          startDate={forecastStartDate}
+          sprintLengthDays={14}
+        />
       </main>
     </div>
   );
