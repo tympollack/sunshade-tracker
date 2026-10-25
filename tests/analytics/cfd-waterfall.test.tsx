@@ -257,6 +257,8 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
       expect(droppedBridge).toBeInTheDocument();
       expect(droppedBridge).toHaveAttribute('stroke-dasharray', '2 2');
+      // Bridge connects at net scope post-removal (100 - droppedBottomPct)
+      expect(droppedBridge?.getAttribute('y1')).toBe('21%');
     });
 
     it('renders high-contrast white text with subtle dark pill backdrop on bar value callouts', () => {
@@ -296,6 +298,47 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
 
       expect(screen.getByText('0 added')).toBeInTheDocument();
       expect(screen.getByText('0 dropped')).toBeInTheDocument();
+    });
+
+    it('BUG-TRK-WATERFALL-RENDER-COLLAPSE: renders all bars and bridges correctly when delivered scope outscales baseline', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 164,
+            addedPoints: 94,
+            droppedPoints: 10,
+            finalDelivered: 484, // Outsized delivered scope exceeding baseline + added (258)
+          }}
+        />
+      );
+
+      // Verify container dimension lock
+      const canvas = container.querySelector('.min-h-\\[250px\\]');
+      expect(canvas).toBeInTheDocument();
+      expect(canvas).toHaveClass('w-full', 'h-64', 'overflow-hidden');
+
+      // Verify all 4 bar pills render
+      expect(screen.getByText('164 pts')).toBeInTheDocument();
+      expect(screen.getByText('+94 pts')).toBeInTheDocument();
+      expect(screen.getByText('-10 pts')).toBeInTheDocument();
+      expect(screen.getByText('484 pts')).toBeInTheDocument();
+
+      // Net Scope pill
+      expect(screen.getByText('248 pts')).toBeInTheDocument();
+
+      // Bridge lines render with valid Y coordinates (not NaN or out of bounds)
+      const baselineBridge = container.querySelector('[data-testid="bridge-baseline-added"]');
+      const addedBridge = container.querySelector('[data-testid="bridge-added-dropped"]');
+      const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
+
+      expect(baselineBridge).toBeInTheDocument();
+      expect(addedBridge).toBeInTheDocument();
+      expect(droppedBridge).toBeInTheDocument();
+
+      const y1Baseline = baselineBridge?.getAttribute('y1');
+      expect(y1Baseline).toMatch(/^\d+(\.\d+)?%$/);
+      expect(parseFloat(y1Baseline!)).toBeGreaterThan(0);
+      expect(parseFloat(y1Baseline!)).toBeLessThanOrEqual(100);
     });
   });
 });
