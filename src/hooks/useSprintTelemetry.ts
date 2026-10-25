@@ -14,6 +14,7 @@ export interface UseSprintTelemetryOptions {
   selectedSprintId?: string;
   startDate: string;
   endDate: string;
+  isSprintDiscoveryPending?: boolean;
 }
 
 export interface UseSprintTelemetryResult {
@@ -35,9 +36,17 @@ export function useSprintTelemetry({
   selectedSprintId = '',
   startDate,
   endDate,
+  isSprintDiscoveryPending = false,
 }: UseSprintTelemetryOptions): UseSprintTelemetryResult {
-  const [isLoading, setIsLoading] = useState(true);
+  const [telemetryLoaded, setTelemetryLoaded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // When project or tenant changes, reset loaded state to ensure skeleton shows
+  useEffect(() => {
+    setTelemetryLoaded(false);
+  }, [tenantSlug, projectSlug]);
+
+  const isLoading = isSprintDiscoveryPending || !telemetryLoaded;
 
   // Pure initial states with zero fake numbers
   const [kpiMetrics, setKpiMetrics] = useState<KpiMetrics>({
@@ -60,6 +69,10 @@ export function useSprintTelemetry({
   const forecastStartDate = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const fetchTelemetry = useCallback(async () => {
+    if (isSprintDiscoveryPending) {
+      return;
+    }
+
     setIsRefreshing(true);
     try {
       // 1. Fetch Sprint Health & Metrics (propagating custom date bounds)
@@ -201,14 +214,16 @@ export function useSprintTelemetry({
     } catch (err) {
       console.error('[Analytics] Error loading telemetry:', err);
     } finally {
-      setIsLoading(false);
+      setTelemetryLoaded(true);
       setIsRefreshing(false);
     }
-  }, [tenantSlug, projectSlug, selectedSprintId, startDate, endDate, forecastStartDate]);
+  }, [tenantSlug, projectSlug, selectedSprintId, startDate, endDate, forecastStartDate, isSprintDiscoveryPending]);
 
   useEffect(() => {
-    fetchTelemetry();
-  }, [fetchTelemetry]);
+    if (!isSprintDiscoveryPending) {
+      fetchTelemetry();
+    }
+  }, [fetchTelemetry, isSprintDiscoveryPending]);
 
   return {
     isLoading,
