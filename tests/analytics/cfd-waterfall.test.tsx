@@ -51,6 +51,18 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
     });
 
+    it('PR-133: renders refresh error pill while preserving chart view when refresh fails with existing cached series', () => {
+      const sampleData: CfdDataPoint[] = [
+        { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },
+      ];
+
+      render(<CumulativeFlowChart data={sampleData} error="Rate limit exceeded" />);
+      expect(screen.getByTestId('cfd-refresh-error-pill')).toBeInTheDocument();
+      expect(screen.getByText('Sync Failed: Rate limit exceeded')).toBeInTheDocument();
+      expect(screen.getByText('Cumulative Flow Diagram (CFD)')).toBeInTheDocument();
+      expect(screen.queryByTestId('cfd-error-state')).toBeNull();
+    });
+
     it('renders stacked area paths and legend for all statuses', () => {
       const sampleData: CfdDataPoint[] = [
         { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },

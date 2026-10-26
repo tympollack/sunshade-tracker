@@ -164,6 +164,7 @@ export function generateCfdSeries(
 
   // Extract project status mappings if configured
   const configuredCompleted = new Set<string>();
+  const explicitlyExcludedFromComplete = new Set<string>();
   const configuredInProgress = new Set<string>();
   const configuredInReview = new Set<string>();
   const configuredUnstarted = new Set<string>();
@@ -172,17 +173,30 @@ export function generateCfdSeries(
     for (const s of projectSettings.statuses) {
       const id = String(s.id || '').toLowerCase().trim();
       if (!id) continue;
-      if (s.is_completed) {
+      if (s.is_completed === true) {
         configuredCompleted.add(id);
+      } else if (s.is_completed === false) {
+        explicitlyExcludedFromComplete.add(id);
       }
     }
   }
 
-  const metricRules = projectSettings?.metric_rules || projectSettings?.sprint_metrics;
+  // Resolve metric rules across all supported settings locations (top-level, nested sprint_settings, metadata)
+  const metricRules =
+    projectSettings?.sprint_metrics ||
+    projectSettings?.metric_rules ||
+    projectSettings?.sprint_settings?.metric_rules ||
+    projectSettings?.sprint_settings?.metrics ||
+    projectSettings?.sprint_settings?.sprint_metrics ||
+    projectSettings?.metadata?.metric_rules ||
+    projectSettings?.metadata?.sprint_metrics;
+
   if (Array.isArray(metricRules?.completed_statuses)) {
-    metricRules.completed_statuses.forEach((st: string) =>
-      configuredCompleted.add(String(st).toLowerCase().trim())
-    );
+    metricRules.completed_statuses.forEach((st: string) => {
+      const id = String(st).toLowerCase().trim();
+      configuredCompleted.add(id);
+      explicitlyExcludedFromComplete.delete(id);
+    });
   }
   if (Array.isArray(metricRules?.in_progress_statuses)) {
     metricRules.in_progress_statuses.forEach((st: string) =>
@@ -205,22 +219,33 @@ export function generateCfdSeries(
     if (configuredInProgress.has(s)) return 'in_progress';
     if (configuredUnstarted.has(s)) return 'not_started';
 
-    // 2. Canonical completed aliases
-    if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
-      return 'complete';
+    // 2. Canonical completed aliases (only if not explicitly excluded from complete by schema)
+    if (!explicitlyExcludedFromComplete.has(s)) {
+      if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
+        return 'complete';
+      }
     }
-    // 3. Canonical in_review aliases
-    if (['in_review', 'review', 'under_review', 'code_review'].includes(s)) {
+
+    // 3. Canonical in_review aliases & review fallbacks
+    if (['in_review', 'review', 'under_review', 'code_review', 'testing', 'qa', 'sign_off'].includes(s)) {
       return 'in_review';
     }
-    // 4. Default review fallbacks only when not configured elsewhere
-    if (['testing', 'qa'].includes(s)) {
-      return 'in_review';
-    }
-    // 5. Canonical in_progress aliases
+
+    // 4. Canonical in_progress aliases
     if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s)) {
       return 'in_progress';
     }
+
+    // 5. Canonical unstarted aliases
+    if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s)) {
+      return 'not_started';
+    }
+
+    // 6. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
+    if (explicitlyExcludedFromComplete.has(s)) {
+      return 'in_progress';
+    }
+
     return 'not_started';
   }
 

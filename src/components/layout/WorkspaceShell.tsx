@@ -163,7 +163,8 @@ export function WorkspaceShell({
       : internalIsMobileLeftOpen;
 
   // Intelligent Drawer Arbitration (TASK-TRK-3PANE-CONTAINER-RESPONSIVENESS)
-  // When user opens RHN inspector on screens < 1440px, auto-collapse LHN to icon rail.
+  // When user opens docked RHN inspector on screens 1024px-1440px, auto-collapse LHN to icon rail.
+  // On screens < 1024px, the inspector is an overlay, so LHN docking does not compete with canvas.
   // When RHN inspector closes, restore previous user preference unless overridden.
   const userLeftCollapsedPrefRef = React.useRef<boolean>(false);
   const wasAutoCollapsedRef = React.useRef<boolean>(false);
@@ -171,12 +172,12 @@ export function WorkspaceShell({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const isNarrowViewport = window.innerWidth < 1440;
+    const isNarrowDockedViewport = window.innerWidth >= 1024 && window.innerWidth < 1440;
     const wasJustOpened = isRightOpen && !prevIsRightOpenRef.current;
     const wasJustClosed = !isRightOpen && prevIsRightOpenRef.current;
     prevIsRightOpenRef.current = isRightOpen;
 
-    if (wasJustOpened && Boolean(rightPane) && isNarrowViewport) {
+    if (wasJustOpened && Boolean(rightPane) && isNarrowDockedViewport) {
       if (!isLeftCollapsed) {
         userLeftCollapsedPrefRef.current = false;
         wasAutoCollapsedRef.current = true;
