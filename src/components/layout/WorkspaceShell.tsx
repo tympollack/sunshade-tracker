@@ -162,7 +162,45 @@ export function WorkspaceShell({
       ? externalIsMobileLeftOpen
       : internalIsMobileLeftOpen;
 
+  // Intelligent Drawer Arbitration (TASK-TRK-3PANE-CONTAINER-RESPONSIVENESS)
+  // When user opens RHN inspector on screens < 1440px, auto-collapse LHN to icon rail.
+  // When RHN inspector closes, restore previous user preference unless overridden.
+  const userLeftCollapsedPrefRef = React.useRef<boolean>(false);
+  const wasAutoCollapsedRef = React.useRef<boolean>(false);
+  const prevIsRightOpenRef = React.useRef<boolean>(isRightOpen);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isNarrowViewport = window.innerWidth < 1440;
+    const wasJustOpened = isRightOpen && !prevIsRightOpenRef.current;
+    const wasJustClosed = !isRightOpen && prevIsRightOpenRef.current;
+    prevIsRightOpenRef.current = isRightOpen;
+
+    if (wasJustOpened && Boolean(rightPane) && isNarrowViewport) {
+      if (!isLeftCollapsed) {
+        userLeftCollapsedPrefRef.current = false;
+        wasAutoCollapsedRef.current = true;
+        if (externalOnToggleLeftCollapse) {
+          externalOnToggleLeftCollapse();
+        } else {
+          setInternalIsLeftCollapsed(true);
+        }
+      }
+    } else if (wasJustClosed && wasAutoCollapsedRef.current) {
+      wasAutoCollapsedRef.current = false;
+      if (!userLeftCollapsedPrefRef.current && isLeftCollapsed) {
+        if (externalOnToggleLeftCollapse) {
+          externalOnToggleLeftCollapse();
+        } else {
+          setInternalIsLeftCollapsed(false);
+        }
+      }
+    }
+  }, [isRightOpen, Boolean(rightPane), isLeftCollapsed, externalOnToggleLeftCollapse]);
+
   const handleToggleLeft = () => {
+    wasAutoCollapsedRef.current = false;
+    userLeftCollapsedPrefRef.current = !isLeftCollapsed;
     if (externalOnToggleLeftCollapse) {
       externalOnToggleLeftCollapse();
     } else {
@@ -259,7 +297,8 @@ export function WorkspaceShell({
         {/* ── Middle Pane (Central Canvas) ── */}
         <main
           data-testid="workspace-canvas"
-          className="flex-1 min-w-0 flex flex-col overflow-hidden relative"
+          className="flex-1 min-w-0 flex flex-col overflow-hidden relative [container-type:inline-size] [container-name:central-stage]"
+          style={{ containerType: 'inline-size', containerName: 'central-stage' }}
         >
           <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
             {centerPane}
