@@ -374,5 +374,73 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       const hasSpacer = rects.some(r => r.getAttribute('fill') === 'transparent' || r.getAttribute('fill') === 'none' || r.getAttribute('fill-opacity') === '0');
       expect(rects.length).toBeGreaterThan(4);
     });
+
+    it('BUG-TRK-WATERFALL-ZERO-DROPPED-PHANTOM: renders zero-height transparent bar and flat connector bridge when dropped scope is 0', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 164,
+            addedPoints: 94,
+            droppedPoints: 0,
+            finalDelivered: 258,
+          }}
+        />
+      );
+
+      // Verify no red dropped bar is rendered with fill="#e11d48"
+      const roseCell = container.querySelector('[fill="#e11d48"]');
+      expect(roseCell).toBeNull();
+
+      // Only Baseline (sky), Added Creep (amber), and Delivered (emerald) bars have fills
+      expect(container.querySelector('[fill="#0284c7"]')).toBeInTheDocument();
+      expect(container.querySelector('[fill="#d97706"]')).toBeInTheDocument();
+      expect(container.querySelector('[fill="#059669"]')).toBeInTheDocument();
+
+      // Verify "0 dropped" label renders
+      expect(screen.getByText('0 dropped')).toBeInTheDocument();
+
+      // Verify bridge connectors stay flat across Added -> Dropped -> Delivered
+      const addedBridge = container.querySelector('[data-testid="bridge-added-dropped"]');
+      const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
+
+      expect(addedBridge).toBeInTheDocument();
+      expect(droppedBridge).toBeInTheDocument();
+
+      // The Y level of the dropped bridge should be flat and match the added bridge level
+      const addedY = addedBridge?.getAttribute('y1');
+      const droppedY = droppedBridge?.getAttribute('y1');
+      expect(droppedY).toBe(addedY);
+
+      // Verify the dropped bar has 0 points and no red cell is rendered
+      expect(roseCell).toBeNull();
+
+      // Verify Recharts filters out the 0-value dropped bar so only 3 bars (Baseline, Added, Delivered) are rendered
+      const valueBar = container.querySelectorAll('.recharts-bar')[1];
+      const barRectangles = valueBar?.querySelectorAll('.recharts-bar-rectangle');
+      expect(barRectangles?.length).toBe(3);
+    });
+
+    it('BUG-TRK-WATERFALL-ZERO-DROPPED-PHANTOM: handles non-finite (NaN) metrics gracefully without propagating NaN coordinates', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: NaN as any,
+            addedPoints: 20,
+            droppedPoints: NaN as any,
+            finalDelivered: 20,
+          }}
+        />
+      );
+
+      // Verify no NaN attributes in bridge connectors or SVG elements
+      const lines = Array.from(container.querySelectorAll('line'));
+      for (const line of lines) {
+        expect(line.getAttribute('y1')).not.toContain('NaN');
+        expect(line.getAttribute('y2')).not.toContain('NaN');
+      }
+
+      expect(screen.getByText('0 dropped')).toBeInTheDocument();
+      expect(screen.getByText('+20 pts')).toBeInTheDocument();
+    });
   });
 });

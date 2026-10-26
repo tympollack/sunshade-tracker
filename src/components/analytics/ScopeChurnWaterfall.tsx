@@ -35,10 +35,18 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
     );
   }
 
-  const baseline = Math.max(0, data?.baselineCommitted || 0);
-  const added = Math.max(0, data?.addedPoints || 0);
-  const dropped = Math.max(0, data?.droppedPoints || 0);
-  const delivered = Math.max(0, data?.finalDelivered || 0);
+  const baseline = typeof data?.baselineCommitted === 'number' && Number.isFinite(data.baselineCommitted)
+    ? Math.max(0, data.baselineCommitted)
+    : 0;
+  const added = typeof data?.addedPoints === 'number' && Number.isFinite(data.addedPoints)
+    ? Math.max(0, data.addedPoints)
+    : 0;
+  const dropped = typeof data?.droppedPoints === 'number' && Number.isFinite(data.droppedPoints)
+    ? Math.max(0, data.droppedPoints)
+    : 0;
+  const delivered = typeof data?.finalDelivered === 'number' && Number.isFinite(data.finalDelivered)
+    ? Math.max(0, data.finalDelivered)
+    : 0;
 
   const netTarget = Math.max(0, baseline + added - dropped);
   const currentTotal = baseline + added;
@@ -55,7 +63,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
 
   // Floating bottom offsets for waterfall steps
   const addedBottomPct = baselineHeightPct;
-  const droppedBottomPct = Math.max(0, Math.round((netTarget / peak) * 100));
+  const droppedBottomPct = dropped > 0 ? Math.max(0, Math.round((netTarget / peak) * 100)) : (addedBottomPct + addedHeightPct);
 
   // Stacked spacer bars data pipeline model
   const waterfallData = [
@@ -73,9 +81,9 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
     },
     {
       name: 'Dropped',
-      spacer: Math.max(0, baseline + added - dropped),
+      spacer: dropped === 0 ? baseline + added : Math.max(0, baseline + added - dropped),
       value: dropped,
-      fill: '#e11d48', // Rose-600
+      fill: dropped > 0 ? '#e11d48' : 'transparent', // Rose-600
     },
     {
       name: 'Delivered',
@@ -132,7 +140,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
                 maxBarSize={48}
               >
                 {waterfallData.map((entry) => (
-                  <Cell key={entry.name} fill={entry.fill} />
+                  <Cell key={entry.name} fill={entry.value > 0 ? entry.fill : 'transparent'} />
                 ))}
               </Bar>
             </BarChart>
@@ -170,7 +178,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
               data-testid="bridge-added-dropped"
             />
           )}
-          {dropped > 0 && (
+          {(dropped > 0 || currentTotal > 0) && (
             <line
               x1="62.5%"
               y1={`${Math.max(2, Math.min(98, 100 - droppedBottomPct))}%`}
