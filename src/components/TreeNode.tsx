@@ -62,7 +62,7 @@ export function getLevelBadgeClasses(
   hierarchy: HierarchyLevel[] = []
 ): string {
   if (isUnmapped) {
-    return 'bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+    return 'bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-mono uppercase px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
   }
 
   const normalized = (itemType || '').toLowerCase().trim();
@@ -70,21 +70,21 @@ export function getLevelBadgeClasses(
 
   if (matched) {
     if (matched.color) {
-      return 'text-[10px] font-mono uppercase px-2 py-0.5 rounded shrink-0 whitespace-nowrap border font-semibold';
+      return 'text-[10px] font-mono uppercase px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap border font-semibold';
     }
 
     switch (matched.level) {
       case 1:
-        return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+        return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
       case 2:
-        return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+        return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap';
       case 3:
-        return 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 text-[10px] font-medium uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+        return 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 text-[10px] font-medium uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
       case 4:
-        return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+        return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
       default:
         // Level 5+
-        return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+        return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     }
   }
 
@@ -94,20 +94,20 @@ export function getLevelBadgeClasses(
     case 'campaign':
     case 'initiative':
     case 'milestone':
-      return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-purple-950/60 text-purple-300 border border-purple-800/60 text-[10px] font-bold uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     case 'story':
     case 'sequence':
     case 'feature':
-      return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-sky-950/60 text-sky-300 border border-sky-800/60 text-[10px] font-semibold uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     case 'deliverable':
-      return 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 text-[10px] font-medium uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 text-[10px] font-medium uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     case 'task':
-      return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-slate-800/80 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     case 'subtask':
     case 'sub-task':
-      return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-slate-900 text-slate-400 border border-slate-800 text-[9px] uppercase font-mono tracking-wider px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
     default:
-      return 'bg-slate-800 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-2 py-0.5 rounded shrink-0 whitespace-nowrap';
+      return 'bg-slate-800 text-slate-300 border border-slate-700 text-[10px] uppercase font-mono px-1.5 py-0.5 rounded font-semibold shrink-0 whitespace-nowrap';
   }
 }
 
@@ -330,8 +330,8 @@ export function TreeNode({
         />
 
         <div
-          className="flex items-center gap-3 transition-all group"
-          style={{ marginLeft: `${item.depth * INDENT_STEP}px` }}
+          className="flex items-center gap-3 transition-all group tree-branch-row"
+          style={{ marginLeft: `${item.depth * INDENT_STEP}px`, ['--node-depth' as any]: item.depth }}
         >
           <TreeNodeBranchConnector isLastChild={isLastChild} depth={item.depth} />
 
