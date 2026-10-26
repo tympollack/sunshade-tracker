@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -177,7 +177,9 @@ export function TreeNodeCard({
         left = Math.max(12, window.innerWidth - menuWidth - 12);
       }
 
-      const estimatedHeight = statusMenuRef.current?.offsetHeight || 180;
+      const estimatedHeight =
+        statusMenuRef.current?.offsetHeight ||
+        Math.min(240, 36 + (effectiveStatuses?.length || 4) * 32 + 12);
       const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
       const spaceBelow = windowHeight - rect.bottom - 8;
       const spaceAbove = rect.top - 8;
@@ -185,6 +187,8 @@ export function TreeNodeCard({
       let top = rect.bottom + 4;
       if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
         top = Math.max(8, rect.top - estimatedHeight - 4);
+      } else if (top + estimatedHeight > windowHeight - 8) {
+        top = Math.max(8, windowHeight - estimatedHeight - 8);
       }
 
       setStatusCoords({
@@ -192,7 +196,7 @@ export function TreeNodeCard({
         left: Math.max(12, left),
       });
     }
-  }, []);
+  }, [effectiveStatuses]);
 
   const updateAssigneePosition = useCallback(() => {
     if (assigneeTriggerRef.current) {
@@ -203,7 +207,9 @@ export function TreeNodeCard({
         left = Math.max(12, window.innerWidth - menuWidth - 12);
       }
 
-      const estimatedHeight = assigneeMenuRef.current?.offsetHeight || 220;
+      const estimatedHeight =
+        assigneeMenuRef.current?.offsetHeight ||
+        Math.min(240, 36 + 32 + (members?.length || 4) * 32 + 12);
       const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
       const spaceBelow = windowHeight - rect.bottom - 8;
       const spaceAbove = rect.top - 8;
@@ -211,6 +217,8 @@ export function TreeNodeCard({
       let top = rect.bottom + 4;
       if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
         top = Math.max(8, rect.top - estimatedHeight - 4);
+      } else if (top + estimatedHeight > windowHeight - 8) {
+        top = Math.max(8, windowHeight - estimatedHeight - 8);
       }
 
       setAssigneeCoords({
@@ -218,7 +226,19 @@ export function TreeNodeCard({
         left: Math.max(12, left),
       });
     }
-  }, []);
+  }, [members]);
+
+  useLayoutEffect(() => {
+    if (isStatusOpen) {
+      updateStatusPosition();
+    }
+  }, [isStatusOpen, updateStatusPosition]);
+
+  useLayoutEffect(() => {
+    if (isAssigneeOpen) {
+      updateAssigneePosition();
+    }
+  }, [isAssigneeOpen, updateAssigneePosition]);
 
   useEffect(() => {
     if (!isStatusOpen) return;

@@ -219,31 +219,33 @@ export function generateCfdSeries(
     if (configuredInProgress.has(s)) return 'in_progress';
     if (configuredUnstarted.has(s)) return 'not_started';
 
-    // 2. If explicitly excluded from complete by project schema (is_completed === false),
-    // prevent falling through to canonical completed aliases (e.g. project uses 'done' for sign-off)
-    if (explicitlyExcludedFromComplete.has(s)) {
-      if (['in_review', 'review', 'testing', 'qa', 'sign_off'].includes(s)) {
-        return 'in_review';
+    // 2. Canonical completed aliases (only if not explicitly excluded from complete by schema)
+    if (!explicitlyExcludedFromComplete.has(s)) {
+      if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
+        return 'complete';
       }
-      return 'in_progress';
     }
 
-    // 3. Canonical completed aliases
-    if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
-      return 'complete';
-    }
-    // 4. Canonical in_review aliases
-    if (['in_review', 'review', 'under_review', 'code_review'].includes(s)) {
+    // 3. Canonical in_review aliases & review fallbacks
+    if (['in_review', 'review', 'under_review', 'code_review', 'testing', 'qa', 'sign_off'].includes(s)) {
       return 'in_review';
     }
-    // 5. Default review fallbacks only when not configured elsewhere
-    if (['testing', 'qa'].includes(s)) {
-      return 'in_review';
-    }
-    // 6. Canonical in_progress aliases
+
+    // 4. Canonical in_progress aliases
     if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s)) {
       return 'in_progress';
     }
+
+    // 5. Canonical unstarted aliases
+    if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s)) {
+      return 'not_started';
+    }
+
+    // 6. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
+    if (explicitlyExcludedFromComplete.has(s)) {
+      return 'in_progress';
+    }
+
     return 'not_started';
   }
 

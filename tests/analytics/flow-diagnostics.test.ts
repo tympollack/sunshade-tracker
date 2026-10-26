@@ -276,6 +276,34 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].in_progress).toBe(1);
     });
 
+    it('PR-134: classifies unstarted statuses marked with is_completed: false into not_started, not in_progress', () => {
+      const mockItems = [
+        {
+          id: 'i-not-started',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'not_started',
+        },
+        {
+          id: 'i-backlog',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'backlog',
+        },
+      ];
+
+      const projectSettingsWithExplicitUncompleted = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', is_completed: false },
+          { id: 'backlog', label: 'Backlog', is_completed: false },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithExplicitUncompleted);
+      // Untouched work marked as is_completed: false should stay in not_started, NOT enter in_progress WIP
+      expect(series[0].not_started).toBe(2);
+      expect(series[0].in_progress).toBe(0);
+      expect(series[0].complete).toBe(0);
+    });
+
     it('PR-133: extracts and resolves completion rules nested under sprint_settings.metric_rules', () => {
       const mockItems = [
         {
