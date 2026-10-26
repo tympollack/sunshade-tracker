@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { Tooltip } from '@/components/analytics/Tooltip';
 import { KpiMetricCards } from '@/components/analytics/KpiMetricCards';
-import { ScopeChurnWaterfall } from '@/components/analytics/ScopeChurnWaterfall';
+import { ScopeChurnWaterfall, WaterfallCustomTooltip } from '@/components/analytics/ScopeChurnWaterfall';
 
 describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
   beforeEach(() => {
@@ -445,6 +445,94 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
       expect(
         screen.getByText('Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline')
       ).toBeInTheDocument();
+      fireEvent.mouseLeave(deliveredBar);
+    });
+
+    it('BUG-TRK-CHART-TOOLTIP-CURSOR-TRACKING: surfaces stage definition tooltips on footer metric labels', () => {
+      render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 100,
+            addedPoints: 20,
+            droppedPoints: 10,
+            finalDelivered: 95,
+          }}
+        />
+      );
+
+      // 1. Day 1 Commitment label tooltip
+      const baselineFooter = screen.getByTestId('tooltip-baseline-footer');
+      fireEvent.mouseEnter(baselineFooter);
+      act(() => {
+        vi.advanceTimersByTime(160);
+      });
+      expect(
+        screen.getByText('Total story points locked in when the sprint was formally activated')
+      ).toBeInTheDocument();
+      fireEvent.mouseLeave(baselineFooter);
+
+      // 2. Injected Scope label tooltip
+      const addedFooter = screen.getByTestId('tooltip-added-footer');
+      fireEvent.mouseEnter(addedFooter);
+      act(() => {
+        vi.advanceTimersByTime(160);
+      });
+      expect(
+        screen.getByText('Story points added to this sprint after kickoff via backlog drag or mid-flight creation')
+      ).toBeInTheDocument();
+      fireEvent.mouseLeave(addedFooter);
+
+      // 3. Backlog Return label tooltip
+      const droppedFooter = screen.getByTestId('tooltip-dropped-footer');
+      fireEvent.mouseEnter(droppedFooter);
+      act(() => {
+        vi.advanceTimersByTime(160);
+      });
+      expect(
+        screen.getByText('Scope removed or deferred back to backlog during active sprint execution')
+      ).toBeInTheDocument();
+      fireEvent.mouseLeave(droppedFooter);
+
+      // 4. Delivered % label tooltip
+      const deliveredFooter = screen.getByTestId('tooltip-delivered-footer');
+      fireEvent.mouseEnter(deliveredFooter);
+      act(() => {
+        vi.advanceTimersByTime(160);
+      });
+      expect(
+        screen.getByText('Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline')
+      ).toBeInTheDocument();
+      fireEvent.mouseLeave(deliveredFooter);
+    });
+
+    it('BUG-TRK-CHART-TOOLTIP-CURSOR-TRACKING: renders WaterfallCustomTooltip unified card with stage name, value points, and description', () => {
+      const mockPayload = [
+        {
+          dataKey: 'value',
+          payload: {
+            name: 'Added Creep',
+            value: 26,
+            description: 'Story points added to this sprint after kickoff via backlog drag or mid-flight creation',
+          },
+        },
+      ];
+
+      const { rerender } = render(<WaterfallCustomTooltip active={true} payload={mockPayload} />);
+
+      const card = screen.getByTestId('waterfall-custom-tooltip');
+      expect(card).toBeInTheDocument();
+      expect(screen.getByText('Added Creep')).toBeInTheDocument();
+      expect(screen.getByText('26 pts')).toBeInTheDocument();
+      expect(
+        screen.getByText('Story points added to this sprint after kickoff via backlog drag or mid-flight creation')
+      ).toBeInTheDocument();
+
+      // Returns null when not active or empty payload
+      rerender(<WaterfallCustomTooltip active={false} payload={mockPayload} />);
+      expect(screen.queryByTestId('waterfall-custom-tooltip')).toBeNull();
+
+      rerender(<WaterfallCustomTooltip active={true} payload={[]} />);
+      expect(screen.queryByTestId('waterfall-custom-tooltip')).toBeNull();
     });
   });
 });
