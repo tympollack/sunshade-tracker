@@ -157,18 +157,20 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(totalOct3).toBe(1);
     });
 
-    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: reconstructs daily status from created_at, updated_at, and current status when transition logs are sparse', () => {
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: reconstructs daily status from status-specific audit timestamps when transition logs are sparse', () => {
       const mockItems = [
         {
           id: 'i1',
           created_at: '2026-10-01T00:00:00.000Z',
-          updated_at: '2026-10-25T14:00:00.000Z',
+          updated_at: '2026-10-28T14:00:00.000Z', // Title edit on Oct 28
+          completed_at: '2026-10-25T14:00:00.000Z', // Completed on Oct 25
           status: 'complete',
         },
         {
           id: 'i2',
           created_at: '2026-10-01T00:00:00.000Z',
-          updated_at: '2026-10-20T10:00:00.000Z',
+          updated_at: '2026-10-28T10:00:00.000Z',
+          metadata: { started_at: '2026-10-20T10:00:00.000Z' },
           status: 'in_progress',
         },
       ];
@@ -177,13 +179,14 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const series = generateCfdSeries(mockItems, [], '2026-10-24', '2026-10-26');
       expect(series.length).toBe(3);
 
-      // On Oct 24: i1 was not updated yet (prior to updated_at), i2 was updated on Oct 20 -> in_progress
+      // On Oct 24: i1 was not completed yet (prior to completed_at), i2 was started on Oct 20 -> in_progress
       const dayOct24 = series.find((s) => s.date === '2026-10-24');
       expect(dayOct24?.complete).toBe(0);
       expect(dayOct24?.not_started).toBe(1);
       expect(dayOct24?.in_progress).toBe(1);
 
-      // On Oct 25: i1 was updated to complete -> complete: 1, in_progress: 1, not_started: 0
+      // On Oct 25: i1 was completed -> complete: 1, in_progress: 1, not_started: 0
+      // Notice: subsequent title edit on Oct 28 does NOT erase the Oct 25 completion!
       const dayOct25 = series.find((s) => s.date === '2026-10-25');
       expect(dayOct25?.complete).toBe(1);
       expect(dayOct25?.in_progress).toBe(1);
@@ -193,6 +196,63 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const dayOct26 = series.find((s) => s.date === '2026-10-26');
       expect(dayOct26?.complete).toBe(1);
       expect(dayOct26?.in_progress).toBe(1);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: does not erase completions when no status timestamp exists and non-status edits advance updated_at', () => {
+      const mockItems = [
+        {
+          id: 'i-legacy',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-20T12:00:00.000Z', // Title edit on Oct 20
+          status: 'complete',
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-05', '2026-10-10');
+      // For legacy items without transition events or status timestamps, non-status edit on Oct 20
+      // does not turn earlier days (Oct 5-10) into not_started
+      for (const day of series) {
+        expect(day.complete).toBe(1);
+        expect(day.not_started).toBe(0);
+      }
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: counts completed unplanned work under complete layer', () => {
+      const mockItems = [
+        {
+          id: 'i-unplanned-completed',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'completed',
+          metadata: { is_unplanned: true },
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02');
+      expect(series[0].complete).toBe(1);
+      expect(series[0].unplanned).toBe(0);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: respects project custom status configurations', () => {
+      const mockItems = [
+        {
+          id: 'i-qa',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const projectSettingsWithTestingComplete = {
+        statuses: [
+          { id: 'not_started', is_completed: false },
+          { id: 'in_progress', is_completed: false },
+          { id: 'testing', is_completed: true },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithTestingComplete);
+      // Because 'testing' is configured with is_completed: true, it maps to complete rather than fallback review
+      expect(series[0].complete).toBe(1);
+      expect(series[0].in_review).toBe(0);
     });
 
     it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: supports full sprint quarter window (10/01/2026 to 12/31/2026) without dropping dates', () => {

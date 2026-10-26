@@ -21,6 +21,8 @@ export interface UseSprintTelemetryResult {
   isLoading: boolean;
   isRefreshing: boolean;
   isValidating: boolean;
+  isCfdLoading: boolean;
+  cfdError: string | null;
   kpiMetrics: KpiMetrics;
   burndownData: BurndownDataPoint[];
   churnData: ScopeChurnData;
@@ -65,6 +67,8 @@ export function useSprintTelemetry({
     finalDelivered: 0,
   });
   const [cfdData, setCfdData] = useState<CfdDataPoint[]>([]);
+  const [isCfdLoading, setIsCfdLoading] = useState(false);
+  const [cfdError, setCfdError] = useState<string | null>(null);
   const [monteCarlo, setMonteCarlo] = useState<MonteCarloSimulationResult | null>(null);
 
   const forecastStartDate = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -179,14 +183,27 @@ export function useSprintTelemetry({
       }
 
       // 3. Fetch CFD series
-      const cfdRes = await fetch(
-        `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/cfd?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&tenant_slug=${encodeURIComponent(tenantSlug)}`
-      );
-      if (cfdRes.ok) {
-        const cfdJson = await cfdRes.json();
-        if (Array.isArray(cfdJson.series)) {
-          setCfdData(cfdJson.series);
+      setIsCfdLoading(true);
+      setCfdError(null);
+      try {
+        const cfdRes = await fetch(
+          `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/cfd?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&tenant_slug=${encodeURIComponent(tenantSlug)}`
+        );
+        if (cfdRes.ok) {
+          const cfdJson = await cfdRes.json();
+          if (Array.isArray(cfdJson.series)) {
+            setCfdData(cfdJson.series);
+          } else {
+            setCfdData([]);
+          }
+        } else {
+          const errData = await cfdRes.json().catch(() => ({}));
+          setCfdError(errData.error || `Failed to fetch CFD telemetry (${cfdRes.status})`);
         }
+      } catch (err: any) {
+        setCfdError(err.message || 'Network error fetching CFD telemetry');
+      } finally {
+        setIsCfdLoading(false);
       }
 
       // 4. Run Monte Carlo simulation for milestone projection (zero fake data fallback)
@@ -230,6 +247,8 @@ export function useSprintTelemetry({
     isLoading,
     isRefreshing,
     isValidating: isRefreshing,
+    isCfdLoading,
+    cfdError,
     kpiMetrics,
     burndownData,
     churnData,

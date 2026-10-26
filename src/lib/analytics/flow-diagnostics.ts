@@ -135,7 +135,8 @@ export function generateCfdSeries(
   items: any[],
   events: any[],
   startDateStr: string,
-  endDateStr: string
+  endDateStr: string,
+  projectSettings?: any
 ): CfdDataPoint[] {
   // Parse date bounds cleanly in UTC to handle timezones and daylight savings without dropping points
   const startParts = (startDateStr || '').split('-').map(Number);
@@ -161,6 +162,72 @@ export function generateCfdSeries(
     (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime()
   );
 
+  // Extract project status mappings if configured
+  const configuredCompleted = new Set<string>();
+  const configuredInProgress = new Set<string>();
+  const configuredInReview = new Set<string>();
+  const configuredUnstarted = new Set<string>();
+
+  if (Array.isArray(projectSettings?.statuses)) {
+    for (const s of projectSettings.statuses) {
+      const id = String(s.id || '').toLowerCase().trim();
+      if (!id) continue;
+      if (s.is_completed) {
+        configuredCompleted.add(id);
+      }
+    }
+  }
+
+  const metricRules = projectSettings?.metric_rules || projectSettings?.sprint_metrics;
+  if (Array.isArray(metricRules?.completed_statuses)) {
+    metricRules.completed_statuses.forEach((st: string) =>
+      configuredCompleted.add(String(st).toLowerCase().trim())
+    );
+  }
+  if (Array.isArray(metricRules?.in_progress_statuses)) {
+    metricRules.in_progress_statuses.forEach((st: string) =>
+      configuredInProgress.add(String(st).toLowerCase().trim())
+    );
+  }
+  if (Array.isArray(metricRules?.unstarted_statuses)) {
+    metricRules.unstarted_statuses.forEach((st: string) =>
+      configuredUnstarted.add(String(st).toLowerCase().trim())
+    );
+  }
+
+  function getCfdCategory(statusName: string): 'complete' | 'in_review' | 'in_progress' | 'not_started' {
+    const s = String(statusName || '').toLowerCase().trim();
+    if (!s) return 'not_started';
+
+    // 1. Project-configured definitions take highest priority
+    if (configuredCompleted.has(s)) return 'complete';
+    if (configuredInReview.has(s)) return 'in_review';
+    if (configuredInProgress.has(s)) return 'in_progress';
+    if (configuredUnstarted.has(s)) return 'not_started';
+
+    // 2. Canonical completed aliases
+    if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
+      return 'complete';
+    }
+    // 3. Canonical in_review aliases
+    if (['in_review', 'review', 'under_review', 'code_review'].includes(s)) {
+      return 'in_review';
+    }
+    // 4. Default review fallbacks only when not configured elsewhere
+    if (['testing', 'qa'].includes(s)) {
+      return 'in_review';
+    }
+    // 5. Canonical in_progress aliases
+    if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s)) {
+      return 'in_progress';
+    }
+    return 'not_started';
+  }
+
+  function isCompleteCategory(statusName: string): boolean {
+    return getCfdCategory(statusName) === 'complete';
+  }
+
   const series: CfdDataPoint[] = [];
 
   for (const dateStr of dates) {
@@ -180,10 +247,6 @@ export function generateCfdSeries(
       if (createdMs && createdMs > endOfDayMs) {
         continue; // Item didn't exist yet on this date
       }
-
-      const itemUpdatedMs = item.updated_at && !isNaN(new Date(item.updated_at).getTime())
-        ? new Date(item.updated_at).getTime()
-        : createdMs;
 
       // Reconstruct status at end of this day from events
       const itemTransitions = sortedEvents.filter(
@@ -207,14 +270,60 @@ export function generateCfdSeries(
           item.metadata?.initial_status ||
           'not_started';
       } else {
-        // Fallback safely: if status transition logs are sparse, reconstruct cumulative daily snapshots
-        // from work item created_at, updated_at, and current status.
-        if (endOfDayMs >= itemUpdatedMs) {
-          // On or after the item was last updated, it has reached its current status
-          status = item.status || 'not_started';
+        // Fallback safely when transition audit logs are sparse:
+        // Check for dedicated status-specific timestamps (completed_at, closed_at, status_updated_at).
+        // If an explicit status timestamp exists, use it to accurately reflect historical transition.
+        // If no status-specific timestamp exists, do NOT treat an arbitrary updated_at change (which advances
+        // on title, description, or sprint edits) as a status transition; retain the item's known status.
+        const completedAtRaw =
+          item.metadata?.completed_at ||
+          item.completed_at ||
+          item.metadata?.closed_at ||
+          item.closed_at;
+        const completedAtMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
+
+        const statusUpdatedAtRaw =
+          item.metadata?.status_updated_at ||
+          item.metadata?.status_changed_at;
+        const statusUpdatedAtMs = statusUpdatedAtRaw ? new Date(statusUpdatedAtRaw).getTime() : NaN;
+
+        const startedAtRaw = item.metadata?.started_at || item.started_at;
+        const startedAtMs = startedAtRaw ? new Date(startedAtRaw).getTime() : NaN;
+
+        if (isCompleteCategory(item.status)) {
+          if (!isNaN(completedAtMs)) {
+            if (endOfDayMs >= completedAtMs) {
+              status = item.status;
+            } else if (!isNaN(startedAtMs) && endOfDayMs >= startedAtMs) {
+              status = 'in_progress';
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else if (!isNaN(statusUpdatedAtMs)) {
+            if (endOfDayMs >= statusUpdatedAtMs) {
+              status = item.status;
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else {
+            // Explicit fallback: no status timestamp exists. Do NOT use updated_at, as title/sprint edits
+            // would erase historical completions. Retain terminal status across the recorded lifetime.
+            status = item.status || 'not_started';
+          }
+        } else if (getCfdCategory(item.status) === 'in_progress' || getCfdCategory(item.status) === 'in_review') {
+          const transMs = !isNaN(statusUpdatedAtMs) ? statusUpdatedAtMs : startedAtMs;
+          if (!isNaN(transMs)) {
+            if (endOfDayMs >= transMs) {
+              status = item.status;
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else {
+            // Fallback for active work without transition timestamps
+            status = item.status || 'not_started';
+          }
         } else {
-          // Prior to updated_at: if initial_status was recorded, use it; otherwise not_started
-          status = item.metadata?.initial_status || 'not_started';
+          status = item.status || 'not_started';
         }
       }
 
@@ -225,16 +334,16 @@ export function generateCfdSeries(
         status === 'unplanned'
       );
 
-      const normalizedStatus = (status || '').toLowerCase().trim();
+      const category = getCfdCategory(status);
 
-      if (isUnplanned && normalizedStatus !== 'complete' && normalizedStatus !== 'done') {
+      if (isUnplanned && category !== 'complete') {
         counts.unplanned++;
-      } else if (normalizedStatus === 'complete' || normalizedStatus === 'done' || normalizedStatus === 'completed') {
+      } else if (category === 'complete') {
         counts.complete++;
-      } else if (normalizedStatus === 'in_progress' || normalizedStatus === 'started' || normalizedStatus === 'doing' || normalizedStatus === 'wip') {
-        counts.in_progress++;
-      } else if (normalizedStatus === 'in_review' || normalizedStatus === 'review' || normalizedStatus === 'testing' || normalizedStatus === 'qa') {
+      } else if (category === 'in_review') {
         counts.in_review++;
+      } else if (category === 'in_progress') {
+        counts.in_progress++;
       } else {
         counts.not_started++;
       }

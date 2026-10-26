@@ -25,7 +25,7 @@ export async function GET(
     const isUuid = UUID_REGEX.test(projectId.trim());
     let projectQuery = supabaseAdmin
       .from('projects')
-      .select('id, name, slug, tenant_id')
+      .select('id, name, slug, tenant_id, settings')
       .eq('tenant_id', authCtx.tenant.id)
       .is('deleted_at', null);
 
@@ -119,7 +119,7 @@ export async function GET(
     }
 
     // 5. Generate daily CFD series
-    const cfdSeries = generateCfdSeries(items || [], events, startDate, endDate);
+    const cfdSeries = generateCfdSeries(items || [], events, startDate, endDate, project.settings);
 
     return NextResponse.json({
       project_id: project.id,

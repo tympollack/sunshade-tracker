@@ -11,6 +11,7 @@ export interface CumulativeFlowChartProps {
   data: CfdDataPoint[];
   isLoading?: boolean;
   isValidating?: boolean;
+  error?: string | null;
   initialTimeWindow?: CfdTimeWindow;
   initialHideUnstarted?: boolean;
   dateFormat?: 'MMM DD' | 'MM/DD';
@@ -127,6 +128,7 @@ export function CumulativeFlowChart({
   data,
   isLoading = false,
   isValidating = false,
+  error = null,
   initialTimeWindow = 'Full Sprint',
   initialHideUnstarted = false,
   dateFormat = 'MMM DD',
@@ -199,7 +201,8 @@ export function CumulativeFlowChart({
     return data;
   }, [data, timeWindow]);
 
-  if (isLoading || isValidating) {
+  // Show skeleton on initial load, or when validating without pre-existing data
+  if (isLoading || (isValidating && (!data || data.length === 0))) {
     return (
       <div
         data-testid="cfd-loading-skeleton"
@@ -207,6 +210,22 @@ export function CumulativeFlowChart({
       >
         <div className="h-5 bg-slate-800 rounded w-64 mb-4" />
         <div className="flex-1 bg-slate-800/40 rounded-lg" />
+      </div>
+    );
+  }
+
+  // Show error state if telemetry fetch failed and no cached data exists
+  if (error && (!displayData || displayData.length === 0)) {
+    return (
+      <div
+        data-testid="cfd-error-state"
+        className="bg-slate-900/80 border border-red-900/40 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center"
+      >
+        <AreaChart className="w-10 h-10 text-rose-500/70 mb-3" />
+        <h3 className="text-sm font-semibold text-rose-200">Unable to Load Flow Telemetry</h3>
+        <p className="text-xs text-rose-400/80 mt-1 max-w-sm">
+          {error}
+        </p>
       </div>
     );
   }

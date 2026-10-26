@@ -18,7 +18,7 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
     });
 
-    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders skeleton and does NOT prematurely show empty state when isLoading or isValidating is true', () => {
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders skeleton and does NOT prematurely show empty state when isLoading or isValidating is true without existing data', () => {
       const { rerender } = render(<CumulativeFlowChart data={[]} isLoading={true} />);
       expect(screen.getByTestId('cfd-loading-skeleton')).toBeInTheDocument();
       expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
@@ -30,6 +30,25 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       rerender(<CumulativeFlowChart data={[]} isLoading={false} isValidating={false} />);
       expect(screen.queryByTestId('cfd-loading-skeleton')).toBeNull();
       expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: preserves existing chart data during background revalidation without flashing skeleton', () => {
+      const sampleData: CfdDataPoint[] = [
+        { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },
+      ];
+
+      render(<CumulativeFlowChart data={sampleData} isValidating={true} />);
+      // Chart remains visible during background isValidating when data is already populated
+      expect(screen.queryByTestId('cfd-loading-skeleton')).toBeNull();
+      expect(screen.getByText('Cumulative Flow Diagram (CFD)')).toBeInTheDocument();
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders error state with descriptive message when CFD fetch fails', () => {
+      render(<CumulativeFlowChart data={[]} error="Failed to fetch CFD telemetry (500)" />);
+      expect(screen.getByTestId('cfd-error-state')).toBeInTheDocument();
+      expect(screen.getByText('Unable to Load Flow Telemetry')).toBeInTheDocument();
+      expect(screen.getByText('Failed to fetch CFD telemetry (500)')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
     });
 
     it('renders stacked area paths and legend for all statuses', () => {

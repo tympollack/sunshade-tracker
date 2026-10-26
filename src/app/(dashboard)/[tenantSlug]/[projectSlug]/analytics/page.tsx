@@ -38,6 +38,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     isLoading,
     isRefreshing,
     isValidating,
+    isCfdLoading,
+    cfdError,
     kpiMetrics,
     burndownData,
     churnData,
@@ -330,6 +332,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           isLoading={isLoading}
           isValidating={isValidating}
           isRefreshing={isRefreshing}
+          isCfdLoading={isCfdLoading}
+          cfdError={cfdError}
           kpiMetrics={kpiMetrics}
           burndownData={burndownData}
           churnData={churnData}
