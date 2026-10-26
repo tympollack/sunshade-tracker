@@ -150,3 +150,56 @@ body {
   }
 }
 
+/* ==========================================================================
+   Central Stage Container Queries (STORY-TRK-HIERARCHY-ROW-DENSITY-STREAMLINE)
+   ========================================================================== */
+.central-stage-status-compact {
+  display: none;
+}
+
+.central-stage-assignee-compact {
+  display: none;
+}
+
+@container central-stage (max-width: 680px) {
+  .tree-branch-row {
+    margin-left: calc(var(--node-depth, 0) * 16px) !important;
+  }
+  .ancestor-guide-rail {
+    left: calc(var(--col-depth, 0) * 16px) !important;
+  }
+  .branch-continuation-rail {
+    left: calc(var(--node-depth, 0) * 16px) !important;
+  }
+  .central-stage-status-select {
+    display: none !important;
+  }
+  .central-stage-status-compact {
+    display: inline-flex !important;
+  }
+  .central-stage-assignee-select {
+    display: none !important;
+  }
+  .central-stage-assignee-compact {
+    display: inline-flex !important;
+  }
+  .central-stage-ref-id {
+    display: none !important;
+  }
+  .central-stage-track-assignee {
+    width: auto !important;
+  }
+  .central-stage-track-status {
+    width: auto !important;
+  }
+  .central-stage-track-rollup {
+    width: 3rem !important; /* w-12 */
+  }
+}
+
+@container central-stage (max-width: 550px) {
+  .central-stage-ref-id {
+    display: none !important;
+  }
+}
+
