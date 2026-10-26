@@ -88,8 +88,8 @@ function SprintAnalyticsViewContent({
       <section className="w-full">
         <CumulativeFlowChart
           data={cfdData}
-          isLoading={isCfdLoading}
-          isValidating={isValidating || isRefreshing}
+          isLoading={isCfdLoading && (!cfdData || cfdData.length === 0)}
+          isValidating={isValidating || isRefreshing || isCfdLoading}
           error={cfdError}
         />
       </section>

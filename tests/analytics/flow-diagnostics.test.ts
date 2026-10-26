@@ -255,6 +255,49 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].in_review).toBe(0);
     });
 
+    it('PR-133: does not classify canonically complete status names as complete if project schema marks is_completed: false', () => {
+      const mockItems = [
+        {
+          id: 'i-done-not-complete',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'done',
+        },
+      ];
+
+      const projectSettingsWithDoneExcluded = {
+        statuses: [
+          { id: 'done', label: 'Done (Awaiting QA)', is_completed: false },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithDoneExcluded);
+      // 'done' is explicitly is_completed: false, so it must NOT enter the complete layer
+      expect(series[0].complete).toBe(0);
+      expect(series[0].in_progress).toBe(1);
+    });
+
+    it('PR-133: extracts and resolves completion rules nested under sprint_settings.metric_rules', () => {
+      const mockItems = [
+        {
+          id: 'i-accepted',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'accepted',
+        },
+      ];
+
+      const projectSettingsWithNestedRules = {
+        sprint_settings: {
+          metric_rules: {
+            completed_statuses: ['accepted'],
+          },
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithNestedRules);
+      expect(series[0].complete).toBe(1);
+      expect(series[0].not_started).toBe(0);
+    });
+
     it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: supports full sprint quarter window (10/01/2026 to 12/31/2026) without dropping dates', () => {
       const series = generateCfdSeries([], [], '2026-10-01', '2026-12-31');
       // October (31) + November (30) + December (31) = 92 days

@@ -176,8 +176,19 @@ export function TreeNodeCard({
       if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
         left = Math.max(12, window.innerWidth - menuWidth - 12);
       }
+
+      const estimatedHeight = statusMenuRef.current?.offsetHeight || 180;
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const spaceBelow = windowHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+
+      let top = rect.bottom + 4;
+      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+        top = Math.max(8, rect.top - estimatedHeight - 4);
+      }
+
       setStatusCoords({
-        top: rect.bottom + 4,
+        top,
         left: Math.max(12, left),
       });
     }
@@ -191,8 +202,19 @@ export function TreeNodeCard({
       if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
         left = Math.max(12, window.innerWidth - menuWidth - 12);
       }
+
+      const estimatedHeight = assigneeMenuRef.current?.offsetHeight || 220;
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const spaceBelow = windowHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+
+      let top = rect.bottom + 4;
+      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+        top = Math.max(8, rect.top - estimatedHeight - 4);
+      }
+
       setAssigneeCoords({
-        top: rect.bottom + 4,
+        top,
         left: Math.max(12, left),
       });
     }
@@ -752,7 +774,7 @@ export function TreeNodeCard({
           ref={statusMenuRef}
           data-testid={`status-popover-${item.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[160px] text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
+          className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[160px] max-h-60 overflow-y-auto custom-scrollbar text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
           style={{ top: `${statusCoords.top}px`, left: `${statusCoords.left}px` }}
         >
           <div className="px-2 py-1 text-[10px] text-slate-500 font-sans font-semibold uppercase tracking-wider border-b border-slate-800 mb-1">

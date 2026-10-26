@@ -202,7 +202,8 @@ export function CumulativeFlowChart({
   }, [data, timeWindow]);
 
   // Show skeleton on initial load, or when validating without pre-existing data
-  if (isLoading || (isValidating && (!data || data.length === 0))) {
+  const hasData = Boolean(displayData && displayData.length > 0);
+  if ((isLoading && !hasData) || (isValidating && !hasData)) {
     return (
       <div
         data-testid="cfd-loading-skeleton"
@@ -306,6 +307,15 @@ export function CumulativeFlowChart({
           <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
             <AreaChart className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="truncate">Cumulative Flow Diagram (CFD)</span>
+            {error && hasData && (
+              <span
+                data-testid="cfd-refresh-error-pill"
+                className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 shrink-0"
+                title={error}
+              >
+                Sync Failed: {error}
+              </span>
+            )}
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             WIP inventory, bottleneck discovery, and delivery flow progression
