@@ -135,22 +135,123 @@ export function generateCfdSeries(
   items: any[],
   events: any[],
   startDateStr: string,
-  endDateStr: string
+  endDateStr: string,
+  projectSettings?: any
 ): CfdDataPoint[] {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  // Parse date bounds cleanly in UTC to handle timezones and daylight savings without dropping points
+  const startParts = (startDateStr || '').split('-').map(Number);
+  const endParts = (endDateStr || '').split('-').map(Number);
+
+  let startUtc = Date.UTC(startParts[0] || 2026, (startParts[1] || 1) - 1, startParts[2] || 1);
+  let endUtc = Date.UTC(endParts[0] || 2026, (endParts[1] || 1) - 1, endParts[2] || 1);
+
+  if (isNaN(startUtc) || isNaN(endUtc) || startUtc > endUtc) {
+    const now = new Date();
+    endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    startUtc = endUtc - 14 * 24 * 60 * 60 * 1000;
+  }
 
   const dates: string[] = [];
-  const current = new Date(start);
-  while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  for (let ms = startUtc; ms <= endUtc; ms += oneDayMs) {
+    dates.push(new Date(ms).toISOString().split('T')[0]);
   }
 
   // Pre-sort events by occurred_at
-  const sortedEvents = [...events].sort(
+  const sortedEvents = [...(events || [])].sort(
     (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime()
   );
+
+  // Extract project status mappings if configured
+  const configuredCompleted = new Set<string>();
+  const explicitlyExcludedFromComplete = new Set<string>();
+  const configuredInProgress = new Set<string>();
+  const configuredInReview = new Set<string>();
+  const configuredUnstarted = new Set<string>();
+
+  if (Array.isArray(projectSettings?.statuses)) {
+    for (const s of projectSettings.statuses) {
+      const id = String(s.id || '').toLowerCase().trim();
+      if (!id) continue;
+      if (s.is_completed === true) {
+        configuredCompleted.add(id);
+      } else if (s.is_completed === false) {
+        explicitlyExcludedFromComplete.add(id);
+      }
+    }
+  }
+
+  // Resolve metric rules across all supported settings locations (top-level, nested sprint_settings, metadata)
+  const metricRules =
+    projectSettings?.sprint_metrics ||
+    projectSettings?.metric_rules ||
+    projectSettings?.sprint_settings?.metric_rules ||
+    projectSettings?.sprint_settings?.metrics ||
+    projectSettings?.sprint_settings?.sprint_metrics ||
+    projectSettings?.metadata?.metric_rules ||
+    projectSettings?.metadata?.sprint_metrics;
+
+  if (Array.isArray(metricRules?.completed_statuses)) {
+    metricRules.completed_statuses.forEach((st: string) => {
+      const id = String(st).toLowerCase().trim();
+      configuredCompleted.add(id);
+      explicitlyExcludedFromComplete.delete(id);
+    });
+  }
+  if (Array.isArray(metricRules?.in_progress_statuses)) {
+    metricRules.in_progress_statuses.forEach((st: string) =>
+      configuredInProgress.add(String(st).toLowerCase().trim())
+    );
+  }
+  if (Array.isArray(metricRules?.unstarted_statuses)) {
+    metricRules.unstarted_statuses.forEach((st: string) =>
+      configuredUnstarted.add(String(st).toLowerCase().trim())
+    );
+  }
+
+  function getCfdCategory(statusName: string): 'complete' | 'in_review' | 'in_progress' | 'not_started' {
+    const s = String(statusName || '').toLowerCase().trim();
+    if (!s) return 'not_started';
+
+    // 1. Project-configured definitions take highest priority
+    if (configuredCompleted.has(s)) return 'complete';
+    if (configuredInReview.has(s)) return 'in_review';
+    if (configuredInProgress.has(s)) return 'in_progress';
+    if (configuredUnstarted.has(s)) return 'not_started';
+
+    // 2. Canonical completed aliases (only if not explicitly excluded from complete by schema)
+    if (!explicitlyExcludedFromComplete.has(s)) {
+      if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
+        return 'complete';
+      }
+    }
+
+    // 3. Canonical in_review aliases & review fallbacks
+    if (['in_review', 'review', 'under_review', 'code_review', 'testing', 'qa', 'sign_off'].includes(s)) {
+      return 'in_review';
+    }
+
+    // 4. Canonical in_progress aliases
+    if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s)) {
+      return 'in_progress';
+    }
+
+    // 5. Canonical unstarted aliases
+    if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s)) {
+      return 'not_started';
+    }
+
+    // 6. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
+    if (explicitlyExcludedFromComplete.has(s)) {
+      return 'in_progress';
+    }
+
+    return 'not_started';
+  }
+
+  function isCompleteCategory(statusName: string): boolean {
+    return getCfdCategory(statusName) === 'complete';
+  }
 
   const series: CfdDataPoint[] = [];
 
@@ -166,8 +267,9 @@ export function generateCfdSeries(
     };
 
     for (const item of items) {
-      const itemCreatedMs = new Date(item.created_at).getTime();
-      if (itemCreatedMs > endOfDayMs) {
+      if (!item) continue;
+      const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+      if (createdMs && createdMs > endOfDayMs) {
         continue; // Item didn't exist yet on this date
       }
 
@@ -184,7 +286,7 @@ export function generateCfdSeries(
       if (priorTransitions.length > 0) {
         // Last transition that occurred on or before endOfDay
         const lastTransition = priorTransitions[priorTransitions.length - 1];
-        status = lastTransition.new_state?.status || item.status;
+        status = lastTransition.new_state?.status || item.status || 'not_started';
       } else if (itemTransitions.length > 0) {
         // Transitions exist later; reconstruct initial status prior to first transition
         const earliestTransition = itemTransitions[0];
@@ -193,27 +295,80 @@ export function generateCfdSeries(
           item.metadata?.initial_status ||
           'not_started';
       } else {
-        // No status transition events recorded; use initial_status or safe fallback to prevent completed items from appearing complete in historical dates
-        status =
-          item.metadata?.initial_status ||
-          (item.status === 'complete' || item.status === 'done' ? 'not_started' : item.status) ||
-          'not_started';
+        // Fallback safely when transition audit logs are sparse:
+        // Check for dedicated status-specific timestamps (completed_at, closed_at, status_updated_at).
+        // If an explicit status timestamp exists, use it to accurately reflect historical transition.
+        // If no status-specific timestamp exists, do NOT treat an arbitrary updated_at change (which advances
+        // on title, description, or sprint edits) as a status transition; retain the item's known status.
+        const completedAtRaw =
+          item.metadata?.completed_at ||
+          item.completed_at ||
+          item.metadata?.closed_at ||
+          item.closed_at;
+        const completedAtMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
+
+        const statusUpdatedAtRaw =
+          item.metadata?.status_updated_at ||
+          item.metadata?.status_changed_at;
+        const statusUpdatedAtMs = statusUpdatedAtRaw ? new Date(statusUpdatedAtRaw).getTime() : NaN;
+
+        const startedAtRaw = item.metadata?.started_at || item.started_at;
+        const startedAtMs = startedAtRaw ? new Date(startedAtRaw).getTime() : NaN;
+
+        if (isCompleteCategory(item.status)) {
+          if (!isNaN(completedAtMs)) {
+            if (endOfDayMs >= completedAtMs) {
+              status = item.status;
+            } else if (!isNaN(startedAtMs) && endOfDayMs >= startedAtMs) {
+              status = 'in_progress';
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else if (!isNaN(statusUpdatedAtMs)) {
+            if (endOfDayMs >= statusUpdatedAtMs) {
+              status = item.status;
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else {
+            // Explicit fallback: no status timestamp exists. Do NOT use updated_at, as title/sprint edits
+            // would erase historical completions. Retain terminal status across the recorded lifetime.
+            status = item.status || 'not_started';
+          }
+        } else if (getCfdCategory(item.status) === 'in_progress' || getCfdCategory(item.status) === 'in_review') {
+          const transMs = !isNaN(statusUpdatedAtMs) ? statusUpdatedAtMs : startedAtMs;
+          if (!isNaN(transMs)) {
+            if (endOfDayMs >= transMs) {
+              status = item.status;
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else {
+            // Fallback for active work without transition timestamps
+            status = item.status || 'not_started';
+          }
+        } else {
+          status = item.status || 'not_started';
+        }
       }
 
       const isUnplanned = Boolean(
         item.metadata?.is_unplanned ||
         item.metadata?.source_type === 'unplanned' ||
-        item.status === 'unplanned'
+        item.status === 'unplanned' ||
+        status === 'unplanned'
       );
 
-      if (isUnplanned && status !== 'complete') {
+      const category = getCfdCategory(status);
+
+      if (isUnplanned && category !== 'complete') {
         counts.unplanned++;
-      } else if (status === 'complete' || status === 'done') {
+      } else if (category === 'complete') {
         counts.complete++;
-      } else if (status === 'in_progress' || status === 'started') {
-        counts.in_progress++;
-      } else if (status === 'in_review' || status === 'review') {
+      } else if (category === 'in_review') {
         counts.in_review++;
+      } else if (category === 'in_progress') {
+        counts.in_progress++;
       } else {
         counts.not_started++;
       }

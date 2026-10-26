@@ -1,8 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   GripVertical,
   Lock,
@@ -57,6 +59,68 @@ interface TreeNodeCardProps {
   hierarchy?: HierarchyLevel[];
 }
 
+function getStatusGlyph(status: string, effectiveStatuses?: StatusDefinition[]) {
+  const norm = (status || '').toLowerCase().trim();
+  const matched = effectiveStatuses?.find((s) => s.id === status || s.id.toLowerCase() === norm);
+  const color = matched?.color;
+  const label = matched?.label || status;
+
+  switch (norm) {
+    case 'complete':
+    case 'done':
+      return {
+        bg: 'bg-emerald-950 text-emerald-400 border-emerald-800',
+        label: label || 'Complete',
+        icon: <Check className="w-3 h-3 text-emerald-400" />,
+        style: undefined,
+      };
+    case 'in_review':
+    case 'review':
+      return {
+        bg: 'bg-amber-950 text-amber-300 border-amber-800',
+        label: label || 'In Review',
+        icon: <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />,
+        style: undefined,
+      };
+    case 'in_progress':
+    case 'started':
+      return {
+        bg: 'bg-sky-950 text-sky-400 border-sky-800',
+        label: label || 'In Progress',
+        icon: <span className="w-2 h-2 rounded-full bg-sky-400" />,
+        style: undefined,
+      };
+    case 'not_started':
+    case 'planned':
+      return {
+        bg: 'bg-slate-900 text-slate-400 border-slate-700',
+        label: label || 'Not Started',
+        icon: <span className="w-2 h-2 rounded-full border border-slate-500" />,
+        style: undefined,
+      };
+    default: {
+      if (color) {
+        return {
+          bg: 'border',
+          label: label,
+          icon: <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />,
+          style: {
+            backgroundColor: `${color}20`,
+            borderColor: `${color}60`,
+            color: color,
+          },
+        };
+      }
+      return {
+        bg: 'bg-slate-900 text-slate-400 border-slate-700',
+        label: label || 'Not Started',
+        icon: <span className="w-2 h-2 rounded-full border border-slate-500" />,
+        style: undefined,
+      };
+    }
+  }
+}
+
 export function TreeNodeCard({
   item,
   nodeIsImmutable,
@@ -94,6 +158,145 @@ export function TreeNodeCard({
 }: TreeNodeCardProps) {
   const effectiveHierarchy =
     hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy || [];
+
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
+  const statusTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const assigneeTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const assigneeMenuRef = useRef<HTMLDivElement | null>(null);
+  const [statusCoords, setStatusCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [assigneeCoords, setAssigneeCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  const updateStatusPosition = useCallback(() => {
+    if (statusTriggerRef.current) {
+      const rect = statusTriggerRef.current.getBoundingClientRect();
+      const menuWidth = 160;
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
+
+      const estimatedHeight =
+        statusMenuRef.current?.offsetHeight ||
+        Math.min(240, 36 + (effectiveStatuses?.length || 4) * 32 + 12);
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const spaceBelow = windowHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+
+      let top = rect.bottom + 4;
+      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+        top = Math.max(8, rect.top - estimatedHeight - 4);
+      } else if (top + estimatedHeight > windowHeight - 8) {
+        top = Math.max(8, windowHeight - estimatedHeight - 8);
+      }
+
+      setStatusCoords({
+        top,
+        left: Math.max(12, left),
+      });
+    }
+  }, [effectiveStatuses]);
+
+  const updateAssigneePosition = useCallback(() => {
+    if (assigneeTriggerRef.current) {
+      const rect = assigneeTriggerRef.current.getBoundingClientRect();
+      const menuWidth = 180;
+      let left = rect.left;
+      if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuWidth - 12);
+      }
+
+      const estimatedHeight =
+        assigneeMenuRef.current?.offsetHeight ||
+        Math.min(240, 36 + 32 + (members?.length || 4) * 32 + 12);
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const spaceBelow = windowHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+
+      let top = rect.bottom + 4;
+      if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+        top = Math.max(8, rect.top - estimatedHeight - 4);
+      } else if (top + estimatedHeight > windowHeight - 8) {
+        top = Math.max(8, windowHeight - estimatedHeight - 8);
+      }
+
+      setAssigneeCoords({
+        top,
+        left: Math.max(12, left),
+      });
+    }
+  }, [members]);
+
+  useLayoutEffect(() => {
+    if (isStatusOpen) {
+      updateStatusPosition();
+    }
+  }, [isStatusOpen, updateStatusPosition]);
+
+  useLayoutEffect(() => {
+    if (isAssigneeOpen) {
+      updateAssigneePosition();
+    }
+  }, [isAssigneeOpen, updateAssigneePosition]);
+
+  useEffect(() => {
+    if (!isStatusOpen) return;
+    updateStatusPosition();
+    const handleScrollResize = () => updateStatusPosition();
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(e.target as Node) &&
+        statusTriggerRef.current &&
+        !statusTriggerRef.current.contains(e.target as Node)
+      ) {
+        setIsStatusOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsStatusOpen(false);
+    };
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+    window.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+      window.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isStatusOpen, updateStatusPosition]);
+
+  useEffect(() => {
+    if (!isAssigneeOpen) return;
+    updateAssigneePosition();
+    const handleScrollResize = () => updateAssigneePosition();
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        assigneeMenuRef.current &&
+        !assigneeMenuRef.current.contains(e.target as Node) &&
+        assigneeTriggerRef.current &&
+        !assigneeTriggerRef.current.contains(e.target as Node)
+      ) {
+        setIsAssigneeOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsAssigneeOpen(false);
+    };
+    window.addEventListener('resize', handleScrollResize);
+    window.addEventListener('scroll', handleScrollResize, true);
+    window.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('resize', handleScrollResize);
+      window.removeEventListener('scroll', handleScrollResize, true);
+      window.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isAssigneeOpen, updateAssigneePosition]);
 
   return (
     <div
@@ -191,7 +394,7 @@ export function TreeNodeCard({
           <span
             onClick={() => onEditItem?.(item)}
             title={item.description ? `${sanitizedTitle} — ${item.description}` : sanitizedTitle}
-            className="font-medium text-slate-100 hover:text-white transition-colors cursor-pointer truncate min-w-0 flex-shrink flex-1"
+            className="truncate font-medium text-slate-100 text-sm flex-1 min-w-0 min-w-[120px] flex-shrink hover:text-white transition-colors cursor-pointer"
           >
             {sanitizedTitle}
           </span>
@@ -222,11 +425,17 @@ export function TreeNodeCard({
           )}
 
           {item.external_ref_id && (
-            <CopyableRefId
-              id={item.external_ref_id}
-              brackets
-              className="text-slate-500 hover:text-slate-300 text-xs font-mono shrink-0 whitespace-nowrap"
-            />
+            <span
+              className="shrink-0 max-w-[140px] truncate central-stage-ref-id"
+              title={item.external_ref_id}
+              data-testid={`tree-node-ref-id-${item.id}`}
+            >
+              <CopyableRefId
+                id={item.external_ref_id}
+                brackets
+                className="text-slate-500 hover:text-slate-300 text-xs text-[11px] font-mono shrink-0 max-w-[140px] truncate"
+              />
+            </span>
           )}
 
           {/* Immutability Lock Badge */}
@@ -263,7 +472,7 @@ export function TreeNodeCard({
           data-testid={`tree-node-right-zone-${item.id}`}
         >
           {/* Rollup / Points Track */}
-          <div className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right" data-testid="col-rollup-points">
+          <div className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right central-stage-track-rollup" data-testid="col-rollup-points">
             {(() => {
               const pointsRollup = (item as any).points_rollup;
               const childCount =
@@ -322,9 +531,10 @@ export function TreeNodeCard({
           </div>
 
           {/* Assignee Selector Track */}
-          <div className="w-32 shrink-0 hidden md:flex items-center truncate" data-testid="col-assignee">
+          <div className="w-32 shrink-0 hidden md:flex items-center gap-1.5 truncate central-stage-track-assignee" data-testid="col-assignee">
+            {/* Desktop wide text select */}
             {members && members.length > 0 ? (
-              <div className="relative inline-flex items-center w-full">
+              <div className="relative inline-flex items-center w-full central-stage-assignee-select">
                 <User className="w-3 h-3 text-slate-500 absolute left-2 pointer-events-none" />
                 <select
                   value={item.assignee || ''}
@@ -346,21 +556,49 @@ export function TreeNodeCard({
                 </select>
               </div>
             ) : (
-              <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono truncate">
+              <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono truncate central-stage-assignee-select">
                 <User className="w-3 h-3 text-slate-500 shrink-0" />
                 <span className="truncate">{item.assignee || 'Unassigned'}</span>
               </span>
             )}
+
+            {/* Compact 22x22px Circular Avatar & Micro-Popover */}
+            <button
+              ref={assigneeTriggerRef}
+              type="button"
+              disabled={nodeIsImmutable}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (nodeIsImmutable) return;
+                setIsAssigneeOpen((prev) => !prev);
+              }}
+              title={item.assignee || 'Unassigned'}
+              data-testid={`assignee-avatar-btn-${item.id}`}
+              className={`w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center font-semibold text-[10px] border transition-all cursor-pointer central-stage-assignee-compact ${
+                nodeIsImmutable
+                  ? 'opacity-50 cursor-not-allowed bg-slate-900 border-slate-800 text-slate-500'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
+              } ${item.assignee ? 'bg-slate-800 text-slate-200' : 'bg-slate-900 text-slate-500'} ${
+                isAssigneeOpen ? 'ring-2 ring-emerald-400/60' : ''
+              }`}
+            >
+              {item.assignee ? (
+                <span>{item.assignee.trim().charAt(0).toUpperCase()}</span>
+              ) : (
+                <User className="w-3 h-3 text-slate-500" />
+              )}
+            </button>
           </div>
 
           {/* Status Selector Track */}
-          <div className="w-36 shrink-0 flex items-center gap-1.5 flex-1 md:flex-initial max-w-[170px] md:max-w-none" data-testid="col-status">
+          <div className="w-36 shrink-0 flex items-center gap-1.5 flex-1 md:flex-initial max-w-[170px] md:max-w-none central-stage-track-status" data-testid="col-status">
+            {/* Desktop wide text select */}
             {effectiveStatuses && effectiveStatuses.length > 0 ? (
               <select
                 value={item.status}
                 disabled={nodeIsImmutable}
                 onChange={(e) => onUpdateStatus?.(item.id, e.target.value)}
-                className={`w-full text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed truncate ${
+                className={`w-full text-xs rounded px-2 py-1 font-mono focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed truncate central-stage-status-select ${
                   unmappedStatusDev ? 'border border-amber-500/60' : 'border border-slate-800'
                 }`}
                 style={
@@ -387,7 +625,7 @@ export function TreeNodeCard({
               </select>
             ) : (
               <span
-                className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 ${
+                className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 central-stage-status-select ${
                   !statusColor ? 'bg-slate-800 text-slate-300' : ''
                 } ${unmappedStatusDev ? 'border border-amber-500/60' : ''}`}
                 style={
@@ -403,6 +641,37 @@ export function TreeNodeCard({
                 {item.status}
               </span>
             )}
+
+            {/* Compact 20x20px Status Indicator Glyph & Micro-Popover */}
+            {(() => {
+              const glyph = getStatusGlyph(item.status, effectiveStatuses);
+              const statusLabel =
+                effectiveStatuses?.find((s) => s.id === item.status)?.label || glyph.label;
+              return (
+                <button
+                  ref={statusTriggerRef}
+                  type="button"
+                  disabled={nodeIsImmutable}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (nodeIsImmutable) return;
+                    setIsStatusOpen((prev) => !prev);
+                  }}
+                  style={glyph.style}
+                  title={nodeIsImmutable ? `${statusLabel} (Locked)` : `Status: ${statusLabel}`}
+                  data-testid={`status-icon-btn-${item.id}`}
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border transition-all cursor-pointer central-stage-status-compact ${
+                    glyph.bg
+                  } ${
+                    nodeIsImmutable
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:ring-2 hover:ring-slate-500/40'
+                  } ${isStatusOpen ? 'ring-2 ring-emerald-400/60' : ''}`}
+                >
+                  {glyph.icon}
+                </button>
+              );
+            })()}
 
             {unmappedStatusDev && (
               <button
@@ -462,6 +731,103 @@ export function TreeNodeCard({
         >
           {item.description}
         </div>
+      )}
+
+      {/* Portaled Assignee Micro-Popover (TASK-TRK-TREE-COMPACT-DROPDOWNS-TO-ICONS) */}
+      {isAssigneeOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={assigneeMenuRef}
+          data-testid={`assignee-popover-${item.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[180px] max-h-60 overflow-y-auto custom-scrollbar text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
+          style={{ top: `${assigneeCoords.top}px`, left: `${assigneeCoords.left}px` }}
+        >
+          <div className="px-2 py-1 text-[10px] text-slate-500 font-sans font-semibold uppercase tracking-wider border-b border-slate-800 mb-1">
+            Assign Member
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onUpdateAssignee?.(item.id, null);
+              setIsAssigneeOpen(false);
+            }}
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
+              !item.assignee
+                ? 'bg-slate-800 text-white font-semibold'
+                : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
+            }`}
+            data-testid="assignee-option-unassigned"
+          >
+            <User className="w-3.5 h-3.5 text-slate-500" />
+            <span className="truncate">Unassigned</span>
+            {!item.assignee && <Check className="w-3 h-3 ml-auto text-emerald-400" />}
+          </button>
+          {members.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => {
+                onUpdateAssignee?.(item.id, m.name);
+                setIsAssigneeOpen(false);
+              }}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
+                item.assignee === m.name
+                  ? 'bg-slate-800 text-white font-semibold'
+                  : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
+              }`}
+              data-testid={`assignee-option-${m.id}`}
+            >
+              <span className="w-4 h-4 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-bold flex items-center justify-center text-slate-300 shrink-0">
+                {m.name.charAt(0).toUpperCase()}
+              </span>
+              <span className="truncate">{m.name}</span>
+              {item.assignee === m.name && <Check className="w-3 h-3 ml-auto text-emerald-400" />}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* Portaled Status Micro-Popover (TASK-TRK-TREE-COMPACT-DROPDOWNS-TO-ICONS) */}
+      {isStatusOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={statusMenuRef}
+          data-testid={`status-popover-${item.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[160px] max-h-60 overflow-y-auto custom-scrollbar text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
+          style={{ top: `${statusCoords.top}px`, left: `${statusCoords.left}px` }}
+        >
+          <div className="px-2 py-1 text-[10px] text-slate-500 font-sans font-semibold uppercase tracking-wider border-b border-slate-800 mb-1">
+            Update Status
+          </div>
+          {(effectiveStatuses || []).map((st) => {
+            const isSelected = item.status === st.id;
+            return (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => {
+                  onUpdateStatus?.(item.id, st.id);
+                  setIsStatusOpen(false);
+                }}
+                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'bg-slate-800 text-white font-semibold'
+                    : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
+                }`}
+                data-testid={`status-option-${st.id}`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: st.color || '#94a3b8' }}
+                />
+                <span className="truncate">{st.label}</span>
+                {isSelected && <Check className="w-3 h-3 ml-auto text-emerald-400" />}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
       )}
     </div>
   );

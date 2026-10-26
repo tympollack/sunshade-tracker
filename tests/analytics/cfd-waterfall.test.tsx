@@ -18,6 +18,51 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
     });
 
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders skeleton and does NOT prematurely show empty state when isLoading or isValidating is true without existing data', () => {
+      const { rerender } = render(<CumulativeFlowChart data={[]} isLoading={true} />);
+      expect(screen.getByTestId('cfd-loading-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
+
+      rerender(<CumulativeFlowChart data={[]} isValidating={true} />);
+      expect(screen.getByTestId('cfd-loading-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
+
+      rerender(<CumulativeFlowChart data={[]} isLoading={false} isValidating={false} />);
+      expect(screen.queryByTestId('cfd-loading-skeleton')).toBeNull();
+      expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: preserves existing chart data during background revalidation without flashing skeleton', () => {
+      const sampleData: CfdDataPoint[] = [
+        { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },
+      ];
+
+      render(<CumulativeFlowChart data={sampleData} isValidating={true} />);
+      // Chart remains visible during background isValidating when data is already populated
+      expect(screen.queryByTestId('cfd-loading-skeleton')).toBeNull();
+      expect(screen.getByText('Cumulative Flow Diagram (CFD)')).toBeInTheDocument();
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders error state with descriptive message when CFD fetch fails', () => {
+      render(<CumulativeFlowChart data={[]} error="Failed to fetch CFD telemetry (500)" />);
+      expect(screen.getByTestId('cfd-error-state')).toBeInTheDocument();
+      expect(screen.getByText('Unable to Load Flow Telemetry')).toBeInTheDocument();
+      expect(screen.getByText('Failed to fetch CFD telemetry (500)')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
+    });
+
+    it('PR-133: renders refresh error pill while preserving chart view when refresh fails with existing cached series', () => {
+      const sampleData: CfdDataPoint[] = [
+        { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },
+      ];
+
+      render(<CumulativeFlowChart data={sampleData} error="Rate limit exceeded" />);
+      expect(screen.getByTestId('cfd-refresh-error-pill')).toBeInTheDocument();
+      expect(screen.getByText('Sync Failed: Rate limit exceeded')).toBeInTheDocument();
+      expect(screen.getByText('Cumulative Flow Diagram (CFD)')).toBeInTheDocument();
+      expect(screen.queryByTestId('cfd-error-state')).toBeNull();
+    });
+
     it('renders stacked area paths and legend for all statuses', () => {
       const sampleData: CfdDataPoint[] = [
         { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },
@@ -373,6 +418,74 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       const fills = rects.map(r => r.getAttribute('fill'));
       const hasSpacer = rects.some(r => r.getAttribute('fill') === 'transparent' || r.getAttribute('fill') === 'none' || r.getAttribute('fill-opacity') === '0');
       expect(rects.length).toBeGreaterThan(4);
+    });
+
+    it('BUG-TRK-WATERFALL-ZERO-DROPPED-PHANTOM: renders zero-height transparent bar and flat connector bridge when dropped scope is 0', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: 164,
+            addedPoints: 94,
+            droppedPoints: 0,
+            finalDelivered: 258,
+          }}
+        />
+      );
+
+      // Verify no red dropped bar is rendered with fill="#e11d48"
+      const roseCell = container.querySelector('[fill="#e11d48"]');
+      expect(roseCell).toBeNull();
+
+      // Only Baseline (sky), Added Creep (amber), and Delivered (emerald) bars have fills
+      expect(container.querySelector('[fill="#0284c7"]')).toBeInTheDocument();
+      expect(container.querySelector('[fill="#d97706"]')).toBeInTheDocument();
+      expect(container.querySelector('[fill="#059669"]')).toBeInTheDocument();
+
+      // Verify "0 dropped" label renders
+      expect(screen.getByText('0 dropped')).toBeInTheDocument();
+
+      // Verify bridge connectors stay flat across Added -> Dropped -> Delivered
+      const addedBridge = container.querySelector('[data-testid="bridge-added-dropped"]');
+      const droppedBridge = container.querySelector('[data-testid="bridge-dropped-delivered"]');
+
+      expect(addedBridge).toBeInTheDocument();
+      expect(droppedBridge).toBeInTheDocument();
+
+      // The Y level of the dropped bridge should be flat and match the added bridge level
+      const addedY = addedBridge?.getAttribute('y1');
+      const droppedY = droppedBridge?.getAttribute('y1');
+      expect(droppedY).toBe(addedY);
+
+      // Verify the dropped bar has 0 points and no red cell is rendered
+      expect(roseCell).toBeNull();
+
+      // Verify Recharts filters out the 0-value dropped bar so only 3 bars (Baseline, Added, Delivered) are rendered
+      const valueBar = container.querySelectorAll('.recharts-bar')[1];
+      const barRectangles = valueBar?.querySelectorAll('.recharts-bar-rectangle');
+      expect(barRectangles?.length).toBe(3);
+    });
+
+    it('BUG-TRK-WATERFALL-ZERO-DROPPED-PHANTOM: handles non-finite (NaN) metrics gracefully without propagating NaN coordinates', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: NaN as any,
+            addedPoints: 20,
+            droppedPoints: NaN as any,
+            finalDelivered: 20,
+          }}
+        />
+      );
+
+      // Verify no NaN attributes in bridge connectors or SVG elements
+      const lines = Array.from(container.querySelectorAll('line'));
+      for (const line of lines) {
+        expect(line.getAttribute('y1')).not.toContain('NaN');
+        expect(line.getAttribute('y2')).not.toContain('NaN');
+      }
+
+      expect(screen.getByText('0 dropped')).toBeInTheDocument();
+      expect(screen.getByText('+20 pts')).toBeInTheDocument();
     });
   });
 });

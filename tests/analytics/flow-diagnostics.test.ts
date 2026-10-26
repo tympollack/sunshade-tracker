@@ -156,6 +156,183 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const totalOct3 = series[2].unplanned + series[2].not_started + series[2].in_progress + series[2].in_review + series[2].complete;
       expect(totalOct3).toBe(1);
     });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: reconstructs daily status from status-specific audit timestamps when transition logs are sparse', () => {
+      const mockItems = [
+        {
+          id: 'i1',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-28T14:00:00.000Z', // Title edit on Oct 28
+          completed_at: '2026-10-25T14:00:00.000Z', // Completed on Oct 25
+          status: 'complete',
+        },
+        {
+          id: 'i2',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-28T10:00:00.000Z',
+          metadata: { started_at: '2026-10-20T10:00:00.000Z' },
+          status: 'in_progress',
+        },
+      ];
+
+      // Empty events array simulating sparse or missing transition logs
+      const series = generateCfdSeries(mockItems, [], '2026-10-24', '2026-10-26');
+      expect(series.length).toBe(3);
+
+      // On Oct 24: i1 was not completed yet (prior to completed_at), i2 was started on Oct 20 -> in_progress
+      const dayOct24 = series.find((s) => s.date === '2026-10-24');
+      expect(dayOct24?.complete).toBe(0);
+      expect(dayOct24?.not_started).toBe(1);
+      expect(dayOct24?.in_progress).toBe(1);
+
+      // On Oct 25: i1 was completed -> complete: 1, in_progress: 1, not_started: 0
+      // Notice: subsequent title edit on Oct 28 does NOT erase the Oct 25 completion!
+      const dayOct25 = series.find((s) => s.date === '2026-10-25');
+      expect(dayOct25?.complete).toBe(1);
+      expect(dayOct25?.in_progress).toBe(1);
+      expect(dayOct25?.not_started).toBe(0);
+
+      // On Oct 26: maintains complete: 1, in_progress: 1
+      const dayOct26 = series.find((s) => s.date === '2026-10-26');
+      expect(dayOct26?.complete).toBe(1);
+      expect(dayOct26?.in_progress).toBe(1);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: does not erase completions when no status timestamp exists and non-status edits advance updated_at', () => {
+      const mockItems = [
+        {
+          id: 'i-legacy',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-20T12:00:00.000Z', // Title edit on Oct 20
+          status: 'complete',
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-05', '2026-10-10');
+      // For legacy items without transition events or status timestamps, non-status edit on Oct 20
+      // does not turn earlier days (Oct 5-10) into not_started
+      for (const day of series) {
+        expect(day.complete).toBe(1);
+        expect(day.not_started).toBe(0);
+      }
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: counts completed unplanned work under complete layer', () => {
+      const mockItems = [
+        {
+          id: 'i-unplanned-completed',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'completed',
+          metadata: { is_unplanned: true },
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02');
+      expect(series[0].complete).toBe(1);
+      expect(series[0].unplanned).toBe(0);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: respects project custom status configurations', () => {
+      const mockItems = [
+        {
+          id: 'i-qa',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const projectSettingsWithTestingComplete = {
+        statuses: [
+          { id: 'not_started', is_completed: false },
+          { id: 'in_progress', is_completed: false },
+          { id: 'testing', is_completed: true },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithTestingComplete);
+      // Because 'testing' is configured with is_completed: true, it maps to complete rather than fallback review
+      expect(series[0].complete).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
+    it('PR-133: does not classify canonically complete status names as complete if project schema marks is_completed: false', () => {
+      const mockItems = [
+        {
+          id: 'i-done-not-complete',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'done',
+        },
+      ];
+
+      const projectSettingsWithDoneExcluded = {
+        statuses: [
+          { id: 'done', label: 'Done (Awaiting QA)', is_completed: false },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithDoneExcluded);
+      // 'done' is explicitly is_completed: false, so it must NOT enter the complete layer
+      expect(series[0].complete).toBe(0);
+      expect(series[0].in_progress).toBe(1);
+    });
+
+    it('PR-134: classifies unstarted statuses marked with is_completed: false into not_started, not in_progress', () => {
+      const mockItems = [
+        {
+          id: 'i-not-started',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'not_started',
+        },
+        {
+          id: 'i-backlog',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'backlog',
+        },
+      ];
+
+      const projectSettingsWithExplicitUncompleted = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', is_completed: false },
+          { id: 'backlog', label: 'Backlog', is_completed: false },
+        ],
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithExplicitUncompleted);
+      // Untouched work marked as is_completed: false should stay in not_started, NOT enter in_progress WIP
+      expect(series[0].not_started).toBe(2);
+      expect(series[0].in_progress).toBe(0);
+      expect(series[0].complete).toBe(0);
+    });
+
+    it('PR-133: extracts and resolves completion rules nested under sprint_settings.metric_rules', () => {
+      const mockItems = [
+        {
+          id: 'i-accepted',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'accepted',
+        },
+      ];
+
+      const projectSettingsWithNestedRules = {
+        sprint_settings: {
+          metric_rules: {
+            completed_statuses: ['accepted'],
+          },
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', projectSettingsWithNestedRules);
+      expect(series[0].complete).toBe(1);
+      expect(series[0].not_started).toBe(0);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: supports full sprint quarter window (10/01/2026 to 12/31/2026) without dropping dates', () => {
+      const series = generateCfdSeries([], [], '2026-10-01', '2026-12-31');
+      // October (31) + November (30) + December (31) = 92 days
+      expect(series.length).toBe(92);
+      expect(series[0].date).toBe('2026-10-01');
+      expect(series[series.length - 1].date).toBe('2026-12-31');
+    });
   });
 
   describe('GET /api/v1/projects/[projectId]/analytics/cfd', () => {
@@ -227,6 +404,62 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const body = await res.json();
       expect(body.project_id).toBe('proj-1');
       expect(body.series.length).toBe(7);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: accepts full quarter date picker bounds (10/01/2026 to 12/31/2026, 92 days) without 400 rejection', async () => {
+      vi.spyOn(authGuard, 'authenticate').mockResolvedValue({
+        errorResponse: null as any,
+        context: {
+          tenant: { id: 't1', slug: 'demo-tenant' } as any,
+          userId: 'u1',
+          role: 'member',
+        },
+      });
+
+      const mockProject = {
+        id: 'proj-1',
+        name: 'Tracker Demo',
+        slug: 'tracker-demo',
+        tenant_id: 't1',
+      };
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const queryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => queryBuilder),
+            is: vi.fn().mockImplementation(() => queryBuilder),
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(queryBuilder) };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sprint_events') {
+          const eventBuilder: any = {
+            eq: vi.fn().mockImplementation(() => eventBuilder),
+            gte: vi.fn().mockImplementation(() => eventBuilder),
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(eventBuilder) };
+        }
+        return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
+      });
+
+      const req = new NextRequest(
+        'http://localhost:3000/api/v1/projects/proj-1/analytics/cfd?startDate=2026-10-01&endDate=2026-12-31'
+      );
+      const res = await getCfdHandler(req, { params: Promise.resolve({ projectId: 'proj-1' }) });
+      expect(res.status).toBe(200);
+
+      const body = await res.json();
+      expect(body.series.length).toBe(92);
     });
   });
 });

@@ -12,6 +12,10 @@ import { AnalyticsDashboardSkeleton } from './AnalyticsDashboardSkeleton';
 
 export interface SprintAnalyticsViewProps {
   isLoading?: boolean;
+  isValidating?: boolean;
+  isRefreshing?: boolean;
+  isCfdLoading?: boolean;
+  cfdError?: string | null;
   kpiMetrics?: KpiMetrics;
   burndownData?: BurndownDataPoint[];
   churnData?: ScopeChurnData;
@@ -25,6 +29,10 @@ export interface SprintAnalyticsViewProps {
 }
 
 function SprintAnalyticsViewContent({
+  isValidating = false,
+  isRefreshing = false,
+  isCfdLoading = false,
+  cfdError = null,
   kpiMetrics,
   burndownData = [],
   churnData,
@@ -78,7 +86,12 @@ function SprintAnalyticsViewContent({
 
       {/* Cumulative Flow Diagram Slot */}
       <section className="w-full">
-        <CumulativeFlowChart data={cfdData} isLoading={false} />
+        <CumulativeFlowChart
+          data={cfdData}
+          isLoading={isCfdLoading && (!cfdData || cfdData.length === 0)}
+          isValidating={isValidating || isRefreshing || isCfdLoading}
+          error={cfdError}
+        />
       </section>
 
       {/* Monte Carlo Release Forecasting */}
@@ -98,6 +111,10 @@ function SprintAnalyticsViewContent({
 
 export function SprintAnalyticsView({
   isLoading = false,
+  isValidating = false,
+  isRefreshing = false,
+  isCfdLoading = false,
+  cfdError = null,
   kpiMetrics,
   burndownData = [],
   churnData,
@@ -116,6 +133,10 @@ export function SprintAnalyticsView({
   return (
     <Suspense fallback={<AnalyticsDashboardSkeleton />}>
       <SprintAnalyticsViewContent
+        isValidating={isValidating}
+        isRefreshing={isRefreshing}
+        isCfdLoading={isCfdLoading}
+        cfdError={cfdError}
         kpiMetrics={kpiMetrics}
         burndownData={burndownData}
         churnData={churnData}

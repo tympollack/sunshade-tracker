@@ -10,6 +10,8 @@ export type CfdScopeMode = 'all' | 'wip_only';
 export interface CumulativeFlowChartProps {
   data: CfdDataPoint[];
   isLoading?: boolean;
+  isValidating?: boolean;
+  error?: string | null;
   initialTimeWindow?: CfdTimeWindow;
   initialHideUnstarted?: boolean;
   dateFormat?: 'MMM DD' | 'MM/DD';
@@ -125,6 +127,8 @@ const LOCAL_STORAGE_HIDE_UNSTARTED_KEY = 'trk_cfd_hide_unstarted';
 export function CumulativeFlowChart({
   data,
   isLoading = false,
+  isValidating = false,
+  error = null,
   initialTimeWindow = 'Full Sprint',
   initialHideUnstarted = false,
   dateFormat = 'MMM DD',
@@ -197,18 +201,42 @@ export function CumulativeFlowChart({
     return data;
   }, [data, timeWindow]);
 
-  if (isLoading) {
+  // Show skeleton on initial load, or when validating without pre-existing data
+  const hasData = Boolean(displayData && displayData.length > 0);
+  if ((isLoading && !hasData) || (isValidating && !hasData)) {
     return (
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col animate-pulse">
+      <div
+        data-testid="cfd-loading-skeleton"
+        className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col animate-pulse"
+      >
         <div className="h-5 bg-slate-800 rounded w-64 mb-4" />
         <div className="flex-1 bg-slate-800/40 rounded-lg" />
       </div>
     );
   }
 
+  // Show error state if telemetry fetch failed and no cached data exists
+  if (error && (!displayData || displayData.length === 0)) {
+    return (
+      <div
+        data-testid="cfd-error-state"
+        className="bg-slate-900/80 border border-red-900/40 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center"
+      >
+        <AreaChart className="w-10 h-10 text-rose-500/70 mb-3" />
+        <h3 className="text-sm font-semibold text-rose-200">Unable to Load Flow Telemetry</h3>
+        <p className="text-xs text-rose-400/80 mt-1 max-w-sm">
+          {error}
+        </p>
+      </div>
+    );
+  }
+
   if (!displayData || displayData.length === 0) {
     return (
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center">
+      <div
+        data-testid="cfd-empty-state"
+        className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center"
+      >
         <AreaChart className="w-10 h-10 text-slate-600 mb-3" />
         <h3 className="text-sm font-semibold text-slate-300">No Flow Telemetry Available</h3>
         <p className="text-xs text-slate-500 mt-1 max-w-sm">
@@ -279,6 +307,15 @@ export function CumulativeFlowChart({
           <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
             <AreaChart className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="truncate">Cumulative Flow Diagram (CFD)</span>
+            {error && hasData && (
+              <span
+                data-testid="cfd-refresh-error-pill"
+                className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 shrink-0"
+                title={error}
+              >
+                Sync Failed: {error}
+              </span>
+            )}
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             WIP inventory, bottleneck discovery, and delivery flow progression
