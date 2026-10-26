@@ -35,10 +35,18 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
     );
   }
 
-  const baseline = typeof data?.baselineCommitted === 'number' ? Math.max(0, data.baselineCommitted) : 0;
-  const added = typeof data?.addedPoints === 'number' ? Math.max(0, data.addedPoints) : 0;
-  const dropped = typeof data?.droppedPoints === 'number' ? Math.max(0, data.droppedPoints) : 0;
-  const delivered = typeof data?.finalDelivered === 'number' ? Math.max(0, data.finalDelivered) : 0;
+  const baseline = typeof data?.baselineCommitted === 'number' && Number.isFinite(data.baselineCommitted)
+    ? Math.max(0, data.baselineCommitted)
+    : 0;
+  const added = typeof data?.addedPoints === 'number' && Number.isFinite(data.addedPoints)
+    ? Math.max(0, data.addedPoints)
+    : 0;
+  const dropped = typeof data?.droppedPoints === 'number' && Number.isFinite(data.droppedPoints)
+    ? Math.max(0, data.droppedPoints)
+    : 0;
+  const delivered = typeof data?.finalDelivered === 'number' && Number.isFinite(data.finalDelivered)
+    ? Math.max(0, data.finalDelivered)
+    : 0;
 
   const netTarget = Math.max(0, baseline + added - dropped);
   const currentTotal = baseline + added;

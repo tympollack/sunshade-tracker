@@ -410,6 +410,37 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       const addedY = addedBridge?.getAttribute('y1');
       const droppedY = droppedBridge?.getAttribute('y1');
       expect(droppedY).toBe(addedY);
+
+      // Verify the dropped bar has 0 points and no red cell is rendered
+      expect(roseCell).toBeNull();
+
+      // Verify Recharts filters out the 0-value dropped bar so only 3 bars (Baseline, Added, Delivered) are rendered
+      const valueBar = container.querySelectorAll('.recharts-bar')[1];
+      const barRectangles = valueBar?.querySelectorAll('.recharts-bar-rectangle');
+      expect(barRectangles?.length).toBe(3);
+    });
+
+    it('BUG-TRK-WATERFALL-ZERO-DROPPED-PHANTOM: handles non-finite (NaN) metrics gracefully without propagating NaN coordinates', () => {
+      const { container } = render(
+        <ScopeChurnWaterfall
+          data={{
+            baselineCommitted: NaN as any,
+            addedPoints: 20,
+            droppedPoints: NaN as any,
+            finalDelivered: 20,
+          }}
+        />
+      );
+
+      // Verify no NaN attributes in bridge connectors or SVG elements
+      const lines = Array.from(container.querySelectorAll('line'));
+      for (const line of lines) {
+        expect(line.getAttribute('y1')).not.toContain('NaN');
+        expect(line.getAttribute('y2')).not.toContain('NaN');
+      }
+
+      expect(screen.getByText('0 dropped')).toBeInTheDocument();
+      expect(screen.getByText('+20 pts')).toBeInTheDocument();
     });
   });
 });
