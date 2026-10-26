@@ -26,16 +26,20 @@ interface ScopeChurnWaterfallProps {
   isLoading?: boolean;
 }
 
-export function WaterfallCustomTooltip({ active, payload }: any) {
+export function WaterfallCustomTooltip({ active, payload, coordinate }: any) {
   if (!active || !payload?.length) return null;
   const valuePayload = payload.find((p: any) => p.dataKey === 'value') || payload[0];
   const data = valuePayload?.payload || payload[0]?.payload;
   if (!data) return null;
 
+  // Overflow & flipping safety: shift left when near the right boundary (e.g. Delivered bar)
+  const isRightAnchored = data.name === 'Delivered' || (coordinate && coordinate.x > 320);
+
   return (
     <div
       data-testid="waterfall-custom-tooltip"
-      className="rounded-lg border border-slate-700/80 bg-slate-900/95 p-2.5 text-xs shadow-2xl backdrop-blur-md max-w-[220px] pointer-events-none z-50"
+      style={isRightAnchored ? { transform: 'translateX(-115%)' } : undefined}
+      className="rounded-lg border border-slate-700/80 bg-slate-900/95 p-2.5 text-xs shadow-2xl backdrop-blur-md max-w-[220px] pointer-events-none z-50 transition-transform duration-75"
     >
       <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-1.5">
         <span className="font-semibold text-slate-100">{data.name}</span>

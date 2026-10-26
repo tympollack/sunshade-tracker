@@ -517,7 +517,7 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
         },
       ];
 
-      const { rerender } = render(<WaterfallCustomTooltip active={true} payload={mockPayload} />);
+      const { rerender } = render(<WaterfallCustomTooltip active={true} payload={mockPayload} coordinate={{ x: 150, y: 100 }} />);
 
       const card = screen.getByTestId('waterfall-custom-tooltip');
       expect(card).toBeInTheDocument();
@@ -526,6 +526,22 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
       expect(
         screen.getByText('Story points added to this sprint after kickoff via backlog drag or mid-flight creation')
       ).toBeInTheDocument();
+      expect(card.style.transform).toBe('');
+
+      // Test flipping to left for Delivered stage or right-edge coordinate
+      const deliveredPayload = [
+        {
+          dataKey: 'value',
+          payload: {
+            name: 'Delivered',
+            value: 95,
+            description: 'Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline',
+          },
+        },
+      ];
+      rerender(<WaterfallCustomTooltip active={true} payload={deliveredPayload} coordinate={{ x: 450, y: 100 }} />);
+      const deliveredCard = screen.getByTestId('waterfall-custom-tooltip');
+      expect(deliveredCard.style.transform).toBe('translateX(-115%)');
 
       // Returns null when not active or empty payload
       rerender(<WaterfallCustomTooltip active={false} payload={mockPayload} />);
