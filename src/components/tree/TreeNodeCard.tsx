@@ -59,38 +59,65 @@ interface TreeNodeCardProps {
   hierarchy?: HierarchyLevel[];
 }
 
-function getStatusGlyph(status: string) {
+function getStatusGlyph(status: string, effectiveStatuses?: StatusDefinition[]) {
   const norm = (status || '').toLowerCase().trim();
+  const matched = effectiveStatuses?.find((s) => s.id === status || s.id.toLowerCase() === norm);
+  const color = matched?.color;
+  const label = matched?.label || status;
+
   switch (norm) {
     case 'complete':
     case 'done':
       return {
         bg: 'bg-emerald-950 text-emerald-400 border-emerald-800',
-        label: 'Complete',
+        label: label || 'Complete',
         icon: <Check className="w-3 h-3 text-emerald-400" />,
+        style: undefined,
       };
     case 'in_review':
     case 'review':
       return {
         bg: 'bg-amber-950 text-amber-300 border-amber-800',
-        label: 'In Review',
+        label: label || 'In Review',
         icon: <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />,
+        style: undefined,
       };
     case 'in_progress':
     case 'started':
       return {
         bg: 'bg-sky-950 text-sky-400 border-sky-800',
-        label: 'In Progress',
+        label: label || 'In Progress',
         icon: <span className="w-2 h-2 rounded-full bg-sky-400" />,
+        style: undefined,
       };
     case 'not_started':
     case 'planned':
-    default:
       return {
         bg: 'bg-slate-900 text-slate-400 border-slate-700',
-        label: 'Not Started',
+        label: label || 'Not Started',
         icon: <span className="w-2 h-2 rounded-full border border-slate-500" />,
+        style: undefined,
       };
+    default: {
+      if (color) {
+        return {
+          bg: 'border',
+          label: label,
+          icon: <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />,
+          style: {
+            backgroundColor: `${color}20`,
+            borderColor: `${color}60`,
+            color: color,
+          },
+        };
+      }
+      return {
+        bg: 'bg-slate-900 text-slate-400 border-slate-700',
+        label: label || 'Not Started',
+        icon: <span className="w-2 h-2 rounded-full border border-slate-500" />,
+        style: undefined,
+      };
+    }
   }
 }
 
@@ -505,7 +532,7 @@ export function TreeNodeCard({
               }}
               title={item.assignee || 'Unassigned'}
               data-testid={`assignee-avatar-btn-${item.id}`}
-              className={`w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center font-semibold text-[10px] border transition-all cursor-pointer ${
+              className={`w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center font-semibold text-[10px] border transition-all cursor-pointer central-stage-assignee-compact ${
                 nodeIsImmutable
                   ? 'opacity-50 cursor-not-allowed bg-slate-900 border-slate-800 text-slate-500'
                   : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-slate-500'
@@ -575,7 +602,7 @@ export function TreeNodeCard({
 
             {/* Compact 20x20px Status Indicator Glyph & Micro-Popover */}
             {(() => {
-              const glyph = getStatusGlyph(item.status);
+              const glyph = getStatusGlyph(item.status, effectiveStatuses);
               const statusLabel =
                 effectiveStatuses?.find((s) => s.id === item.status)?.label || glyph.label;
               return (
@@ -588,9 +615,10 @@ export function TreeNodeCard({
                     if (nodeIsImmutable) return;
                     setIsStatusOpen((prev) => !prev);
                   }}
+                  style={glyph.style}
                   title={nodeIsImmutable ? `${statusLabel} (Locked)` : `Status: ${statusLabel}`}
                   data-testid={`status-icon-btn-${item.id}`}
-                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border transition-all cursor-pointer ${
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border transition-all cursor-pointer central-stage-status-compact ${
                     glyph.bg
                   } ${
                     nodeIsImmutable

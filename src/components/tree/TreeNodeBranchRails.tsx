@@ -24,8 +24,8 @@ export function TreeNodeBranchRails({
           <div
             key={colDepth}
             data-testid={`ancestor-rail-${colDepth}`}
-            className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
-            style={{ left: `${colDepth * INDENT_STEP}px` }}
+            className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none ancestor-guide-rail"
+            style={{ left: `${colDepth * INDENT_STEP}px`, ['--col-depth' as any]: colDepth }}
           />
         );
       })}
@@ -34,8 +34,8 @@ export function TreeNodeBranchRails({
       {!isLastChild && depth > 0 && (
         <div
           data-testid="branch-connector-continuation"
-          className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none"
-          style={{ left: `${depth * INDENT_STEP}px` }}
+          className="absolute top-0 bottom-0 w-[2px] bg-slate-700 pointer-events-none branch-continuation-rail"
+          style={{ left: `${depth * INDENT_STEP}px`, ['--node-depth' as any]: depth }}
         />
       )}
     </>

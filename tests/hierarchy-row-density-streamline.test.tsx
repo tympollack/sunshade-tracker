@@ -94,6 +94,39 @@ describe('STORY-TRK-HIERARCHY-ROW-DENSITY-STREAMLINE Suite', () => {
       expect(screen.queryByTestId(`status-popover-${item.id}`)).not.toBeInTheDocument();
     });
 
+    it('renders custom schema statuses with their configured label and color styling on compact glyphs', () => {
+      const customStatuses: StatusDefinition[] = [
+        ...mockStatuses,
+        { id: 'blocked', label: 'Blocked', color: '#ef4444', order: 5 },
+      ];
+      const item = createTestItem({ status: 'blocked' });
+
+      render(
+        <TreeNodeCard
+          item={item}
+          nodeIsImmutable={false}
+          isBeingDragged={false}
+          dropPosition={null}
+          sanitizedTitle={item.title}
+          isDescExpanded={false}
+          setIsDescExpanded={vi.fn()}
+          validChildTypes={[]}
+          isCreatingChild={false}
+          setIsCreatingChild={vi.fn()}
+          setChildError={vi.fn()}
+          onDragOver={vi.fn()}
+          onDragLeave={vi.fn()}
+          onDrop={vi.fn()}
+          effectiveStatuses={customStatuses}
+          members={mockMembers}
+        />
+      );
+
+      const statusBtn = screen.getByTestId(`status-icon-btn-${item.id}`);
+      expect(statusBtn).toBeInTheDocument();
+      expect(statusBtn).toHaveAttribute('title', 'Status: Blocked');
+    });
+
     it('renders compact 22x22px circular avatar glyph with user initial and opens assignee micro-popover', async () => {
       const onUpdateAssignee = vi.fn();
       const item = createTestItem({ assignee: 'Tymz' });

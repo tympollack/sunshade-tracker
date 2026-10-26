@@ -153,9 +153,23 @@ body {
 /* ==========================================================================
    Central Stage Container Queries (STORY-TRK-HIERARCHY-ROW-DENSITY-STREAMLINE)
    ========================================================================== */
+.central-stage-status-compact {
+  display: none;
+}
+
+.central-stage-assignee-compact {
+  display: none;
+}
+
 @container central-stage (max-width: 680px) {
   .tree-branch-row {
     margin-left: calc(var(--node-depth, 0) * 16px) !important;
+  }
+  .ancestor-guide-rail {
+    left: calc(var(--col-depth, 0) * 16px) !important;
+  }
+  .branch-continuation-rail {
+    left: calc(var(--node-depth, 0) * 16px) !important;
   }
   .central-stage-status-select {
     display: none !important;
