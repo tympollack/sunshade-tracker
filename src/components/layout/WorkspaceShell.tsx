@@ -163,16 +163,20 @@ export function WorkspaceShell({
       : internalIsMobileLeftOpen;
 
   // Intelligent Drawer Arbitration (TASK-TRK-3PANE-CONTAINER-RESPONSIVENESS)
-  // When opening RHN inspector on screens < 1440px, auto-collapse LHN to icon rail.
+  // When user opens RHN inspector on screens < 1440px, auto-collapse LHN to icon rail.
   // When RHN inspector closes, restore previous user preference unless overridden.
   const userLeftCollapsedPrefRef = React.useRef<boolean>(false);
   const wasAutoCollapsedRef = React.useRef<boolean>(false);
+  const prevIsRightOpenRef = React.useRef<boolean>(isRightOpen);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const isNarrowViewport = window.innerWidth < 1440;
+    const wasJustOpened = isRightOpen && !prevIsRightOpenRef.current;
+    const wasJustClosed = !isRightOpen && prevIsRightOpenRef.current;
+    prevIsRightOpenRef.current = isRightOpen;
 
-    if (isRightOpen && Boolean(rightPane) && isNarrowViewport) {
+    if (wasJustOpened && Boolean(rightPane) && isNarrowViewport) {
       if (!isLeftCollapsed) {
         userLeftCollapsedPrefRef.current = false;
         wasAutoCollapsedRef.current = true;
@@ -182,7 +186,7 @@ export function WorkspaceShell({
           setInternalIsLeftCollapsed(true);
         }
       }
-    } else if (!isRightOpen && wasAutoCollapsedRef.current) {
+    } else if (wasJustClosed && wasAutoCollapsedRef.current) {
       wasAutoCollapsedRef.current = false;
       if (!userLeftCollapsedPrefRef.current && isLeftCollapsed) {
         if (externalOnToggleLeftCollapse) {
@@ -192,7 +196,7 @@ export function WorkspaceShell({
         }
       }
     }
-  }, [isRightOpen, Boolean(rightPane)]);
+  }, [isRightOpen, Boolean(rightPane), isLeftCollapsed, externalOnToggleLeftCollapse]);
 
   const handleToggleLeft = () => {
     wasAutoCollapsedRef.current = false;
