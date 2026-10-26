@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
+  Tooltip as RechartsTooltip,
 } from 'recharts';
 import { Tooltip } from './Tooltip';
 
@@ -23,6 +24,30 @@ export interface ScopeChurnData {
 interface ScopeChurnWaterfallProps {
   data?: ScopeChurnData;
   isLoading?: boolean;
+}
+
+export function WaterfallCustomTooltip({ active, payload, coordinate }: any) {
+  if (!active || !payload?.length) return null;
+  const valuePayload = payload.find((p: any) => p.dataKey === 'value') || payload[0];
+  const data = valuePayload?.payload || payload[0]?.payload;
+  if (!data) return null;
+
+  // Overflow & flipping safety: shift left when near the right boundary (e.g. Delivered bar)
+  const isRightAnchored = data.name === 'Delivered' || (coordinate && coordinate.x > 320);
+
+  return (
+    <div
+      data-testid="waterfall-custom-tooltip"
+      style={isRightAnchored ? { transform: 'translateX(-115%)' } : undefined}
+      className="rounded-lg border border-slate-700/80 bg-slate-900/95 p-2.5 text-xs shadow-2xl backdrop-blur-md max-w-[220px] pointer-events-none z-50 transition-transform duration-75"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-1.5">
+        <span className="font-semibold text-slate-100">{data.name}</span>
+        <span className="font-mono font-bold text-cyan-400">{data.value} pts</span>
+      </div>
+      <p className="text-[11px] text-slate-400 leading-tight">{data.description}</p>
+    </div>
+  );
 }
 
 export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWaterfallProps) {
@@ -72,24 +97,28 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
       spacer: 0,
       value: baseline,
       fill: '#0284c7', // Sky-600
+      description: 'Total story points locked in when the sprint was formally activated',
     },
     {
       name: 'Added Creep',
       spacer: baseline,
       value: added,
       fill: '#d97706', // Amber-600
+      description: 'Story points added to this sprint after kickoff via backlog drag or mid-flight creation',
     },
     {
       name: 'Dropped',
       spacer: dropped === 0 ? baseline + added : Math.max(0, baseline + added - dropped),
       value: dropped,
       fill: dropped > 0 ? '#e11d48' : 'transparent', // Rose-600
+      description: 'Scope removed or deferred back to backlog during active sprint execution',
     },
     {
       name: 'Delivered',
       spacer: 0,
       value: delivered,
       fill: '#059669', // Emerald-600
+      description: 'Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline',
     },
   ];
 
@@ -131,6 +160,11 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
               <CartesianGrid strokeDasharray="2 2" stroke="#334155" vertical={false} />
               <XAxis dataKey="name" hide />
               <YAxis domain={[0, peak]} hide />
+              <RechartsTooltip
+                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                offset={12}
+                content={<WaterfallCustomTooltip />}
+              />
               <Bar dataKey="spacer" stackId="waterfall" fill="transparent" isAnimationActive={false} maxBarSize={48} />
               <Bar
                 dataKey="value"
@@ -196,76 +230,116 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
         {/* Value Callout Labels & Tooltip Hit Areas */}
         <div className="absolute inset-0 grid grid-cols-4 pointer-events-none z-20">
           {/* Baseline Bar */}
-          <Tooltip
-            content="Total story points locked in when the sprint was formally activated"
-            className="h-full flex flex-col justify-end pointer-events-auto"
-            data-testid="tooltip-baseline-bar"
-          >
-            <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
-              <span
-                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                style={{ bottom: `${baseline > 0 ? Math.max(4, baselineHeightPct) : 0}%` }}
+          <div className="flex flex-col items-center w-full h-full justify-end relative">
+            <div
+              className="absolute pointer-events-auto"
+              style={{ bottom: `${baseline > 0 ? Math.max(4, baselineHeightPct) : 0}%` }}
+            >
+              <Tooltip
+                content="Total story points locked in when the sprint was formally activated"
+                side="top"
+                sideOffset={6}
+                collisionPadding={12}
+                data-testid="tooltip-baseline-bar"
               >
-                {baseline} pts
-              </span>
+                <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm cursor-help block">
+                  {baseline} pts
+                </span>
+              </Tooltip>
             </div>
-          </Tooltip>
+          </div>
 
           {/* (+) Added Scope Bar (Floating) */}
-          <Tooltip
-            content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
-            className="h-full flex flex-col justify-end pointer-events-auto"
-            data-testid="tooltip-added-bar"
-          >
-            <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
-              {added > 0 ? (
-                <span
-                  className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                  style={{ bottom: `${addedBottomPct + addedHeightPct}%` }}
+          <div className="flex flex-col items-center w-full h-full justify-end relative">
+            {added > 0 ? (
+              <div
+                className="absolute pointer-events-auto"
+                style={{ bottom: `${addedBottomPct + addedHeightPct}%` }}
+              >
+                <Tooltip
+                  content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
+                  side="top"
+                  sideOffset={6}
+                  collisionPadding={12}
+                  data-testid="tooltip-added-bar"
                 >
-                  +{added} pts
-                </span>
-              ) : (
-                <div className="text-xs text-slate-500 italic mb-4">0 added</div>
-              )}
-            </div>
-          </Tooltip>
+                  <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm cursor-help block">
+                    +{added} pts
+                  </span>
+                </Tooltip>
+              </div>
+            ) : (
+              <div className="pointer-events-auto mb-4">
+                <Tooltip
+                  content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
+                  side="top"
+                  sideOffset={6}
+                  collisionPadding={12}
+                  data-testid="tooltip-added-bar"
+                >
+                  <span className="text-xs text-slate-500 italic cursor-help block">
+                    0 added
+                  </span>
+                </Tooltip>
+              </div>
+            )}
+          </div>
 
           {/* (-) Dropped Scope Bar (Floating) */}
-          <Tooltip
-            content="Scope removed or deferred back to backlog during active sprint execution"
-            className="h-full flex flex-col justify-end pointer-events-auto"
-            data-testid="tooltip-dropped-bar"
-          >
-            <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
-              {dropped > 0 ? (
-                <span
-                  className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                  style={{ bottom: `${droppedBottomPct + droppedHeightPct}%` }}
+          <div className="flex flex-col items-center w-full h-full justify-end relative">
+            {dropped > 0 ? (
+              <div
+                className="absolute pointer-events-auto"
+                style={{ bottom: `${droppedBottomPct + droppedHeightPct}%` }}
+              >
+                <Tooltip
+                  content="Scope removed or deferred back to backlog during active sprint execution"
+                  side="top"
+                  sideOffset={6}
+                  collisionPadding={12}
+                  data-testid="tooltip-dropped-bar"
                 >
-                  -{dropped} pts
-                </span>
-              ) : (
-                <div className="text-xs text-slate-500 italic mb-4">0 dropped</div>
-              )}
-            </div>
-          </Tooltip>
+                  <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm cursor-help block">
+                    -{dropped} pts
+                  </span>
+                </Tooltip>
+              </div>
+            ) : (
+              <div className="pointer-events-auto mb-4">
+                <Tooltip
+                  content="Scope removed or deferred back to backlog during active sprint execution"
+                  side="top"
+                  sideOffset={6}
+                  collisionPadding={12}
+                  data-testid="tooltip-dropped-bar"
+                >
+                  <span className="text-xs text-slate-500 italic cursor-help block">
+                    0 dropped
+                  </span>
+                </Tooltip>
+              </div>
+            )}
+          </div>
 
           {/* (=) Final Delivered Points Bar */}
-          <Tooltip
-            content="Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline"
-            className="h-full flex flex-col justify-end pointer-events-auto"
-            data-testid="tooltip-delivered-bar"
-          >
-            <div className="flex flex-col items-center w-full h-full justify-end relative group cursor-help">
-              <span
-                className="absolute text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm z-10"
-                style={{ bottom: `${delivered > 0 ? Math.max(4, deliveredHeightPct) : 0}%` }}
+          <div className="flex flex-col items-center w-full h-full justify-end relative">
+            <div
+              className="absolute pointer-events-auto"
+              style={{ bottom: `${delivered > 0 ? Math.max(4, deliveredHeightPct) : 0}%` }}
+            >
+              <Tooltip
+                content="Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline"
+                side="top"
+                sideOffset={6}
+                collisionPadding={12}
+                data-testid="tooltip-delivered-bar"
               >
-                {delivered} pts
-              </span>
+                <span className="text-xs font-semibold text-slate-100 font-mono mb-2 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-700/60 shadow-sm cursor-help block">
+                  {delivered} pts
+                </span>
+              </Tooltip>
             </div>
-          </Tooltip>
+          </div>
         </div>
       </div>
 
@@ -275,30 +349,62 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
           <div className="flex items-center gap-1 text-blue-400 font-semibold mb-0.5">
             <Target className="w-3.5 h-3.5" /> Baseline
           </div>
-          <span className="text-[11px] text-slate-400">Day 1 Commitment</span>
+          <Tooltip
+            content="Total story points locked in when the sprint was formally activated"
+            side="top"
+            sideOffset={6}
+            collisionPadding={12}
+            data-testid="tooltip-baseline-footer"
+          >
+            <span className="text-[11px] text-slate-400 cursor-help">Day 1 Commitment</span>
+          </Tooltip>
         </div>
 
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-amber-400 font-semibold mb-0.5">
             <Plus className="w-3.5 h-3.5" /> Added Creep
           </div>
-          <span className="text-[11px] text-slate-400">Injected Scope</span>
+          <Tooltip
+            content="Story points added to this sprint after kickoff via backlog drag or mid-flight creation"
+            side="top"
+            sideOffset={6}
+            collisionPadding={12}
+            data-testid="tooltip-added-footer"
+          >
+            <span className="text-[11px] text-slate-400 cursor-help">Injected Scope</span>
+          </Tooltip>
         </div>
 
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-red-400 font-semibold mb-0.5">
             <Minus className="w-3.5 h-3.5" /> Dropped
           </div>
-          <span className="text-[11px] text-slate-400">Backlog Return</span>
+          <Tooltip
+            content="Scope removed or deferred back to backlog during active sprint execution"
+            side="top"
+            sideOffset={6}
+            collisionPadding={12}
+            data-testid="tooltip-dropped-footer"
+          >
+            <span className="text-[11px] text-slate-400 cursor-help">Backlog Return</span>
+          </Tooltip>
         </div>
 
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-1 text-emerald-400 font-semibold mb-0.5">
             <CheckCircle className="w-3.5 h-3.5" /> Delivered
           </div>
-          <span className="text-[11px] text-slate-400">
-            {baseline > 0 ? `${Math.round((delivered / baseline) * 100)}% of plan` : 'Completed'}
-          </span>
+          <Tooltip
+            content="Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline"
+            side="top"
+            sideOffset={6}
+            collisionPadding={12}
+            data-testid="tooltip-delivered-footer"
+          >
+            <span className="text-[11px] text-slate-400 cursor-help">
+              {baseline > 0 ? `${Math.round((delivered / baseline) * 100)}% of plan` : 'Completed'}
+            </span>
+          </Tooltip>
         </div>
       </div>
     </div>
