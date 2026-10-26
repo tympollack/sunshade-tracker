@@ -20,6 +20,7 @@ export interface UseSprintTelemetryOptions {
 export interface UseSprintTelemetryResult {
   isLoading: boolean;
   isRefreshing: boolean;
+  isValidating: boolean;
   kpiMetrics: KpiMetrics;
   burndownData: BurndownDataPoint[];
   churnData: ScopeChurnData;
@@ -228,6 +229,7 @@ export function useSprintTelemetry({
   return {
     isLoading,
     isRefreshing,
+    isValidating: isRefreshing,
     kpiMetrics,
     burndownData,
     churnData,

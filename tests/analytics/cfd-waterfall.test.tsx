@@ -18,6 +18,20 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
     });
 
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: renders skeleton and does NOT prematurely show empty state when isLoading or isValidating is true', () => {
+      const { rerender } = render(<CumulativeFlowChart data={[]} isLoading={true} />);
+      expect(screen.getByTestId('cfd-loading-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
+
+      rerender(<CumulativeFlowChart data={[]} isValidating={true} />);
+      expect(screen.getByTestId('cfd-loading-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('No Flow Telemetry Available')).toBeNull();
+
+      rerender(<CumulativeFlowChart data={[]} isLoading={false} isValidating={false} />);
+      expect(screen.queryByTestId('cfd-loading-skeleton')).toBeNull();
+      expect(screen.getByText('No Flow Telemetry Available')).toBeInTheDocument();
+    });
+
     it('renders stacked area paths and legend for all statuses', () => {
       const sampleData: CfdDataPoint[] = [
         { date: '2026-10-01', complete: 5, in_review: 2, in_progress: 8, not_started: 10, unplanned: 1 },

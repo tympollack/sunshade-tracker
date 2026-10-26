@@ -4,7 +4,7 @@ import { authenticate } from '@/lib/auth-guard';
 import { generateCfdSeries } from '@/lib/analytics/flow-diagnostics';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_CFD_DAYS = 90;
+const MAX_CFD_DAYS = 120;
 
 export async function GET(
   req: NextRequest,
@@ -96,13 +96,13 @@ export async function GET(
 
     let events: any[] = [];
     try {
-      const ninetyDaysBeforeStart = new Date(startMs - 90 * 24 * 60 * 60 * 1000).toISOString();
+      const historyStart = new Date(startMs - MAX_CFD_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
       const { data: evData, error: evErr } = await supabaseAdmin
         .from('sprint_events')
         .select('*')
         .eq('project_id', project.id)
-        .gte('occurred_at', ninetyDaysBeforeStart)
+        .gte('occurred_at', historyStart)
         .order('occurred_at', { ascending: true });
 
       if (evErr) {

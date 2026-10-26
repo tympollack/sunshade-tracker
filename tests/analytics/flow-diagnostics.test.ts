@@ -156,6 +156,52 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const totalOct3 = series[2].unplanned + series[2].not_started + series[2].in_progress + series[2].in_review + series[2].complete;
       expect(totalOct3).toBe(1);
     });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: reconstructs daily status from created_at, updated_at, and current status when transition logs are sparse', () => {
+      const mockItems = [
+        {
+          id: 'i1',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-25T14:00:00.000Z',
+          status: 'complete',
+        },
+        {
+          id: 'i2',
+          created_at: '2026-10-01T00:00:00.000Z',
+          updated_at: '2026-10-20T10:00:00.000Z',
+          status: 'in_progress',
+        },
+      ];
+
+      // Empty events array simulating sparse or missing transition logs
+      const series = generateCfdSeries(mockItems, [], '2026-10-24', '2026-10-26');
+      expect(series.length).toBe(3);
+
+      // On Oct 24: i1 was not updated yet (prior to updated_at), i2 was updated on Oct 20 -> in_progress
+      const dayOct24 = series.find((s) => s.date === '2026-10-24');
+      expect(dayOct24?.complete).toBe(0);
+      expect(dayOct24?.not_started).toBe(1);
+      expect(dayOct24?.in_progress).toBe(1);
+
+      // On Oct 25: i1 was updated to complete -> complete: 1, in_progress: 1, not_started: 0
+      const dayOct25 = series.find((s) => s.date === '2026-10-25');
+      expect(dayOct25?.complete).toBe(1);
+      expect(dayOct25?.in_progress).toBe(1);
+      expect(dayOct25?.not_started).toBe(0);
+
+      // On Oct 26: maintains complete: 1, in_progress: 1
+      const dayOct26 = series.find((s) => s.date === '2026-10-26');
+      expect(dayOct26?.complete).toBe(1);
+      expect(dayOct26?.in_progress).toBe(1);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: supports full sprint quarter window (10/01/2026 to 12/31/2026) without dropping dates', () => {
+      const series = generateCfdSeries([], [], '2026-10-01', '2026-12-31');
+      // October (31) + November (30) + December (31) = 92 days
+      expect(series.length).toBe(92);
+      expect(series[0].date).toBe('2026-10-01');
+      expect(series[series.length - 1].date).toBe('2026-12-31');
+    });
   });
 
   describe('GET /api/v1/projects/[projectId]/analytics/cfd', () => {
@@ -227,6 +273,62 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       const body = await res.json();
       expect(body.project_id).toBe('proj-1');
       expect(body.series.length).toBe(7);
+    });
+
+    it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: accepts full quarter date picker bounds (10/01/2026 to 12/31/2026, 92 days) without 400 rejection', async () => {
+      vi.spyOn(authGuard, 'authenticate').mockResolvedValue({
+        errorResponse: null as any,
+        context: {
+          tenant: { id: 't1', slug: 'demo-tenant' } as any,
+          userId: 'u1',
+          role: 'member',
+        },
+      });
+
+      const mockProject = {
+        id: 'proj-1',
+        name: 'Tracker Demo',
+        slug: 'tracker-demo',
+        tenant_id: 't1',
+      };
+
+      (supabaseAdmin.from as any).mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const queryBuilder: any = {
+            eq: vi.fn().mockImplementation(() => queryBuilder),
+            is: vi.fn().mockImplementation(() => queryBuilder),
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockProject, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(queryBuilder) };
+        }
+        if (table === 'work_items') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sprint_events') {
+          const eventBuilder: any = {
+            eq: vi.fn().mockImplementation(() => eventBuilder),
+            gte: vi.fn().mockImplementation(() => eventBuilder),
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(eventBuilder) };
+        }
+        return { select: vi.fn().mockReturnValue({ data: [], error: null }) };
+      });
+
+      const req = new NextRequest(
+        'http://localhost:3000/api/v1/projects/proj-1/analytics/cfd?startDate=2026-10-01&endDate=2026-12-31'
+      );
+      const res = await getCfdHandler(req, { params: Promise.resolve({ projectId: 'proj-1' }) });
+      expect(res.status).toBe(200);
+
+      const body = await res.json();
+      expect(body.series.length).toBe(92);
     });
   });
 });

@@ -10,6 +10,7 @@ export type CfdScopeMode = 'all' | 'wip_only';
 export interface CumulativeFlowChartProps {
   data: CfdDataPoint[];
   isLoading?: boolean;
+  isValidating?: boolean;
   initialTimeWindow?: CfdTimeWindow;
   initialHideUnstarted?: boolean;
   dateFormat?: 'MMM DD' | 'MM/DD';
@@ -125,6 +126,7 @@ const LOCAL_STORAGE_HIDE_UNSTARTED_KEY = 'trk_cfd_hide_unstarted';
 export function CumulativeFlowChart({
   data,
   isLoading = false,
+  isValidating = false,
   initialTimeWindow = 'Full Sprint',
   initialHideUnstarted = false,
   dateFormat = 'MMM DD',
@@ -197,9 +199,12 @@ export function CumulativeFlowChart({
     return data;
   }, [data, timeWindow]);
 
-  if (isLoading) {
+  if (isLoading || isValidating) {
     return (
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col animate-pulse">
+      <div
+        data-testid="cfd-loading-skeleton"
+        className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col animate-pulse"
+      >
         <div className="h-5 bg-slate-800 rounded w-64 mb-4" />
         <div className="flex-1 bg-slate-800/40 rounded-lg" />
       </div>
@@ -208,7 +213,10 @@ export function CumulativeFlowChart({
 
   if (!displayData || displayData.length === 0) {
     return (
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center">
+      <div
+        data-testid="cfd-empty-state"
+        className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center"
+      >
         <AreaChart className="w-10 h-10 text-slate-600 mb-3" />
         <h3 className="text-sm font-semibold text-slate-300">No Flow Telemetry Available</h3>
         <p className="text-xs text-slate-500 mt-1 max-w-sm">

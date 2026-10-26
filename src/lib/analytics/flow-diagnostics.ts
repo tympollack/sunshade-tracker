@@ -137,18 +137,27 @@ export function generateCfdSeries(
   startDateStr: string,
   endDateStr: string
 ): CfdDataPoint[] {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
+  // Parse date bounds cleanly in UTC to handle timezones and daylight savings without dropping points
+  const startParts = (startDateStr || '').split('-').map(Number);
+  const endParts = (endDateStr || '').split('-').map(Number);
+
+  let startUtc = Date.UTC(startParts[0] || 2026, (startParts[1] || 1) - 1, startParts[2] || 1);
+  let endUtc = Date.UTC(endParts[0] || 2026, (endParts[1] || 1) - 1, endParts[2] || 1);
+
+  if (isNaN(startUtc) || isNaN(endUtc) || startUtc > endUtc) {
+    const now = new Date();
+    endUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    startUtc = endUtc - 14 * 24 * 60 * 60 * 1000;
+  }
 
   const dates: string[] = [];
-  const current = new Date(start);
-  while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  for (let ms = startUtc; ms <= endUtc; ms += oneDayMs) {
+    dates.push(new Date(ms).toISOString().split('T')[0]);
   }
 
   // Pre-sort events by occurred_at
-  const sortedEvents = [...events].sort(
+  const sortedEvents = [...(events || [])].sort(
     (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime()
   );
 
@@ -166,10 +175,15 @@ export function generateCfdSeries(
     };
 
     for (const item of items) {
-      const itemCreatedMs = new Date(item.created_at).getTime();
-      if (itemCreatedMs > endOfDayMs) {
+      if (!item) continue;
+      const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+      if (createdMs && createdMs > endOfDayMs) {
         continue; // Item didn't exist yet on this date
       }
+
+      const itemUpdatedMs = item.updated_at && !isNaN(new Date(item.updated_at).getTime())
+        ? new Date(item.updated_at).getTime()
+        : createdMs;
 
       // Reconstruct status at end of this day from events
       const itemTransitions = sortedEvents.filter(
@@ -184,7 +198,7 @@ export function generateCfdSeries(
       if (priorTransitions.length > 0) {
         // Last transition that occurred on or before endOfDay
         const lastTransition = priorTransitions[priorTransitions.length - 1];
-        status = lastTransition.new_state?.status || item.status;
+        status = lastTransition.new_state?.status || item.status || 'not_started';
       } else if (itemTransitions.length > 0) {
         // Transitions exist later; reconstruct initial status prior to first transition
         const earliestTransition = itemTransitions[0];
@@ -193,26 +207,33 @@ export function generateCfdSeries(
           item.metadata?.initial_status ||
           'not_started';
       } else {
-        // No status transition events recorded; use initial_status or safe fallback to prevent completed items from appearing complete in historical dates
-        status =
-          item.metadata?.initial_status ||
-          (item.status === 'complete' || item.status === 'done' ? 'not_started' : item.status) ||
-          'not_started';
+        // Fallback safely: if status transition logs are sparse, reconstruct cumulative daily snapshots
+        // from work item created_at, updated_at, and current status.
+        if (endOfDayMs >= itemUpdatedMs) {
+          // On or after the item was last updated, it has reached its current status
+          status = item.status || 'not_started';
+        } else {
+          // Prior to updated_at: if initial_status was recorded, use it; otherwise not_started
+          status = item.metadata?.initial_status || 'not_started';
+        }
       }
 
       const isUnplanned = Boolean(
         item.metadata?.is_unplanned ||
         item.metadata?.source_type === 'unplanned' ||
-        item.status === 'unplanned'
+        item.status === 'unplanned' ||
+        status === 'unplanned'
       );
 
-      if (isUnplanned && status !== 'complete') {
+      const normalizedStatus = (status || '').toLowerCase().trim();
+
+      if (isUnplanned && normalizedStatus !== 'complete' && normalizedStatus !== 'done') {
         counts.unplanned++;
-      } else if (status === 'complete' || status === 'done') {
+      } else if (normalizedStatus === 'complete' || normalizedStatus === 'done' || normalizedStatus === 'completed') {
         counts.complete++;
-      } else if (status === 'in_progress' || status === 'started') {
+      } else if (normalizedStatus === 'in_progress' || normalizedStatus === 'started' || normalizedStatus === 'doing' || normalizedStatus === 'wip') {
         counts.in_progress++;
-      } else if (status === 'in_review' || status === 'review') {
+      } else if (normalizedStatus === 'in_review' || normalizedStatus === 'review' || normalizedStatus === 'testing' || normalizedStatus === 'qa') {
         counts.in_review++;
       } else {
         counts.not_started++;

@@ -12,6 +12,8 @@ import { AnalyticsDashboardSkeleton } from './AnalyticsDashboardSkeleton';
 
 export interface SprintAnalyticsViewProps {
   isLoading?: boolean;
+  isValidating?: boolean;
+  isRefreshing?: boolean;
   kpiMetrics?: KpiMetrics;
   burndownData?: BurndownDataPoint[];
   churnData?: ScopeChurnData;
@@ -25,6 +27,8 @@ export interface SprintAnalyticsViewProps {
 }
 
 function SprintAnalyticsViewContent({
+  isValidating = false,
+  isRefreshing = false,
   kpiMetrics,
   burndownData = [],
   churnData,
@@ -78,7 +82,11 @@ function SprintAnalyticsViewContent({
 
       {/* Cumulative Flow Diagram Slot */}
       <section className="w-full">
-        <CumulativeFlowChart data={cfdData} isLoading={false} />
+        <CumulativeFlowChart
+          data={cfdData}
+          isLoading={false}
+          isValidating={isValidating || isRefreshing}
+        />
       </section>
 
       {/* Monte Carlo Release Forecasting */}
@@ -98,6 +106,8 @@ function SprintAnalyticsViewContent({
 
 export function SprintAnalyticsView({
   isLoading = false,
+  isValidating = false,
+  isRefreshing = false,
   kpiMetrics,
   burndownData = [],
   churnData,
@@ -116,6 +126,8 @@ export function SprintAnalyticsView({
   return (
     <Suspense fallback={<AnalyticsDashboardSkeleton />}>
       <SprintAnalyticsViewContent
+        isValidating={isValidating}
+        isRefreshing={isRefreshing}
         kpiMetrics={kpiMetrics}
         burndownData={burndownData}
         churnData={churnData}
