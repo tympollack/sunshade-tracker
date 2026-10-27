@@ -145,13 +145,27 @@ export function generateMonteCarloCacheKey(params: MonteCarloCacheKeyParams): st
  */
 export function getCachedMonteCarlo(key: string): MonteCarloSimulationResult | null {
   if (memoryCache.has(key)) {
-    return memoryCache.get(key)!;
+    const item = memoryCache.get(key)!;
+    // Invalidate pre-v2 weekly multi-sprint entries that used the legacy daily model
+    if (key.includes('_week_') && (!item.version || item.version < 2)) {
+      memoryCache.delete(key);
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        try { window.sessionStorage.removeItem(key); } catch {}
+      }
+      return null;
+    }
+    return item;
   }
   if (typeof window !== 'undefined' && window.sessionStorage) {
     try {
       const item = window.sessionStorage.getItem(key);
       if (item) {
         const parsed = JSON.parse(item) as MonteCarloSimulationResult;
+        // Invalidate pre-v2 weekly multi-sprint entries that used the legacy daily model
+        if (key.includes('_week_') && (!parsed.version || parsed.version < 2)) {
+          window.sessionStorage.removeItem(key);
+          return null;
+        }
         memoryCache.set(key, parsed);
         return parsed;
       }
@@ -368,6 +382,7 @@ export interface MonteCarloSimulationResult {
   executionTimeMs: number;
   cadenceUnit?: MonteCarloCadenceUnit;
   isDailySimulation?: boolean;
+  version?: number;
 }
 
 export function runMonteCarloSimulation(input: MonteCarloSimulationInput): MonteCarloSimulationResult {
@@ -507,6 +522,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       executionTimeMs,
       cadenceUnit: input.cadenceUnit,
       isDailySimulation: true,
+      version: 2,
     };
   }
 
@@ -574,5 +590,6 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
     distribution,
     executionTimeMs,
     cadenceUnit: input.cadenceUnit,
+    version: 2,
   };
 }
