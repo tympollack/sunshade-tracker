@@ -122,7 +122,15 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
         const is_completed =
           typeof s.is_completed === 'boolean'
             ? s.is_completed
-            : Boolean(id === 'complete' || id === 'done' || id === 'closed' || id === 'published');
+            : Boolean(
+                id === 'complete' ||
+                id === 'done' ||
+                id === 'closed' ||
+                id === 'published' ||
+                id === 'syndicated' ||
+                id === 'archived' ||
+                id === 'released'
+              );
 
         return {
           id,
