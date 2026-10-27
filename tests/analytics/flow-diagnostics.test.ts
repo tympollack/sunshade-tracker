@@ -581,6 +581,74 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       // Cycle time: Oct 3 -> Oct 6 = 3 days
       expect(metrics.cycleTimeDays).toBe(3);
     });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: classifies custom review stages into in_review layer under normalized project settings with is_completed: false', () => {
+      // Simulates project settings normalized by useProjectSettings (where all nonterminal statuses have is_completed: false)
+      const normalizedSubstackSettings = {
+        statuses: [
+          { id: 'pitch_backlog', label: 'Pitch & Concepts', order: 1, is_completed: false },
+          { id: 'outlining', label: 'Outlining & Research', order: 2, is_completed: false },
+          { id: 'drafting', label: 'Drafting', order: 3, is_completed: false },
+          { id: 'tone_audit', label: 'Peplink Tone Audit', order: 4, is_completed: false },
+          { id: 'staged', label: 'Staged & Scheduled', order: 5, is_completed: false },
+          { id: 'published', label: 'Published', order: 6, is_completed: true },
+          { id: 'syndicated', label: 'Syndicated / Archived', order: 7, is_completed: false },
+          { id: 'not_started', label: 'Not Started', order: 8, is_completed: false },
+          { id: 'complete', label: 'Complete', order: 9, is_completed: true },
+        ],
+      };
+
+      const mockItems = [
+        { id: 'item-1', created_at: '2026-10-01T00:00:00.000Z', status: 'tone_audit' },
+        { id: 'item-2', created_at: '2026-10-01T00:00:00.000Z', status: 'staged' },
+        { id: 'item-3', created_at: '2026-10-01T00:00:00.000Z', status: 'drafting' },
+        { id: 'item-4', created_at: '2026-10-01T00:00:00.000Z', status: 'published' },
+        { id: 'item-5', created_at: '2026-10-01T00:00:00.000Z', status: 'pitch_backlog' },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', normalizedSubstackSettings);
+      expect(series[0].in_review).toBe(2); // tone_audit and staged
+      expect(series[0].in_progress).toBe(1); // drafting
+      expect(series[0].complete).toBe(1); // published
+      expect(series[0].not_started).toBe(1); // pitch_backlog
+    });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: does not classify negated completion names such as incomplete or unpublished as complete', () => {
+      const mockItems = [
+        { id: 'item-1', created_at: '2026-10-01T00:00:00.000Z', status: 'incomplete' },
+        { id: 'item-2', created_at: '2026-10-01T00:00:00.000Z', status: 'unpublished' },
+        { id: 'item-3', created_at: '2026-10-01T00:00:00.000Z', status: 'not_completed' },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02');
+      expect(series[0].complete).toBe(0);
+      expect(series[0].not_started).toBe(3);
+    });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: classifies workflow entry stage (e.g. queue) as not_started even when generic metric_rules specify unrelated unstarted_statuses', () => {
+      const customWorkflowSettings = {
+        statuses: [
+          { id: 'queue', label: 'Queue', order: 1 },
+          { id: 'working', label: 'Working', order: 2 },
+          { id: 'done', label: 'Done', order: 3, is_completed: true },
+        ],
+        metric_rules: {
+          unstarted_statuses: ['not_started'],
+          in_progress_statuses: ['in_progress', 'working'],
+          completed_statuses: ['complete', 'done'],
+        },
+      };
+
+      const mockItems = [
+        { id: 'item-1', created_at: '2026-10-01T00:00:00.000Z', status: 'queue' },
+        { id: 'item-2', created_at: '2026-10-01T00:00:00.000Z', status: 'working' },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', customWorkflowSettings);
+      expect(series[0].not_started).toBe(1); // queue remains in not_started
+      expect(series[0].in_progress).toBe(1); // working is in_progress
+      expect(series[0].complete).toBe(0);
+    });
   });
 
   describe('GET /api/v1/projects/[projectId]/analytics/cfd', () => {

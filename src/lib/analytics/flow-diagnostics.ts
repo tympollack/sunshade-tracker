@@ -113,6 +113,8 @@ export const CANONICAL_UNSTARTED_ALIASES = new Set([
   'new',
   'proposed',
   'inbox',
+  'queue',
+  'queued',
 ]);
 
 export const isUnstartedAlias = (s: string, norm: string, label?: string): boolean => {
@@ -125,7 +127,8 @@ export const isUnstartedAlias = (s: string, norm: string, label?: string): boole
     norm.startsWith('todo') ||
     norm.startsWith('pitch') ||
     norm.startsWith('concept') ||
-    (Boolean(label) && /backlog|not started|unstarted|todo|to do|pitch|concept/i.test(label || ''))
+    norm.startsWith('queue') ||
+    (Boolean(label) && /backlog|not started|unstarted|todo|to do|pitch|concept|queue|queued|ideas|icebox|inbox/i.test(label || ''))
   );
 };
 
@@ -139,22 +142,51 @@ export const isReviewAlias = (s: string, norm: string, label?: string): boolean 
     norm.includes('testing') ||
     norm.includes('staged') ||
     norm.includes('staging') ||
-    (Boolean(label) && /review|audit|qa|testing|test|staged|staging|inspect|approval/i.test(label || ''))
+    norm.includes('verification') ||
+    norm.includes('inspect') ||
+    (Boolean(label) && /\b(review|under review|in review|code review|audit|staging|staged|preview|verification|inspection|sign off)\b/i.test(label || ''))
   );
 };
 
 export const isCompleteAlias = (s: string, norm: string, label?: string): boolean => {
-  return (
-    CANONICAL_COMPLETE_ALIASES.has(s) ||
-    CANONICAL_COMPLETE_ALIASES.has(norm) ||
-    norm.includes('complete') ||
-    norm.includes('completed') ||
-    norm.includes('published') ||
-    norm.includes('syndicated') ||
-    norm.includes('archived') ||
-    norm.includes('shipped') ||
-    (Boolean(label) && /complete|completed|done|published|syndicated|archived|shipped/i.test(label || ''))
-  );
+  // Guard against negated forms: incomplete, uncompleted, unpublished, not_completed, not_done, unresolved, etc.
+  if (
+    /^(in|un|non)[_-]?(complete|completed|published|done|resolved|released|archived|shipped|finished)/i.test(norm) ||
+    /^(not|un|in|non)[_-]/i.test(norm) ||
+    norm.includes('not_complete') ||
+    norm.includes('not_done') ||
+    norm.includes('not_published') ||
+    (Boolean(label) &&
+      /\b(not|in|un|non)[-\s]?(complete|completed|done|published|syndicated|archived|shipped|released|finished|resolved)\b/i.test(
+        label || ''
+      ))
+  ) {
+    return false;
+  }
+
+  if (CANONICAL_COMPLETE_ALIASES.has(s) || CANONICAL_COMPLETE_ALIASES.has(norm)) {
+    return true;
+  }
+
+  const tokens = norm.split(/[\s\-_]+/).filter(Boolean);
+  if (tokens.some((t) => CANONICAL_COMPLETE_ALIASES.has(t))) {
+    const hasNegation = tokens.some((t) => ['not', 'un', 'in', 'non'].includes(t));
+    if (hasNegation) return false;
+    return true;
+  }
+
+  if (label) {
+    const labelLower = label.toLowerCase().trim();
+    if (
+      /\b(complete|completed|done|published|syndicated|archived|shipped|delivered|released|finished|resolved|live)\b/i.test(
+        labelLower
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 export const isInProgressAlias = (s: string, norm: string, label?: string): boolean => {
@@ -333,26 +365,17 @@ export function createStatusClassifier(
         return;
       }
 
-      // If explicitly marked is_completed: false, check if unstarted; if not, it's active in-flight work
-      if (explicitlyExcludedFromComplete.has(id) || explicitlyExcludedFromComplete.has(normId)) {
-        if (isUnstartedAlias(id, normId, label)) {
-          configuredUnstarted.add(id);
-          configuredUnstarted.add(normId);
-        } else {
-          configuredInProgress.add(id);
-          configuredInProgress.add(normId);
-        }
-        return;
-      }
+      const isExcludedFromComplete =
+        explicitlyExcludedFromComplete.has(id) || explicitlyExcludedFromComplete.has(normId);
 
-      // Check complete aliases (if not explicitly excluded by is_completed: false)
-      if (isCompleteAlias(id, normId, label)) {
+      // Check complete aliases (only if not explicitly excluded from completion by schema)
+      if (!isExcludedFromComplete && isCompleteAlias(id, normId, label)) {
         configuredCompleted.add(id);
         configuredCompleted.add(normId);
         return;
       }
 
-      // Check review aliases
+      // Check review aliases (takes precedence over unstarted/in_progress)
       if (isReviewAlias(id, normId, label)) {
         configuredInReview.add(id);
         configuredInReview.add(normId);
@@ -372,16 +395,30 @@ export function createStatusClassifier(
         configuredInProgress.add(normId);
         return;
       }
+
+      // If this status had a canonically complete name but was explicitly marked is_completed: false,
+      // it is active in-flight work (e.g. 'done' marked is_completed: false)
+      if (isExcludedFromComplete && isCompleteAlias(id, normId, label)) {
+        configuredInProgress.add(id);
+        configuredInProgress.add(normId);
+        return;
+      }
     });
 
     // 4. Workflow position fallback: any intermediate status in the project workflow
     // that is neither completed nor unstarted is an active in-flight stage (in_progress).
-    // The very first status (order 1) defaults to not_started if no unstarted status was mapped.
-    const hasUnstarted =
-      configuredUnstarted.size > 0 ||
-      Array.from(explicitSchemaCategories.values()).includes('not_started');
+    // If none of the actual project schema statuses was mapped to not_started, the initial
+    // workflow stage (order 1 / index 0) defaults to not_started as the backlog entry state.
     const sortedEntries = [...statusEntries].sort((a, b) => a.order - b.order);
-    const firstEntry = sortedEntries[0];
+    const schemaHasUnstarted = sortedEntries.some(
+      (entry) =>
+        configuredUnstarted.has(entry.id) ||
+        configuredUnstarted.has(entry.normId) ||
+        explicitSchemaCategories.get(entry.id) === 'not_started' ||
+        explicitSchemaCategories.get(entry.normId) === 'not_started'
+    );
+
+    let firstStatusHandled = schemaHasUnstarted;
 
     sortedEntries.forEach((entry, idx) => {
       const { id, normId } = entry;
@@ -396,10 +433,11 @@ export function createStatusClassifier(
         return;
       }
 
-      // If no initial unstarted status exists and this is the first status in the workflow
-      if (!hasUnstarted && idx === 0 && entry === firstEntry) {
+      // If no schema status is unstarted yet, the first workflow status is the backlog entry state
+      if (!firstStatusHandled && idx === 0) {
         configuredUnstarted.add(id);
         configuredUnstarted.add(normId);
+        firstStatusHandled = true;
         return;
       }
 
