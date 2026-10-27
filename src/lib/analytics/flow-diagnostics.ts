@@ -217,9 +217,6 @@ export function generateCfdSeries(
         configuredCompleted.add(id);
         explicitSchemaCategories.set(id, 'complete');
         explicitSchemaCategories.set(normId, 'complete');
-      } else if (canonicalReviewAliases.has(normId) || canonicalReviewAliases.has(id)) {
-        // Schema status entry without an explicit category fallback
-        configuredInReview.add(id);
       }
     }
   }
@@ -242,11 +239,14 @@ export function generateCfdSeries(
     });
   }
   const inReviewList = metricRules?.in_review_statuses || metricRules?.review_statuses;
+  const explicitMetricReviewStatuses = new Set<string>();
   if (Array.isArray(inReviewList)) {
     inReviewList.forEach((st: string) => {
       const id = String(st).toLowerCase().trim();
       const normId = id.replace(/[\s\-_]+/g, '_');
       configuredInReview.add(id);
+      explicitMetricReviewStatuses.add(id);
+      explicitMetricReviewStatuses.add(normId);
       configuredInProgress.delete(id);
       configuredInProgress.delete(normId);
     });
@@ -275,8 +275,8 @@ export function generateCfdSeries(
         return;
       }
 
-      // 2. If review list explicitly specified this status, do not re-add to in_progress
-      if (configuredInReview.has(id) || configuredInReview.has(normId)) {
+      // 2. If review list was explicitly defined by metricRules.in_review_statuses, keep it authoritative
+      if (explicitMetricReviewStatuses.has(id) || explicitMetricReviewStatuses.has(normId)) {
         return;
       }
 

@@ -167,6 +167,14 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       expect(weekConversion.label).toBe(`${weekConversion.value} weeks`);
     });
 
+    it('preserves nonzero fractional sprint values and never displays 0 sprints for positive intra-sprint forecasts', () => {
+      // 1 day out of 21 working days in a 30-day sprint = 1 / 21 sprints ~= 0.0476
+      const conversion = convertSprintsToCadence(1 / 21, 'sprint', 30, true);
+      expect(conversion.value).toBe(0.05);
+      expect(conversion.label).toBe('0.05 sprints');
+      expect(conversion.value).toBeGreaterThan(0);
+    });
+
     it('emits equal bins for zero and positive historical velocities to maintain unbiased sprint weighting', () => {
       // 1 idle sprint (0 pts), 1 active sprint (140 pts)
       const bins = deriveDailyThroughputBins([0, 140], 14);

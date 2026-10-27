@@ -70,6 +70,29 @@ describe('TASK-TRK-MC-CACHE-AND-SKELETON: Monte Carlo Cache and Skeleton Loaders
       expect(retrieved?.percentiles.p85).toBe(3);
     });
 
+    it('invalidates legacy pre-v2 weekly multi-sprint cache entries upon retrieval', () => {
+      const legacyWeeklyKey = 'mc_prj1_sp1_200_week_1000_v_1_123';
+      const legacyResult = {
+        ...sampleSimulation,
+        cadenceUnit: 'week' as const,
+        isDailySimulation: true,
+      };
+
+      setCachedMonteCarlo(legacyWeeklyKey, legacyResult);
+      expect(getCachedMonteCarlo(legacyWeeklyKey)).toBeNull();
+
+      // Stores and retrieves version 2 results successfully
+      const v2WeeklyKey = 'mc_prj1_sp1_200_week_1000_v_1_456';
+      const v2Result = {
+        ...sampleSimulation,
+        cadenceUnit: 'week' as const,
+        version: 2,
+      };
+      setCachedMonteCarlo(v2WeeklyKey, v2Result);
+      expect(getCachedMonteCarlo(v2WeeklyKey)).not.toBeNull();
+      expect(getCachedMonteCarlo(v2WeeklyKey)?.version).toBe(2);
+    });
+
     it('generates distinct velocity hashes for fractional velocity variations', () => {
       const hash1 = hashVelocities([10.1]);
       const hash2 = hashVelocities([10.9]);
