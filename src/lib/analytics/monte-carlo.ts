@@ -284,10 +284,11 @@ export function convertSprintsToCadence(
     }
     case 'sprint':
     default: {
+      const val = isDailySimulation && sprints !== null ? Math.round(sprints * 10) / 10 : sprints;
       return {
-        value: sprints,
+        value: val,
         unit: 'sprint',
-        label: `${sprints} ${sprints === 1 ? 'sprint' : 'sprints'}`,
+        label: `${val} ${val === 1 ? 'sprint' : 'sprints'}`,
       };
     }
   }
@@ -322,6 +323,7 @@ export interface MonteCarloSimulationResult {
   distribution: number[];
   executionTimeMs: number;
   cadenceUnit?: MonteCarloCadenceUnit;
+  isDailySimulation?: boolean;
 }
 
 export function runMonteCarloSimulation(input: MonteCarloSimulationInput): MonteCarloSimulationResult {
@@ -379,8 +381,15 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
   const MAX_SPRINTS_LIMIT = 500;
   let censoredTrials = 0;
 
-  // Day-level discrete event simulation when cadenceUnit === 'day'
-  if (input.cadenceUnit === 'day') {
+  const maxVelocity = Math.max(...velocities);
+  const isIntraSprintScope = remainingStoryPoints <= maxVelocity;
+  const shouldUseDailySim =
+    input.cadenceUnit === 'day' ||
+    input.cadenceUnit === 'week' ||
+    isIntraSprintScope;
+
+  // Day-level discrete event simulation for day/week cadence or intra-sprint remaining scope
+  if (shouldUseDailySim) {
     const validLength = Math.max(1, sprintLengthDays);
     const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));
     const dailyBins = deriveDailyThroughputBins(velocities, sprintLengthDays);
@@ -454,6 +463,7 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
       distribution,
       executionTimeMs,
       cadenceUnit: input.cadenceUnit,
+      isDailySimulation: true,
     };
   }
 

@@ -147,6 +147,26 @@ describe('TASK-TRK-MONTE-CARLO: monte-carlo simulation', () => {
       expect(cadenceDayConversion.label).toBe('1 day');
     });
 
+    it('simulates intra-sprint scope with week cadence without inflating to 2 weeks', () => {
+      const startDate = '2026-10-26T00:00:00.000Z'; // Monday
+      const result = runMonteCarloSimulation({
+        remainingStoryPoints: 8,
+        historicalVelocities: [472],
+        iterations: 1000,
+        sprintLengthDays: 14,
+        startDate,
+        cadenceUnit: 'week',
+      });
+
+      // 8 pts with 472 velocity takes ~1-2 days
+      expect(result.isDailySimulation).toBe(true);
+      expect(result.projectedDates.p50).toBe('2026-10-27T00:00:00.000Z');
+      // Verify week cadence conversion does not round up to 2 weeks
+      const weekConversion = convertSprintsToCadence(result.percentiles.p50, 'week', 14, true);
+      expect(weekConversion.value).toBeLessThan(1);
+      expect(weekConversion.label).toBe(`${weekConversion.value} weeks`);
+    });
+
     it('emits equal bins for zero and positive historical velocities to maintain unbiased sprint weighting', () => {
       // 1 idle sprint (0 pts), 1 active sprint (140 pts)
       const bins = deriveDailyThroughputBins([0, 140], 14);

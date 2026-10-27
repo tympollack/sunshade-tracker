@@ -169,6 +169,25 @@ export function generateCfdSeries(
   const configuredInReview = new Set<string>();
   const configuredUnstarted = new Set<string>();
 
+  const canonicalReviewAliases = new Set([
+    'in_review',
+    'review',
+    'under_review',
+    'code_review',
+    'pr_review',
+    'peer_review',
+    'reviewing',
+    'ready_for_review',
+    'testing',
+    'test',
+    'in_testing',
+    'qa',
+    'qa_review',
+    'in_qa',
+    'sign_off',
+    'audit',
+  ]);
+
   if (Array.isArray(projectSettings?.statuses)) {
     for (const s of projectSettings.statuses) {
       const id = String(s.id || '').toLowerCase().trim();
@@ -177,6 +196,18 @@ export function generateCfdSeries(
         configuredCompleted.add(id);
       } else if (s.is_completed === false) {
         explicitlyExcludedFromComplete.add(id);
+      }
+
+      const cat = String(s.category || '').toLowerCase().trim();
+      const normId = id.replace(/[\s\-_]+/g, '_');
+      if (cat === 'in_review' || cat === 'review' || canonicalReviewAliases.has(normId)) {
+        configuredInReview.add(id);
+      } else if (cat === 'in_progress') {
+        configuredInProgress.add(id);
+      } else if (cat === 'not_started' || cat === 'unstarted') {
+        configuredUnstarted.add(id);
+      } else if (cat === 'complete' || cat === 'completed') {
+        configuredCompleted.add(id);
       }
     }
   }
@@ -198,10 +229,25 @@ export function generateCfdSeries(
       explicitlyExcludedFromComplete.delete(id);
     });
   }
+  const inReviewList = metricRules?.in_review_statuses || metricRules?.review_statuses;
+  if (Array.isArray(inReviewList)) {
+    inReviewList.forEach((st: string) => {
+      const id = String(st).toLowerCase().trim();
+      configuredInReview.add(id);
+    });
+  }
   if (Array.isArray(metricRules?.in_progress_statuses)) {
-    metricRules.in_progress_statuses.forEach((st: string) =>
-      configuredInProgress.add(String(st).toLowerCase().trim())
-    );
+    metricRules.in_progress_statuses.forEach((st: string) => {
+      const id = String(st).toLowerCase().trim();
+      const normId = id.replace(/[\s\-_]+/g, '_');
+      // If the metric rules included review/testing statuses under generic WIP in_progress_statuses,
+      // route them to configuredInReview for CFD precision instead of swallowing them into in_progress
+      if (canonicalReviewAliases.has(normId)) {
+        configuredInReview.add(id);
+      } else {
+        configuredInProgress.add(id);
+      }
+    });
   }
   if (Array.isArray(metricRules?.unstarted_statuses)) {
     metricRules.unstarted_statuses.forEach((st: string) =>
@@ -212,37 +258,41 @@ export function generateCfdSeries(
   function getCfdCategory(statusName: string): 'complete' | 'in_review' | 'in_progress' | 'not_started' {
     const s = String(statusName || '').toLowerCase().trim();
     if (!s) return 'not_started';
+    const norm = s.replace(/[\s\-_]+/g, '_');
 
     // 1. Project-configured definitions take highest priority
-    if (configuredCompleted.has(s)) return 'complete';
-    if (configuredInReview.has(s)) return 'in_review';
-    if (configuredInProgress.has(s)) return 'in_progress';
-    if (configuredUnstarted.has(s)) return 'not_started';
+    if (configuredCompleted.has(s) || configuredCompleted.has(norm)) return 'complete';
+    if (configuredInReview.has(s) || configuredInReview.has(norm)) return 'in_review';
+    if (configuredInProgress.has(s) || configuredInProgress.has(norm)) return 'in_progress';
+    if (configuredUnstarted.has(s) || configuredUnstarted.has(norm)) return 'not_started';
 
     // 2. Canonical completed aliases (only if not explicitly excluded from complete by schema)
-    if (!explicitlyExcludedFromComplete.has(s)) {
-      if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s)) {
+    if (!explicitlyExcludedFromComplete.has(s) && !explicitlyExcludedFromComplete.has(norm)) {
+      if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s) ||
+          ['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(norm)) {
         return 'complete';
       }
     }
 
     // 3. Canonical in_review aliases & review fallbacks
-    if (['in_review', 'review', 'under_review', 'code_review', 'testing', 'qa', 'sign_off'].includes(s)) {
+    if (canonicalReviewAliases.has(s) || canonicalReviewAliases.has(norm)) {
       return 'in_review';
     }
 
     // 4. Canonical in_progress aliases
-    if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s)) {
+    if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s) ||
+        ['in_progress', 'started', 'doing', 'wip', 'active'].includes(norm)) {
       return 'in_progress';
     }
 
     // 5. Canonical unstarted aliases
-    if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s)) {
+    if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s) ||
+        ['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(norm)) {
       return 'not_started';
     }
 
     // 6. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
-    if (explicitlyExcludedFromComplete.has(s)) {
+    if (explicitlyExcludedFromComplete.has(s) || explicitlyExcludedFromComplete.has(norm)) {
       return 'in_progress';
     }
 
@@ -286,26 +336,45 @@ export function generateCfdSeries(
       if (priorTransitions.length > 0) {
         // Last transition that occurred on or before endOfDay
         const lastTransition = priorTransitions[priorTransitions.length - 1];
-        status = lastTransition.new_state?.status || item.status || 'not_started';
+        const extracted =
+          (typeof lastTransition.new_state === 'string' ? lastTransition.new_state : null) ||
+          lastTransition.new_state?.status ||
+          lastTransition.to_status ||
+          lastTransition.new_status ||
+          lastTransition.details?.status ||
+          lastTransition.metadata?.status ||
+          lastTransition.metadata?.to_status;
+        status = extracted || item.status || 'not_started';
       } else if (itemTransitions.length > 0) {
         // Transitions exist later; reconstruct initial status prior to first transition
         const earliestTransition = itemTransitions[0];
-        status =
+        const prevExtracted =
+          (typeof earliestTransition.previous_state === 'string' ? earliestTransition.previous_state : null) ||
           earliestTransition.previous_state?.status ||
+          earliestTransition.old_state?.status ||
+          earliestTransition.from_status ||
+          earliestTransition.old_status ||
+          earliestTransition.details?.from_status ||
+          earliestTransition.metadata?.from_status;
+        status =
+          prevExtracted ||
           item.metadata?.initial_status ||
           'not_started';
       } else {
         // Fallback safely when transition audit logs are sparse:
-        // Check for dedicated status-specific timestamps (completed_at, closed_at, status_updated_at).
-        // If an explicit status timestamp exists, use it to accurately reflect historical transition.
-        // If no status-specific timestamp exists, do NOT treat an arbitrary updated_at change (which advances
-        // on title, description, or sprint edits) as a status transition; retain the item's known status.
         const completedAtRaw =
           item.metadata?.completed_at ||
           item.completed_at ||
           item.metadata?.closed_at ||
           item.closed_at;
         const completedAtMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
+
+        const reviewedAtRaw =
+          item.metadata?.in_review_at ||
+          item.metadata?.reviewed_at ||
+          item.metadata?.review_at ||
+          item.in_review_at;
+        const reviewedAtMs = reviewedAtRaw ? new Date(reviewedAtRaw).getTime() : NaN;
 
         const statusUpdatedAtRaw =
           item.metadata?.status_updated_at ||
@@ -315,10 +384,14 @@ export function generateCfdSeries(
         const startedAtRaw = item.metadata?.started_at || item.started_at;
         const startedAtMs = startedAtRaw ? new Date(startedAtRaw).getTime() : NaN;
 
-        if (isCompleteCategory(item.status)) {
+        const currentCategory = getCfdCategory(item.status);
+
+        if (currentCategory === 'complete') {
           if (!isNaN(completedAtMs)) {
             if (endOfDayMs >= completedAtMs) {
               status = item.status;
+            } else if (!isNaN(reviewedAtMs) && endOfDayMs >= reviewedAtMs) {
+              status = 'in_review';
             } else if (!isNaN(startedAtMs) && endOfDayMs >= startedAtMs) {
               status = 'in_progress';
             } else {
@@ -331,11 +404,22 @@ export function generateCfdSeries(
               status = item.metadata?.initial_status || 'not_started';
             }
           } else {
-            // Explicit fallback: no status timestamp exists. Do NOT use updated_at, as title/sprint edits
-            // would erase historical completions. Retain terminal status across the recorded lifetime.
             status = item.status || 'not_started';
           }
-        } else if (getCfdCategory(item.status) === 'in_progress' || getCfdCategory(item.status) === 'in_review') {
+        } else if (currentCategory === 'in_review') {
+          const transMs = !isNaN(reviewedAtMs) ? reviewedAtMs : (!isNaN(statusUpdatedAtMs) ? statusUpdatedAtMs : startedAtMs);
+          if (!isNaN(transMs)) {
+            if (endOfDayMs >= transMs) {
+              status = item.status;
+            } else if (!isNaN(startedAtMs) && endOfDayMs >= startedAtMs) {
+              status = 'in_progress';
+            } else {
+              status = item.metadata?.initial_status || 'not_started';
+            }
+          } else {
+            status = item.status || 'not_started';
+          }
+        } else if (currentCategory === 'in_progress') {
           const transMs = !isNaN(statusUpdatedAtMs) ? statusUpdatedAtMs : startedAtMs;
           if (!isNaN(transMs)) {
             if (endOfDayMs >= transMs) {
@@ -344,7 +428,6 @@ export function generateCfdSeries(
               status = item.metadata?.initial_status || 'not_started';
             }
           } else {
-            // Fallback for active work without transition timestamps
             status = item.status || 'not_started';
           }
         } else {
