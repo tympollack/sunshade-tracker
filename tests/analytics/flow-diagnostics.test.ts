@@ -326,6 +326,118 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].not_started).toBe(0);
     });
 
+    it('classifies in_review and review statuses into in_review layer even when metric_rules list in_review under in_progress_statuses', () => {
+      const mockItems = [
+        {
+          id: 'i-review',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'in_review',
+        },
+        {
+          id: 'i-qa',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'qa',
+        },
+        {
+          id: 'i-dev',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'in_progress',
+        },
+      ];
+
+      const defaultMetricRulesSettings = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', is_completed: false },
+          { id: 'in_progress', label: 'In Progress', is_completed: false },
+          { id: 'in_review', label: 'In Review', is_completed: false },
+          { id: 'qa', label: 'QA', is_completed: false },
+          { id: 'complete', label: 'Complete', is_completed: true },
+        ],
+        metric_rules: {
+          in_progress_statuses: ['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing'],
+          completed_statuses: ['complete', 'done'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', defaultMetricRulesSettings);
+      expect(series[0].in_review).toBe(2);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].complete).toBe(0);
+      expect(series[0].not_started).toBe(0);
+    });
+
+    it('respects explicit schema category in_progress over canonical review alias for testing status', () => {
+      const mockItems = [
+        {
+          id: 'i-testing',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const schemaWithTestingAsInProgress = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', category: 'not_started' },
+          { id: 'testing', label: 'Testing / Automated Run', category: 'in_progress' },
+          { id: 'complete', label: 'Complete', category: 'complete', is_completed: true },
+        ],
+        metric_rules: {
+          in_progress_statuses: ['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', schemaWithTestingAsInProgress);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
+    it('respects custom metric_rules in_progress_statuses list when status matches review alias', () => {
+      const mockItems = [
+        {
+          id: 'i-testing',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const customMetricRulesSettings = {
+        metric_rules: {
+          in_progress_statuses: ['active', 'testing'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', customMetricRulesSettings);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
+    it('preserves historical in_review state before completion when reviewed_at timestamp is present', () => {
+      const mockItems = [
+        {
+          id: 'i-finished',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'complete',
+          metadata: {
+            started_at: '2026-10-02T10:00:00.000Z',
+            in_review_at: '2026-10-04T10:00:00.000Z',
+            completed_at: '2026-10-06T10:00:00.000Z',
+          },
+        },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-07');
+      // Day 1: not started
+      expect(series.find((s) => s.date === '2026-10-01')?.not_started).toBe(1);
+      // Day 2-3: in progress
+      expect(series.find((s) => s.date === '2026-10-03')?.in_progress).toBe(1);
+      // Day 4-5: in review
+      expect(series.find((s) => s.date === '2026-10-04')?.in_review).toBe(1);
+      expect(series.find((s) => s.date === '2026-10-05')?.in_review).toBe(1);
+      // Day 6-7: complete
+      expect(series.find((s) => s.date === '2026-10-06')?.complete).toBe(1);
+      expect(series.find((s) => s.date === '2026-10-07')?.complete).toBe(1);
+    });
+
     it('BUG-TRK-CFD-TELEMETRY-EMPTY-STATE-REGRESSION: supports full sprint quarter window (10/01/2026 to 12/31/2026) without dropping dates', () => {
       const series = generateCfdSeries([], [], '2026-10-01', '2026-12-31');
       // October (31) + November (30) + December (31) = 92 days

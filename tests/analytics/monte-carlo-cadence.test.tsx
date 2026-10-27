@@ -137,5 +137,38 @@ describe('TASK-TRK-MC-CADENCE-SELECTOR: Monte Carlo Cadence Selector', () => {
       expect(screen.getByTestId('mc-p85-value')).toHaveTextContent('6 weeks');
       expect(screen.getByTestId('mc-p95-value')).toHaveTextContent('8 weeks');
     });
+
+    it('displays sub-week fractional forecasts from daily intra-sprint simulation when week cadence is selected', () => {
+      const intraSprintSimulation: MonteCarloSimulationResult = {
+        remainingStoryPoints: 8,
+        iterations: 1000,
+        sprintLengthDays: 14,
+        startDate: '2026-10-26T00:00:00.000Z',
+        deliveredWithinHorizon: true,
+        censoredTrials: 0,
+        percentiles: {
+          p50: 1 / 14, // 1 day = 0.1 weeks
+          p85: 2 / 14, // 2 days = 0.3 weeks
+          p95: 3 / 14, // 3 days = 0.4 weeks
+        },
+        projectedDates: {
+          p50: '2026-10-27T00:00:00.000Z',
+          p85: '2026-10-28T00:00:00.000Z',
+          p95: '2026-10-29T00:00:00.000Z',
+        },
+        distribution: [1 / 14, 2 / 14, 3 / 14],
+        executionTimeMs: 15,
+        cadenceUnit: 'week',
+        isDailySimulation: true,
+      };
+
+      localStorage.setItem('trk_mc_cadence_unit', 'week');
+      render(<MonteCarloSimulator simulation={intraSprintSimulation} />);
+
+      expect(screen.getByTestId('mc-p50-value')).toHaveTextContent('0.1 weeks');
+      expect(screen.getByTestId('mc-p85-value')).toHaveTextContent('0.3 weeks');
+      expect(screen.getByTestId('mc-p95-value')).toHaveTextContent('0.4 weeks');
+      expect(screen.getByTestId('mc-p50-date')).toHaveTextContent('2026-10-27');
+    });
   });
 });
