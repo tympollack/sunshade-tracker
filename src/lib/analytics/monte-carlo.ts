@@ -238,57 +238,101 @@ export function convertSprintsToCadence(
       };
     }
     case 'week': {
-      // Fractional weeks to 1 decimal place
-      const val = Math.round((days / 7) * 10) / 10;
+      // Fractional weeks to 1 decimal place; preserve nonzero values
+      let val = Math.round((days / 7) * 10) / 10;
+      let label = `${val} ${val === 1 ? 'week' : 'weeks'}`;
+      if (days > 0 && val === 0) {
+        val = Math.max(0.01, Math.round((days / 7) * 100) / 100);
+        label = `${val} weeks`;
+      }
       return {
         value: val,
         unit,
-        label: `${val} ${val === 1 ? 'week' : 'weeks'}`,
+        label,
       };
     }
     case '2-week': {
-      // Bi-weekly increments to 1 decimal place
-      const val = Math.round((days / 14) * 10) / 10;
+      // Bi-weekly increments to 1 decimal place; preserve nonzero values
+      let val = Math.round((days / 14) * 10) / 10;
+      let label = `${val} ${val === 1 ? 'bi-week' : 'bi-weeks'}`;
+      if (days > 0 && val === 0) {
+        val = Math.max(0.01, Math.round((days / 14) * 100) / 100);
+        label = `${val} bi-weeks`;
+      }
       return {
         value: val,
         unit,
-        label: `${val} ${val === 1 ? 'bi-week' : 'bi-weeks'}`,
+        label,
       };
     }
     case 'month': {
       // Calendar month equivalent (30.4375 avg days/month in Gregorian calendar)
-      const val = Math.round((days / 30.4375) * 10) / 10;
+      let val = Math.round((days / 30.4375) * 10) / 10;
+      let label = `${val} ${val === 1 ? 'month' : 'months'}`;
+      if (days > 0 && val === 0) {
+        val = Math.max(0.01, Math.round((days / 30.4375) * 100) / 100);
+        label = `${val} months`;
+      }
       return {
         value: val,
         unit,
-        label: `${val} ${val === 1 ? 'month' : 'months'}`,
+        label,
       };
     }
     case 'quarter': {
       // Fractional quarters (365.25 / 4 = 91.3125 days/quarter)
-      const val = Math.round((days / 91.3125) * 10) / 10;
+      let val = Math.round((days / 91.3125) * 10) / 10;
+      let label = `${val} ${val === 1 ? 'quarter' : 'quarters'} `;
+      if (days > 0 && val === 0) {
+        val = Math.max(0.01, Math.round((days / 91.3125) * 100) / 100);
+        label = `${val} quarters`;
+      }
       return {
         value: val,
         unit,
-        label: `${val} ${val === 1 ? 'quarter' : 'quarters'}`,
+        label: label.trim(),
       };
     }
     case 'year': {
       // Fractional years (365.25 days/year)
-      const val = Math.round((days / 365.25) * 10) / 10;
+      let val = Math.round((days / 365.25) * 10) / 10;
+      let label = `${val} ${val === 1 ? 'year' : 'years'}`;
+      if (days > 0 && val === 0) {
+        val = Math.max(0.01, Math.round((days / 365.25) * 100) / 100);
+        label = `${val} years`;
+      }
       return {
         value: val,
         unit,
-        label: `${val} ${val === 1 ? 'year' : 'years'}`,
+        label,
       };
     }
     case 'sprint':
     default: {
-      const val = isDailySimulation && sprints !== null ? Math.round(sprints * 10) / 10 : sprints;
+      if (sprints === null) {
+        return {
+          value: null,
+          unit: 'sprint',
+          label: '> 500 sprints',
+        };
+      }
+      let val = sprints;
+      let label = `${sprints} ${sprints === 1 ? 'sprint' : 'sprints'}`;
+      if (isDailySimulation) {
+        const rounded1 = Math.round(sprints * 10) / 10;
+        if (sprints > 0 && rounded1 === 0) {
+          // Preserve nonzero fractional sprint values (e.g. 1/21 for a 30-day sprint -> 0.05 sprints)
+          val = Math.max(0.01, Math.round(sprints * 100) / 100);
+          label = `${val} sprints`;
+        } else {
+          val = rounded1;
+          label = `${val} ${val === 1 ? 'sprint' : 'sprints'}`;
+        }
+      }
       return {
         value: val,
         unit: 'sprint',
-        label: `${val} ${val === 1 ? 'sprint' : 'sprints'}`,
+        label,
       };
     }
   }
@@ -385,10 +429,9 @@ export function runMonteCarloSimulation(input: MonteCarloSimulationInput): Monte
   const isIntraSprintScope = remainingStoryPoints <= maxVelocity;
   const shouldUseDailySim =
     input.cadenceUnit === 'day' ||
-    input.cadenceUnit === 'week' ||
     isIntraSprintScope;
 
-  // Day-level discrete event simulation for day/week cadence or intra-sprint remaining scope
+  // Day-level discrete event simulation for day cadence or intra-sprint remaining scope
   if (shouldUseDailySim) {
     const validLength = Math.max(1, sprintLengthDays);
     const activeWorkDays = Math.max(1, Math.round(validLength * (5 / 7)));

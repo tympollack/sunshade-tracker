@@ -411,6 +411,31 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].in_review).toBe(0);
     });
 
+    it('places uncategorized schema status in in_progress when custom metric_rules classify it as active work', () => {
+      const mockItems = [
+        {
+          id: 'i-testing',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const settings = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', is_completed: false },
+          { id: 'testing', label: 'Testing', is_completed: false }, // no explicit category property
+          { id: 'complete', label: 'Complete', is_completed: true },
+        ],
+        sprint_metrics: {
+          in_progress_statuses: ['active', 'testing'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', settings);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
     it('preserves historical in_review state before completion when reviewed_at timestamp is present', () => {
       const mockItems = [
         {
