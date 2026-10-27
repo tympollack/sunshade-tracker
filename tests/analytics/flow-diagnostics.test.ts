@@ -470,6 +470,117 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].date).toBe('2026-10-01');
       expect(series[series.length - 1].date).toBe('2026-12-31');
     });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: accurately classifies custom editorial workflow statuses (Substack) into flow layers', () => {
+      const substackSettings = {
+        statuses: [
+          { id: 'pitch_backlog', label: 'Pitch & Concepts', order: 1 },
+          { id: 'outlining', label: 'Outlining & Research', order: 2 },
+          { id: 'drafting', label: 'Drafting', order: 3 },
+          { id: 'tone_audit', label: 'Peplink Tone Audit', order: 4 },
+          { id: 'staged', label: 'Staged & Scheduled', order: 5 },
+          { id: 'published', label: 'Published', order: 6 },
+          { id: 'syndicated', label: 'Syndicated / Archived', order: 7 },
+          { id: 'not_started', label: 'Not Started', order: 8 },
+          { id: 'complete', label: 'Complete', order: 9 },
+        ],
+      };
+
+      const mockItems = [
+        { id: 'item-pitch', created_at: '2026-10-01T00:00:00.000Z', status: 'pitch_backlog' },
+        { id: 'item-outline', created_at: '2026-10-01T00:00:00.000Z', status: 'outlining' },
+        { id: 'item-draft', created_at: '2026-10-01T00:00:00.000Z', status: 'drafting' },
+        { id: 'item-audit', created_at: '2026-10-01T00:00:00.000Z', status: 'tone_audit' },
+        { id: 'item-staged', created_at: '2026-10-01T00:00:00.000Z', status: 'staged' },
+        { id: 'item-published', created_at: '2026-10-01T00:00:00.000Z', status: 'published' },
+        { id: 'item-syndicated', created_at: '2026-10-01T00:00:00.000Z', status: 'syndicated' },
+        { id: 'item-not-started', created_at: '2026-10-01T00:00:00.000Z', status: 'not_started' },
+        { id: 'item-complete', created_at: '2026-10-01T00:00:00.000Z', status: 'complete' },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', substackSettings);
+      const day = series[0];
+
+      // not_started layer: pitch_backlog (1) + not_started (1) = 2
+      expect(day.not_started).toBe(2);
+      // in_progress layer: outlining (1) + drafting (1) = 2
+      expect(day.in_progress).toBe(2);
+      // in_review layer: tone_audit (1) + staged (1) = 2
+      expect(day.in_review).toBe(2);
+      // complete layer: published (1) + syndicated (1) + complete (1) = 3
+      expect(day.complete).toBe(3);
+      // unplanned: 0
+      expect(day.unplanned).toBe(0);
+      // Total items = 9
+      expect(day.not_started + day.in_progress + day.in_review + day.complete).toBe(9);
+    });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: includes custom intermediate workflow stages in active in_progress flow rather than not_started', () => {
+      const customPipelineSettings = {
+        statuses: [
+          { id: 'inbox', label: 'Inbox', order: 1 },
+          { id: 'phase_1', label: 'Discovery', order: 2 },
+          { id: 'phase_2', label: 'Execution', order: 3 },
+          { id: 'phase_3', label: 'Polishing', order: 4 },
+          { id: 'shipped', label: 'Shipped', order: 5, is_completed: true },
+        ],
+      };
+
+      const mockItems = [
+        { id: 'i1', created_at: '2026-10-01T00:00:00.000Z', status: 'inbox' },
+        { id: 'i2', created_at: '2026-10-01T00:00:00.000Z', status: 'phase_1' },
+        { id: 'i3', created_at: '2026-10-01T00:00:00.000Z', status: 'phase_2' },
+        { id: 'i4', created_at: '2026-10-01T00:00:00.000Z', status: 'phase_3' },
+        { id: 'i5', created_at: '2026-10-01T00:00:00.000Z', status: 'shipped' },
+      ];
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', customPipelineSettings);
+      const day = series[0];
+
+      expect(day.not_started).toBe(1); // inbox
+      expect(day.in_progress).toBe(3); // phase_1, phase_2, phase_3
+      expect(day.complete).toBe(1);    // shipped
+    });
+
+    it('FEAT-TRK-CFD-CUSTOM-STATUSES: computes lead and cycle durations for items progressing through custom workflow stages', async () => {
+      const substackSettings = {
+        statuses: [
+          { id: 'pitch_backlog', label: 'Pitch & Concepts', order: 1 },
+          { id: 'outlining', label: 'Outlining & Research', order: 2 },
+          { id: 'published', label: 'Published', order: 3 },
+        ],
+      };
+
+      const mockItem = {
+        id: 'item-essay',
+        created_at: '2026-10-01T00:00:00.000Z',
+        status: 'published',
+      };
+
+      const mockEvents = [
+        {
+          event_type: 'status_transition',
+          new_state: { status: 'outlining' },
+          occurred_at: '2026-10-03T00:00:00.000Z',
+        },
+        {
+          event_type: 'status_transition',
+          new_state: { status: 'published' },
+          occurred_at: '2026-10-06T00:00:00.000Z',
+        },
+      ];
+
+      const metrics = await calculateItemDurations('item-essay', {
+        item: mockItem,
+        events: mockEvents,
+        projectSettings: substackSettings,
+      });
+
+      // Lead time: Oct 1 -> Oct 6 = 5 days
+      expect(metrics.leadTimeDays).toBe(5);
+      // Cycle time: Oct 3 -> Oct 6 = 3 days
+      expect(metrics.cycleTimeDays).toBe(3);
+    });
   });
 
   describe('GET /api/v1/projects/[projectId]/analytics/cfd', () => {
