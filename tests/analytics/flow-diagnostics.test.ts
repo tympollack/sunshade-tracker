@@ -366,6 +366,51 @@ describe('TASK-TRK-FLOW-CFD-API: flow-diagnostics & CFD API', () => {
       expect(series[0].not_started).toBe(0);
     });
 
+    it('respects explicit schema category in_progress over canonical review alias for testing status', () => {
+      const mockItems = [
+        {
+          id: 'i-testing',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const schemaWithTestingAsInProgress = {
+        statuses: [
+          { id: 'not_started', label: 'Not Started', category: 'not_started' },
+          { id: 'testing', label: 'Testing / Automated Run', category: 'in_progress' },
+          { id: 'complete', label: 'Complete', category: 'complete', is_completed: true },
+        ],
+        metric_rules: {
+          in_progress_statuses: ['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', schemaWithTestingAsInProgress);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
+    it('respects custom metric_rules in_progress_statuses list when status matches review alias', () => {
+      const mockItems = [
+        {
+          id: 'i-testing',
+          created_at: '2026-10-01T00:00:00.000Z',
+          status: 'testing',
+        },
+      ];
+
+      const customMetricRulesSettings = {
+        metric_rules: {
+          in_progress_statuses: ['active', 'testing'],
+        },
+      };
+
+      const series = generateCfdSeries(mockItems, [], '2026-10-01', '2026-10-02', customMetricRulesSettings);
+      expect(series[0].in_progress).toBe(1);
+      expect(series[0].in_review).toBe(0);
+    });
+
     it('preserves historical in_review state before completion when reviewed_at timestamp is present', () => {
       const mockItems = [
         {

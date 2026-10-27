@@ -168,6 +168,7 @@ export function generateCfdSeries(
   const configuredInProgress = new Set<string>();
   const configuredInReview = new Set<string>();
   const configuredUnstarted = new Set<string>();
+  const explicitSchemaCategories = new Map<string, 'complete' | 'in_review' | 'in_progress' | 'not_started'>();
 
   const canonicalReviewAliases = new Set([
     'in_review',
@@ -200,14 +201,25 @@ export function generateCfdSeries(
 
       const cat = String(s.category || '').toLowerCase().trim();
       const normId = id.replace(/[\s\-_]+/g, '_');
-      if (cat === 'in_review' || cat === 'review' || canonicalReviewAliases.has(normId)) {
+      if (cat === 'in_review' || cat === 'review') {
         configuredInReview.add(id);
+        explicitSchemaCategories.set(id, 'in_review');
+        explicitSchemaCategories.set(normId, 'in_review');
       } else if (cat === 'in_progress') {
         configuredInProgress.add(id);
+        explicitSchemaCategories.set(id, 'in_progress');
+        explicitSchemaCategories.set(normId, 'in_progress');
       } else if (cat === 'not_started' || cat === 'unstarted') {
         configuredUnstarted.add(id);
+        explicitSchemaCategories.set(id, 'not_started');
+        explicitSchemaCategories.set(normId, 'not_started');
       } else if (cat === 'complete' || cat === 'completed') {
         configuredCompleted.add(id);
+        explicitSchemaCategories.set(id, 'complete');
+        explicitSchemaCategories.set(normId, 'complete');
+      } else if (canonicalReviewAliases.has(normId) || canonicalReviewAliases.has(id)) {
+        // Schema status entry without an explicit category fallback
+        configuredInReview.add(id);
       }
     }
   }
@@ -233,16 +245,43 @@ export function generateCfdSeries(
   if (Array.isArray(inReviewList)) {
     inReviewList.forEach((st: string) => {
       const id = String(st).toLowerCase().trim();
+      const normId = id.replace(/[\s\-_]+/g, '_');
       configuredInReview.add(id);
+      configuredInProgress.delete(id);
+      configuredInProgress.delete(normId);
     });
   }
   if (Array.isArray(metricRules?.in_progress_statuses)) {
+    const defaultWipAliases = new Set(['in_progress', 'doing', 'review', 'in_review', 'qa', 'testing']);
+    const isGenericDefaultList =
+      metricRules.in_progress_statuses.length === defaultWipAliases.size &&
+      metricRules.in_progress_statuses.every((st: string) => defaultWipAliases.has(String(st).toLowerCase().trim()));
+
     metricRules.in_progress_statuses.forEach((st: string) => {
       const id = String(st).toLowerCase().trim();
       const normId = id.replace(/[\s\-_]+/g, '_');
-      // If the metric rules included review/testing statuses under generic WIP in_progress_statuses,
-      // route them to configuredInReview for CFD precision instead of swallowing them into in_progress
-      if (canonicalReviewAliases.has(normId)) {
+
+      // 1. Explicit schema assignment takes highest priority
+      const explicitCat = explicitSchemaCategories.get(id) || explicitSchemaCategories.get(normId);
+      if (explicitCat === 'in_progress') {
+        configuredInProgress.add(id);
+        configuredInReview.delete(id);
+        configuredInReview.delete(normId);
+        return;
+      } else if (explicitCat === 'in_review') {
+        configuredInReview.add(id);
+        configuredInProgress.delete(id);
+        configuredInProgress.delete(normId);
+        return;
+      }
+
+      // 2. If review list explicitly specified this status, do not re-add to in_progress
+      if (configuredInReview.has(id) || configuredInReview.has(normId)) {
+        return;
+      }
+
+      // 3. If from generic default WIP list and matches canonical review aliases, route to review
+      if (isGenericDefaultList && (canonicalReviewAliases.has(normId) || canonicalReviewAliases.has(id))) {
         configuredInReview.add(id);
       } else {
         configuredInProgress.add(id);
@@ -260,13 +299,17 @@ export function generateCfdSeries(
     if (!s) return 'not_started';
     const norm = s.replace(/[\s\-_]+/g, '_');
 
-    // 1. Project-configured definitions take highest priority
+    // 1. Explicit schema assignment takes highest priority
+    const explicitCat = explicitSchemaCategories.get(s) || explicitSchemaCategories.get(norm);
+    if (explicitCat) return explicitCat;
+
+    // 2. Project-configured definitions take high priority
     if (configuredCompleted.has(s) || configuredCompleted.has(norm)) return 'complete';
     if (configuredInReview.has(s) || configuredInReview.has(norm)) return 'in_review';
     if (configuredInProgress.has(s) || configuredInProgress.has(norm)) return 'in_progress';
     if (configuredUnstarted.has(s) || configuredUnstarted.has(norm)) return 'not_started';
 
-    // 2. Canonical completed aliases (only if not explicitly excluded from complete by schema)
+    // 3. Canonical completed aliases (only if not explicitly excluded from complete by schema)
     if (!explicitlyExcludedFromComplete.has(s) && !explicitlyExcludedFromComplete.has(norm)) {
       if (['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(s) ||
           ['complete', 'done', 'completed', 'resolved', 'closed', 'shipped'].includes(norm)) {
@@ -274,24 +317,24 @@ export function generateCfdSeries(
       }
     }
 
-    // 3. Canonical in_review aliases & review fallbacks
+    // 4. Canonical in_review aliases & review fallbacks
     if (canonicalReviewAliases.has(s) || canonicalReviewAliases.has(norm)) {
       return 'in_review';
     }
 
-    // 4. Canonical in_progress aliases
+    // 5. Canonical in_progress aliases
     if (['in_progress', 'started', 'doing', 'wip', 'active'].includes(s) ||
         ['in_progress', 'started', 'doing', 'wip', 'active'].includes(norm)) {
       return 'in_progress';
     }
 
-    // 5. Canonical unstarted aliases
+    // 6. Canonical unstarted aliases
     if (['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(s) ||
         ['not_started', 'unstarted', 'todo', 'to_do', 'backlog', 'open', 'planned'].includes(norm)) {
       return 'not_started';
     }
 
-    // 6. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
+    // 7. Explicitly excluded from complete fallback (e.g. project defines 'done' as is_completed: false)
     if (explicitlyExcludedFromComplete.has(s) || explicitlyExcludedFromComplete.has(norm)) {
       return 'in_progress';
     }
