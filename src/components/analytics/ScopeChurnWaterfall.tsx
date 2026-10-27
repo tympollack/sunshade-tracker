@@ -26,20 +26,16 @@ interface ScopeChurnWaterfallProps {
   isLoading?: boolean;
 }
 
-export function WaterfallCustomTooltip({ active, payload, coordinate }: any) {
+export function WaterfallCustomTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const valuePayload = payload.find((p: any) => p.dataKey === 'value') || payload[0];
   const data = valuePayload?.payload || payload[0]?.payload;
   if (!data) return null;
 
-  // Overflow & flipping safety: shift left when near the right boundary (e.g. Delivered bar)
-  const isRightAnchored = data.name === 'Delivered' || (coordinate && coordinate.x > 320);
-
   return (
     <div
       data-testid="waterfall-custom-tooltip"
-      style={isRightAnchored ? { transform: 'translateX(-115%)' } : undefined}
-      className="rounded-lg border border-slate-700/80 bg-slate-900/95 p-2.5 text-xs shadow-2xl backdrop-blur-md max-w-[220px] pointer-events-none z-50 transition-transform duration-75"
+      className="rounded-lg border border-slate-700/80 bg-slate-900/95 p-2.5 text-xs shadow-2xl backdrop-blur-md max-w-[220px] pointer-events-none z-50"
     >
       <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-1.5">
         <span className="font-semibold text-slate-100">{data.name}</span>
@@ -96,28 +92,28 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
       name: 'Baseline',
       spacer: 0,
       value: baseline,
-      fill: '#0284c7', // Sky-600
+      color: '#0284c7', // Sky-600
       description: 'Total story points locked in when the sprint was formally activated',
     },
     {
       name: 'Added Creep',
       spacer: baseline,
       value: added,
-      fill: '#d97706', // Amber-600
+      color: '#d97706', // Amber-600
       description: 'Story points added to this sprint after kickoff via backlog drag or mid-flight creation',
     },
     {
       name: 'Dropped',
       spacer: dropped === 0 ? baseline + added : Math.max(0, baseline + added - dropped),
       value: dropped,
-      fill: dropped > 0 ? '#e11d48' : 'transparent', // Rose-600
+      color: dropped > 0 ? '#e11d48' : 'transparent', // Rose-600
       description: 'Scope removed or deferred back to backlog during active sprint execution',
     },
     {
       name: 'Delivered',
       spacer: 0,
       value: delivered,
-      fill: '#059669', // Emerald-600
+      color: '#059669', // Emerald-600
       description: 'Total story points marked completed. Percentage reflects Delivered / Day 1 Baseline',
     },
   ];
@@ -163,9 +159,14 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
               <RechartsTooltip
                 cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                 offset={12}
+                isAnimationActive={false}
                 content={<WaterfallCustomTooltip />}
               />
-              <Bar dataKey="spacer" stackId="waterfall" fill="transparent" isAnimationActive={false} maxBarSize={48} />
+              <Bar dataKey="spacer" stackId="waterfall" fill="transparent" isAnimationActive={false} maxBarSize={48}>
+                {waterfallData.map((entry) => (
+                  <Cell key={`spacer-${entry.name}`} fill="transparent" />
+                ))}
+              </Bar>
               <Bar
                 dataKey="value"
                 stackId="waterfall"
@@ -174,7 +175,7 @@ export function ScopeChurnWaterfall({ data, isLoading = false }: ScopeChurnWater
                 maxBarSize={48}
               >
                 {waterfallData.map((entry) => (
-                  <Cell key={entry.name} fill={entry.value > 0 ? entry.fill : 'transparent'} />
+                  <Cell key={`val-${entry.name}`} fill={entry.value > 0 ? entry.color : 'transparent'} />
                 ))}
               </Bar>
             </BarChart>

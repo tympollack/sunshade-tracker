@@ -239,7 +239,7 @@ export function MonteCarloSimulator({
     return null;
   }
 
-  const isDailySim = simResult?.cadenceUnit === 'day';
+  const isDailySim = Boolean(simResult?.isDailySimulation) || simResult?.cadenceUnit === 'day';
   const p50Display = simResult
     ? convertSprintsToCadence(simResult.percentiles.p50, cadenceUnit, effectiveSprintLength, isDailySim)
     : { label: '--', value: 0, unit: cadenceUnit };

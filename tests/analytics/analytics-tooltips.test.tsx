@@ -526,9 +526,7 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
       expect(
         screen.getByText('Story points added to this sprint after kickoff via backlog drag or mid-flight creation')
       ).toBeInTheDocument();
-      expect(card.style.transform).toBe('');
-
-      // Test flipping to left for Delivered stage or right-edge coordinate
+      // Verify Delivered stage renders unified card
       const deliveredPayload = [
         {
           dataKey: 'value',
@@ -541,7 +539,9 @@ describe('TASK-TRK-ANALYTICS-HOVER-TOOLTIPS: Contextual Tooltips', () => {
       ];
       rerender(<WaterfallCustomTooltip active={true} payload={deliveredPayload} coordinate={{ x: 450, y: 100 }} />);
       const deliveredCard = screen.getByTestId('waterfall-custom-tooltip');
-      expect(deliveredCard.style.transform).toBe('translateX(-115%)');
+      expect(deliveredCard).toBeInTheDocument();
+      expect(screen.getByText('Delivered')).toBeInTheDocument();
+      expect(screen.getByText('95 pts')).toBeInTheDocument();
 
       // Returns null when not active or empty payload
       rerender(<WaterfallCustomTooltip active={false} payload={mockPayload} />);
