@@ -26,6 +26,7 @@ import {
 } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
+import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
 
 export const RESERVED_METADATA_KEYS = new Set([
   'sprint',
@@ -710,6 +711,22 @@ export function WorkItemInspectorDrawer({
             </button>
           </div>
         )}
+
+        {/* Transition Guard Blank Field Warnings */}
+        <TransitionGuardWarningBanner
+          item={{
+            ...item,
+            status,
+            metadata: localMeta,
+          }}
+          projectSettings={projectSettings}
+          selectedStatus={status}
+          existingMetadataKeys={localMeta}
+          onQuickAddField={(fieldKey) => {
+            handleCustomFieldCommit(fieldKey, '');
+          }}
+          testId="drawer-transition-guard-warning"
+        />
 
         {/* Title Input */}
         <div>

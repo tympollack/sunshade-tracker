@@ -255,4 +255,36 @@ export function getUnmetTransitionGuards(
   return unmet;
 }
 
+/**
+ * Formats a human-readable transition guard rejection message for toast notifications.
+ * Example: "Cannot move to In Review: Missing Pull Request URL"
+ */
+export function formatGuardRejectionMessage(
+  targetStatus: string,
+  errors: string[] | string | undefined | null,
+  statuses?: Array<{ id: string; label?: string }> | null
+): string {
+  const matchedStatus = Array.isArray(statuses)
+    ? statuses.find((s) => s?.id === targetStatus)
+    : undefined;
+  const statusLabel =
+    matchedStatus?.label ||
+    (targetStatus || '')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase()) ||
+    'target status';
+
+  const reasonStr = Array.isArray(errors)
+    ? errors.filter(Boolean).join(', ')
+    : typeof errors === 'string' && errors.trim().length > 0
+    ? errors.trim()
+    : 'Missing required transition fields';
+
+  if (reasonStr.toLowerCase().startsWith('cannot move to')) {
+    return reasonStr;
+  }
+
+  return `Cannot move to ${statusLabel}: ${reasonStr}`;
+}
+
 export { matchesCondition, resolveFieldValue, isBlankValue };
