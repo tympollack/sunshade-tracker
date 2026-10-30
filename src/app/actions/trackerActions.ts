@@ -180,6 +180,17 @@ export async function reassignWorkItemProject(
       }
     }
 
+    if (overrides?.status && overrides.status !== targetItem.status) {
+      const { validateTransitionGuards } = await import('@/lib/automation/guardEvaluator');
+      const guardRes = validateTransitionGuards(targetItem, overrides.status, destProject.settings);
+      if (!guardRes.allowed) {
+        return {
+          success: false,
+          error: guardRes.errors.join('; '),
+        };
+      }
+    }
+
     // 5. Recursively find all descendant item IDs
     const { data: tenantItems } = await service
       .from('work_items')
@@ -1103,6 +1114,57 @@ export async function adminBulkMoveSprintAction(params: {
     return { success: false, error: err.message || 'Server action error during bulk sprint move' };
   }
 }
+
+/**
+ * Server action to update a work item's status while enforcing project transition guardrails.
+ */
+export async function updateWorkItemStatus(
+  itemIdOrParams:
+    | string
+    | {
+        id?: string;
+        itemId?: string;
+        status?: string;
+        newStatus?: string;
+        metadata?: Record<string, any>;
+        prevOrder?: number;
+        nextOrder?: number;
+        projectSettings?: any;
+      },
+  newStatus?: string,
+  options?: {
+    metadata?: Record<string, any>;
+    prevOrder?: number;
+    nextOrder?: number;
+    projectSettings?: any;
+  }
+) {
+  const { performUpdateWorkItemStatus } = await import('@/lib/automation/workItemGuardMutations');
+  return performUpdateWorkItemStatus(itemIdOrParams, newStatus, options);
+}
+
+/**
+ * Server action to update a work item while enforcing project transition guardrails on status changes.
+ */
+export async function updateWorkItem(
+  itemIdOrPayload:
+    | string
+    | {
+        id?: string;
+        itemId?: string;
+        status?: string;
+        metadata?: Record<string, any>;
+        [key: string]: any;
+      },
+  updates?: Record<string, any>,
+  options?: {
+    projectSettings?: any;
+  }
+) {
+  const { performUpdateWorkItem } = await import('@/lib/automation/workItemGuardMutations');
+  return performUpdateWorkItem(itemIdOrPayload as any, updates, options);
+}
+
 
 
 

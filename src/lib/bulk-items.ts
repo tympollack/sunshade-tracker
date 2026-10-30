@@ -6,6 +6,7 @@ import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/noti
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { validateEstimateImmutability } from '@/lib/services/sprintGuardrailService';
+import { validateTransitionGuards } from '@/lib/automation/guardEvaluator';
 
 
 export const MAX_BULK_ITEMS = 100;
@@ -983,7 +984,15 @@ export async function handleBulkUpdateItems(
   tenantId: string,
   payload: BulkUpdatePayload,
   options?: { tenantSlug?: string; actorId?: string | null; actorName?: string | null; governance_bypass?: boolean }
-): Promise<{ success: boolean; updated_count: number; items: WorkItem[]; error?: string; status?: number }> {
+): Promise<{
+  success: boolean;
+  updated_count: number;
+  items: WorkItem[];
+  error?: string;
+  code?: string;
+  errors?: string[];
+  status?: number;
+}> {
   // Shared project settings cache
   const projectSettingsCache = new Map<string, ProjectSettings>();
   async function getProjectSettings(projectId: string): Promise<ProjectSettings> {
@@ -1330,6 +1339,28 @@ export async function handleBulkUpdateItems(
               status: 409,
             };
           }
+        }
+      }
+
+      if (updates.status !== undefined && updates.status !== item.status) {
+        const guardResult = validateTransitionGuards(item, updates.status, projectSettings, {
+          ...itemUpdate,
+          metadata: {
+            ...(item.metadata || {}),
+            ...(itemUpdate.metadata || {}),
+            ...(updates.metadata && typeof updates.metadata === 'object' ? updates.metadata : {}),
+          },
+        });
+        if (!guardResult.allowed) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: guardResult.errors.join('; '),
+            code: 'GUARD_REJECTED',
+            errors: guardResult.errors,
+            status: 422,
+          };
         }
       }
 
@@ -1879,6 +1910,28 @@ export async function handleBulkUpdateItems(
               status: 409,
             };
           }
+        }
+      }
+
+      if (it.status !== undefined && it.status !== existing.status) {
+        const guardResult = validateTransitionGuards(existing, it.status, projectSettings, {
+          ...patchFields,
+          metadata: {
+            ...(existing.metadata || {}),
+            ...(patchFields.metadata || {}),
+            ...(it.metadata && typeof it.metadata === 'object' ? it.metadata : {}),
+          },
+        });
+        if (!guardResult.allowed) {
+          return {
+            success: false,
+            updated_count: 0,
+            items: [],
+            error: guardResult.errors.join('; '),
+            code: 'GUARD_REJECTED',
+            errors: guardResult.errors,
+            status: 422,
+          };
         }
       }
 
