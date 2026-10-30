@@ -265,9 +265,13 @@ export function matchesCondition(
     case '$match':
     case 'pattern': {
       if (isBlankValue(actual) || expected === null || expected === undefined) return false;
+      const patternStr = expected instanceof RegExp ? expected.source : String(expected);
+      if (patternStr.length > 250) return false;
+      const actualStr = String(actual);
+      if (actualStr.length > 2000) return false;
       try {
-        const regex = expected instanceof RegExp ? expected : new RegExp(String(expected));
-        return regex.test(String(actual));
+        const regex = expected instanceof RegExp ? expected : new RegExp(patternStr);
+        return regex.test(actualStr);
       } catch {
         return false;
       }

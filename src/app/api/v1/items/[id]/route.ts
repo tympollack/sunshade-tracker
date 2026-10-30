@@ -29,7 +29,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     headers: req.headers,
     body: JSON.stringify({
       ...body,
-      id: body.id || itemId,
+      id: itemId,
     }),
   });
 

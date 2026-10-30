@@ -1430,7 +1430,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               .sort((a, b) => a.order_index - b.order_index)
           );
 
-          if (res.status === 422 || errData.code === 'GUARD_REJECTED') {
+          if (errData.code === 'GUARD_REJECTED') {
             triggerGuardRejection(
               itemId,
               newStatus,
@@ -2284,7 +2284,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         if (originalItem) {
           setItems((prev) => prev.map(rollbackItemUpdates));
         }
-        if (res.status === 422 || errJson.code === 'GUARD_REJECTED') {
+        if (errJson.code === 'GUARD_REJECTED') {
           const effectiveSettings = getItemProjectSettings(originalItem);
           const targetStatus = updates.status || originalItem.status;
           triggerGuardRejection(
@@ -2800,7 +2800,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        if (res.status === 422 || err.code === 'GUARD_REJECTED') {
+        if (err.code === 'GUARD_REJECTED') {
           const msg = formatGuardRejectionMessage(
             targetStatus,
             err.errors || err.error,

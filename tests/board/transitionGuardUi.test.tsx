@@ -174,7 +174,7 @@ describe('TASK-TRK-GUARD-UI-INTERCEPTOR: Kanban Guard Feedback & Modal Warnings'
 
       const warning = screen.getByTestId('transition-guard-warning');
       expect(warning).toBeInTheDocument();
-      expect(screen.getByText(/Required transition fields are blank/i)).toBeInTheDocument();
+      expect(screen.getByText(/Unmet transition guard requirements/i)).toBeInTheDocument();
       expect(screen.getByText(/Missing Pull Request URL/i)).toBeInTheDocument();
 
       const quickAddBtn = screen.getByTestId('guard-quick-add-pr_url');
@@ -195,7 +195,7 @@ describe('TASK-TRK-GUARD-UI-INTERCEPTOR: Kanban Guard Feedback & Modal Warnings'
 
       const banner = screen.getByTestId('transition-guard-warning');
       expect(banner.className).toContain('bg-rose-950/60');
-      expect(screen.getByText(/Cannot transition to selected status — required fields are blank/i)).toBeInTheDocument();
+      expect(screen.getByText(/Cannot transition to selected status — unmet transition guard requirements/i)).toBeInTheDocument();
     });
 
     it('returns null when all guard conditions are satisfied', () => {

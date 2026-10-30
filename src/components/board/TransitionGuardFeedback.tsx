@@ -102,8 +102,8 @@ export function TransitionGuardWarningBanner({
         />
         <span>
           {isSelectedStatusBlocked
-            ? `Cannot transition to selected status — required fields are blank`
-            : `Required transition fields are blank`}
+            ? `Cannot transition to selected status — unmet transition guard requirements`
+            : `Unmet transition guard requirements`}
         </span>
       </div>
       <ul className="space-y-1 pl-6">

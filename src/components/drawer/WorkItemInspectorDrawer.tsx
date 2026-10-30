@@ -368,6 +368,12 @@ export function WorkItemInspectorDrawer({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [addedCustomFieldKeys, setAddedCustomFieldKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAddedCustomFieldKeys([]);
+  }, [item?.id]);
+
   const resolvedFields = useMemo(() => {
     const configuredFields = resolveCustomMetadataFields(projectSettings, customMetadataFields);
     const configuredKeys = new Set(configuredFields.map((f) => f.key.toLowerCase()));
@@ -388,8 +394,17 @@ export function WorkItemInspectorDrawer({
       inferFieldDefinitionFromKey(key)
     );
 
-    return [...configuredFields, ...dynamicFields];
-  }, [projectSettings, customMetadataFields, item?.metadata]);
+    const existingKeySet = new Set([
+      ...configuredFields.map((f) => f.key.toLowerCase()),
+      ...dynamicFields.map((f) => f.key.toLowerCase()),
+    ]);
+
+    const additionalFields: CustomMetadataFieldDefinition[] = addedCustomFieldKeys
+      .filter((k) => !existingKeySet.has(k.toLowerCase()))
+      .map((k) => inferFieldDefinitionFromKey(k));
+
+    return [...configuredFields, ...dynamicFields, ...additionalFields];
+  }, [projectSettings, customMetadataFields, item?.metadata, addedCustomFieldKeys]);
   const hasExplicitPointsField = useMemo(
     () => resolvedFields.some((f) => f.key === 'story_points' || f.key === 'points'),
     [resolvedFields]
@@ -723,7 +738,8 @@ export function WorkItemInspectorDrawer({
           selectedStatus={status}
           existingMetadataKeys={localMeta}
           onQuickAddField={(fieldKey) => {
-            handleCustomFieldCommit(fieldKey, '');
+            setLocalMeta((prev) => ({ ...prev, [fieldKey]: '' }));
+            setAddedCustomFieldKeys((prev) => (prev.includes(fieldKey) ? prev : [...prev, fieldKey]));
           }}
           testId="drawer-transition-guard-warning"
         />

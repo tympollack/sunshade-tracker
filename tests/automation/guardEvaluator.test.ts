@@ -18,6 +18,17 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+vi.mock('@/lib/supabase-server', () => ({
+  createServerClient: vi.fn().mockResolvedValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: 'test-user-id', email: 'test@sunshade.systems' } },
+        error: null,
+      }),
+    },
+  }),
+}));
+
 describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUATOR)', () => {
   const sampleSettings: ProjectSettings = {
     schema_version: '1.0',

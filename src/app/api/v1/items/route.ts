@@ -1384,17 +1384,18 @@ export async function PATCH(req: NextRequest) {
       }
       if (status !== undefined) {
         if (status !== existingItem.status) {
+          const candidateMetadata =
+            resolvedMetadata !== undefined
+              ? resolvedMetadata
+              : (existingItem.metadata || {});
+
           const guardResult = validateTransitionGuards(
             existingItem,
             status,
             effectiveProjectSettings,
             {
               ...updateFields,
-              metadata: {
-                ...(existingItem.metadata || {}),
-                ...(resolvedMetadata || {}),
-                ...(metadata && typeof metadata === 'object' ? metadata : {}),
-              },
+              metadata: candidateMetadata,
             }
           );
           if (!guardResult.allowed) {
