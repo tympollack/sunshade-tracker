@@ -91,6 +91,8 @@ export const ProjectSettingsSchema = z
     github_repo: z.string().nullable().optional(),
     repository_url: z.string().nullable().optional(),
     automations: z.array(z.any()).nullable().optional(),
+    transition_guards: z.array(z.any()).nullable().optional(),
+    workflow: z.record(z.any()).nullable().optional(),
     templates: z.any().nullable().optional(),
   })
   .passthrough();

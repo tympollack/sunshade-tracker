@@ -274,6 +274,21 @@ export interface ProjectTemplateItem {
   [key: string]: any;
 }
 
+export interface TransitionGuardCondition {
+  field: string;
+  operator: string;
+  value?: any;
+  message: string;
+}
+
+export interface TransitionGuard {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  target_status: string;
+  conditions: TransitionGuardCondition[];
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
@@ -288,6 +303,8 @@ export interface ProjectSettings {
   github_repo?: string;
   repository_url?: string;
   automations?: AutomationRule[];
+  transition_guards?: TransitionGuard[];
+  workflow?: Record<string, any>;
   templates?: Record<string, ProjectTemplateItem[]> | any;
   [key: string]: any;
 }

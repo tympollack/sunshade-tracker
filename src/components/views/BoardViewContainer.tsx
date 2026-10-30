@@ -98,6 +98,7 @@ export interface BoardViewContainerProps {
   activeTimelineSnapshot?: TimelineSnapshotPoint | null;
   onSelectTimelineSnapshot?: (snap: TimelineSnapshotPoint | null) => void;
   onOpenDiffModal?: (baseId: string, targetId: string) => void;
+  guardRejectedItemIds?: Set<string>;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -172,6 +173,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     activeTimelineSnapshot = null,
     onSelectTimelineSnapshot,
     onOpenDiffModal,
+    guardRejectedItemIds,
   } = props;
 
   const isEffectivelyReadOnly = isReadOnly || Boolean(activeTimelineSnapshot);
@@ -588,6 +590,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                               isCardImmutable={isCardImmutable}
                               isReadOnly={isEffectivelyReadOnly}
                               isBeingDragged={isBeingDragged}
+                              isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
                               onEditItem={setEditingItem}
                               onDeleteItem={setDeleteConfirmItem}
                               onUpdateStatus={handleUpdateStatus}
@@ -643,6 +646,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       isAllProjects={isAllProjects}
                       isCardImmutable={isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs)}
                       isReadOnly={isEffectivelyReadOnly}
+                      isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
                       onEditItem={setEditingItem}
                       onDeleteItem={setDeleteConfirmItem}
                       onUpdateStatus={handleUpdateStatus}

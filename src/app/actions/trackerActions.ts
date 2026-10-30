@@ -74,7 +74,7 @@ export async function reassignWorkItemProject(
   itemId: string,
   newProjectId: string,
   tenantSlug?: string,
-  overrides?: { status?: string; item_type?: string }
+  overrides?: { status?: string; item_type?: string; metadata?: Record<string, any> }
 ): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
   try {
     if (!itemId || !newProjectId) {
@@ -180,6 +180,26 @@ export async function reassignWorkItemProject(
       }
     }
 
+    if (overrides?.status && overrides.status !== targetItem.status) {
+      const { validateTransitionGuards } = await import('@/lib/automation/guardEvaluator');
+      const candidateItem = {
+        ...targetItem,
+        status: overrides.status,
+        item_type: overrides.item_type || targetItem.item_type,
+        metadata: {
+          ...(targetItem.metadata || {}),
+          ...(overrides.metadata || {}),
+        },
+      };
+      const guardRes = validateTransitionGuards(candidateItem, overrides.status, destProject.settings);
+      if (!guardRes.allowed) {
+        return {
+          success: false,
+          error: guardRes.errors.join('; '),
+        };
+      }
+    }
+
     // 5. Recursively find all descendant item IDs
     const { data: tenantItems } = await service
       .from('work_items')
@@ -216,6 +236,12 @@ export async function reassignWorkItemProject(
     }
     if (overrides?.item_type) {
       targetUpdateFields.item_type = overrides.item_type;
+    }
+    if (overrides?.metadata) {
+      targetUpdateFields.metadata = {
+        ...(targetItem.metadata || {}),
+        ...overrides.metadata,
+      };
     }
     if (shouldDisconnectParent) {
       targetUpdateFields.parent_id = null;
@@ -1103,6 +1129,143 @@ export async function adminBulkMoveSprintAction(params: {
     return { success: false, error: err.message || 'Server action error during bulk sprint move' };
   }
 }
+
+/**
+ * Server action to update a work item's status while enforcing project transition guardrails.
+ */
+export async function updateWorkItemStatus(
+  itemIdOrParams:
+    | string
+    | {
+        id?: string;
+        itemId?: string;
+        status?: string;
+        newStatus?: string;
+        metadata?: Record<string, any>;
+        prevOrder?: number;
+        nextOrder?: number;
+        projectSettings?: any;
+      },
+  newStatus?: string,
+  options?: {
+    metadata?: Record<string, any>;
+    prevOrder?: number;
+    nextOrder?: number;
+    projectSettings?: any;
+  }
+) {
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+    if (userErr || !user) {
+      return { success: false, status: 401, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const itemId =
+      typeof itemIdOrParams === 'string'
+        ? itemIdOrParams
+        : itemIdOrParams.id || itemIdOrParams.itemId;
+    if (itemId) {
+      const { data: item } = await supabaseAdmin
+        .from('work_items')
+        .select('tenant_id')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (item?.tenant_id) {
+        const { data: membership } = await supabaseAdmin
+          .from('tenant_members')
+          .select('role')
+          .eq('tenant_id', item.tenant_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const { data: owned } = await supabaseAdmin
+          .from('tenants')
+          .select('id')
+          .eq('owner_id', user.id)
+          .eq('id', item.tenant_id)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (!membership && !owned) {
+          return { success: false, status: 403, error: 'Forbidden: You do not have access to this workspace' };
+        }
+      }
+    }
+  } catch {
+    // If called outside request store (e.g. non-request test execution), fall through
+  }
+
+  const { performUpdateWorkItemStatus } = await import('@/lib/automation/workItemGuardMutations');
+  return performUpdateWorkItemStatus(itemIdOrParams, newStatus, options);
+}
+
+/**
+ * Server action to update a work item while enforcing project transition guardrails on status changes.
+ */
+export async function updateWorkItem(
+  itemIdOrPayload:
+    | string
+    | {
+        id?: string;
+        itemId?: string;
+        status?: string;
+        metadata?: Record<string, any>;
+        [key: string]: any;
+      },
+  updates?: Record<string, any>,
+  options?: {
+    projectSettings?: any;
+  }
+) {
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+    if (userErr || !user) {
+      return { success: false, status: 401, error: 'Unauthorized: Valid user session required' };
+    }
+
+    const itemId =
+      typeof itemIdOrPayload === 'string'
+        ? itemIdOrPayload
+        : itemIdOrPayload.id || itemIdOrPayload.itemId;
+    if (itemId) {
+      const { data: item } = await supabaseAdmin
+        .from('work_items')
+        .select('tenant_id')
+        .eq('id', itemId)
+        .maybeSingle();
+      if (item?.tenant_id) {
+        const { data: membership } = await supabaseAdmin
+          .from('tenant_members')
+          .select('role')
+          .eq('tenant_id', item.tenant_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const { data: owned } = await supabaseAdmin
+          .from('tenants')
+          .select('id')
+          .eq('owner_id', user.id)
+          .eq('id', item.tenant_id)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (!membership && !owned) {
+          return { success: false, status: 403, error: 'Forbidden: You do not have access to this workspace' };
+        }
+      }
+    }
+  } catch {
+    // If called outside request store (e.g. non-request test execution), fall through
+  }
+
+  const { performUpdateWorkItem } = await import('@/lib/automation/workItemGuardMutations');
+  return performUpdateWorkItem(itemIdOrPayload as any, updates, options);
+}
+
 
 
 

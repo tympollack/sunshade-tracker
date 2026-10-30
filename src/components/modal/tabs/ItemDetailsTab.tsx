@@ -13,6 +13,7 @@ import { WorkItem, ProjectSettings, StatusDefinition, CustomFieldDefinition, nor
 import { GitHubBadge } from '@/components/GitHubBadge';
 import { isGitHubMetadataKey } from '@/lib/github-metadata';
 import { normalizeAssignee } from '@/lib/assignee-utils';
+import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
 
 export interface ItemDetailsTabProps {
   item: WorkItem;
@@ -170,6 +171,23 @@ export function ItemDetailsTab({
           <span>{saveError}</span>
         </div>
       )}
+
+      {/* Transition Guard Blank Field Warnings */}
+      <TransitionGuardWarningBanner
+        item={{
+          ...item,
+          status,
+          item_type: itemType,
+          metadata,
+        }}
+        projectSettings={effectiveProjectSettings}
+        selectedStatus={status}
+        existingMetadataKeys={metadata}
+        onQuickAddField={(fieldKey) => {
+          handleUpdateField(fieldKey, '');
+        }}
+        testId="modal-transition-guard-warning"
+      />
 
       {/* Title */}
       <div className="space-y-1.5">

@@ -26,6 +26,7 @@ import {
 } from '@/types/tracker';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
+import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
 
 export const RESERVED_METADATA_KEYS = new Set([
   'sprint',
@@ -367,6 +368,12 @@ export function WorkItemInspectorDrawer({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [addedCustomFieldKeys, setAddedCustomFieldKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAddedCustomFieldKeys([]);
+  }, [item?.id]);
+
   const resolvedFields = useMemo(() => {
     const configuredFields = resolveCustomMetadataFields(projectSettings, customMetadataFields);
     const configuredKeys = new Set(configuredFields.map((f) => f.key.toLowerCase()));
@@ -387,8 +394,17 @@ export function WorkItemInspectorDrawer({
       inferFieldDefinitionFromKey(key)
     );
 
-    return [...configuredFields, ...dynamicFields];
-  }, [projectSettings, customMetadataFields, item?.metadata]);
+    const existingKeySet = new Set([
+      ...configuredFields.map((f) => f.key.toLowerCase()),
+      ...dynamicFields.map((f) => f.key.toLowerCase()),
+    ]);
+
+    const additionalFields: CustomMetadataFieldDefinition[] = addedCustomFieldKeys
+      .filter((k) => !existingKeySet.has(k.toLowerCase()))
+      .map((k) => inferFieldDefinitionFromKey(k));
+
+    return [...configuredFields, ...dynamicFields, ...additionalFields];
+  }, [projectSettings, customMetadataFields, item?.metadata, addedCustomFieldKeys]);
   const hasExplicitPointsField = useMemo(
     () => resolvedFields.some((f) => f.key === 'story_points' || f.key === 'points'),
     [resolvedFields]
@@ -710,6 +726,23 @@ export function WorkItemInspectorDrawer({
             </button>
           </div>
         )}
+
+        {/* Transition Guard Blank Field Warnings */}
+        <TransitionGuardWarningBanner
+          item={{
+            ...item,
+            status,
+            metadata: localMeta,
+          }}
+          projectSettings={projectSettings}
+          selectedStatus={status}
+          existingMetadataKeys={localMeta}
+          onQuickAddField={(fieldKey) => {
+            setLocalMeta((prev) => ({ ...prev, [fieldKey]: '' }));
+            setAddedCustomFieldKeys((prev) => (prev.includes(fieldKey) ? prev : [...prev, fieldKey]));
+          }}
+          testId="drawer-transition-guard-warning"
+        />
 
         {/* Title Input */}
         <div>

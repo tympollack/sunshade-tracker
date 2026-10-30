@@ -21,6 +21,7 @@ import {
   isItemCompleted,
 } from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
+import { validateTransitionGuards } from '@/lib/automation/guardEvaluator';
 
 /**
  * Automatically pages through Supabase PostgREST queries in 1000-row chunks
@@ -1118,7 +1119,14 @@ export async function PATCH(req: NextRequest) {
         governance_bypass: isCallerAdmin && requestedBulkGovernanceBypass,
       });
       if (!bulkRes.success) {
-        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+        return NextResponse.json(
+          {
+            error: bulkRes.error,
+            ...(bulkRes.code ? { code: bulkRes.code } : {}),
+            ...(bulkRes.errors ? { errors: bulkRes.errors } : {}),
+          },
+          { status: bulkRes.status || 400 }
+        );
       }
       return NextResponse.json({
         success: true,
@@ -1375,6 +1383,32 @@ export async function PATCH(req: NextRequest) {
         }
       }
       if (status !== undefined) {
+        if (status !== existingItem.status) {
+          const candidateMetadata =
+            resolvedMetadata !== undefined
+              ? resolvedMetadata
+              : (existingItem.metadata || {});
+
+          const guardResult = validateTransitionGuards(
+            existingItem,
+            status,
+            effectiveProjectSettings,
+            {
+              ...updateFields,
+              metadata: candidateMetadata,
+            }
+          );
+          if (!guardResult.allowed) {
+            return NextResponse.json(
+              {
+                error: guardResult.errors.join('; '),
+                code: 'GUARD_REJECTED',
+                errors: guardResult.errors,
+              },
+              { status: 422 }
+            );
+          }
+        }
         updateFields.status = status;
       }
     }
