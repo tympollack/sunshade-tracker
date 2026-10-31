@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { createHmac } from 'node:crypto';
-import { POST as deploymentWebhookHandler, extractDeploymentInfo, itemMatchesDeployment } from '@/app/api/v1/webhooks/deployments/route';
-import { POST as observabilityWebhookHandler, extractObservabilityAlert } from '@/app/api/v1/webhooks/observability/route';
+import { POST as deploymentWebhookHandler } from '@/app/api/v1/webhooks/deployments/route';
+import { extractDeploymentInfo, itemMatchesDeployment } from '@/lib/webhooks/deployments';
+import { POST as observabilityWebhookHandler } from '@/app/api/v1/webhooks/observability/route';
+import { extractObservabilityAlert } from '@/lib/webhooks/observability';
 import { triggerAutomationEvent, executeProjectAutomations, matchesTrigger } from '@/lib/automation-engine';
 import { supabaseAdmin } from '@/lib/db';
 import type { WorkItem, ProjectSettings } from '@/types/tracker';
