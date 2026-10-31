@@ -21,6 +21,7 @@ import {
 } from '@/lib/governance/sprint-rules';
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
+import { TransitionGuardsEditor } from './TransitionGuardsEditor';
 
 export {
   ProjectSettingsSchema,
@@ -479,6 +480,13 @@ export function ProjectSchemaEditor({
           </div>
         </div>
       </div>
+
+      {/* 4. Visual Transition Guardrails Editor */}
+      <TransitionGuardsEditor
+        settings={settings}
+        onChange={onChange}
+        readOnly={readOnly}
+      />
     </div>
   );
 }
