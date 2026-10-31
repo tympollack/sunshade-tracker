@@ -559,33 +559,52 @@ export interface ExecuteAutomationsOptions {
   tenantId: string;
   projectId: string;
   settings: ProjectSettings;
-  items: WorkItem[];
+  items?: WorkItem[];
   itemMutationSnapshots?: Array<{ item: any; prior: any }>;
   actorId?: string | null;
   actorName?: string | null;
+  eventType?: string;
+  eventPayload?: Record<string, any>;
+}
+
+export interface ExecuteAutomationsResult {
+  executedRuleIds: string[];
+  updatedItems: WorkItem[];
+  createdItems: WorkItem[];
 }
 
 /**
- * Evaluates active project automations against newly ingested items
- * and triggers templates or webhooks accordingly.
+ * Evaluates active project automations against newly ingested items or event payloads,
+ * executing templates, webhooks, metadata patches, or defect creations accordingly.
  */
-export async function executeProjectAutomations(options: ExecuteAutomationsOptions): Promise<void> {
-  const { tenantId, projectId, settings, items, itemMutationSnapshots, actorId, actorName } = options;
+export async function executeProjectAutomations(
+  options: ExecuteAutomationsOptions
+): Promise<ExecuteAutomationsResult | void> {
+  const { tenantId, projectId, settings, items = [], itemMutationSnapshots, actorId, actorName, eventType: explicitEventType, eventPayload } = options;
+  const result: ExecuteAutomationsResult = {
+    executedRuleIds: [],
+    updatedItems: [],
+    createdItems: [],
+  };
+
   if (!settings?.automations || !Array.isArray(settings.automations) || settings.automations.length === 0) {
-    return;
+    return result;
   }
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return;
+
+  // If items array is empty but an eventPayload is supplied, treat eventPayload as a context item
+  const targetItems: any[] = items.length > 0 ? items : (eventPayload ? [eventPayload] : []);
+  if (targetItems.length === 0) {
+    return result;
   }
 
   const pendingWebhooks: Promise<any>[] = [];
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+  for (let i = 0; i < targetItems.length; i++) {
+    const item = targetItems[i];
     const snap = itemMutationSnapshots?.[i];
 
-    let eventType: 'item_created' | 'item_updated' | 'item_restored' = 'item_created';
-    if (snap) {
+    let eventType: string = explicitEventType || 'item_created';
+    if (!explicitEventType && snap) {
       if (!snap.prior) {
         eventType = 'item_created';
       } else if (snap.prior.deleted_at !== null) {
@@ -595,9 +614,22 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
       }
     }
 
+    const contextItem = {
+      ...(eventPayload || {}),
+      ...item,
+      metadata: {
+        ...(eventPayload?.metadata || {}),
+        ...(item?.metadata || {}),
+      },
+    };
+
     for (const rule of settings.automations) {
       if (rule.enabled === false) continue;
-      if (!matchesTrigger(rule.trigger, item, eventType)) continue;
+      if (!matchesTrigger(rule.trigger, contextItem, eventType)) continue;
+
+      if (rule.id) {
+        result.executedRuleIds.push(rule.id);
+      }
 
       const actionsList: AutomationAction[] = Array.isArray(rule.actions)
         ? rule.actions
@@ -630,7 +662,7 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
             }
 
             if (templateItems && Array.isArray(templateItems) && templateItems.length > 0) {
-              await expandTemplate({
+              const children = await expandTemplate({
                 tenantId,
                 projectId,
                 template: templateItems,
@@ -639,7 +671,94 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
                 actorId,
                 actorName,
               });
+              result.createdItems.push(...children);
             }
+          } else if (actionType === 'patch_metadata' || actionType === 'patch_item') {
+            const metaSource = (action as any).metadata || (action as any).fields || {};
+            const patchedFields: Record<string, any> = {};
+
+            for (const [k, v] of Object.entries(metaSource)) {
+              patchedFields[k] = typeof v === 'string' ? interpolate(v, contextItem) : v;
+            }
+
+            if (eventPayload?.deployment_url && patchedFields.deployment_url === undefined) {
+              patchedFields.deployment_url = eventPayload.deployment_url;
+            }
+            if (eventPayload?.deployment_status && patchedFields.deployment_status === undefined) {
+              patchedFields.deployment_status = eventPayload.deployment_status;
+            }
+
+            const nextMetadata = { ...(item.metadata || {}), ...patchedFields };
+            item.metadata = nextMetadata;
+
+            if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              await supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMetadata,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', item.id);
+            }
+
+            if (!result.updatedItems.some((u) => u.id === item.id)) {
+              result.updatedItems.push(item);
+            }
+          } else if (actionType === 'create_item' || actionType === 'create_bug' || actionType === 'create_defect') {
+            const targetType = (action as any).item_type || 'bug';
+            const targetStatus = (action as any).status || resolveDefaultChildStatus(settings);
+            const targetPriority = (action as any).priority || eventPayload?.priority || 'Critical';
+            const title = interpolate((action as any).title || eventPayload?.title || 'Automated Defect Card', contextItem);
+            const description = interpolate((action as any).description || eventPayload?.description || '', contextItem);
+
+            const itemMetadata: Record<string, any> = {
+              ...(eventPayload?.metadata || {}),
+              ...((action as any).metadata || {}),
+              priority: targetPriority,
+            };
+
+            for (const [k, v] of Object.entries(itemMetadata)) {
+              if (typeof v === 'string') {
+                itemMetadata[k] = interpolate(v, contextItem);
+              }
+            }
+
+            const newItemRecord = {
+              tenant_id: tenantId,
+              project_id: projectId,
+              parent_id: (action as any).parent_id || eventPayload?.parent_id || null,
+              external_ref_id: (action as any).external_ref_id
+                ? interpolate((action as any).external_ref_id, contextItem)
+                : eventPayload?.external_ref_id || null,
+              item_type: targetType,
+              status: targetStatus,
+              title,
+              description,
+              order_index: (action as any).order_index ?? 1000.0,
+              sprint_id: eventPayload?.sprint_id || null,
+              metadata: itemMetadata,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+
+            let inserted: any = null;
+            if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              let { data: insertedData, error: insertErr } = await supabaseAdmin
+                .from('work_items')
+                .insert(newItemRecord)
+                .select()
+                .single();
+
+              if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+                const fallback = { ...newItemRecord };
+                delete fallback.sprint_id;
+                const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
+                insertedData = retry.data;
+              }
+              inserted = insertedData;
+            }
+
+            result.createdItems.push((inserted || newItemRecord) as WorkItem);
           } else if (actionType === 'dispatch_webhook') {
             const webhookAction = action as DispatchWebhookAction;
             let parentContext: any = null;
@@ -681,4 +800,287 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
   if (pendingWebhooks.length > 0) {
     await Promise.allSettled(pendingWebhooks);
   }
+
+  return result;
+}
+
+export interface TriggerAutomationEventOptions {
+  tenantId: string;
+  projectId: string;
+  settings?: ProjectSettings | null;
+  event: string;
+  payload?: Record<string, any>;
+  matchedItems?: WorkItem[];
+  actorId?: string | null;
+  actorName?: string | null;
+}
+
+export interface TriggerAutomationEventResult {
+  success: boolean;
+  event: string;
+  matchedItems: WorkItem[];
+  updatedItems: WorkItem[];
+  createdItems: WorkItem[];
+  executedRules: string[];
+}
+
+/**
+ * Triggers a custom automation event (e.g. deployment_completed, observability_alert)
+ * against project automations. If no custom rule consumes the event, default platform rules
+ * execute (patching deployment preview URLs or auto-spawning defect cards under triage epic).
+ */
+export async function triggerAutomationEvent(
+  options: TriggerAutomationEventOptions
+): Promise<TriggerAutomationEventResult> {
+  const { tenantId, projectId, event, payload = {}, matchedItems = [], actorId, actorName } = options;
+
+  let effectiveSettings: ProjectSettings = options.settings as ProjectSettings;
+  if (!effectiveSettings && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      const { data: proj } = await supabaseAdmin
+        .from('projects')
+        .select('id, settings')
+        .eq('id', projectId)
+        .maybeSingle();
+      effectiveSettings = (proj?.settings || {}) as ProjectSettings;
+    } catch {
+      effectiveSettings = {} as ProjectSettings;
+    }
+  }
+  if (!effectiveSettings) {
+    effectiveSettings = {} as ProjectSettings;
+  }
+
+  const result = await executeProjectAutomations({
+    tenantId,
+    projectId,
+    settings: effectiveSettings,
+    items: matchedItems,
+    eventType: event,
+    eventPayload: payload,
+    actorId,
+    actorName,
+  });
+
+  const updatedItems = [...(result?.updatedItems || [])];
+  const createdItems = [...(result?.createdItems || [])];
+
+  // 1. Default platform automation rule for deployment_completed:
+  // Patches metadata.deployment_url and metadata.deployment_status on matched items
+  if (event === 'deployment_completed' && matchedItems.length > 0) {
+    const deploymentUrl = payload.deployment_url || payload.url;
+    const deploymentStatus = payload.deployment_status || payload.status || 'succeeded';
+    const environment = payload.environment || payload.target || 'preview';
+
+    for (const item of matchedItems) {
+      const isAlreadyUpdated = updatedItems.some((u) => u.id === item.id);
+      if (!isAlreadyUpdated && item.id) {
+        const nextMeta = {
+          ...(item.metadata || {}),
+          deployment_url: deploymentUrl,
+          deployment_status: deploymentStatus,
+          deployment_environment: environment,
+          deployed_at: payload.deployed_at || new Date().toISOString(),
+        };
+        item.metadata = nextMeta;
+
+        if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+          await supabaseAdmin
+            .from('work_items')
+            .update({
+              metadata: nextMeta,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', item.id);
+        }
+
+        updatedItems.push(item);
+      }
+    }
+  }
+
+  // 2. Default platform automation rule for observability_alert:
+  // If no custom rule created a defect item, auto-spawns an incident bug card under the triage epic
+  if (event === 'observability_alert' && createdItems.length === 0) {
+    const source = payload.source || 'observability';
+    const errorSignature = payload.error_signature || payload.incident_id || payload.id || 'ANOMALY';
+    const externalRefId = payload.external_ref_id || `BUG-${String(source).toUpperCase().replace(/[^A-Z0-9]/g, '')}-${String(errorSignature).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24)}`;
+
+    let triageEpicId: string | null = payload.parent_id || null;
+    let activeSprintId: string | null = payload.sprint_id || null;
+    let activeSprintName: string | null = payload.sprint_name || null;
+
+    // Resolve active sprint if not passed
+    if (!activeSprintId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        let sprintQuery: any = supabaseAdmin
+          .from('sprints')
+          .select('id, name, status, is_active')
+          .eq('project_id', projectId);
+
+        if (typeof sprintQuery.is === 'function') {
+          sprintQuery = sprintQuery.is('deleted_at', null);
+        }
+
+        const { data: dbSprints } = await sprintQuery;
+        const activeDb = (dbSprints || []).find((s: any) => s.is_active === true || String(s.status).toLowerCase() === 'active');
+        if (activeDb) {
+          activeSprintId = activeDb.id;
+          activeSprintName = activeDb.name;
+        }
+      } catch {
+        // Fallback to project settings sprint_settings
+      }
+
+      if (!activeSprintId && effectiveSettings.sprint_settings?.sprints) {
+        const activeDef = effectiveSettings.sprint_settings.sprints.find((s: any) => s.is_current === true || String(s.status).toLowerCase() === 'active');
+        if (activeDef) {
+          activeSprintId = activeDef.id || null;
+          activeSprintName = activeDef.name || null;
+        }
+      }
+    }
+
+    // Resolve triage epic if not passed
+    if (!triageEpicId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        const { data: epics } = await supabaseAdmin
+          .from('work_items')
+          .select('id, external_ref_id, title')
+          .eq('project_id', projectId)
+          .eq('item_type', 'epic');
+
+        const foundEpic = (epics || []).find((e: any) =>
+          String(e.external_ref_id || '').toUpperCase().includes('TRIAGE') ||
+          String(e.title || '').toLowerCase().includes('triage')
+        );
+
+        if (foundEpic) {
+          triageEpicId = foundEpic.id;
+        } else {
+          // Auto-create triage epic
+          const { data: newEpic } = await supabaseAdmin
+            .from('work_items')
+            .insert({
+              tenant_id: tenantId,
+              project_id: projectId,
+              external_ref_id: 'EPIC-TRIAGE',
+              item_type: 'epic',
+              status: 'in_progress',
+              title: 'Production Incident Triage',
+              description: 'Epic grouping incoming production incidents and observability anomalies.',
+              order_index: 0,
+              metadata: { priority: 'Critical' },
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+
+          if (newEpic) {
+            triageEpicId = newEpic.id;
+          }
+        }
+      } catch {
+        // Continue with null triageEpicId if lookup fails
+      }
+    }
+
+    // Check if an item with externalRefId already exists
+    let existingItem: any = null;
+    if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        const { data: found } = await supabaseAdmin
+          .from('work_items')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('external_ref_id', externalRefId)
+          .maybeSingle();
+        existingItem = found;
+      } catch {
+        existingItem = null;
+      }
+    }
+
+    if (existingItem) {
+      const occurrenceCount = (existingItem.metadata?.occurrence_count || 1) + 1;
+      const updatedMeta = {
+        ...(existingItem.metadata || {}),
+        ...(payload.metadata || {}),
+        occurrence_count: occurrenceCount,
+        last_seen_at: new Date().toISOString(),
+      };
+
+      if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        const { data: updated } = await supabaseAdmin
+          .from('work_items')
+          .update({
+            metadata: updatedMeta,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingItem.id)
+          .select()
+          .single();
+        updatedItems.push(updated || existingItem);
+      } else {
+        existingItem.metadata = updatedMeta;
+        updatedItems.push(existingItem);
+      }
+    } else {
+      const bugPayload = {
+        tenant_id: tenantId,
+        project_id: projectId,
+        parent_id: triageEpicId,
+        external_ref_id: externalRefId,
+        item_type: 'bug',
+        status: 'not_started',
+        title: payload.title || `Production Incident: ${payload.service || 'System'} anomaly`,
+        description: payload.description || 'Observability alert reported.',
+        order_index: 1000.0,
+        sprint_id: activeSprintId,
+        metadata: {
+          ...(payload.metadata || {}),
+          priority: 'Critical',
+          severity: 'Critical',
+          observability_source: source,
+          service_name: payload.service || payload.service_name || 'unknown',
+          error_signature: errorSignature,
+          sprint: activeSprintName || undefined,
+          sprint_id: activeSprintId || undefined,
+          reported_at: payload.reported_at || new Date().toISOString(),
+          occurrence_count: 1,
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      let insertedBug: any = null;
+      if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        let { data: inserted, error: insertErr } = await supabaseAdmin
+          .from('work_items')
+          .insert(bugPayload)
+          .select()
+          .single();
+
+        if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+          const fallback: Record<string, any> = { ...bugPayload };
+          delete fallback.sprint_id;
+          const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
+          inserted = retry.data;
+        }
+        insertedBug = inserted;
+      }
+
+      createdItems.push((insertedBug || bugPayload) as WorkItem);
+    }
+  }
+
+  return {
+    success: true,
+    event,
+    matchedItems,
+    updatedItems,
+    createdItems,
+    executedRules: result?.executedRuleIds || [],
+  };
 }
