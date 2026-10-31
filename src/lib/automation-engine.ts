@@ -750,15 +750,25 @@ export async function executeProjectAutomations(
                 .single();
 
               if (insertErr && isMissingSprintIdColumnError(insertErr)) {
-                const fallback = { ...newItemRecord };
+                const fallback: Record<string, any> = { ...newItemRecord };
                 delete fallback.sprint_id;
                 const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
                 insertedData = retry.data;
+                insertErr = retry.error;
               }
-              inserted = insertedData;
+
+              if (insertErr) {
+                console.error(`[tracker:automation] Failed to create item in rule "${rule.name || rule.id}":`, insertErr);
+              } else if (insertedData) {
+                inserted = insertedData;
+              }
+            } else {
+              inserted = newItemRecord;
             }
 
-            result.createdItems.push((inserted || newItemRecord) as WorkItem);
+            if (inserted) {
+              result.createdItems.push(inserted as WorkItem);
+            }
           } else if (actionType === 'dispatch_webhook') {
             const webhookAction = action as DispatchWebhookAction;
             let parentContext: any = null;
@@ -865,35 +875,34 @@ export async function triggerAutomationEvent(
   const updatedItems = [...(result?.updatedItems || [])];
   const createdItems = [...(result?.createdItems || [])];
 
-  // 1. Default platform automation rule for deployment_completed:
-  // Patches metadata.deployment_url and metadata.deployment_status on matched items
+  // 1. Platform automation rule for deployment_completed:
+  // Ensures metadata.deployment_url, deployment_status, deployment_environment, and deployed_at are set on all matched items
   if (event === 'deployment_completed' && matchedItems.length > 0) {
     const deploymentUrl = payload.deployment_url || payload.url;
     const deploymentStatus = payload.deployment_status || payload.status || 'succeeded';
     const environment = payload.environment || payload.target || 'preview';
 
     for (const item of matchedItems) {
-      const isAlreadyUpdated = updatedItems.some((u) => u.id === item.id);
-      if (!isAlreadyUpdated && item.id) {
-        const nextMeta = {
-          ...(item.metadata || {}),
-          deployment_url: deploymentUrl,
-          deployment_status: deploymentStatus,
-          deployment_environment: environment,
-          deployed_at: payload.deployed_at || new Date().toISOString(),
-        };
-        item.metadata = nextMeta;
+      const nextMeta = {
+        ...(item.metadata || {}),
+        deployment_url: deploymentUrl || item.metadata?.deployment_url,
+        deployment_status: deploymentStatus || item.metadata?.deployment_status || 'succeeded',
+        deployment_environment: environment || item.metadata?.deployment_environment || 'preview',
+        deployed_at: payload.deployed_at || new Date().toISOString(),
+      };
+      item.metadata = nextMeta;
 
-        if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-          await supabaseAdmin
-            .from('work_items')
-            .update({
-              metadata: nextMeta,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', item.id);
-        }
+      if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            metadata: nextMeta,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', item.id);
+      }
 
+      if (!updatedItems.some((u) => u.id === item.id)) {
         updatedItems.push(item);
       }
     }
@@ -940,6 +949,9 @@ export async function triggerAutomationEvent(
         }
       }
     }
+
+    // Defend against Issue #6 (ANALYSIS_0001): Only assign relational sprint_id if valid UUID
+    const relationalSprintId = activeSprintId && isUuid(activeSprintId) ? activeSprintId : null;
 
     // Resolve triage epic if not passed
     if (!triageEpicId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
@@ -1011,18 +1023,23 @@ export async function triggerAutomationEvent(
         last_seen_at: new Date().toISOString(),
       };
 
+      // Defend against Issue #10 (ANALYSIS_0005): Update incident description with latest logs & stack trace
+      const updatedDesc = payload.description || existingItem.description;
+
       if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
         const { data: updated } = await supabaseAdmin
           .from('work_items')
           .update({
+            description: updatedDesc,
             metadata: updatedMeta,
             updated_at: new Date().toISOString(),
           })
           .eq('id', existingItem.id)
           .select()
           .single();
-        updatedItems.push(updated || existingItem);
+        updatedItems.push(updated || { ...existingItem, description: updatedDesc, metadata: updatedMeta });
       } else {
+        existingItem.description = updatedDesc;
         existingItem.metadata = updatedMeta;
         updatedItems.push(existingItem);
       }
@@ -1037,7 +1054,7 @@ export async function triggerAutomationEvent(
         title: payload.title || `Production Incident: ${payload.service || 'System'} anomaly`,
         description: payload.description || 'Observability alert reported.',
         order_index: 1000.0,
-        sprint_id: activeSprintId,
+        sprint_id: relationalSprintId,
         metadata: {
           ...(payload.metadata || {}),
           priority: 'Critical',
@@ -1067,11 +1084,21 @@ export async function triggerAutomationEvent(
           delete fallback.sprint_id;
           const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
           inserted = retry.data;
+          insertErr = retry.error;
         }
-        insertedBug = inserted;
+
+        if (insertErr) {
+          console.error('[tracker:automation] Failed to insert incident bug:', insertErr);
+        } else if (inserted) {
+          insertedBug = inserted;
+        }
+      } else {
+        insertedBug = bugPayload;
       }
 
-      createdItems.push((insertedBug || bugPayload) as WorkItem);
+      if (insertedBug) {
+        createdItems.push(insertedBug as WorkItem);
+      }
     }
   }
 

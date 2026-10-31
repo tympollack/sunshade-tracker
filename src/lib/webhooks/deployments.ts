@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import type { WorkItem } from '@/types/tracker';
+import type { WorkItem, Project } from '@/types/tracker';
 
 export interface ExtractedDeploymentInfo {
   branch?: string;
@@ -20,6 +20,15 @@ function formatUrl(rawUrl: string): string {
   return `https://${trimmed}`;
 }
 
+function normalizeDeploymentState(rawState?: string): string {
+  const state = String(rawState || '').toLowerCase().trim();
+  if (state === 'success' || state === 'succeeded' || state === 'ready') return 'succeeded';
+  if (state === 'pending' || state === 'queued' || state === 'building' || state === 'in_progress' || state === 'created') return 'in_progress';
+  if (state === 'failure' || state === 'error' || state === 'failed') return 'failed';
+  if (state === 'canceled' || state === 'cancelled') return 'canceled';
+  return state || 'succeeded';
+}
+
 /**
  * Normalizes multi-platform CI/CD deployment payloads (GitHub, Vercel, Cloudflare Pages, etc.)
  */
@@ -37,8 +46,8 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
     const targetUrl = deploymentStatus.target_url || deploymentStatus.environment_url || deployment.payload?.web_url || body.target_url;
     const rawEnv = (deploymentStatus.environment || deployment.environment || body.environment || '').toLowerCase();
     const environment: 'preview' | 'production' = rawEnv === 'production' || rawEnv === 'prod' ? 'production' : 'preview';
-    const state = deploymentStatus.state || body.state || 'succeeded';
-    const status = state === 'success' ? 'succeeded' : state;
+    const rawState = deploymentStatus.state || body.state || (ghEvent === 'deployment' ? 'pending' : 'success');
+    const status = normalizeDeploymentState(rawState);
 
     return {
       branch,
@@ -68,14 +77,14 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
     const target = dpl.target || body.payload?.target || body.target || meta.environment;
     const environment: 'preview' | 'production' = target === 'production' || target === 'prod' ? 'production' : 'preview';
 
-    let status = 'succeeded';
     const eventType = String(body.type || body.event || '');
+    let rawState = 'succeeded';
     if (eventType.includes('error') || eventType.includes('failed')) {
-      status = 'failed';
+      rawState = 'failed';
     } else if (eventType.includes('canceled') || eventType.includes('cancelled')) {
-      status = 'canceled';
+      rawState = 'canceled';
     } else if (eventType.includes('created') || eventType.includes('building')) {
-      status = 'in_progress';
+      rawState = 'in_progress';
     }
 
     return {
@@ -83,7 +92,7 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
       commitSha,
       environment,
       deploymentUrl: rawUrl ? formatUrl(rawUrl) : undefined,
-      deploymentStatus: status,
+      deploymentStatus: normalizeDeploymentState(rawState),
       source: 'vercel',
       repository: meta.githubCommitRepo || body.name,
     };
@@ -98,7 +107,7 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
     const rawUrl = dpl.url || body.url;
     const rawEnv = (dpl.environment || body.environment || '').toLowerCase();
     const environment: 'preview' | 'production' = rawEnv === 'production' ? 'production' : 'preview';
-    const status = body.status === 'success' || dpl.status === 'success' ? 'succeeded' : (body.status || 'succeeded');
+    const status = normalizeDeploymentState(body.status || dpl.status || 'success');
 
     return {
       branch,
@@ -118,7 +127,7 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
   const rawUrl = body.deployment_url || body.target_url || body.preview_url || body.url;
   const rawEnv = (body.environment || body.target || '').toLowerCase();
   const environment: 'preview' | 'production' = rawEnv === 'production' || rawEnv === 'prod' ? 'production' : 'preview';
-  const status = body.deployment_status || body.status || 'succeeded';
+  const status = normalizeDeploymentState(body.deployment_status || body.status || 'succeeded');
 
   return {
     branch,
@@ -132,7 +141,7 @@ export function extractDeploymentInfo(body: any, req?: NextRequest): ExtractedDe
 }
 
 /**
- * Checks if a work item matches the deployment based on commitSha or branch reference.
+ * Checks if a work item matches the deployment based on commitSha or branch reference with boundary isolation.
  */
 export function itemMatchesDeployment(item: WorkItem | any, commitSha?: string, branch?: string): boolean {
   if (!item) return false;
@@ -149,38 +158,49 @@ export function itemMatchesDeployment(item: WorkItem | any, commitSha?: string, 
     }
   }
 
-  // 2. Match by external_ref_id or title in branch name
-  if (branch) {
-    const branchUpper = String(branch).toUpperCase();
-
-    // Check external_ref_id
-    if (item.external_ref_id) {
-      const refUpper = String(item.external_ref_id).toUpperCase();
-      if (branchUpper.includes(refUpper)) {
-        return true;
-      }
-    }
-
-    // Check ref tags embedded in branch (e.g. feat/STORY-123-abc)
-    const refMatches = branchUpper.match(/[A-Z0-9]+-[A-Z0-9-]+/g) || [];
-    if (item.external_ref_id && refMatches.some((r) => r === item.external_ref_id.toUpperCase())) {
+  // 2. Match by external_ref_id with strict token boundary (avoiding short ref collisions e.g. TASK-1 in TASK-10)
+  if (branch && item.external_ref_id) {
+    const escapedRef = String(item.external_ref_id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const refRegex = new RegExp(`(^|[^A-Z0-9])${escapedRef}([^A-Z0-9]|$)`, 'i');
+    if (refRegex.test(branch)) {
       return true;
     }
+  }
 
-    // Check item title slug (if title has meaningful distinctive words)
-    if (item.title) {
-      const cleanTitleWords = item.title
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .split(/\s+/)
-        .filter((w: string) => w.length >= 5);
+  // 3. Match by item title words with strict multi-word token boundary
+  if (branch && item.title) {
+    const cleanTitleWords = item.title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .split(/\s+/)
+      .filter((w: string) => w.length >= 5);
 
-      const branchLower = String(branch).toLowerCase();
-      if (cleanTitleWords.length > 0 && cleanTitleWords.every((w: string) => branchLower.includes(w))) {
-        return true;
-      }
+    const branchLower = String(branch).toLowerCase();
+    if (cleanTitleWords.length >= 2 && cleanTitleWords.every((w: string) => branchLower.includes(w))) {
+      return true;
     }
   }
 
   return false;
+}
+
+/**
+ * Checks if a repository name matches a project's github_repo or slug/name
+ */
+export function projectMatchesRepository(project: Project | any, repository?: string): boolean {
+  if (!project || !repository) return false;
+  const repoClean = String(repository).toLowerCase().trim();
+  const repoName = repoClean.split('/').pop() || repoClean;
+
+  const projSlug = String(project.slug || '').toLowerCase().trim();
+  const projName = String(project.name || '').toLowerCase().trim();
+  const ghRepo = String(project.settings?.github_repo || '').toLowerCase().trim();
+  const ghRepoName = ghRepo.split('/').pop() || ghRepo;
+
+  return (
+    projSlug === repoName ||
+    projName === repoName ||
+    ghRepo === repoClean ||
+    (Boolean(ghRepoName) && ghRepoName === repoName)
+  );
 }

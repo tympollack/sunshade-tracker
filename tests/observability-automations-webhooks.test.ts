@@ -437,7 +437,7 @@ describe('STORY-TRK-OBSERVABILITY-AUTOMATIONS: CI/CD & Observability Webhook Ing
                 resolve({
                   data: [
                     {
-                      id: 'sprint-q4-2026',
+                      id: 'a1111111-2222-3333-4444-555555555555',
                       name: 'Sprint 2026-Q4',
                       is_active: true,
                     },
@@ -478,7 +478,8 @@ describe('STORY-TRK-OBSERVABILITY-AUTOMATIONS: CI/CD & Observability Webhook Ing
         expect(insertMock).toHaveBeenCalled();
         expect(insertedCard.item_type).toBe('bug');
         expect(insertedCard.parent_id).toBe('epic-triage-uuid');
-        expect(insertedCard.sprint_id).toBe('sprint-q4-2026');
+        expect(insertedCard.sprint_id).toBe('a1111111-2222-3333-4444-555555555555');
+        expect(insertedCard.metadata.sprint_id).toBe('a1111111-2222-3333-4444-555555555555');
         expect(insertedCard.metadata.priority).toBe('Critical');
         expect(insertedCard.metadata.observability_source).toBe('axiom');
         expect(insertedCard.description).toContain('Redis queue connection failed');

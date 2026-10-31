@@ -49,13 +49,23 @@ export async function POST(req: NextRequest) {
         tenantQuery = tenantQuery.is('deleted_at', null);
       }
 
-      const { data: tData } = await tenantQuery.maybeSingle();
+      const { data: tData, error: tErr } = await tenantQuery.maybeSingle();
+      if (tErr) {
+        return NextResponse.json({ error: `Database error resolving tenant: ${tErr.message}` }, { status: 500 });
+      }
       tenant = tData;
-    } catch {
-      // Non-blocking query failure
+    } catch (err: any) {
+      return NextResponse.json({ error: `Failed to resolve tenant: ${err.message}` }, { status: 500 });
     }
   }
 
+  if (!tenant && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
+  }
+
+  const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000000';
+
+  // Security Check: Tenant & Global HMAC Secrets
   const globalSecret =
     process.env.OBSERVABILITY_WEBHOOK_SECRET ||
     process.env.SUNSHADE_ECOSYSTEM_WEBHOOK_SECRET ||
@@ -81,6 +91,14 @@ export async function POST(req: NextRequest) {
       );
     }
     isValidSig = Boolean(signature && verifyHmacSignature(rawBody, signature, globalSecret));
+  } else if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_UNSIGNED_WEBHOOKS) {
+    // Production safety: reject unsigned alerts when no secret is configured
+    return NextResponse.json(
+      { error: 'Unauthorized: Observability webhooks require a secret configured on the workspace or platform' },
+      { status: 401 }
+    );
+  } else if (signature) {
+    isValidSig = false;
   }
 
   if (!isValidSig) {
@@ -89,12 +107,6 @@ export async function POST(req: NextRequest) {
       { status: 401 }
     );
   }
-
-  if (!tenant && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-    return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
-  }
-
-  const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000000';
 
   // 3. Extract Normalized Alert Information
   const alertInfo = extractObservabilityAlert(body, req);
@@ -122,16 +134,29 @@ export async function POST(req: NextRequest) {
         projQuery = projQuery.eq('slug', targetProjectSlug);
       }
 
-      const { data: projs } = await projQuery;
+      const { data: projs, error: pErr } = await projQuery;
+      if (pErr) {
+        return NextResponse.json({ error: `Database error querying projects: ${pErr.message}` }, { status: 500 });
+      }
+
       if (projs && projs.length > 0) {
         project =
           projs.find((p: any) => p.slug === targetProjectSlug) ||
           projs.find((p: any) => p.slug === alertInfo.service) ||
           projs[0];
       }
-    } catch {
-      // Non-blocking query failure
+    } catch (err: any) {
+      return NextResponse.json({ error: `Failed to query projects: ${err.message}` }, { status: 500 });
     }
+  }
+
+  // Defend against Issue #3 (BUG_0004): If target project cannot be resolved, reject with 404
+  if (!project && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    const missingName = targetProjectSlug || alertInfo.service || 'default';
+    return NextResponse.json(
+      { error: `Target project "${missingName}" not found in workspace "${tenantSlug}"` },
+      { status: 404 }
+    );
   }
 
   const projectId = project?.id || '00000000-0000-0000-0000-000000000001';
@@ -181,10 +206,17 @@ export async function POST(req: NextRequest) {
   const updatedItem = result.updatedItems[0] || null;
   const activeItem = createdItem || updatedItem;
 
+  if (!activeItem) {
+    return NextResponse.json(
+      { error: 'Failed to persist observability incident record in project backlog' },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     success: true,
     event: 'observability_alert',
-    action: createdItem ? 'created' : updatedItem ? 'updated' : 'processed',
+    action: createdItem ? 'created' : 'updated',
     item: activeItem,
     external_ref_id: externalRefId,
     alert: alertInfo,

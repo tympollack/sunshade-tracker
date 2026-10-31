@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
 import { triggerAutomationEvent } from '@/lib/automation-engine';
-import { extractDeploymentInfo, itemMatchesDeployment } from '@/lib/webhooks/deployments';
+import { extractDeploymentInfo, itemMatchesDeployment, projectMatchesRepository } from '@/lib/webhooks/deployments';
 import type { WorkItem } from '@/types/tracker';
 
 /**
@@ -50,13 +50,23 @@ export async function POST(req: NextRequest) {
         tenantQuery = tenantQuery.is('deleted_at', null);
       }
 
-      const { data: tData } = await tenantQuery.maybeSingle();
+      const { data: tData, error: tErr } = await tenantQuery.maybeSingle();
+      if (tErr) {
+        return NextResponse.json({ error: `Database error resolving tenant: ${tErr.message}` }, { status: 500 });
+      }
       tenant = tData;
-    } catch {
-      // Non-blocking query failure
+    } catch (err: any) {
+      return NextResponse.json({ error: `Failed to resolve tenant: ${err.message}` }, { status: 500 });
     }
   }
 
+  if (!tenant && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
+  }
+
+  const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000000';
+
+  // Security Check: Tenant & Global HMAC Secrets
   const globalSecret =
     process.env.DEPLOYMENT_WEBHOOK_SECRET ||
     process.env.SUNSHADE_ECOSYSTEM_WEBHOOK_SECRET ||
@@ -82,6 +92,15 @@ export async function POST(req: NextRequest) {
       );
     }
     isValidSig = Boolean(signature && verifyHmacSignature(rawBody, signature, globalSecret));
+  } else if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_UNSIGNED_WEBHOOKS) {
+    // Production safety: reject unsigned webhooks when no secret is configured
+    return NextResponse.json(
+      { error: 'Unauthorized: Deployment webhooks require a secret configured on the workspace or platform' },
+      { status: 401 }
+    );
+  } else if (signature) {
+    // Signature header provided but secret was missing
+    isValidSig = false;
   }
 
   if (!isValidSig) {
@@ -91,16 +110,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!tenant && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-    return NextResponse.json({ error: `Tenant workspace "${tenantSlug}" not found` }, { status: 404 });
-  }
-
-  const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000000';
-
   // 3. Extract Normalized Deployment Information
   const deploymentInfo = extractDeploymentInfo(body, req);
 
-  // 4. Resolve Project(s) and Items
+  // 4. Resolve Target Project(s)
   const targetProjectSlug =
     req.headers.get('x-project-slug') ||
     body.project_slug ||
@@ -123,14 +136,33 @@ export async function POST(req: NextRequest) {
         projQuery = projQuery.eq('slug', targetProjectSlug);
       }
 
-      const { data: projs } = await projQuery;
+      const { data: projs, error: pErr } = await projQuery;
+      if (pErr) {
+        return NextResponse.json({ error: `Database error resolving projects: ${pErr.message}` }, { status: 500 });
+      }
       candidateProjects = projs || [];
-    } catch {
-      // Non-blocking project fetch
+    } catch (err: any) {
+      return NextResponse.json({ error: `Failed to query projects: ${err.message}` }, { status: 500 });
     }
   }
 
-  // 5. Query active work items in tenant or targeted project(s)
+  // Defend against Issue #1 (BUG_0001): If project slug was explicitly provided but not found, reject with 404
+  if (targetProjectSlug && candidateProjects.length === 0) {
+    return NextResponse.json(
+      { error: `Target project "${targetProjectSlug}" not found in workspace "${tenantSlug}"` },
+      { status: 404 }
+    );
+  }
+
+  // Defend against Issue #7 (ANALYSIS_0002): Filter candidate projects by repository if multiple projects exist
+  if (deploymentInfo.repository && candidateProjects.length > 1) {
+    const repoMatched = candidateProjects.filter((p) => projectMatchesRepository(p, deploymentInfo.repository));
+    if (repoMatched.length > 0) {
+      candidateProjects = repoMatched;
+    }
+  }
+
+  // 5. Query active work items constrained strictly to candidate projects
   let candidateItems: WorkItem[] = [];
   if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
     try {
@@ -143,18 +175,26 @@ export async function POST(req: NextRequest) {
         itemsQuery = itemsQuery.is('deleted_at', null);
       }
 
-      if (targetProjectSlug && candidateProjects.length === 1) {
-        itemsQuery = itemsQuery.eq('project_id', candidateProjects[0].id);
+      if (candidateProjects.length > 0) {
+        const allowedProjectIds = candidateProjects.map((p) => p.id);
+        if (allowedProjectIds.length === 1) {
+          itemsQuery = itemsQuery.eq('project_id', allowedProjectIds[0]);
+        } else {
+          itemsQuery = itemsQuery.in('project_id', allowedProjectIds);
+        }
       }
 
-      const { data: items } = await itemsQuery;
+      const { data: items, error: iErr } = await itemsQuery;
+      if (iErr) {
+        return NextResponse.json({ error: `Database error fetching work items: ${iErr.message}` }, { status: 500 });
+      }
       candidateItems = items || [];
-    } catch {
-      // Non-blocking items query
+    } catch (err: any) {
+      return NextResponse.json({ error: `Failed to fetch work items: ${err.message}` }, { status: 500 });
     }
   }
 
-  // Match items
+  // Match items using strict token boundary rules
   const matchedItems = candidateItems.filter((it) =>
     itemMatchesDeployment(it, deploymentInfo.commitSha, deploymentInfo.branch)
   );
