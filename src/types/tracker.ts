@@ -235,12 +235,33 @@ export interface LegacyTemplateAction {
   [key: string]: any;
 }
 
+export interface PatchMetadataAction {
+  type: 'patch_metadata' | 'patch_item';
+  metadata?: Record<string, any>;
+  fields?: Record<string, any>;
+  [key: string]: any;
+}
+
+export interface CreateItemAction {
+  type: 'create_item' | 'create_bug' | 'create_defect';
+  item_type?: string;
+  title?: string;
+  description?: string;
+  priority?: string;
+  status?: string;
+  parent_id?: string;
+  parent_epic_ref?: string;
+  metadata?: Record<string, any>;
+  [key: string]: any;
+}
+
 export interface GenericAutomationAction {
   type: string;
   target?: string;
   template_id?: string;
   url?: string;
   include_parent_context?: boolean;
+  metadata?: Record<string, any>;
   [key: string]: any;
 }
 
@@ -248,6 +269,8 @@ export type AutomationAction =
   | ExpandChildrenTemplateAction
   | DispatchWebhookAction
   | LegacyTemplateAction
+  | PatchMetadataAction
+  | CreateItemAction
   | GenericAutomationAction;
 
 export interface AutomationRule {
