@@ -255,6 +255,15 @@ export interface CreateItemAction {
   [key: string]: any;
 }
 
+export interface CalculateCalendarSlotAction {
+  type: 'calculate_calendar_slot' | 'calculate_cadence';
+  cadence_days?: number;
+  weekday?: string;
+  utc_time?: string;
+  collision_statuses?: string[];
+  [key: string]: any;
+}
+
 export interface GenericAutomationAction {
   type: string;
   target?: string;
@@ -271,7 +280,15 @@ export type AutomationAction =
   | LegacyTemplateAction
   | PatchMetadataAction
   | CreateItemAction
+  | CalculateCalendarSlotAction
   | GenericAutomationAction;
+
+export interface AutomationRuleCondition {
+  field: string;
+  operator: string;
+  value?: any;
+  logic?: 'AND' | 'OR';
+}
 
 export interface AutomationRule {
   id?: string;
@@ -279,6 +296,7 @@ export interface AutomationRule {
   description?: string;
   enabled?: boolean;
   trigger: AutomationTrigger;
+  conditions?: AutomationRuleCondition[];
   actions?: AutomationAction[];
   action?: AutomationAction;
   [key: string]: any;

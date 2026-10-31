@@ -22,6 +22,7 @@ import {
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
 import { TransitionGuardsEditor } from './TransitionGuardsEditor';
+import { AutomationPipelineEditor } from './AutomationPipelineEditor';
 
 export {
   ProjectSettingsSchema,
@@ -483,6 +484,13 @@ export function ProjectSchemaEditor({
 
       {/* 4. Visual Transition Guardrails Editor */}
       <TransitionGuardsEditor
+        settings={settings}
+        onChange={onChange}
+        readOnly={readOnly}
+      />
+
+      {/* 5. Visual Automation Pipelines Editor */}
+      <AutomationPipelineEditor
         settings={settings}
         onChange={onChange}
         readOnly={readOnly}

@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
+import { matchesCondition } from '@/lib/automation/predicateEvaluator';
 import type {
   AutomationAction,
   AutomationRule,
@@ -30,7 +31,7 @@ export function matchesTrigger(
   }
 
   // 2. Reserved keys that should not be evaluated as field predicates
-  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action']);
+  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action', 'conditions']);
 
   for (const [key, expectedValue] of Object.entries(trigger)) {
     if (reservedKeys.has(key)) continue;
@@ -627,6 +628,23 @@ export async function executeProjectAutomations(
       if (rule.enabled === false) continue;
       if (!matchesTrigger(rule.trigger, contextItem, eventType)) continue;
 
+      // Evaluate rule condition filters if specified
+      if (Array.isArray(rule.conditions) && rule.conditions.length > 0) {
+        let conditionsPassed = true;
+        for (let cIdx = 0; cIdx < rule.conditions.length; cIdx++) {
+          const cond = rule.conditions[cIdx];
+          const passed = matchesCondition(contextItem, cond);
+          if (cIdx === 0) {
+            conditionsPassed = passed;
+          } else if (cond.logic === 'OR') {
+            conditionsPassed = conditionsPassed || passed;
+          } else {
+            conditionsPassed = conditionsPassed && passed;
+          }
+        }
+        if (!conditionsPassed) continue;
+      }
+
       if (rule.id) {
         result.executedRuleIds.push(rule.id);
       }
@@ -798,6 +816,38 @@ export async function executeProjectAutomations(
                 console.error(`[tracker:automation] Webhook dispatch error in rule "${rule.name || rule.id}":`, actionErr);
               })
             );
+          } else if (actionType === 'calculate_calendar_slot' || actionType === 'calculate_cadence') {
+            const cadenceDays = Number((action as any).cadence_days) || 7;
+            const targetWeekday = (action as any).weekday || 'Monday';
+            const targetUtcTime = (action as any).utc_time || '14:00';
+            const collisionStatuses = Array.isArray((action as any).collision_statuses)
+              ? (action as any).collision_statuses
+              : ['in_progress', 'in_review'];
+
+            const patchedFields: Record<string, any> = {
+              cadence_days: cadenceDays,
+              scheduled_weekday: targetWeekday,
+              scheduled_utc_time: targetUtcTime,
+              collision_statuses: collisionStatuses,
+              calculated_at: new Date().toISOString(),
+            };
+
+            const nextMetadata = { ...(item.metadata || {}), ...patchedFields };
+            item.metadata = nextMetadata;
+
+            if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              await supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMetadata,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', item.id);
+            }
+
+            if (!result.updatedItems.some((u) => u.id === item.id)) {
+              result.updatedItems.push(item);
+            }
           }
         } catch (actionErr) {
           console.error(`[tracker:automation] Error executing action in rule "${rule.name || rule.id}":`, actionErr);
