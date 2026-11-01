@@ -3,6 +3,11 @@ import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
 import { matchesCondition } from '@/lib/automation/predicateEvaluator';
+import {
+  formatCiBugRefId,
+  sanitizeLogSecrets,
+  synthesizeCiAgentPrompt,
+} from '@/lib/ci/failureReporter';
 import type {
   AutomationAction,
   AutomationRule,
@@ -591,19 +596,156 @@ export async function dispatchWebhook(
 export interface ExecuteAutomationsOptions {
   tenantId: string;
   projectId: string;
-  settings: ProjectSettings;
+  settings?: ProjectSettings | null;
   items?: WorkItem[];
   itemMutationSnapshots?: Array<{ item: any; prior: any }>;
   actorId?: string | null;
   actorName?: string | null;
   eventType?: string;
   eventPayload?: Record<string, any>;
+  event?: string;
+  source?: string;
+  event_type?: string;
+  payload?: Record<string, any>;
 }
 
 export interface ExecuteAutomationsResult {
   executedRuleIds: string[];
   updatedItems: WorkItem[];
   createdItems: WorkItem[];
+}
+
+/**
+ * Auto-provisions a Critical bug task card in tracker.work_items for CI test/build failures,
+ * with failing stack traces and error logs pre-populated in agent_prompt.
+ */
+export async function provisionCiFailureBugItem(options: {
+  tenantId: string;
+  projectId: string;
+  settings?: ProjectSettings | null;
+  payload: Record<string, any>;
+}): Promise<WorkItem | null> {
+  const { tenantId, projectId, settings, payload } = options;
+
+  const commitSha = payload.commit_sha || '';
+  const branch = payload.branch || 'main';
+  const failedStep = payload.failed_step || payload.job || 'Build Step';
+  const errorLog = payload.error_log || payload.error || '';
+  const runId = payload.run_id ? String(payload.run_id) : '';
+  const actor = payload.actor || 'CI Runner';
+
+  const shortSha = commitSha ? commitSha.slice(0, 8) : 'unknown';
+  const externalRefId = payload.external_ref_id || formatCiBugRefId(commitSha, failedStep);
+
+  const title = `CI Failure: ${failedStep} on ${branch}${commitSha ? ` (${shortSha})` : ''}`;
+
+  const sanitizedTrace = sanitizeLogSecrets(errorLog);
+  const trimmedStack = sanitizedTrace.split('\n').slice(0, 30).join('\n');
+
+  const description = `### Automated CI Failure Report\n> **Step:** \`${failedStep}\`\n> **Branch:** \`${branch}\`\n> **Commit:** \`${commitSha}\`\n> **Run ID:** \`${runId}\`\n> **Actor:** ${actor}\n\n\`\`\`\n${trimmedStack || 'No stack trace captured.'}\n\`\`\``;
+
+  const agentPrompt = synthesizeCiAgentPrompt({
+    commitSha: commitSha || 'HEAD',
+    jobName: failedStep,
+    errorMessage: sanitizedTrace.slice(0, 300),
+  }) + (sanitizedTrace ? `\n\n### FAILING TRACE / ERROR LOG\n\`\`\`\n${sanitizedTrace.slice(0, 3000)}\n\`\`\`` : '');
+
+  // Determine item_type from hierarchy
+  const hierarchy = settings?.hierarchy || [];
+  const bugType = hierarchy.find((h) => h.type === 'bug' || h.type === 'defect')?.type || 'task';
+
+  // Determine default status
+  const statuses = settings?.statuses || [];
+  const defaultStatus = statuses[0]?.id || 'not_started';
+
+  // Check if item with externalRefId already exists
+  let existingItem: any = null;
+  if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      const { data: found } = await supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('external_ref_id', externalRefId)
+        .maybeSingle();
+      existingItem = found;
+    } catch {
+      existingItem = null;
+    }
+  }
+
+  const record: any = {
+    tenant_id: tenantId,
+    project_id: projectId,
+    external_ref_id: externalRefId,
+    item_type: bugType,
+    status: defaultStatus,
+    title,
+    description,
+    order_index: 0,
+    metadata: {
+      priority: 'Critical',
+      severity: 'High',
+      agent_prompt: agentPrompt,
+      error_log: sanitizedTrace,
+      failed_step: failedStep,
+      branch,
+      commit_sha: commitSha,
+      run_id: runId,
+      actor,
+      source: 'ci_runner',
+      auto_generated: true,
+      created_by: 'ci_runner',
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingItem) {
+    if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      const { data: updated } = await supabaseAdmin
+        .from('work_items')
+        .update({
+          description,
+          metadata: {
+            ...(existingItem.metadata || {}),
+            ...record.metadata,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingItem.id)
+        .select()
+        .single();
+      return updated || { ...existingItem, description, metadata: { ...existingItem.metadata, ...record.metadata } };
+    }
+    return { ...existingItem, description, metadata: { ...existingItem.metadata, ...record.metadata } };
+  }
+
+  if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      let { data: inserted, error: insertErr } = await supabaseAdmin
+        .from('work_items')
+        .insert(record)
+        .select()
+        .single();
+
+      if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+        const fallback: Record<string, any> = { ...record };
+        delete fallback.sprint_id;
+        const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
+        inserted = retry.data;
+        insertErr = retry.error;
+      }
+
+      if (!insertErr && inserted) {
+        return inserted;
+      }
+    } catch {
+      // Continue with in-memory fallback
+    }
+  }
+
+  return { id: `bug-${Date.now()}`, ...record };
 }
 
 /**
@@ -620,13 +762,43 @@ export async function executeProjectAutomations(
     createdItems: [],
   };
 
+  const effectivePayload = options.eventPayload || options.payload || {};
+  const effectiveEventType = options.eventType || options.event || options.event_type || 'item_created';
+  const effectiveSource = options.source || effectivePayload.source;
+
+  const isCiFailure =
+    (effectiveSource === 'ci_runner' || effectivePayload.source === 'ci_runner') &&
+    (effectiveEventType === 'webhook_received' || options.event_type === 'build_failed' || effectivePayload.event_type === 'build_failed');
+
   if (!settings?.automations || !Array.isArray(settings.automations) || settings.automations.length === 0) {
+    if (isCiFailure && result.createdItems.length === 0) {
+      const spawned = await provisionCiFailureBugItem({
+        tenantId,
+        projectId,
+        settings,
+        payload: effectivePayload,
+      });
+      if (spawned) {
+        result.createdItems.push(spawned);
+      }
+    }
     return result;
   }
 
   // If items array is empty but an eventPayload is supplied, treat eventPayload as a context item
-  const targetItems: any[] = items.length > 0 ? items : (eventPayload ? [eventPayload] : []);
+  const targetItems: any[] = items.length > 0 ? items : (effectivePayload ? [effectivePayload] : []);
   if (targetItems.length === 0) {
+    if (isCiFailure && result.createdItems.length === 0) {
+      const spawned = await provisionCiFailureBugItem({
+        tenantId,
+        projectId,
+        settings,
+        payload: effectivePayload,
+      });
+      if (spawned) {
+        result.createdItems.push(spawned);
+      }
+    }
     return result;
   }
 
@@ -636,8 +808,8 @@ export async function executeProjectAutomations(
     const item = targetItems[i];
     const snap = itemMutationSnapshots?.[i];
 
-    let eventType: string = explicitEventType || 'item_created';
-    if (!explicitEventType && snap) {
+    let eventType: string = effectiveEventType;
+    if (!options.eventType && !options.event && snap) {
       if (!snap.prior) {
         eventType = 'item_created';
       } else if (snap.prior.deleted_at !== null) {
@@ -648,11 +820,13 @@ export async function executeProjectAutomations(
     }
 
     const contextItem = {
-      ...(eventPayload || {}),
+      source: effectiveSource,
+      event_type: options.event_type || effectivePayload.event_type,
+      ...(effectivePayload || {}),
       ...item,
       settings,
       metadata: {
-        ...(eventPayload?.metadata || {}),
+        ...(effectivePayload?.metadata || {}),
         ...(item?.metadata || {}),
       },
     };
@@ -946,6 +1120,18 @@ export async function executeProjectAutomations(
   // Await concurrent webhook deliveries so batches do not accumulate sequential 5s timeouts
   if (pendingWebhooks.length > 0) {
     await Promise.allSettled(pendingWebhooks);
+  }
+
+  if (isCiFailure && result.createdItems.length === 0) {
+    const spawned = await provisionCiFailureBugItem({
+      tenantId,
+      projectId,
+      settings,
+      payload: effectivePayload,
+    });
+    if (spawned) {
+      result.createdItems.push(spawned);
+    }
   }
 
   return result;
