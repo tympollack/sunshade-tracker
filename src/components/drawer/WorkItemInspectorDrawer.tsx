@@ -27,6 +27,7 @@ import {
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
+import { TransitionChecklist } from '@/components/work-items/TransitionChecklist';
 
 export const RESERVED_METADATA_KEYS = new Set([
   'sprint',
@@ -742,6 +743,22 @@ export function WorkItemInspectorDrawer({
             setAddedCustomFieldKeys((prev) => (prev.includes(fieldKey) ? prev : [...prev, fieldKey]));
           }}
           testId="drawer-transition-guard-warning"
+        />
+
+        {/* Dynamic Transition Verification Checklist */}
+        <TransitionChecklist
+          item={{
+            ...item,
+            status,
+            metadata: localMeta,
+          }}
+          projectSettings={projectSettings}
+          targetStatus={status}
+          onUpdateField={(fieldKey, value) => {
+            handleCustomFieldChange(fieldKey, value);
+            handleCustomFieldCommit(fieldKey, value);
+          }}
+          readOnly={isReadOnly}
         />
 
         {/* Title Input */}

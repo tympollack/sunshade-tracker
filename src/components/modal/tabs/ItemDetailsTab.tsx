@@ -14,6 +14,7 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { isGitHubMetadataKey } from '@/lib/github-metadata';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
+import { TransitionChecklist } from '@/components/work-items/TransitionChecklist';
 
 export interface ItemDetailsTabProps {
   item: WorkItem;
@@ -187,6 +188,22 @@ export function ItemDetailsTab({
           handleUpdateField(fieldKey, '');
         }}
         testId="modal-transition-guard-warning"
+      />
+
+      {/* Dynamic Transition Verification Checklist */}
+      <TransitionChecklist
+        item={{
+          ...item,
+          status,
+          item_type: itemType,
+          metadata,
+        }}
+        projectSettings={effectiveProjectSettings}
+        targetStatus={status}
+        onUpdateField={(fieldKey, value) => {
+          handleUpdateField(fieldKey, value);
+        }}
+        readOnly={isReadOnly || isLocked}
       />
 
       {/* Title */}
