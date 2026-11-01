@@ -12,11 +12,13 @@ import {
   Sliders,
   Layers,
   HelpCircle,
+  Filter,
 } from 'lucide-react';
 import type {
   ProjectSettings,
   TransitionGuard,
   TransitionGuardCondition,
+  AutomationCondition,
   StatusDefinition,
 } from '@/types/tracker';
 import { TokenCatalogPopover } from './TokenCatalogPopover';
@@ -29,7 +31,9 @@ export const GUARD_OPERATORS = [
   { value: '$in', label: 'Must be in list', code: '$in', requiresValue: true, placeholder: 'val1, val2' },
   { value: '$regex', label: 'Must match pattern', code: '$regex', requiresValue: true, placeholder: 'Regex pattern (e.g. ^https://)' },
   { value: '$gt', label: 'Greater than', code: '$gt', requiresValue: true },
+  { value: '$gte', label: 'Greater than or equal', code: '$gte', requiresValue: true },
   { value: '$lt', label: 'Less than', code: '$lt', requiresValue: true },
+  { value: '$lte', label: 'Less than or equal', code: '$lte', requiresValue: true },
 ];
 
 export interface TransitionGuardsEditorProps {
@@ -198,6 +202,54 @@ export function TransitionGuardsEditor({
       if (g.id !== guardId) return g;
       const conditions = (g.conditions || []).filter((_, idx) => idx !== condIndex);
       return { ...g, conditions };
+    });
+    handleUpdateGuards(nextGuards);
+  };
+
+  const handleAddWhenCondition = (guardId: string) => {
+    if (readOnly) return;
+    const defaultField = fieldOptions.standard[0]?.value || 'item_type';
+    const nextGuards = guards.map((g) => {
+      if (g.id !== guardId) return g;
+      const currentWhen = Array.isArray(g.when) ? g.when : [];
+      const newCond: AutomationCondition = {
+        field: defaultField,
+        operator: '$eq',
+        value: '',
+        logic: currentWhen.length > 0 ? 'AND' : undefined,
+      };
+      return {
+        ...g,
+        when: [...currentWhen, newCond],
+      };
+    });
+    handleUpdateGuards(nextGuards);
+  };
+
+  const handleUpdateWhenCondition = (
+    guardId: string,
+    condIndex: number,
+    updates: Partial<AutomationCondition>
+  ) => {
+    if (readOnly) return;
+    const nextGuards = guards.map((g) => {
+      if (g.id !== guardId) return g;
+      const when = [...(g.when || [])];
+      when[condIndex] = {
+        ...when[condIndex],
+        ...updates,
+      };
+      return { ...g, when };
+    });
+    handleUpdateGuards(nextGuards);
+  };
+
+  const handleDeleteWhenCondition = (guardId: string, condIndex: number) => {
+    if (readOnly) return;
+    const nextGuards = guards.map((g) => {
+      if (g.id !== guardId) return g;
+      const when = (g.when || []).filter((_, idx) => idx !== condIndex);
+      return { ...g, when };
     });
     handleUpdateGuards(nextGuards);
   };
@@ -433,6 +485,182 @@ export function TransitionGuardsEditor({
                       </div>
                     </div>
 
+                    {/* 'Applies Only When' Section (Optional Applicability Rules) */}
+                    <div
+                      data-testid={`when-section-${guard.id}`}
+                      className="space-y-2 p-3 rounded-xl border border-slate-900 bg-slate-950/60"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-1.5">
+                          <Filter className="w-3.5 h-3.5 text-sky-400" />
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                            Applies Only When (Optional Applicability Rules)
+                          </span>
+                        </div>
+                        {!readOnly && (
+                          <button
+                            type="button"
+                            onClick={() => handleAddWhenCondition(guard.id)}
+                            data-testid={`add-when-condition-${guard.id}`}
+                            className="inline-flex items-center space-x-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium transition-colors"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add 'When' Filter</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {(!guard.when || guard.when.length === 0) ? (
+                        <p className="text-[11px] text-slate-500 italic">
+                          No applicability conditions configured — this guardrail applies to all work items moving to this status.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {guard.when.map((whenCond, whenIdx) => {
+                            const opMeta = GUARD_OPERATORS.find((o) => o.value === whenCond.operator);
+                            const requiresVal = opMeta ? opMeta.requiresValue : true;
+
+                            return (
+                              <div
+                                key={whenIdx}
+                                data-testid={`when-condition-row-${guard.id}-${whenIdx}`}
+                                className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-slate-900/60 border border-slate-850 text-xs"
+                              >
+                                {whenIdx > 0 ? (
+                                  <select
+                                    disabled={readOnly}
+                                    value={whenCond.logic || 'AND'}
+                                    onChange={(e) =>
+                                      handleUpdateWhenCondition(guard.id, whenIdx, {
+                                        logic: e.target.value as 'AND' | 'OR',
+                                      })
+                                    }
+                                    data-testid={`when-logic-select-${guard.id}-${whenIdx}`}
+                                    className="px-2 py-1 bg-slate-950 border border-slate-800 rounded text-[11px] font-mono text-sky-300 focus:outline-none focus:border-sky-500"
+                                  >
+                                    <option value="AND">AND</option>
+                                    <option value="OR">OR</option>
+                                  </select>
+                                ) : (
+                                  <span className="text-[11px] font-mono text-slate-500 px-2 py-1 bg-slate-950 rounded border border-slate-900">
+                                    WHEN
+                                  </span>
+                                )}
+
+                                {/* Field Selector with Token Popover */}
+                                <div className="flex items-center space-x-1 flex-1 min-w-[160px]">
+                                  <select
+                                    disabled={readOnly}
+                                    value={whenCond.field}
+                                    onChange={(e) =>
+                                      handleUpdateWhenCondition(guard.id, whenIdx, { field: e.target.value })
+                                    }
+                                    data-testid={`when-field-select-${guard.id}-${whenIdx}`}
+                                    className="w-full px-2 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                                  >
+                                    <optgroup label="Standard Fields">
+                                      {fieldOptions.standard.map((sf) => (
+                                        <option key={sf.value} value={sf.value}>
+                                          {sf.label}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                    {fieldOptions.customMeta.length > 0 && (
+                                      <optgroup label="Project Custom Metadata">
+                                        {fieldOptions.customMeta.map((cf) => (
+                                          <option key={cf.value} value={cf.value}>
+                                            {cf.label}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                    {!fieldOptions.standard.some((sf) => sf.value === whenCond.field) &&
+                                      !fieldOptions.customMeta.some((cf) => cf.value === whenCond.field) && (
+                                        <optgroup label="Custom Specified Path">
+                                          <option value={whenCond.field}>{whenCond.field}</option>
+                                        </optgroup>
+                                      )}
+                                  </select>
+                                  <TokenCatalogPopover
+                                    settings={settings}
+                                    iconOnly={true}
+                                    disabled={readOnly}
+                                    onSelectToken={(tok) => {
+                                      const clean = tok
+                                        .replace(/^\{\{\s*/, '')
+                                        .replace(/\s*\}\}$/, '')
+                                        .replace(/^item\./, '');
+                                      handleUpdateWhenCondition(guard.id, whenIdx, { field: clean });
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Operator */}
+                                <select
+                                  disabled={readOnly}
+                                  value={whenCond.operator}
+                                  onChange={(e) =>
+                                    handleUpdateWhenCondition(guard.id, whenIdx, { operator: e.target.value })
+                                  }
+                                  data-testid={`when-operator-select-${guard.id}-${whenIdx}`}
+                                  className="px-2 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500 min-w-[120px]"
+                                >
+                                  {GUARD_OPERATORS.map((op) => (
+                                    <option key={op.value} value={op.value}>
+                                      {op.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {/* Comparison Value */}
+                                {requiresVal ? (
+                                  <div className="flex items-center space-x-1 flex-1 min-w-[140px]">
+                                    <input
+                                      type="text"
+                                      disabled={readOnly}
+                                      value={whenCond.value !== undefined ? String(whenCond.value) : ''}
+                                      onChange={(e) =>
+                                        handleUpdateWhenCondition(guard.id, whenIdx, { value: e.target.value })
+                                      }
+                                      placeholder={opMeta?.placeholder || 'Value...'}
+                                      data-testid={`when-value-input-${guard.id}-${whenIdx}`}
+                                      className="w-full px-2 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-slate-200 placeholder-slate-600 font-mono focus:outline-none focus:border-sky-500"
+                                    />
+                                    <TokenCatalogPopover
+                                      settings={settings}
+                                      iconOnly={true}
+                                      disabled={readOnly}
+                                      onSelectToken={(tok) => {
+                                        const current = whenCond.value !== undefined ? String(whenCond.value) : '';
+                                        handleUpdateWhenCondition(guard.id, whenIdx, { value: current + tok });
+                                      }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-slate-600 font-mono italic px-2">
+                                    Not applicable
+                                  </span>
+                                )}
+
+                                {/* Delete When Condition */}
+                                {!readOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteWhenCondition(guard.id, whenIdx)}
+                                    data-testid={`delete-when-condition-${guard.id}-${whenIdx}`}
+                                    className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-950/20 transition-colors"
+                                    title="Remove when condition"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Conditions Table */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -476,38 +704,52 @@ export function TransitionGuardsEditor({
                                 >
                                   {/* Field Selector */}
                                   <td className="p-2">
-                                    <select
-                                      disabled={readOnly}
-                                      value={cond.field}
-                                      onChange={(e) =>
-                                        handleUpdateCondition(guard.id, condIdx, { field: e.target.value })
-                                      }
-                                      data-testid={`condition-field-select-${guard.id}-${condIdx}`}
-                                      className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
-                                    >
-                                      <optgroup label="Standard Fields">
-                                        {fieldOptions.standard.map((sf) => (
-                                          <option key={sf.value} value={sf.value}>
-                                            {sf.label}
-                                          </option>
-                                        ))}
-                                      </optgroup>
-                                      {fieldOptions.customMeta.length > 0 && (
-                                        <optgroup label="Project Custom Metadata">
-                                          {fieldOptions.customMeta.map((cf) => (
-                                            <option key={cf.value} value={cf.value}>
-                                              {cf.label}
+                                    <div className="flex items-center space-x-1">
+                                      <select
+                                        disabled={readOnly}
+                                        value={cond.field}
+                                        onChange={(e) =>
+                                          handleUpdateCondition(guard.id, condIdx, { field: e.target.value })
+                                        }
+                                        data-testid={`condition-field-select-${guard.id}-${condIdx}`}
+                                        className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                                      >
+                                        <optgroup label="Standard Fields">
+                                          {fieldOptions.standard.map((sf) => (
+                                            <option key={sf.value} value={sf.value}>
+                                              {sf.label}
                                             </option>
                                           ))}
                                         </optgroup>
-                                      )}
-                                      {!fieldOptions.standard.some((sf) => sf.value === cond.field) &&
-                                        !fieldOptions.customMeta.some((cf) => cf.value === cond.field) && (
-                                          <optgroup label="Custom Specified Path">
-                                            <option value={cond.field}>{cond.field}</option>
+                                        {fieldOptions.customMeta.length > 0 && (
+                                          <optgroup label="Project Custom Metadata">
+                                            {fieldOptions.customMeta.map((cf) => (
+                                              <option key={cf.value} value={cf.value}>
+                                                {cf.label}
+                                              </option>
+                                            ))}
                                           </optgroup>
                                         )}
-                                    </select>
+                                        {!fieldOptions.standard.some((sf) => sf.value === cond.field) &&
+                                          !fieldOptions.customMeta.some((cf) => cf.value === cond.field) && (
+                                            <optgroup label="Custom Specified Path">
+                                              <option value={cond.field}>{cond.field}</option>
+                                            </optgroup>
+                                          )}
+                                      </select>
+                                      <TokenCatalogPopover
+                                        settings={settings}
+                                        iconOnly={true}
+                                        disabled={readOnly}
+                                        onSelectToken={(tok) => {
+                                          const clean = tok
+                                            .replace(/^\{\{\s*/, '')
+                                            .replace(/\s*\}\}$/, '')
+                                            .replace(/^item\./, '');
+                                          handleUpdateCondition(guard.id, condIdx, { field: clean });
+                                        }}
+                                      />
+                                    </div>
                                   </td>
 
                                   {/* Operator */}
