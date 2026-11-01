@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
+import { matchesCondition } from '@/lib/automation/predicateEvaluator';
 import type {
   AutomationAction,
   AutomationRule,
@@ -30,7 +31,7 @@ export function matchesTrigger(
   }
 
   // 2. Reserved keys that should not be evaluated as field predicates
-  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action']);
+  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action', 'conditions']);
 
   for (const [key, expectedValue] of Object.entries(trigger)) {
     if (reservedKeys.has(key)) continue;
@@ -75,23 +76,55 @@ export function matchesTrigger(
 }
 
 /**
- * Replaces {{key}} and {{metadata.key}} mustache-style placeholders
- * in a template string with values from the context item.
+ * Traverses an object using a dot-separated path.
+ */
+function getByDotPath(obj: Record<string, any> | null | undefined, path: string): any {
+  if (!obj || typeof obj !== 'object' || !path) return undefined;
+  const parts = path.split('.');
+  let current: any = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+/**
+ * Replaces {{key}}, {{item.key}}, {{metadata.key}}, {{settings.key}}, and {{NOW()}}/{{TODAY}}
+ * placeholders in a template string with values from the context item.
  */
 export function interpolate(templateString: string, contextItem: Record<string, any>): string {
   if (!templateString) return '';
   if (!contextItem) return templateString;
 
-  return templateString.replace(/{{\s*([\w.]+)\s*}}/g, (_match, path: string) => {
+  return templateString.replace(/{{\s*([\w().]+)\s*}}/g, (_match, rawPath: string) => {
+    const path = rawPath.trim();
+    if (path === 'NOW()' || path === 'NOW') {
+      return new Date().toISOString();
+    }
+    if (path === 'TODAY()' || path === 'TODAY') {
+      return new Date().toISOString().split('T')[0];
+    }
+
+    let lookupPath = path;
+    if (lookupPath.startsWith('item.')) {
+      lookupPath = lookupPath.slice(5);
+    }
+
     let resolved: any;
 
-    if (path.startsWith('metadata.')) {
-      const metaKey = path.slice('metadata.'.length);
+    if (lookupPath.startsWith('metadata.')) {
+      const metaKey = lookupPath.slice('metadata.'.length);
       resolved = contextItem.metadata?.[metaKey];
+    } else if (lookupPath.startsWith('settings.')) {
+      const settingsKey = lookupPath.slice('settings.'.length);
+      resolved = getByDotPath(contextItem.settings, settingsKey);
     } else {
-      resolved = contextItem[path];
+      resolved = contextItem[lookupPath];
       if (resolved === undefined && contextItem.metadata) {
-        resolved = contextItem.metadata[path];
+        resolved = contextItem.metadata[lookupPath];
       }
     }
 
@@ -617,6 +650,7 @@ export async function executeProjectAutomations(
     const contextItem = {
       ...(eventPayload || {}),
       ...item,
+      settings,
       metadata: {
         ...(eventPayload?.metadata || {}),
         ...(item?.metadata || {}),
@@ -626,6 +660,23 @@ export async function executeProjectAutomations(
     for (const rule of settings.automations) {
       if (rule.enabled === false) continue;
       if (!matchesTrigger(rule.trigger, contextItem, eventType)) continue;
+
+      // Evaluate rule condition filters if specified
+      if (Array.isArray(rule.conditions) && rule.conditions.length > 0) {
+        let conditionsPassed = true;
+        for (let cIdx = 0; cIdx < rule.conditions.length; cIdx++) {
+          const cond = rule.conditions[cIdx];
+          const passed = matchesCondition(contextItem, cond);
+          if (cIdx === 0) {
+            conditionsPassed = passed;
+          } else if (cond.logic === 'OR') {
+            conditionsPassed = conditionsPassed || passed;
+          } else {
+            conditionsPassed = conditionsPassed && passed;
+          }
+        }
+        if (!conditionsPassed) continue;
+      }
 
       if (rule.id) {
         result.executedRuleIds.push(rule.id);
@@ -798,6 +849,92 @@ export async function executeProjectAutomations(
                 console.error(`[tracker:automation] Webhook dispatch error in rule "${rule.name || rule.id}":`, actionErr);
               })
             );
+          } else if (actionType === 'calculate_calendar_slot' || actionType === 'calculate_cadence') {
+            const cadenceDays = Number((action as any).cadence_days) || 7;
+            const targetWeekday = (action as any).weekday || 'Monday';
+            const targetUtcTime = (action as any).utc_time || '14:00';
+            const collisionStatuses = Array.isArray((action as any).collision_statuses)
+              ? (action as any).collision_statuses
+              : ['in_progress', 'in_review'];
+
+            // Compute concrete next scheduled calendar slot date
+            const weekdayMap: Record<string, number> = {
+              sunday: 0,
+              monday: 1,
+              tuesday: 2,
+              wednesday: 3,
+              thursday: 4,
+              friday: 5,
+              saturday: 6,
+            };
+            const targetDayNum = weekdayMap[targetWeekday.toLowerCase()] ?? 1;
+
+            const now = new Date();
+            const [hours, minutes] = targetUtcTime.split(':').map((s: string) => parseInt(s, 10) || 0);
+
+            const candidateDate = new Date(Date.UTC(
+              now.getUTCFullYear(),
+              now.getUTCMonth(),
+              now.getUTCDate(),
+              hours,
+              minutes,
+              0,
+              0
+            ));
+
+            let daysToAdd = (targetDayNum - candidateDate.getUTCDay() + 7) % 7;
+            if (daysToAdd === 0 && candidateDate.getTime() <= now.getTime()) {
+              daysToAdd = 7;
+            }
+            candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
+            const scheduledSlotDate = candidateDate.toISOString();
+
+            let hasCollision = false;
+            if (projectId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              try {
+                const { data: existingSlots } = await supabaseAdmin
+                  .from('work_items')
+                  .select('id, metadata, status')
+                  .eq('project_id', projectId)
+                  .in('status', collisionStatuses)
+                  .neq('id', item.id || '');
+
+                if (existingSlots && existingSlots.length > 0) {
+                  hasCollision = existingSlots.some(
+                    (s: any) => s.metadata?.scheduled_slot_date === scheduledSlotDate
+                  );
+                }
+              } catch {
+                // Ignore collision check lookup failure
+              }
+            }
+
+            const patchedFields: Record<string, any> = {
+              cadence_days: cadenceDays,
+              scheduled_weekday: targetWeekday,
+              scheduled_utc_time: targetUtcTime,
+              scheduled_slot_date: scheduledSlotDate,
+              collision_statuses: collisionStatuses,
+              has_collision: hasCollision,
+              calculated_at: new Date().toISOString(),
+            };
+
+            const nextMetadata = { ...(item.metadata || {}), ...patchedFields };
+            item.metadata = nextMetadata;
+
+            if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              await supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMetadata,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', item.id);
+            }
+
+            if (!result.updatedItems.some((u) => u.id === item.id)) {
+              result.updatedItems.push(item);
+            }
           }
         } catch (actionErr) {
           console.error(`[tracker:automation] Error executing action in rule "${rule.name || rule.id}":`, actionErr);

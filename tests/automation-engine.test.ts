@@ -119,6 +119,25 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       const template = 'Domain: {{metadata.missing_field}} and {{non_existent}}';
       expect(interpolate(template, contextItem)).toBe('Domain:  and ');
     });
+
+    it('resolves item-prefixed paths, settings variables, and NOW/TODAY timestamps', () => {
+      const itemWithSettings = {
+        ...contextItem,
+        settings: {
+          editorial: { cadence: 14 },
+          github_repo: 'tympollack/sunshade-tracker',
+        },
+      };
+
+      const template = '{{item.title}} on {{settings.github_repo}} every {{settings.editorial.cadence}} days';
+      expect(interpolate(template, itemWithSettings)).toBe(
+        'Acme Onboarding Story on tympollack/sunshade-tracker every 14 days'
+      );
+
+      const withTimestamps = 'Date: {{TODAY}} at {{NOW()}}';
+      const output = interpolate(withTimestamps, itemWithSettings);
+      expect(output).toMatch(/^Date: \d{4}-\d{2}-\d{2} at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    });
   });
 
   describe('expandTemplate & buildTemplateRecords', () => {
@@ -439,6 +458,138 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
 
       // The creation rule fires exactly once (for the creation snapshot), not suppressed by the subsequent update!
       expect(upsertMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('evaluates rule conditions filter before executing actions', async () => {
+      const updateMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-filtered',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            conditions: [
+              {
+                field: 'priority',
+                operator: '$eq',
+                value: 'Critical',
+              },
+            ],
+            actions: [
+              {
+                type: 'patch_metadata',
+                metadata: { expedited: true },
+              },
+            ],
+          },
+        ],
+      };
+
+      const regularItem: WorkItem = {
+        id: 'reg-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'open',
+        title: 'Regular Task',
+        order_index: 10,
+        metadata: { priority: 'Low' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const criticalItem: WorkItem = {
+        id: 'crit-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'open',
+        title: 'Critical Task',
+        order_index: 20,
+        metadata: { priority: 'Critical' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const result = await executeProjectAutomations({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        settings,
+        items: [regularItem, criticalItem],
+      });
+
+      expect(result?.executedRuleIds).toEqual(['rule-filtered']);
+      expect(regularItem.metadata.expedited).toBeUndefined();
+      expect(criticalItem.metadata.expedited).toBe(true);
+    });
+
+    it('executes calculate_calendar_slot action and updates work item metadata', async () => {
+      const updateMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-cadence',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Wednesday',
+                utc_time: '18:00',
+                collision_statuses: ['in_progress'],
+              },
+            ],
+          },
+        ],
+      };
+
+      const item: WorkItem = {
+        id: 'item-slot-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'story',
+        status: 'open',
+        title: 'Release Story',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const result = await executeProjectAutomations({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        settings,
+        items: [item],
+      });
+
+      expect(result?.executedRuleIds).toContain('rule-cadence');
+      expect(item.metadata.cadence_days).toBe(14);
+      expect(item.metadata.scheduled_weekday).toBe('Wednesday');
+      expect(item.metadata.scheduled_utc_time).toBe('18:00');
+      expect(item.metadata.collision_statuses).toEqual(['in_progress']);
+      expect(item.metadata.calculated_at).toBeDefined();
     });
   });
 

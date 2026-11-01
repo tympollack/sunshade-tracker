@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { getTenantEfficiencyMetrics } from '@/lib/services/valueLedgerServer';
 import { GET as getEfficiencyRouteHandler } from '@/app/api/v1/tenants/efficiency/route';
@@ -46,9 +46,18 @@ describe('Value Ledger Server Aggregator & API Route', () => {
     },
   };
 
-  const now = new Date();
-  const currentMonthItemDate = new Date(now.getTime() - 86400000).toISOString();
-  const oldMonthItemDate = new Date(now.getFullYear(), now.getMonth() - 2, 10).toISOString();
+  beforeAll(() => {
+    vi.useFakeTimers();
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  const FIXED_TEST_DATE = new Date('2026-10-15T12:00:00.000Z');
+  const now = FIXED_TEST_DATE;
+  const currentMonthItemDate = new Date(now.getFullYear(), now.getMonth(), 14, 12, 0, 0).toISOString();
+  const oldMonthItemDate = new Date(now.getFullYear(), now.getMonth() - 2, 10, 12, 0, 0).toISOString();
 
   const mockItems = [
     {
@@ -76,6 +85,7 @@ describe('Value Ledger Server Aggregator & API Route', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.setSystemTime(FIXED_TEST_DATE);
   });
 
   it('aggregates metrics with custom project completion statuses and active projects correctly', async () => {
