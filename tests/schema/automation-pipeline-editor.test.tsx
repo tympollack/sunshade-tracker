@@ -243,6 +243,58 @@ describe('TASK-TRK-AUTOMATION-PIPELINE-BUILDER-UI: AutomationPipelineEditor', ()
     );
   });
 
+  it('cleans up leftover status/item_type matchers when switching event types', () => {
+    const handleChange = vi.fn();
+    render(<AutomationPipelineEditor settings={baseSettings} onChange={handleChange} />);
+
+    // Rule 1 starts with status_transition and status: 'in_review'
+    const eventSelect = screen.getByTestId('trigger-event-select-rule-expand-qa');
+    fireEvent.change(eventSelect, { target: { value: 'deployment_completed' } });
+
+    expect(handleChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        automations: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'rule-expand-qa',
+            trigger: expect.not.objectContaining({
+              status: expect.anything(),
+            }),
+          }),
+        ]),
+      })
+    );
+  });
+
+  it('generates an unused metadata key without colliding with existing custom keys', () => {
+    const handleChange = vi.fn();
+    const settingsWithKey: ProjectSettings = {
+      ...baseSettings,
+      automations: [
+        {
+          id: 'rule-meta-collide',
+          name: 'Collide test',
+          enabled: true,
+          trigger: { event: 'item_created' },
+          actions: [
+            {
+              type: 'patch_metadata',
+              metadata: { custom_2: 'existing-value' },
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<AutomationPipelineEditor settings={settingsWithKey} onChange={handleChange} />);
+    const addFieldBtn = screen.getByTestId('add-metadata-key-rule-meta-collide-0');
+    fireEvent.click(addFieldBtn);
+
+    const updated = handleChange.mock.calls[0][0];
+    const patchedMetadata = updated.automations[0].actions[0].metadata;
+    expect(patchedMetadata.custom_2).toBe('existing-value');
+    expect(patchedMetadata.custom_3).toBe('');
+  });
+
   it('synchronizes automations cleanly between Visual Form and Raw JSON in ProjectSchemaView', async () => {
     const handleSave = vi.fn();
     render(

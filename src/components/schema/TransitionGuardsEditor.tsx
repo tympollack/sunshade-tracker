@@ -547,6 +547,7 @@ export function TransitionGuardsEditor({
                                         <TokenCatalogPopover
                                           settings={settings}
                                           iconOnly={true}
+                                          disabled={readOnly}
                                           onSelectToken={(tok) => {
                                             const current = cond.value !== undefined ? String(cond.value) : '';
                                             handleUpdateCondition(guard.id, condIdx, { value: current + tok });
@@ -577,6 +578,7 @@ export function TransitionGuardsEditor({
                                       <TokenCatalogPopover
                                         settings={settings}
                                         iconOnly={true}
+                                        disabled={readOnly}
                                         onSelectToken={(tok) => {
                                           const current = cond.message || '';
                                           handleUpdateCondition(guard.id, condIdx, { message: current + tok });

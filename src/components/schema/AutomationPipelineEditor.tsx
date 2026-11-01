@@ -148,8 +148,19 @@ export function AutomationPipelineEditor({
       }
     });
 
+    (settings.custom_metadata_fields || []).forEach((cf: any) => {
+      const key = typeof cf === 'string' ? cf : cf?.key;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        customMeta.push({
+          value: `metadata.${key}`,
+          label: `metadata.${key} (${cf?.label || key})`,
+        });
+      }
+    });
+
     return { standard, customMeta };
-  }, [settings.custom_fields]);
+  }, [settings.custom_fields, settings.custom_metadata_fields]);
 
   // Available templates from settings
   const templateOptions = useMemo<string[]>(() => {
@@ -234,6 +245,29 @@ export function AutomationPipelineEditor({
           ...r.trigger,
           ...triggerUpdates,
         },
+      };
+    });
+    handleUpdateRules(nextRules);
+  };
+
+  const handleTriggerEventChange = (ruleId: string, newEvent: string) => {
+    if (readOnly) return;
+    const nextRules = rules.map((r) => {
+      if (r.id !== ruleId) return r;
+      const nextTrigger: Record<string, any> = {
+        ...r.trigger,
+        event: newEvent,
+        type: newEvent,
+      };
+      if (newEvent !== 'status_transition') {
+        delete nextTrigger.status;
+      }
+      if (newEvent !== 'item_created') {
+        delete nextTrigger.item_type;
+      }
+      return {
+        ...r,
+        trigger: nextTrigger,
       };
     });
     handleUpdateRules(nextRules);
@@ -556,12 +590,7 @@ export function AutomationPipelineEditor({
                             id={`trigger-event-${ruleId}`}
                             disabled={readOnly}
                             value={eventType}
-                            onChange={(e) =>
-                              handleTriggerChange(rule.id || ruleId, {
-                                event: e.target.value,
-                                type: e.target.value,
-                              })
-                            }
+                            onChange={(e) => handleTriggerEventChange(rule.id || ruleId, e.target.value)}
                             data-testid={`trigger-event-select-${ruleId}`}
                             className="w-full px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-sky-500 disabled:opacity-50"
                           >
@@ -757,6 +786,7 @@ export function AutomationPipelineEditor({
                                     <TokenCatalogPopover
                                       settings={settings}
                                       iconOnly={true}
+                                      disabled={readOnly}
                                       onSelectToken={(tok) => {
                                         const current = cond.value !== undefined ? String(cond.value) : '';
                                         handleUpdateCondition(rule.id || ruleId, condIdx, { value: current + tok });
@@ -1025,8 +1055,13 @@ export function AutomationPipelineEditor({
                                         type="button"
                                         onClick={() => {
                                           const meta = { ...((action as any).metadata || {}) };
-                                          const newKey = `custom_${Object.keys(meta).length + 1}`;
-                                          meta[newKey] = '';
+                                          let counter = Object.keys(meta).length + 1;
+                                          let candidate = `custom_${counter}`;
+                                          while (candidate in meta) {
+                                            counter++;
+                                            candidate = `custom_${counter}`;
+                                          }
+                                          meta[candidate] = '';
                                           handleUpdateAction(rule.id || ruleId, actIdx, {
                                             ...action,
                                             metadata: meta,
@@ -1086,6 +1121,7 @@ export function AutomationPipelineEditor({
                                           <TokenCatalogPopover
                                             settings={settings}
                                             iconOnly={true}
+                                            disabled={readOnly}
                                             onSelectToken={(tok) => {
                                               const meta = { ...((action as any).metadata || {}) };
                                               meta[key] = (meta[key] || '') + tok;
@@ -1203,6 +1239,7 @@ export function AutomationPipelineEditor({
                                       <TokenCatalogPopover
                                         settings={settings}
                                         iconOnly={true}
+                                        disabled={readOnly}
                                         onSelectToken={(tok) => {
                                           const current = (action as any).url || '';
                                           handleUpdateAction(rule.id || ruleId, actIdx, {

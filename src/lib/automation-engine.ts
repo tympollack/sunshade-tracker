@@ -76,23 +76,55 @@ export function matchesTrigger(
 }
 
 /**
- * Replaces {{key}} and {{metadata.key}} mustache-style placeholders
- * in a template string with values from the context item.
+ * Traverses an object using a dot-separated path.
+ */
+function getByDotPath(obj: Record<string, any> | null | undefined, path: string): any {
+  if (!obj || typeof obj !== 'object' || !path) return undefined;
+  const parts = path.split('.');
+  let current: any = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+/**
+ * Replaces {{key}}, {{item.key}}, {{metadata.key}}, {{settings.key}}, and {{NOW()}}/{{TODAY}}
+ * placeholders in a template string with values from the context item.
  */
 export function interpolate(templateString: string, contextItem: Record<string, any>): string {
   if (!templateString) return '';
   if (!contextItem) return templateString;
 
-  return templateString.replace(/{{\s*([\w.]+)\s*}}/g, (_match, path: string) => {
+  return templateString.replace(/{{\s*([\w().]+)\s*}}/g, (_match, rawPath: string) => {
+    const path = rawPath.trim();
+    if (path === 'NOW()' || path === 'NOW') {
+      return new Date().toISOString();
+    }
+    if (path === 'TODAY()' || path === 'TODAY') {
+      return new Date().toISOString().split('T')[0];
+    }
+
+    let lookupPath = path;
+    if (lookupPath.startsWith('item.')) {
+      lookupPath = lookupPath.slice(5);
+    }
+
     let resolved: any;
 
-    if (path.startsWith('metadata.')) {
-      const metaKey = path.slice('metadata.'.length);
+    if (lookupPath.startsWith('metadata.')) {
+      const metaKey = lookupPath.slice('metadata.'.length);
       resolved = contextItem.metadata?.[metaKey];
+    } else if (lookupPath.startsWith('settings.')) {
+      const settingsKey = lookupPath.slice('settings.'.length);
+      resolved = getByDotPath(contextItem.settings, settingsKey);
     } else {
-      resolved = contextItem[path];
+      resolved = contextItem[lookupPath];
       if (resolved === undefined && contextItem.metadata) {
-        resolved = contextItem.metadata[path];
+        resolved = contextItem.metadata[lookupPath];
       }
     }
 
@@ -618,6 +650,7 @@ export async function executeProjectAutomations(
     const contextItem = {
       ...(eventPayload || {}),
       ...item,
+      settings,
       metadata: {
         ...(eventPayload?.metadata || {}),
         ...(item?.metadata || {}),
@@ -824,11 +857,65 @@ export async function executeProjectAutomations(
               ? (action as any).collision_statuses
               : ['in_progress', 'in_review'];
 
+            // Compute concrete next scheduled calendar slot date
+            const weekdayMap: Record<string, number> = {
+              sunday: 0,
+              monday: 1,
+              tuesday: 2,
+              wednesday: 3,
+              thursday: 4,
+              friday: 5,
+              saturday: 6,
+            };
+            const targetDayNum = weekdayMap[targetWeekday.toLowerCase()] ?? 1;
+
+            const now = new Date();
+            const [hours, minutes] = targetUtcTime.split(':').map((s: string) => parseInt(s, 10) || 0);
+
+            const candidateDate = new Date(Date.UTC(
+              now.getUTCFullYear(),
+              now.getUTCMonth(),
+              now.getUTCDate(),
+              hours,
+              minutes,
+              0,
+              0
+            ));
+
+            let daysToAdd = (targetDayNum - candidateDate.getUTCDay() + 7) % 7;
+            if (daysToAdd === 0 && candidateDate.getTime() <= now.getTime()) {
+              daysToAdd = 7;
+            }
+            candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
+            const scheduledSlotDate = candidateDate.toISOString();
+
+            let hasCollision = false;
+            if (projectId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              try {
+                const { data: existingSlots } = await supabaseAdmin
+                  .from('work_items')
+                  .select('id, metadata, status')
+                  .eq('project_id', projectId)
+                  .in('status', collisionStatuses)
+                  .neq('id', item.id || '');
+
+                if (existingSlots && existingSlots.length > 0) {
+                  hasCollision = existingSlots.some(
+                    (s: any) => s.metadata?.scheduled_slot_date === scheduledSlotDate
+                  );
+                }
+              } catch {
+                // Ignore collision check lookup failure
+              }
+            }
+
             const patchedFields: Record<string, any> = {
               cadence_days: cadenceDays,
               scheduled_weekday: targetWeekday,
               scheduled_utc_time: targetUtcTime,
+              scheduled_slot_date: scheduledSlotDate,
               collision_statuses: collisionStatuses,
+              has_collision: hasCollision,
               calculated_at: new Date().toISOString(),
             };
 

@@ -119,6 +119,25 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       const template = 'Domain: {{metadata.missing_field}} and {{non_existent}}';
       expect(interpolate(template, contextItem)).toBe('Domain:  and ');
     });
+
+    it('resolves item-prefixed paths, settings variables, and NOW/TODAY timestamps', () => {
+      const itemWithSettings = {
+        ...contextItem,
+        settings: {
+          editorial: { cadence: 14 },
+          github_repo: 'tympollack/sunshade-tracker',
+        },
+      };
+
+      const template = '{{item.title}} on {{settings.github_repo}} every {{settings.editorial.cadence}} days';
+      expect(interpolate(template, itemWithSettings)).toBe(
+        'Acme Onboarding Story on tympollack/sunshade-tracker every 14 days'
+      );
+
+      const withTimestamps = 'Date: {{TODAY}} at {{NOW()}}';
+      const output = interpolate(withTimestamps, itemWithSettings);
+      expect(output).toMatch(/^Date: \d{4}-\d{2}-\d{2} at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    });
   });
 
   describe('expandTemplate & buildTemplateRecords', () => {
