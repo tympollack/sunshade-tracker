@@ -283,12 +283,15 @@ export type AutomationAction =
   | CalculateCalendarSlotAction
   | GenericAutomationAction;
 
-export interface AutomationRuleCondition {
+export interface AutomationCondition {
   field: string;
   operator: string;
   value?: any;
   logic?: 'AND' | 'OR';
+  [key: string]: any;
 }
+
+export type AutomationRuleCondition = AutomationCondition;
 
 export interface AutomationRule {
   id?: string;
@@ -327,7 +330,9 @@ export interface TransitionGuard {
   name?: string;
   enabled?: boolean;
   target_status: string;
+  when?: AutomationCondition[];
   conditions: TransitionGuardCondition[];
+  [key: string]: any;
 }
 
 export interface ProjectSettings {

@@ -75,7 +75,7 @@ export async function reassignWorkItemProject(
   newProjectId: string,
   tenantSlug?: string,
   overrides?: { status?: string; item_type?: string; metadata?: Record<string, any> }
-): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
+): Promise<{ success: boolean; updatedCount?: number; error?: string; violations?: string[] }> {
   try {
     if (!itemId || !newProjectId) {
       return { success: false, error: 'Item ID and new project ID are required' };
@@ -181,7 +181,7 @@ export async function reassignWorkItemProject(
     }
 
     if (overrides?.status && overrides.status !== targetItem.status) {
-      const { validateTransitionGuards } = await import('@/lib/automation/guardEvaluator');
+      const { evaluateTransitionGuards } = await import('@/lib/automation/guardEvaluator');
       const candidateItem = {
         ...targetItem,
         status: overrides.status,
@@ -191,11 +191,12 @@ export async function reassignWorkItemProject(
           ...(overrides.metadata || {}),
         },
       };
-      const guardRes = validateTransitionGuards(candidateItem, overrides.status, destProject.settings);
+      const guardRes = evaluateTransitionGuards(candidateItem, overrides.status, destProject.settings);
       if (!guardRes.allowed) {
         return {
           success: false,
-          error: guardRes.errors.join('; '),
+          error: guardRes.violations.join('; '),
+          violations: guardRes.violations,
         };
       }
     }
@@ -345,7 +346,7 @@ export async function bulkReassignProjects(
   itemIds: string[],
   newProjectId: string,
   tenantSlug?: string
-): Promise<{ success: boolean; updatedCount?: number; error?: string }> {
+): Promise<{ success: boolean; updatedCount?: number; error?: string; violations?: string[] }> {
   try {
     if (!itemIds || itemIds.length === 0 || !newProjectId) {
       return { success: false, error: 'Item IDs and new project ID are required' };
