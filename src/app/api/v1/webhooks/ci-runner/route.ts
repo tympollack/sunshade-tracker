@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
 import { executeProjectAutomations } from '@/lib/automation-engine';
@@ -7,8 +7,9 @@ import { executeProjectAutomations } from '@/lib/automation-engine';
  * POST /api/v1/webhooks/ci-runner
  *
  * Ingests external CI test/build failure webhooks, verifies HMAC signature or Bearer token,
- * resolves target project by project_slug, and emits non-blocking automation events via queueMicrotask
- * to auto-stage critical bug remediation tasks in tracker.work_items.
+ * resolves target project by project_slug within the authenticated tenant boundary,
+ * and emits non-blocking automation events via Next.js after() to auto-stage critical
+ * bug remediation tasks in tracker.work_items.
  */
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required field: project_slug' }, { status: 400 });
   }
 
-  // 2. Tenant Resolution
+  // 2. Tenant Resolution & Strict Workspace Scoping
   const tenantSlug =
     req.headers.get('x-tenant-slug') ||
     body.tenant_slug ||
@@ -77,11 +78,9 @@ export async function POST(req: NextRequest) {
       const { data: tData } = await tenantQuery.maybeSingle();
       tenant = tData;
     } catch {
-      // Fallback to default
+      tenant = null;
     }
   }
-
-  const tenantId = tenant?.id || '00000000-0000-0000-0000-000000000000';
 
   const globalSecret =
     process.env.WEBHOOK_SIGNING_SECRET ||
@@ -117,18 +116,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Resolve Target Project by project_slug
+  if (!tenant) {
+    return NextResponse.json(
+      { error: `Tenant '${tenantSlug}' not found` },
+      { status: 404 }
+    );
+  }
+
+  const tenantId = tenant.id;
+
+  // 3. Resolve Target Project by project_slug strictly within tenant boundary
   let project: any = null;
   if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
     try {
       let projQuery: any = supabaseAdmin
         .from('projects')
         .select('id, slug, name, settings, tenant_id')
-        .eq('slug', project_slug);
-
-      if (tenantId && tenantId !== '00000000-0000-0000-0000-000000000000') {
-        projQuery = projQuery.eq('tenant_id', tenantId);
-      }
+        .eq('slug', project_slug)
+        .eq('tenant_id', tenantId);
 
       if (typeof projQuery.is === 'function') {
         projQuery = projQuery.is('deleted_at', null);
@@ -150,8 +155,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 4. Non-blocking automation event emission via queueMicrotask (< 100ms response)
+  // 4. Secure Payload Construction (body spread cannot override system source/event_type)
   const payload = {
+    ...body,
     project_slug,
     branch,
     commit_sha,
@@ -161,10 +167,10 @@ export async function POST(req: NextRequest) {
     run_id,
     source: 'ci_runner',
     event_type: 'build_failed',
-    ...body,
   };
 
-  queueMicrotask(() => {
+  // 5. Non-blocking automation event emission using Next.js after() to prevent premature termination
+  const runAutomations = () => {
     executeProjectAutomations({
       tenantId: project.tenant_id || tenantId,
       projectId: project.id,
@@ -178,7 +184,17 @@ export async function POST(req: NextRequest) {
     }).catch((err) => {
       console.error('[ci-runner-webhook] Automation execution failed:', err);
     });
-  });
+  };
+
+  try {
+    if (typeof after === 'function') {
+      after(runAutomations);
+    } else {
+      queueMicrotask(runAutomations);
+    }
+  } catch {
+    queueMicrotask(runAutomations);
+  }
 
   return NextResponse.json({ success: true, queued: true }, { status: 200 });
 }

@@ -29,7 +29,7 @@ export interface TransitionChecklistProps {
   item: Partial<WorkItem> | Record<string, any> | null | undefined;
   projectSettings?: ProjectSettings | null;
   targetStatus?: string;
-  onUpdateField?: (fieldKey: string, value: any) => void;
+  onUpdateField?: (fieldKey: string, value: any, fullPath?: string) => void;
   readOnly?: boolean;
   className?: string;
 }
@@ -272,7 +272,7 @@ export function TransitionChecklist({
                               <input
                                 type="checkbox"
                                 checked={Boolean(currentVal)}
-                                onChange={(e) => onUpdateField(fieldKey, e.target.checked)}
+                                onChange={(e) => onUpdateField(fieldKey, e.target.checked, cond.field)}
                                 data-testid={`checklist-input-${fieldKey}`}
                                 className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-slate-900"
                               />
@@ -283,7 +283,7 @@ export function TransitionChecklist({
                           ) : isEnumType ? (
                             <select
                               value={currentVal !== undefined && currentVal !== null ? String(currentVal) : ''}
-                              onChange={(e) => onUpdateField(fieldKey, e.target.value)}
+                              onChange={(e) => onUpdateField(fieldKey, e.target.value, cond.field)}
                               data-testid={`checklist-input-${fieldKey}`}
                               className="w-full px-2 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
                             >
@@ -305,7 +305,8 @@ export function TransitionChecklist({
                               onChange={(e) =>
                                 onUpdateField(
                                   fieldKey,
-                                  e.target.value === '' ? null : Number(e.target.value)
+                                  e.target.value === '' ? null : Number(e.target.value),
+                                  cond.field
                                 )
                               }
                               placeholder={`Enter numeric value for ${cfDef?.label || fieldKey}...`}
@@ -316,7 +317,7 @@ export function TransitionChecklist({
                             <input
                               type="text"
                               value={currentVal !== undefined && currentVal !== null ? String(currentVal) : ''}
-                              onChange={(e) => onUpdateField(fieldKey, e.target.value)}
+                              onChange={(e) => onUpdateField(fieldKey, e.target.value, cond.field)}
                               placeholder={`Provide ${cfDef?.label || fieldKey}...`}
                               data-testid={`checklist-input-${fieldKey}`}
                               className="w-full px-2.5 py-1 bg-slate-900 border border-slate-800 rounded text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"

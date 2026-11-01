@@ -150,13 +150,55 @@ describe('TASK-TRK-SCHEMA-DRIVEN-VERIFICATION-UI: TransitionChecklist', () => {
     const peerInput = screen.getByTestId('checklist-input-peer_reviewer');
     expect(peerInput).toBeInTheDocument();
     fireEvent.change(peerInput, { target: { value: 'alice_reviewer' } });
-    expect(onUpdateField).toHaveBeenCalledWith('peer_reviewer', 'alice_reviewer');
+    expect(onUpdateField).toHaveBeenCalledWith('peer_reviewer', 'alice_reviewer', 'metadata.peer_reviewer');
 
     // Number input for signoff_score
     const scoreInput = screen.getByTestId('checklist-input-signoff_score');
     expect(scoreInput).toBeInTheDocument();
     fireEvent.change(scoreInput, { target: { value: '9' } });
-    expect(onUpdateField).toHaveBeenCalledWith('signoff_score', 9);
+    expect(onUpdateField).toHaveBeenCalledWith('signoff_score', 9, 'metadata.signoff_score');
+  });
+
+  it('renders and supports updating core property requirements such as assignee', () => {
+    const onUpdateField = vi.fn();
+    const coreSettings: ProjectSettings = {
+      schema_version: '1.0',
+      hierarchy: [{ type: 'task', label: 'Task', level: 1, allowed_parents: [] }],
+      statuses: [
+        { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
+        { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+      ],
+      custom_fields: [],
+      transition_guards: [
+        {
+          id: 'guard-start-assignee',
+          name: 'Require Assignee to Start',
+          enabled: true,
+          target_status: 'in_progress',
+          conditions: [
+            {
+              field: 'item.assignee',
+              operator: '$is_not_null',
+              message: 'Task must be assigned to an engineer before starting.',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <TransitionChecklist
+        item={{ id: 'task-core-1', status: 'not_started', assignee: null }}
+        projectSettings={coreSettings}
+        targetStatus="in_progress"
+        onUpdateField={onUpdateField}
+      />
+    );
+
+    expect(screen.getByTestId('checklist-item-unmet-assignee')).toBeInTheDocument();
+    const assigneeInput = screen.getByTestId('checklist-input-assignee');
+    fireEvent.change(assigneeInput, { target: { value: 'alice' } });
+    expect(onUpdateField).toHaveBeenCalledWith('assignee', 'alice', 'item.assignee');
   });
 
   it('does not contain hardcoded domain-specific terms in templates', () => {

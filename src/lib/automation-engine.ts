@@ -627,19 +627,20 @@ export async function provisionCiFailureBugItem(options: {
 }): Promise<WorkItem | null> {
   const { tenantId, projectId, settings, payload } = options;
 
-  const commitSha = payload.commit_sha || '';
-  const branch = payload.branch || 'main';
-  const failedStep = payload.failed_step || payload.job || 'Build Step';
-  const errorLog = payload.error_log || payload.error || '';
-  const runId = payload.run_id ? String(payload.run_id) : '';
-  const actor = payload.actor || 'CI Runner';
+  const commitSha = sanitizeLogSecrets(String(payload.commit_sha || '')).slice(0, 64);
+  const branch = sanitizeLogSecrets(String(payload.branch || 'main')).slice(0, 128);
+  const failedStep = sanitizeLogSecrets(String(payload.failed_step || payload.job || 'Build Step')).slice(0, 200);
+  const runId = sanitizeLogSecrets(String(payload.run_id || '')).slice(0, 64);
+  const actor = sanitizeLogSecrets(String(payload.actor || 'CI Runner')).slice(0, 128);
+
+  const rawErrorLog = String(payload.error_log || payload.error || '');
+  const truncatedErrorLog = rawErrorLog.slice(0, 32000);
+  const sanitizedTrace = sanitizeLogSecrets(truncatedErrorLog);
 
   const shortSha = commitSha ? commitSha.slice(0, 8) : 'unknown';
   const externalRefId = payload.external_ref_id || formatCiBugRefId(commitSha, failedStep);
 
   const title = `CI Failure: ${failedStep} on ${branch}${commitSha ? ` (${shortSha})` : ''}`;
-
-  const sanitizedTrace = sanitizeLogSecrets(errorLog);
   const trimmedStack = sanitizedTrace.split('\n').slice(0, 30).join('\n');
 
   const description = `### Automated CI Failure Report\n> **Step:** \`${failedStep}\`\n> **Branch:** \`${branch}\`\n> **Commit:** \`${commitSha}\`\n> **Run ID:** \`${runId}\`\n> **Actor:** ${actor}\n\n\`\`\`\n${trimmedStack || 'No stack trace captured.'}\n\`\`\``;
@@ -652,7 +653,7 @@ export async function provisionCiFailureBugItem(options: {
 
   // Determine item_type from hierarchy
   const hierarchy = settings?.hierarchy || [];
-  const bugType = hierarchy.find((h) => h.type === 'bug' || h.type === 'defect')?.type || 'task';
+  const bugType = hierarchy.find((h) => h.type === 'bug' || h.type === 'defect')?.type || hierarchy[0]?.type || 'task';
 
   // Determine default status
   const statuses = settings?.statuses || [];
@@ -662,13 +663,15 @@ export async function provisionCiFailureBugItem(options: {
   let existingItem: any = null;
   if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
     try {
-      const { data: found } = await supabaseAdmin
-        .from('work_items')
-        .select('*')
-        .eq('project_id', projectId)
-        .eq('external_ref_id', externalRefId)
-        .maybeSingle();
-      existingItem = found;
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.select === 'function') {
+        const { data: found } = await wiTable
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('external_ref_id', externalRefId)
+          .maybeSingle();
+        existingItem = found;
+      }
     } catch {
       existingItem = null;
     }
@@ -687,7 +690,7 @@ export async function provisionCiFailureBugItem(options: {
       priority: 'Critical',
       severity: 'High',
       agent_prompt: agentPrompt,
-      error_log: sanitizedTrace,
+      error_log: sanitizedTrace.slice(0, 16000),
       failed_step: failedStep,
       branch,
       commit_sha: commitSha,
@@ -703,49 +706,92 @@ export async function provisionCiFailureBugItem(options: {
 
   if (existingItem) {
     if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-      const { data: updated } = await supabaseAdmin
-        .from('work_items')
-        .update({
-          description,
-          metadata: {
-            ...(existingItem.metadata || {}),
-            ...record.metadata,
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existingItem.id)
-        .select()
-        .single();
-      return updated || { ...existingItem, description, metadata: { ...existingItem.metadata, ...record.metadata } };
+      const existingHistory = Array.isArray(existingItem.metadata?.run_history)
+        ? existingItem.metadata.run_history
+        : existingItem.metadata?.run_id
+        ? [
+            {
+              run_id: existingItem.metadata.run_id,
+              commit_sha: existingItem.metadata.commit_sha,
+              failed_step: existingItem.metadata.failed_step,
+              error_log: existingItem.metadata.error_log ? String(existingItem.metadata.error_log).slice(0, 5000) : '',
+              timestamp: existingItem.updated_at || existingItem.created_at,
+            },
+          ]
+        : [];
+
+      const updatedHistory = [
+        ...existingHistory,
+        {
+          run_id: runId,
+          commit_sha: commitSha,
+          failed_step: failedStep,
+          error_log: sanitizedTrace.slice(0, 5000),
+          timestamp: new Date().toISOString(),
+        },
+      ].slice(-10);
+
+      const updatedDescription = `${existingItem.description || ''}\n\n---\n#### Additional CI Run Failure (Run #${runId || 'N/A'})\n> **Step:** \`${failedStep}\` | **Actor:** ${actor} | **Timestamp:** ${new Date().toISOString()}\n\`\`\`\n${trimmedStack || 'No stack trace captured.'}\n\`\`\``;
+
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.update === 'function') {
+        const { data: updated, error: updateErr } = await wiTable
+          .update({
+            description: updatedDescription,
+            metadata: {
+              ...(existingItem.metadata || {}),
+              ...record.metadata,
+              run_history: updatedHistory,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingItem.id)
+          .select()
+          .single();
+
+        if (updateErr) {
+          console.error('[ci-provision] Failed to update existing CI failure card:', updateErr);
+          return null;
+        }
+        return updated || null;
+      }
+      return null;
     }
-    return { ...existingItem, description, metadata: { ...existingItem.metadata, ...record.metadata } };
+    return null;
   }
 
   if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
     try {
-      let { data: inserted, error: insertErr } = await supabaseAdmin
-        .from('work_items')
-        .insert(record)
-        .select()
-        .single();
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.insert === 'function') {
+        let { data: inserted, error: insertErr } = await wiTable
+          .insert(record)
+          .select()
+          .single();
 
-      if (insertErr && isMissingSprintIdColumnError(insertErr)) {
-        const fallback: Record<string, any> = { ...record };
-        delete fallback.sprint_id;
-        const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
-        inserted = retry.data;
-        insertErr = retry.error;
-      }
+        if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+          const fallback: Record<string, any> = { ...record };
+          delete fallback.sprint_id;
+          const retry = await wiTable.insert(fallback).select().single();
+          inserted = retry.data;
+          insertErr = retry.error;
+        }
 
-      if (!insertErr && inserted) {
-        return inserted;
+        if (insertErr) {
+          console.error('[ci-provision] Failed to insert CI failure card:', insertErr);
+          return null;
+        }
+
+        return inserted || null;
       }
-    } catch {
-      // Continue with in-memory fallback
+      return null;
+    } catch (err) {
+      console.error('[ci-provision] Exception inserting CI failure card:', err);
+      return null;
     }
   }
 
-  return { id: `bug-${Date.now()}`, ...record };
+  return null;
 }
 
 /**
@@ -1122,7 +1168,11 @@ export async function executeProjectAutomations(
     await Promise.allSettled(pendingWebhooks);
   }
 
-  if (isCiFailure && result.createdItems.length === 0) {
+  // Auto-provision CI failure bug card if not already created by a matching project automation rule
+  const hasCiBugItem = result.createdItems.some(
+    (item) => item?.metadata?.source === 'ci_runner' || item?.metadata?.auto_generated
+  );
+  if (isCiFailure && !hasCiBugItem) {
     const spawned = await provisionCiFailureBugItem({
       tenantId,
       projectId,

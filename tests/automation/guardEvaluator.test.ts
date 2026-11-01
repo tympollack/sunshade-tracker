@@ -149,6 +149,45 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
       ).toBe(true);
       expect(isBlankValue('  ')).toBe(true);
     });
+
+    it('resolves comparison tokens (e.g. {{item.assignee}}) dynamically against work item in matchesCondition', () => {
+      const item = {
+        id: 'item-tok-1',
+        assignee: 'alice',
+        status: 'in_review',
+        metadata: {
+          owner: 'alice',
+          lead_dev: 'bob',
+        },
+      };
+
+      // Exact match token comparison: metadata.owner == {{item.assignee}} (both 'alice')
+      expect(
+        matchesCondition(item, {
+          field: 'metadata.owner',
+          operator: '$eq',
+          value: '{{item.assignee}}',
+        })
+      ).toBe(true);
+
+      // Comparison where token does not match: metadata.lead_dev == {{item.assignee}} ('bob' != 'alice')
+      expect(
+        matchesCondition(item, {
+          field: 'metadata.lead_dev',
+          operator: '$eq',
+          value: '{{item.assignee}}',
+        })
+      ).toBe(false);
+
+      // Embedded token in string:
+      expect(
+        matchesCondition(item, {
+          field: 'assignee',
+          operator: '$eq',
+          value: '{{metadata.owner}}',
+        })
+      ).toBe(true);
+    });
   });
 
   describe('validateTransitionGuards & token interpolation', () => {
