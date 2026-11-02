@@ -1,6 +1,19 @@
 import React from 'react';
 import { supabaseAdmin } from '@/lib/db';
-import { ShieldAlert, Award, GitPullRequest, Terminal, CheckCircle2, Clock, PlayCircle } from 'lucide-react';
+import {
+  ShieldAlert,
+  Award,
+  GitPullRequest,
+  Terminal,
+  CheckCircle2,
+  Clock,
+  PlayCircle,
+  Coins,
+  Flame,
+  Layers,
+  ShieldCheck,
+} from 'lucide-react';
+import { calculateBountyPricing } from '@/lib/bounties/neglectPricing';
 
 interface PageProps {
   params: Promise<{ tenantSlug: string }>;
@@ -115,6 +128,36 @@ export default async function PublicBountiesPage({ params }: PageProps) {
           </div>
         </div>
 
+        {/* Sovereign Token Economy Status Banner */}
+        <div className="bg-gradient-to-r from-slate-900/90 via-slate-900/60 to-amber-950/20 border border-slate-800 rounded-xl p-4 mt-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0">
+              <Coins className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-white">Sovereign 20-Hour Token Economy</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                  Closed-Loop Work Rebate
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Anchored to 1,200,000 Tokens/Week (60,000 Tokens/Hr · 1,000 Tokens/Min) with dynamic neglect surge pricing up to 2.00x.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 font-mono text-xs text-slate-300">
+            <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+              <Flame className="w-3.5 h-3.5 text-amber-400" />
+              <span>Up to 2.0x Dormancy Bonus</span>
+            </div>
+            <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Artifact Proof Guard</span>
+            </div>
+          </div>
+        </div>
+
         {/* Contributor & Agent Instructions */}
         <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="flex gap-3">
@@ -184,47 +227,76 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                     No items in this column
                   </div>
                 ) : (
-                  colItems.map((item: any) => (
-                    <article
-                      key={item.id}
-                      className="bg-slate-900 border border-slate-800/90 rounded-lg p-4 shadow-sm hover:border-slate-700 transition-all flex flex-col gap-2"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="px-2 py-0.5 rounded bg-sky-950/60 text-sky-400 border border-sky-800/50 text-xs font-mono font-semibold">
-                          {item.external_ref_id || item.id.slice(0, 8)}
-                        </span>
-                        {item.metadata?.bounty_reward && (
-                          <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-bold font-mono">
-                            {item.metadata.bounty_reward}
+                  colItems.map((item: any) => {
+                    const pricing = calculateBountyPricing({
+                      estimatedHours: item.metadata?.estimated_hours || item.metadata?.bounty_hours,
+                      priority: item.priority || item.metadata?.priority,
+                      lastActivityDate: item.updated_at || item.created_at,
+                    });
+
+                    return (
+                      <article
+                        key={item.id}
+                        className="bg-slate-900 border border-slate-800/90 rounded-lg p-4 shadow-sm hover:border-slate-700 transition-all flex flex-col gap-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="px-2 py-0.5 rounded bg-sky-950/60 text-sky-400 border border-sky-800/50 text-xs font-mono font-semibold">
+                            {item.external_ref_id || item.id.slice(0, 8)}
                           </span>
+                          {item.metadata?.bounty_reward ? (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-bold font-mono">
+                              {item.metadata.bounty_reward}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-bold font-mono flex items-center gap-1">
+                              <Coins className="w-3 h-3 text-amber-400" />
+                              {pricing.dynamicBountyTokens.toLocaleString()} Tokens
+                            </span>
+                          )}
+                        </div>
+
+                        {pricing.neglectMultiplier > 1.0 && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                              <Flame className="w-3 h-3 text-amber-400" />
+                              {pricing.neglectMultiplier.toFixed(2)}x Neglect Yield (+{pricing.daysDormant}d dormant)
+                            </span>
+                          </div>
                         )}
-                      </div>
 
-                      <h4 className="text-sm font-semibold text-slate-100 leading-snug">
-                        {item.title}
-                      </h4>
+                        <h4 className="text-sm font-semibold text-slate-100 leading-snug">
+                          {item.title}
+                        </h4>
 
-                      {item.description && (
-                        <p className="text-xs text-slate-400 line-clamp-2">
-                          {item.description}
-                        </p>
-                      )}
-
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-500">
-                        <span>{item.assignee ? `@${item.assignee}` : 'Unassigned'}</span>
-                        {item.metadata?.pr_url && (
-                          <a
-                            href={item.metadata.pr_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-purple-400 hover:text-purple-300 flex items-center gap-1 font-mono text-[11px]"
-                          >
-                            <GitPullRequest className="w-3 h-3" /> PR
-                          </a>
+                        {item.description && (
+                          <p className="text-xs text-slate-400 line-clamp-2">
+                            {item.description}
+                          </p>
                         )}
-                      </div>
-                    </article>
-                  ))
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-500">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            {pricing.estimatedHours.toFixed(1)} hrs est.
+                          </span>
+                          {item.metadata?.pr_url ? (
+                            <a
+                              href={item.metadata.pr_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-purple-400 hover:text-purple-300 flex items-center gap-1 font-mono text-[11px]"
+                            >
+                              <GitPullRequest className="w-3 h-3" /> PR
+                            </a>
+                          ) : (
+                            <span className="text-[11px] font-mono text-emerald-400/80 flex items-center gap-1">
+                              <ShieldCheck className="w-3 h-3 text-emerald-400" /> Proof Req.
+                            </span>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })
                 )}
               </div>
             </div>
