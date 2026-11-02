@@ -255,7 +255,7 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                           )}
                         </div>
 
-                        {pricing.neglectMultiplier > 1.0 && (
+                        {!item.metadata?.bounty_reward && pricing.neglectMultiplier > 1.0 && (
                           <div className="flex items-center gap-1.5">
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
                               <Flame className="w-3 h-3 text-amber-400" />
@@ -275,10 +275,16 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                         )}
 
                         <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-500">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            {pricing.estimatedHours.toFixed(1)} hrs est.
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-slate-400">
+                              {item.assignee ? `@${item.assignee}` : 'Unassigned'}
+                            </span>
+                            <span className="text-slate-600">·</span>
+                            <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              {pricing.estimatedHours.toFixed(1)} hrs est.
+                            </span>
+                          </div>
                           {item.metadata?.pr_url ? (
                             <a
                               href={item.metadata.pr_url}

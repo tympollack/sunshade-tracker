@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   calculateNeglectMultiplier,
   calculateBountyPricing,
@@ -13,6 +13,8 @@ import {
   getCalendarWeekRange,
   validateWeeklyBountyClaim,
   computeUserWeeklyUtilization,
+  getItemTokenCommitment,
+  assertRunnerWeeklyCapacity,
 } from '@/lib/bounties/flexLedgerService';
 
 describe('TASK-TRK-NEGLECT-YIELD-PRICING: Neglect Multiplier & Yield Pricing', () => {
@@ -128,6 +130,11 @@ describe('TASK-TRK-20HR-FLEX-LEDGER: 20-Hour Weekly Sovereign Capacity Ledger', 
     expect(range.endOfWeek.getUTCDate()).toBe(8); // Nov 8, 2026 is Sunday
     expect(range.endOfWeek.getUTCHours()).toBe(23);
     expect(range.endOfWeek.getUTCMinutes()).toBe(59);
+
+    // Year-end week boundary: Dec 30, 2024 is part of 2025-W01
+    const yearEndMonday = new Date(Date.UTC(2024, 11, 30, 10, 0, 0));
+    const yearEndRange = getCalendarWeekRange(yearEndMonday);
+    expect(yearEndRange.isoWeekLabel).toBe('2025-W01');
   });
 
   it('allows claiming bounty when projected utilization is within 1,200,000 tokens (20 hrs)', () => {
@@ -165,7 +172,7 @@ describe('TASK-TRK-20HR-FLEX-LEDGER: 20-Hour Weekly Sovereign Capacity Ledger', 
     expect(res.reason).toContain('exceeds your 20-hour weekly sovereign capacity (1,200,000 tokens/week)');
   });
 
-  it('permits claiming over-limit bounty when adminOverride is true', () => {
+  it('permits claiming over-limit bounty when adminOverride is true while preserving tokensExceeded', () => {
     const res = validateWeeklyBountyClaim({
       candidateBountyTokens: 300000,
       currentWeeklyTokens: 1100000,
@@ -174,19 +181,91 @@ describe('TASK-TRK-20HR-FLEX-LEDGER: 20-Hour Weekly Sovereign Capacity Ledger', 
 
     expect(res.allowed).toBe(true);
     expect(res.projectedTokens).toBe(1400000);
+    expect(res.tokensExceeded).toBe(200000); // 1,400,000 - 1,200,000
+  });
+
+  it('computes token commitment accurately from bounty_hours as well as estimated_hours', () => {
+    const itemWithBountyHours = {
+      metadata: {
+        bounty_hours: 4.0,
+        neglect_multiplier: 1.0,
+      },
+    };
+    expect(getItemTokenCommitment(itemWithBountyHours)).toBe(240000); // 4 hrs * 60,000
+
+    const itemWithBountyHoursAndNeglect = {
+      metadata: {
+        bounty_hours: 2.0,
+        neglect_multiplier: 1.5,
+      },
+    };
+    expect(getItemTokenCommitment(itemWithBountyHoursAndNeglect)).toBe(180000); // 2 hrs * 60,000 * 1.5
   });
 
   it('computes total utilization from active/completed week items accurately', () => {
     const items = [
       { metadata: { dynamic_tokens: 120000 } }, // 2 hrs
       { metadata: { estimated_hours: 3.0, neglect_multiplier: 1.0 } }, // 3 hrs * 60,000 = 180,000
+      { metadata: { bounty_hours: 1.5, neglect_multiplier: 1.0 } }, // 1.5 hrs * 60,000 = 90,000
       { metadata: {} }, // default 1 hr = 60,000
     ];
 
     const utilization = computeUserWeeklyUtilization(items);
-    // Total tokens = 120,000 + 180,000 + 60,000 = 360,000
-    expect(utilization.totalTokens).toBe(360000);
-    expect(utilization.totalHours).toBe(6.0);
-    expect(utilization.itemCount).toBe(3);
+    // Total tokens = 120,000 + 180,000 + 90,000 + 60,000 = 450,000
+    expect(utilization.totalTokens).toBe(450000);
+    expect(utilization.totalHours).toBe(7.5);
+    expect(utilization.itemCount).toBe(4);
+  });
+
+  it('assertRunnerWeeklyCapacity checks runner commitments and blocks claim exceeding 20hr cap', async () => {
+    const mockClient = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              neq: vi.fn().mockResolvedValue({
+                data: [
+                  // Runner holds 18 hours already this week = 1,080,000 tokens
+                  {
+                    id: 'existing-1',
+                    updated_at: new Date().toISOString(),
+                    metadata: { dynamic_tokens: 1080000 },
+                  },
+                ],
+                error: null,
+              }),
+            })),
+          })),
+        })),
+      })),
+    };
+
+    // Candidate is a 4-hour task = 240,000 tokens
+    const candidateItem = {
+      id: 'candidate-bounty-1',
+      metadata: { bounty_hours: 4.0 },
+    };
+
+    const res = await assertRunnerWeeklyCapacity({
+      supabaseClient: mockClient as any,
+      tenantId: 'tenant-1',
+      assignee: 'runner-tym',
+      candidateItem,
+    });
+
+    expect(res.allowed).toBe(false);
+    expect(res.tokensExceeded).toBe(120000); // 1,080,000 + 240,000 - 1,200,000
+    expect(res.reason).toContain('exceeds your 20-hour weekly sovereign capacity');
+
+    // With admin override
+    const overrideRes = await assertRunnerWeeklyCapacity({
+      supabaseClient: mockClient as any,
+      tenantId: 'tenant-1',
+      assignee: 'runner-tym',
+      candidateItem,
+      adminOverride: true,
+    });
+    expect(overrideRes.allowed).toBe(true);
+    expect(overrideRes.tokensExceeded).toBe(120000);
   });
 });

@@ -52,7 +52,7 @@ export function getCalendarWeekRange(refDate: Date = new Date()): CalendarWeekRa
     target.setUTCMonth(0, 1 + ((4 - target.getUTCDay() + 7) % 7));
   }
   const weekNumber = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
-  const isoWeekLabel = `${startOfWeek.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+  const isoWeekLabel = `${new Date(firstThursday).getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
 
   return { startOfWeek, endOfWeek, isoWeekLabel };
 }
@@ -112,28 +112,72 @@ export function validateWeeklyBountyClaim(params: {
     projectedHours,
     remainingTokens,
     remainingHours,
-    tokensExceeded: 0,
+    tokensExceeded,
   };
 }
 
 /**
  * Derives token commitment for a work item in the weekly calculation.
+ * Supports dynamic_tokens, bounty_tokens, estimated_hours, and bounty_hours.
  */
 export function getItemTokenCommitment(item: any): number {
-  const meta = item.metadata || {};
+  const meta = item?.metadata || {};
   if (meta.dynamic_tokens && !isNaN(Number(meta.dynamic_tokens))) {
     return Number(meta.dynamic_tokens);
   }
   if (meta.bounty_tokens && !isNaN(Number(meta.bounty_tokens))) {
     return Number(meta.bounty_tokens);
   }
-  if (meta.estimated_hours && !isNaN(Number(meta.estimated_hours))) {
-    const hours = Number(meta.estimated_hours);
+  const rawHours = meta.estimated_hours ?? meta.bounty_hours;
+  if (rawHours !== undefined && !isNaN(Number(rawHours))) {
+    const hours = Number(rawHours);
     const mult = Number(meta.neglect_multiplier || 1.0);
     return Math.round(hours * TOKEN_RATE_PER_HOUR * mult);
   }
   // Default 1-hr task
   return TOKEN_RATE_PER_HOUR;
+}
+
+/**
+ * Server-side capacity enforcement helper that queries a runner's weekly commitments
+ * and validates whether candidate bounty tokens can be claimed under the 20-hr weekly limit.
+ */
+export async function assertRunnerWeeklyCapacity(params: {
+  supabaseClient: any;
+  tenantId: string;
+  assignee: string;
+  candidateItem: {
+    id: string;
+    metadata?: Record<string, any>;
+    [key: string]: any;
+  };
+  adminOverride?: boolean;
+}): Promise<WeeklyCapacityValidationResult> {
+  const { startOfWeek, endOfWeek } = getCalendarWeekRange();
+
+  const { data: userItems } = await params.supabaseClient
+    .from('work_items')
+    .select('id, metadata, status, updated_at, created_at')
+    .eq('tenant_id', params.tenantId)
+    .eq('assignee', params.assignee)
+    .neq('id', params.candidateItem.id);
+
+  const weeklyItems = (userItems || []).filter((it: any) => {
+    const updated = it.updated_at ? new Date(it.updated_at).getTime() : 0;
+    const created = it.created_at ? new Date(it.created_at).getTime() : 0;
+    const startMs = startOfWeek.getTime();
+    const endMs = endOfWeek.getTime();
+    return (updated >= startMs && updated <= endMs) || (created >= startMs && created <= endMs);
+  });
+
+  const { totalTokens: currentWeeklyTokens } = computeUserWeeklyUtilization(weeklyItems);
+  const candidateBountyTokens = getItemTokenCommitment(params.candidateItem);
+
+  return validateWeeklyBountyClaim({
+    candidateBountyTokens,
+    currentWeeklyTokens,
+    adminOverride: params.adminOverride,
+  });
 }
 
 /**
