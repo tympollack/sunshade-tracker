@@ -217,4 +217,251 @@ describe('Value Realization Ledger Service', () => {
     expect(res.itemizedYields[0].realizedValue).toBe(750.0);
     expect(res.itemizedYields[0].metric).toBe('2 active projects (3 proj-mo)');
   });
+
+  describe('Anti-Chore Farming and Verified Efficiency Yield Filter', () => {
+    it('strictly excludes personal_organizer items, yielding 0.0 hrs and $0.00 for 100 completed chores', () => {
+      const personalItems = Array.from({ length: 100 }, (_, i) => ({
+        id: `personal-chore-${i}`,
+        project_id: 'proj-personal-organizer',
+        project_ledger_mode: 'personal_organizer' as const,
+        status: 'complete',
+        metadata: {
+          title: `Chore ${i}`,
+        },
+      }));
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'personal-user',
+        items: personalItems,
+      });
+
+      expect(res.kpis.completedItemsCount).toBe(0);
+      expect(res.kpis.totalHoursReclaimed).toBe(0);
+      expect(res.kpis.grossRealizedValue).toBe(0);
+      expect(res.kpis.netRealizedSavings).toBe(0);
+      expect(res.kpis.activeProjectsCount).toBe(0);
+      expect(res.kpis.breakdown?.personalExcludedCount).toBe(100);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(0);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(0);
+      expect(res.kpis.breakdown?.totalConsideredCount).toBe(100);
+    });
+
+    it('awards Autonomous Review (0.20 hrs) only to items with verified artifact proofs', () => {
+      const mixedItems = [
+        // 1 item with commit_sha
+        {
+          id: 'item-commit',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'audited_production' as const,
+          status: 'complete',
+          metadata: { commit_sha: 'a1b2c3d4e5f6' },
+        },
+        // 1 item with pr_url
+        {
+          id: 'item-pr',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'audited_production' as const,
+          status: 'complete',
+          metadata: { pr_url: 'https://github.com/org/repo/pull/42' },
+        },
+        // 1 item with zkp_attestation_id
+        {
+          id: 'item-zkp',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { zkp_attestation_id: 'zkp_987654321' },
+        },
+        // 1 item with ai_usage_logs
+        {
+          id: 'item-ai',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { ai_usage_logs: [{ run_id: 'run-1', tokens: 1500 }] },
+        },
+        // 2 items WITHOUT artifact proof (e.g., manual checkmark without artifacts)
+        {
+          id: 'item-unverified-1',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { notes: 'manual task done' },
+        },
+        {
+          id: 'item-unverified-2',
+          project_id: 'proj-prod',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: {},
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items: mixedItems,
+      });
+
+      // 6 completed commercial items:
+      // Triage: 6 * 0.05 = 0.30 hrs
+      // Autonomous Review: only 4 verified items * 0.20 = 0.80 hrs
+      // Proj-prod has 4 verified items (>= 3), so activeProjectsCount = 1 -> Hierarchy: 1 * 2.0 = 2.0 hrs
+      // Total Hours = 2.0 + 0.30 + 0.80 = 3.10 hrs
+      expect(res.kpis.completedItemsCount).toBe(6);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(4);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(2);
+      expect(res.kpis.breakdown?.personalExcludedCount).toBe(0);
+
+      const [hierarchy, triage, autonomous] = res.itemizedYields;
+      expect(triage.hoursReclaimed).toBe(0.3);
+      expect(autonomous.hoursReclaimed).toBe(0.8);
+      expect(hierarchy.hoursReclaimed).toBe(2.0);
+      expect(res.kpis.totalHoursReclaimed).toBe(3.1);
+    });
+
+    it('requires at least 3 verified completed items per non-personal project to unlock Hierarchical Status Rollup', () => {
+      // Project A has only 2 verified completions (< 3)
+      // Project B has 3 verified completions (>= 3)
+      const items = [
+        {
+          id: 'item-a1',
+          project_id: 'proj-a',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { commit_sha: 'sha-a1b2c3d' },
+        },
+        {
+          id: 'item-a2',
+          project_id: 'proj-a',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { commit_sha: 'sha-a2b2c3d' },
+        },
+        {
+          id: 'item-b1',
+          project_id: 'proj-b',
+          project_ledger_mode: 'audited_production' as const,
+          status: 'complete',
+          metadata: { pr_url: 'https://github.com/org/repo/pull/1' },
+        },
+        {
+          id: 'item-b2',
+          project_id: 'proj-b',
+          project_ledger_mode: 'audited_production' as const,
+          status: 'complete',
+          metadata: { pr_url: 'https://github.com/org/repo/pull/2' },
+        },
+        {
+          id: 'item-b3',
+          project_id: 'proj-b',
+          project_ledger_mode: 'audited_production' as const,
+          status: 'complete',
+          metadata: { pr_url: 'https://github.com/org/repo/pull/3' },
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items,
+      });
+
+      // Only Project B qualifies (activeProjectsCount = 1)
+      expect(res.kpis.activeProjectsCount).toBe(1);
+      const [hierarchy] = res.itemizedYields;
+      expect(hierarchy.hoursReclaimed).toBe(2.0);
+      expect(hierarchy.metric).toBe('1 active project (1 proj-mo)');
+    });
+
+    it('verifies array-only artifact records (commit_hashes and pr_urls arrays)', () => {
+      const items = [
+        {
+          id: 'item-arr-1',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'done',
+          metadata: { pr_urls: ['https://github.com/acme/app/pull/7'] },
+        },
+        {
+          id: 'item-arr-2',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'completed',
+          metadata: { commit_hashes: ['0123456789abcdef0123456789abcdef01234567'] },
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items,
+      });
+
+      expect(res.kpis.completedItemsCount).toBe(2);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(2);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(0);
+      expect(res.itemizedYields[2].hoursReclaimed).toBe(0.4); // 2 * 0.20 hrs
+    });
+
+    it('rejects fabricated or malformed artifact metadata', () => {
+      const fakeItems = [
+        {
+          id: 'fake-1',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { commit_sha: 'yes' }, // Too short / non-hex
+        },
+        {
+          id: 'fake-2',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { pr_url: 'http://example.com' }, // Not a pull request URL
+        },
+        {
+          id: 'fake-3',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { has_ai_logs: true }, // Boolean shortcut without telemetry objects
+        },
+        {
+          id: 'fake-4',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { zkp_attestation_id: 'true' }, // Invalid reserved token
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items: fakeItems,
+      });
+
+      expect(res.kpis.completedItemsCount).toBe(4);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(0);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(4);
+      expect(res.itemizedYields[2].hoursReclaimed).toBe(0); // 0 autonomous hours
+    });
+
+    it('returns zero hierarchy hours when only personal items exist, even if projectMonths is provided', () => {
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'demo',
+        items: [
+          {
+            id: '1',
+            project_id: 'p',
+            status: 'complete',
+            project_ledger_mode: 'personal_organizer' as const,
+          },
+        ],
+        projectMonths: 1,
+      });
+
+      expect(res.kpis.activeProjectsCount).toBe(0);
+      expect(res.kpis.totalHoursReclaimed).toBe(0);
+      expect(res.itemizedYields[0].hoursReclaimed).toBe(0);
+      expect(res.itemizedYields[0].realizedValue).toBe(0);
+    });
+  });
 });
