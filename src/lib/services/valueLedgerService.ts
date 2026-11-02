@@ -1,3 +1,10 @@
+import type {
+  LedgerMode,
+  EfficiencyBreakdownStats,
+  ItemVerificationProof,
+  WorkItemWithProjectMode,
+} from '@/types/statements';
+
 export interface ItemizedYield {
   id: string;
   frictionPoint: string;
@@ -18,6 +25,7 @@ export interface EfficiencySummaryKPIs {
   grossRealizedValue: number;
   platformSubscriptionFee: number;
   netRealizedSavings: number;
+  breakdown?: EfficiencyBreakdownStats;
 }
 
 export interface EfficiencyStatementDateRange {
@@ -43,15 +51,21 @@ export interface ComputeMetricsOptions {
   tenantSlug: string;
   tenantName?: string;
   tier?: string;
-  completedItemsCount: number;
-  activeProjectsCount: number;
-  totalItemsCount: number;
+  completedItemsCount?: number;
+  activeProjectsCount?: number;
+  totalItemsCount?: number;
   hourlyRate?: number;
   velocityFactor?: string;
   startDate?: string;
   endDate?: string;
   periodMultiplier?: number;
   projectMonths?: number;
+  // Item-level and project-level filtering inputs
+  items?: WorkItemWithProjectMode[];
+  verifiedItemsCount?: number;
+  personalExcludedCount?: number;
+  unverifiedExcludedCount?: number;
+  qualifyingProjectsCount?: number;
 }
 
 const DEFAULT_HOURLY_RATE = 125;
@@ -60,28 +74,133 @@ export const ECOSYSTEM_NOTE =
   'Built to eliminate busywork. Spend your reclaimed hours building, not managing administrative overhead.';
 
 /**
+ * Validates whether a completed item possesses verifiable artifact proof of execution.
+ * Checks for commit hashes, pull requests, ZKP attestations, or AI telemetry logs.
+ */
+export function hasVerifiableArtifactProof(
+  item: WorkItemWithProjectMode
+): ItemVerificationProof {
+  const meta = item.metadata || {};
+
+  if (meta.commit_sha || meta.commit_hash) {
+    return {
+      hasArtifactProof: true,
+      proofType: 'commit_sha',
+      proofRef: String(meta.commit_sha || meta.commit_hash),
+    };
+  }
+
+  if (meta.pr_url || meta.pr_number) {
+    return {
+      hasArtifactProof: true,
+      proofType: 'pr_url',
+      proofRef: String(meta.pr_url || meta.pr_number),
+    };
+  }
+
+  if (meta.zkp_attestation_id || meta.zkp_hash) {
+    return {
+      hasArtifactProof: true,
+      proofType: 'zkp_attestation_id',
+      proofRef: String(meta.zkp_attestation_id || meta.zkp_hash),
+    };
+  }
+
+  if (meta.has_ai_logs === true || (Array.isArray(meta.ai_usage_logs) && meta.ai_usage_logs.length > 0)) {
+    return {
+      hasArtifactProof: true,
+      proofType: 'ai_usage_logs',
+      proofRef: 'verified_telemetry_logs',
+    };
+  }
+
+  return { hasArtifactProof: false };
+}
+
+/**
  * Pure calculation engine for deriving administrative drag hours reclaimed,
- * itemized yields, and realized financial value.
+ * itemized yields, and realized financial value with Anti-Chore-Farming protection.
  *
- * Product Modeling Rationale:
- * - Hourly Rate ($125/hr default): Calibrated to blended engineering/PM compensation benchmarks.
- *   Fully configurable via query params or runtime options for customer-tailored audits.
- * - Hierarchical Status Rollup (2.0 hrs/project/month): Modeled on ~30 minutes/week spent in manual
- *   cross-team alignment, status reporting, and epic rollups eliminated by automated hierarchy tracking.
- * - Backlog Triage & State Sync (0.05 hrs / 3 min per item): Calibrated against manual metadata syncing,
- *   re-prioritization, and board maintenance.
- * - Autonomous Dev & Review Cycles (0.20 hrs / 12 min per item): Accounts for context switching, PR linking,
- *   and branch status reconciliation handled automatically.
- *
- * These metrics represent estimated administrative drag reduction and reclaimed engineering capacity.
+ * Rules:
+ * 1. Personal organizer projects ('personal_organizer') are strictly excluded from $125/hr
+ *    commercial efficiency statements ($0.00 and 0.0 hrs).
+ * 2. Backlog Triage & State Sync (0.05 hrs / 3 min per item) is awarded to completed items
+ *    in 'standard_workspace' and 'audited_production'.
+ * 3. Autonomous Review & Dev Cycles (0.20 hrs / 12 min per item) is strictly awarded ONLY
+ *    to items possessing verified artifact proof (commit_sha, pr_url, zkp, or ai_usage_logs).
+ * 4. Hierarchical Status Rollup (2.0 hrs/proj-mo) only counts non-personal projects with at least
+ *    3 verified completed items.
  */
 export function computeEfficiencyMetrics(
   opts: ComputeMetricsOptions
 ): EfficiencyMetricsPayload {
-  const completedCount = Math.max(0, Math.floor(opts.completedItemsCount || 0));
-  const activeProjectsCount = Math.max(0, Math.floor(opts.activeProjectsCount || 0));
-  const totalItemsCount = Math.max(0, Math.floor(opts.totalItemsCount || 0));
   const rate = opts.hourlyRate ?? DEFAULT_HOURLY_RATE;
+  let verifiedArtifactCount = 0;
+  let standardOrAuditedCompletedCount = 0;
+  let personalExcludedCount = 0;
+  let unverifiedExcludedCount = 0;
+  let activeProjectsCount = opts.activeProjectsCount ?? 0;
+  let totalItemsCount = opts.totalItemsCount ?? 0;
+
+  if (Array.isArray(opts.items)) {
+    totalItemsCount = opts.items.length;
+    const projectVerifiedCounts = new Map<string, number>();
+
+    for (const item of opts.items) {
+      const isCompleted = item.status === 'complete';
+      if (!isCompleted) continue;
+
+      const ledgerMode: LedgerMode = item.project_ledger_mode || 'standard_workspace';
+
+      if (ledgerMode === 'personal_organizer') {
+        // Excluded from commercial statements
+        personalExcludedCount++;
+        continue;
+      }
+
+      // Qualifying workspace/production item
+      standardOrAuditedCompletedCount++;
+
+      const proof = hasVerifiableArtifactProof(item);
+      if (proof.hasArtifactProof) {
+        verifiedArtifactCount++;
+        const currentCount = projectVerifiedCounts.get(item.project_id) || 0;
+        projectVerifiedCounts.set(item.project_id, currentCount + 1);
+      } else {
+        unverifiedExcludedCount++;
+      }
+    }
+
+    // Projects qualifying for hierarchical status rollup: non-personal and >= 3 verified items
+    let qualifyingProjects = 0;
+    for (const count of projectVerifiedCounts.values()) {
+      if (count >= 3) {
+        qualifyingProjects++;
+      }
+    }
+    activeProjectsCount = qualifyingProjects;
+  } else {
+    // Fallback when aggregate counts are passed directly
+    personalExcludedCount = opts.personalExcludedCount ?? 0;
+    unverifiedExcludedCount = opts.unverifiedExcludedCount ?? 0;
+
+    if (opts.verifiedItemsCount !== undefined) {
+      verifiedArtifactCount = opts.verifiedItemsCount;
+      standardOrAuditedCompletedCount =
+        opts.completedItemsCount ?? verifiedArtifactCount + unverifiedExcludedCount;
+    } else {
+      // Backward-compatible fallback for legacy unsegmented aggregate options
+      const rawCompleted = Math.max(0, Math.floor(opts.completedItemsCount || 0));
+      verifiedArtifactCount = Math.max(0, rawCompleted - unverifiedExcludedCount);
+      standardOrAuditedCompletedCount = rawCompleted;
+    }
+
+    if (opts.qualifyingProjectsCount !== undefined) {
+      activeProjectsCount = opts.qualifyingProjectsCount;
+    }
+  }
+
+  const completedCount = standardOrAuditedCompletedCount;
   const velocity =
     opts.velocityFactor !== undefined
       ? opts.velocityFactor
@@ -89,7 +208,7 @@ export function computeEfficiencyMetrics(
       ? '0%'
       : DEFAULT_VELOCITY_FACTOR;
 
-  // Calculate period duration in months for scaling monthly-based yields (FEAT-TRK-DURATION-SCALING)
+  // Calculate period duration in months
   let durationMonths = opts.periodMultiplier ?? 1;
   if (!opts.periodMultiplier && opts.startDate && opts.endDate) {
     const sMs = new Date(opts.startDate).getTime();
@@ -109,10 +228,7 @@ export function computeEfficiencyMetrics(
   }
 
   // ─── Itemized Yield Breakdown ──────────────────────────────────────────────
-  // 1. Hierarchical Status Rollup: 2.0 hrs per active project/month (30m/week)
-  // If explicit projectMonths is provided, scale based on distinct active project-months to avoid over-crediting
-  // projects with only brief activity in multi-month periods (BUG-TRK-PROJECT-MONTH-SCALING).
-  // Otherwise, fallback to activeProjectsCount * durationMonths.
+  // 1. Hierarchical Status Rollup: 2.0 hrs per qualifying active project/month
   const effectiveProjectMonths =
     opts.projectMonths !== undefined
       ? opts.projectMonths
@@ -121,32 +237,34 @@ export function computeEfficiencyMetrics(
   const hierarchyHours = Number((effectiveProjectMonths * 2.0).toFixed(2));
   const hierarchyValue = Number((hierarchyHours * rate).toFixed(2));
 
-  // 2. Backlog Triage & State Sync: 0.05 hrs (3 min) per completed item
-  const triageHours = Number((completedCount * 0.05).toFixed(2));
+  // 2. Backlog Triage & State Sync: 0.05 hrs (3 min) per completed standard/audited item
+  const triageHours = Number((standardOrAuditedCompletedCount * 0.05).toFixed(2));
   const triageValue = Number((triageHours * rate).toFixed(2));
 
-  // 3. Autonomous Review & Dev Cycles: 0.20 hrs (12 min) per completed item
-  const autonomousHours = Number((completedCount * 0.2).toFixed(2));
+  // 3. Autonomous Review & Dev Cycles: 0.20 hrs (12 min) ONLY per verified artifact item
+  const autonomousHours = Number((verifiedArtifactCount * 0.2).toFixed(2));
   const autonomousValue = Number((autonomousHours * rate).toFixed(2));
 
-  // Total Hours = (Completed Items * 0.25 hrs) + (Effective Project Months * 2.0 hrs)
+  // Total Reclaimed Hours
   const totalHours = Number((hierarchyHours + triageHours + autonomousHours).toFixed(2));
   const grossValue = Number((totalHours * rate).toFixed(2));
   const subscriptionFee = 0.0;
   const netSavings = grossValue;
+
+  const breakdown: EfficiencyBreakdownStats = {
+    verifiedArtifactCount,
+    personalExcludedCount,
+    unverifiedExcludedCount,
+    totalConsideredCount: completedCount + personalExcludedCount,
+  };
 
   const itemizedYields: ItemizedYield[] = [
     {
       id: 'hierarchical-status-rollup',
       frictionPoint: 'Hierarchical Status Rollup',
       description:
-        '15–30 min per project/week saved via automated hierarchy queries & real-time progress rollups.',
-      metric:
-        opts.projectMonths !== undefined && (durationMonths !== 1 || effectiveProjectMonths !== activeProjectsCount)
-          ? `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} (${effectiveProjectMonths} proj-mo)`
-          : `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} tracked${
-              durationMonths !== 1 ? ` (${durationMonths} mos)` : ''
-            }`,
+        '15–30 min per project/week saved via automated hierarchy queries & real-time progress rollups (min. 3 verified completions).',
+      metric: `${activeProjectsCount} active project${activeProjectsCount === 1 ? '' : 's'} (${effectiveProjectMonths} proj-mo)`,
       hoursReclaimed: hierarchyHours,
       ratePerHour: rate,
       realizedValue: hierarchyValue,
@@ -155,8 +273,8 @@ export function computeEfficiencyMetrics(
       id: 'backlog-triage-state-sync',
       frictionPoint: 'Backlog Triage & State Sync',
       description:
-        '2–5 min per item eliminated via atomic status transitions and inline metadata management.',
-      metric: `${completedCount} completed work item${completedCount === 1 ? '' : 's'}`,
+        '2–5 min per item eliminated via atomic status transitions and inline metadata management in commercial workspaces.',
+      metric: `${standardOrAuditedCompletedCount} commercial work item${standardOrAuditedCompletedCount === 1 ? '' : 's'}`,
       hoursReclaimed: triageHours,
       ratePerHour: rate,
       realizedValue: triageValue,
@@ -165,8 +283,8 @@ export function computeEfficiencyMetrics(
       id: 'autonomous-review-dev-cycles',
       frictionPoint: 'Autonomous Review & Dev Cycles',
       description:
-        'Friction eliminated via automated PR linking, commit attribution, and autonomous agent loops.',
-      metric: `${completedCount} attributed item${completedCount === 1 ? '' : 's'}`,
+        'Friction eliminated via automated PR linking, commit attribution, and verified artifact proofs.',
+      metric: `${verifiedArtifactCount} artifact-verified item${verifiedArtifactCount === 1 ? '' : 's'}`,
       hoursReclaimed: autonomousHours,
       ratePerHour: rate,
       realizedValue: autonomousValue,
@@ -191,7 +309,7 @@ export function computeEfficiencyMetrics(
       endDate: end,
     },
     kpis: {
-      completedItemsCount: completedCount,
+      completedItemsCount: standardOrAuditedCompletedCount,
       activeProjectsCount,
       totalItemsCount,
       totalHoursReclaimed: totalHours,
@@ -200,6 +318,7 @@ export function computeEfficiencyMetrics(
       grossRealizedValue: grossValue,
       platformSubscriptionFee: subscriptionFee,
       netRealizedSavings: netSavings,
+      breakdown,
     },
     itemizedYields,
     ecosystemNote: ECOSYSTEM_NOTE,
@@ -228,7 +347,9 @@ export function formatEfficiencyStatementCSV(payload: EfficiencyMetricsPayload):
     [],
     ['Summary KPIs'],
     ['Metric', 'Value'],
-    ['Completed Work Items', String(payload.kpis.completedItemsCount)],
+    ['Commercial Work Items', String(payload.kpis.completedItemsCount)],
+    ['Artifact-Verified Items', String(payload.kpis.breakdown?.verifiedArtifactCount ?? 0)],
+    ['Personal / Chores Excluded', String(payload.kpis.breakdown?.personalExcludedCount ?? 0)],
     ['Active Projects', String(payload.kpis.activeProjectsCount)],
     ['Total Work Items', String(payload.kpis.totalItemsCount)],
     ['Hours Reclaimed', `${payload.kpis.totalHoursReclaimed} hrs`],
