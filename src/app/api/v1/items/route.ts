@@ -1549,6 +1549,49 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Capacity Guardrail: Enforce 20-hr weekly sovereign capacity cap on task claims
+    const effectiveAssignee = updateFields.assignee !== undefined ? updateFields.assignee : existingItem.assignee;
+    const isClaimTransition =
+      effectiveAssignee &&
+      ((updateFields.status === 'in_progress' && existingItem.status !== 'in_progress') ||
+        (updateFields.assignee && updateFields.assignee !== existingItem.assignee));
+
+    if (isClaimTransition) {
+      const { assertRunnerWeeklyCapacity } = await import('@/lib/bounties/flexLedgerService');
+      const candidateItem = {
+        ...existingItem,
+        ...updateFields,
+        metadata: resolvedMetadata !== undefined ? resolvedMetadata : (existingItem.metadata || {}),
+      };
+
+      const adminOverride =
+        isCallerAdmin &&
+        Boolean(
+          body.capacity_override ||
+            body.admin_override ||
+            req.headers.get('x-capacity-override') === 'true'
+        );
+
+      const capacityResult = await assertRunnerWeeklyCapacity({
+        supabaseClient: supabaseAdmin,
+        tenantId: authCtx.tenant.id,
+        assignee: effectiveAssignee,
+        candidateItem,
+        adminOverride,
+      });
+
+      if (!capacityResult.allowed) {
+        return NextResponse.json(
+          {
+            error: capacityResult.reason,
+            code: 'WEEKLY_CAPACITY_EXCEEDED',
+            details: capacityResult,
+          },
+          { status: 422 }
+        );
+      }
+    }
+
     let { data: updated, error } = await supabaseAdmin
       .from('work_items')
       .update(updateFields)
