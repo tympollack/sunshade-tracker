@@ -60,3 +60,20 @@ export interface DualStreamMintResult {
   isEligibleForBounty: boolean;
   reason?: string;
 }
+
+export interface EfficiencyMintSummary {
+  totalUpkeepTokens: number;
+  totalBountyTokens: number;
+  totalMintedTokens: number;
+  ecosystemPoolAddress: string;
+  eligibleItemsCount: number;
+}
+
+export interface AttestMintParams {
+  workItemId: string;
+  tenantId?: string;
+  projectId?: string;
+  assignee?: string;
+  recipientUserId?: string;
+  metadata?: Record<string, any>;
+}

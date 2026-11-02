@@ -16,6 +16,9 @@ import {
   Check,
   AlertCircle,
   Calendar,
+  Coins,
+  Layers,
+  Lock,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { WorkspaceSwitcher } from '@/components/WorkspaceSwitcher';
@@ -323,6 +326,69 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
             <p className="text-[11px] text-emerald-400/80">
               Self-administered · 100% net realized yield
             </p>
+          </div>
+        </div>
+
+        {/* Anti-Chore Farming & Sovereign Token Minting Breakdown */}
+        <div className="p-5 rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-4 print:border-gray-300 print:bg-gray-50">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/60 pb-3 print:border-gray-300">
+            <div className="flex items-center space-x-2">
+              <Coins className="w-4 h-4 text-amber-400 print:text-black" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-200 print:text-black">
+                Sovereign Token Yield & Verification Filter
+              </span>
+            </div>
+            <div className="flex items-center space-x-2 flex-wrap gap-y-1 print:hidden">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                <Check className="w-3 h-3" />
+                {kpis?.breakdown?.verifiedArtifactCount ?? 0} Artifact-Verified
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-800 text-slate-400 border border-slate-700/60">
+                {kpis?.breakdown?.unverifiedExcludedCount ?? 0} Unverified Commercial
+              </span>
+              {(kpis?.breakdown?.personalExcludedCount ?? 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  {kpis?.breakdown?.personalExcludedCount} Personal / Chores Excluded
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Stream A: Ecosystem Upkeep */}
+            <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
+                  <Layers className="w-3.5 h-3.5 text-indigo-400 print:text-black" />
+                  Stream A: Ecosystem Upkeep Pool
+                </div>
+                <div className="text-lg font-bold font-mono text-white mt-1 print:text-black">
+                  {((kpis?.completedItemsCount ?? 0) * 3000).toLocaleString()}
+                  <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
+                  Minted to System Bounty Escrow (3,000 tokens/item upkeep dividend)
+                </p>
+              </div>
+            </div>
+
+            {/* Stream B: Personal Execution Bounty */}
+            <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
+                  <Coins className="w-3.5 h-3.5 text-amber-400 print:text-black" />
+                  Stream B: Personal Execution Bounties
+                </div>
+                <div className="text-lg font-bold font-mono text-amber-300 mt-1 print:text-black">
+                  {((kpis?.breakdown?.verifiedArtifactCount ?? 0) * 12000).toLocaleString()}
+                  <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
+                  Minted to Assignee Wallets (12,000 tokens baseline for verified artifacts)
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
