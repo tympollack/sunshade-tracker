@@ -27,6 +27,7 @@ import {
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
+import { TransitionChecklist } from '@/components/work-items/TransitionChecklist';
 
 export const RESERVED_METADATA_KEYS = new Set([
   'sprint',
@@ -742,6 +743,50 @@ export function WorkItemInspectorDrawer({
             setAddedCustomFieldKeys((prev) => (prev.includes(fieldKey) ? prev : [...prev, fieldKey]));
           }}
           testId="drawer-transition-guard-warning"
+        />
+
+        {/* Dynamic Transition Verification Checklist */}
+        <TransitionChecklist
+          item={{
+            ...item,
+            title,
+            description,
+            assignee,
+            status,
+            metadata: localMeta,
+          }}
+          projectSettings={projectSettings}
+          targetStatus={status}
+          onUpdateField={(fieldKey, value, fullPath) => {
+            const rawPath = (fullPath || fieldKey).trim();
+            const normalized = rawPath.replace(/^item\./, '');
+            const isCore =
+              rawPath.startsWith('item.') ||
+              (!rawPath.startsWith('metadata.') &&
+                ['title', 'description', 'assignee', 'status', 'item_type', 'type', 'external_ref_id', 'external_ref'].includes(normalized));
+
+            if (isCore) {
+              const strVal = value === null || value === undefined ? '' : String(value);
+              if (normalized === 'title') {
+                setTitle(strVal);
+                handleFieldChange({ title: strVal });
+              } else if (normalized === 'description') {
+                setDescription(strVal);
+                handleFieldChange({ description: strVal });
+              } else if (normalized === 'assignee') {
+                handleAssigneeChange(strVal);
+              } else if (normalized === 'status') {
+                handleStatusChange(strVal);
+              } else {
+                handleFieldChange({ [normalized]: strVal });
+              }
+            } else {
+              const metaKey = normalized.replace(/^metadata\./, '');
+              handleCustomFieldChange(metaKey, value);
+              handleCustomFieldCommit(metaKey, value);
+            }
+          }}
+          readOnly={isReadOnly}
         />
 
         {/* Title Input */}

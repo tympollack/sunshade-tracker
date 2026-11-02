@@ -244,4 +244,103 @@ describe('TASK-TRK-TRANSITION-GUARD-BUILDER-UI: TransitionGuardsEditor', () => {
 
     expect(screen.getByTestId('transition-guards-editor-section')).toBeInTheDocument();
   });
+
+  it('adds, updates, and deletes "when" applicability filter conditions', () => {
+    const handleChange = vi.fn();
+    render(<TransitionGuardsEditor settings={baseSettings} onChange={handleChange} />);
+
+    // Add 'when' condition
+    const addWhenBtn = screen.getByTestId('add-when-condition-guard-review-pr');
+    fireEvent.click(addWhenBtn);
+
+    expect(handleChange).toHaveBeenCalledTimes(1);
+    const updatedSettings = handleChange.mock.calls[0][0];
+    expect(updatedSettings.transition_guards[0].when).toHaveLength(1);
+    expect(updatedSettings.transition_guards[0].when[0].field).toBe('status');
+    expect(updatedSettings.transition_guards[0].when[0].operator).toBe('$eq');
+
+    // Re-render with the guard having a 'when' condition
+    const settingsWithWhen: ProjectSettings = {
+      ...baseSettings,
+      transition_guards: [
+        {
+          ...baseSettings.transition_guards![0],
+          when: [
+            {
+              field: 'item_type',
+              operator: '$eq',
+              value: 'story',
+            },
+          ],
+        },
+        baseSettings.transition_guards![1],
+      ],
+    };
+
+    const handleUpdateChange = vi.fn();
+    const { rerender } = render(
+      <TransitionGuardsEditor settings={settingsWithWhen} onChange={handleUpdateChange} />
+    );
+
+    // Update field
+    const whenFieldSelect = screen.getByTestId('when-field-select-guard-review-pr-0');
+    fireEvent.change(whenFieldSelect, { target: { value: 'metadata.target_words' } });
+
+    expect(handleUpdateChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transition_guards: expect.arrayContaining([
+          expect.objectContaining({
+            when: expect.arrayContaining([
+              expect.objectContaining({
+                field: 'metadata.target_words',
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+
+    // Update operator
+    const whenOpSelect = screen.getByTestId('when-operator-select-guard-review-pr-0');
+    fireEvent.change(whenOpSelect, { target: { value: '$gt' } });
+
+    expect(handleUpdateChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transition_guards: expect.arrayContaining([
+          expect.objectContaining({
+            when: expect.arrayContaining([
+              expect.objectContaining({
+                operator: '$gt',
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+
+    // Update value
+    const whenValInput = screen.getByTestId('when-value-input-guard-review-pr-0');
+    fireEvent.change(whenValInput, { target: { value: '500' } });
+
+    expect(handleUpdateChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transition_guards: expect.arrayContaining([
+          expect.objectContaining({
+            when: expect.arrayContaining([
+              expect.objectContaining({
+                value: '500',
+              }),
+            ]),
+          }),
+        ]),
+      })
+    );
+
+    // Delete when condition
+    const deleteWhenBtn = screen.getByTestId('delete-when-condition-guard-review-pr-0');
+    fireEvent.click(deleteWhenBtn);
+
+    const updatedAfterDelete = handleUpdateChange.mock.calls[handleUpdateChange.mock.calls.length - 1][0];
+    expect(updatedAfterDelete.transition_guards[0].when).toHaveLength(0);
+  });
 });

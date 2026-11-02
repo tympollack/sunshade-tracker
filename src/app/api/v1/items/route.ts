@@ -21,7 +21,7 @@ import {
   isItemCompleted,
 } from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
-import { validateTransitionGuards } from '@/lib/automation/guardEvaluator';
+import { evaluateTransitionGuards, validateTransitionGuards } from '@/lib/automation/guardEvaluator';
 
 /**
  * Automatically pages through Supabase PostgREST queries in 1000-row chunks
@@ -1389,7 +1389,7 @@ export async function PATCH(req: NextRequest) {
               ? resolvedMetadata
               : (existingItem.metadata || {});
 
-          const guardResult = validateTransitionGuards(
+          const guardResult = evaluateTransitionGuards(
             existingItem,
             status,
             effectiveProjectSettings,
@@ -1401,9 +1401,10 @@ export async function PATCH(req: NextRequest) {
           if (!guardResult.allowed) {
             return NextResponse.json(
               {
-                error: guardResult.errors.join('; '),
+                error: 'GUARD_REJECTED',
                 code: 'GUARD_REJECTED',
-                errors: guardResult.errors,
+                violations: guardResult.violations,
+                errors: guardResult.violations,
               },
               { status: 422 }
             );

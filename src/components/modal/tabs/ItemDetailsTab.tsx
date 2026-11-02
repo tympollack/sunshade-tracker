@@ -14,6 +14,7 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { isGitHubMetadataKey } from '@/lib/github-metadata';
 import { normalizeAssignee } from '@/lib/assignee-utils';
 import { TransitionGuardWarningBanner } from '@/components/board/TransitionGuardFeedback';
+import { TransitionChecklist } from '@/components/work-items/TransitionChecklist';
 
 export interface ItemDetailsTabProps {
   item: WorkItem;
@@ -187,6 +188,44 @@ export function ItemDetailsTab({
           handleUpdateField(fieldKey, '');
         }}
         testId="modal-transition-guard-warning"
+      />
+
+      {/* Dynamic Transition Verification Checklist */}
+      <TransitionChecklist
+        item={{
+          ...item,
+          title,
+          description,
+          assignee,
+          status,
+          item_type: itemType,
+          metadata,
+        }}
+        projectSettings={effectiveProjectSettings}
+        targetStatus={status}
+        onUpdateField={(fieldKey, value, fullPath) => {
+          const rawPath = (fullPath || fieldKey).trim();
+          const normalized = rawPath.replace(/^item\./, '');
+          const isCore =
+            rawPath.startsWith('item.') ||
+            (!rawPath.startsWith('metadata.') &&
+              ['title', 'description', 'assignee', 'status', 'item_type', 'type', 'external_ref_id', 'external_ref'].includes(normalized));
+
+          const strVal = value === null || value === undefined ? '' : String(value);
+
+          if (isCore) {
+            if (normalized === 'title') onTitleChange(strVal);
+            else if (normalized === 'description') onDescriptionChange(strVal);
+            else if (normalized === 'assignee') onAssigneeChange(strVal);
+            else if (normalized === 'status') onStatusChange(strVal);
+            else if (normalized === 'item_type' || normalized === 'type') onItemTypeChange(strVal);
+            else if (normalized === 'external_ref_id' || normalized === 'external_ref') onExternalRefChange(strVal);
+          } else {
+            const metaKey = normalized.replace(/^metadata\./, '');
+            handleUpdateField(metaKey, strVal);
+          }
+        }}
+        readOnly={isReadOnly || isLocked}
       />
 
       {/* Title */}

@@ -3,6 +3,7 @@ import { matchesCondition, resolveFieldValue, isBlankValue } from './predicateEv
 
 export interface TransitionGuardValidationResult {
   allowed: boolean;
+  violations: string[];
   errors: string[];
 }
 
@@ -144,28 +145,68 @@ export function mergeItemStateForGuard(
 }
 
 /**
- * Evaluates all active TransitionGuards configured for `newStatus` against `item`.
- * Returns `{ allowed: true, errors: [] }` when all conditions pass, or
- * `{ allowed: false, errors: string[] }` when one or more conditions fail.
+ * Evaluates whether an item satisfies a guard's optional `when` filter conditions.
+ * Returns true if the guard has no `when` conditions or if the conditions match the item.
  */
-export function validateTransitionGuards(
+export function evaluateGuardWhenClause(
+  guard: TransitionGuard,
+  item: Record<string, any>
+): boolean {
+  if (!guard.when || !Array.isArray(guard.when) || guard.when.length === 0) {
+    return true;
+  }
+
+  let conditionsPassed = true;
+  for (let cIdx = 0; cIdx < guard.when.length; cIdx++) {
+    const cond = guard.when[cIdx];
+    const passed = matchesCondition(item, cond);
+    if (cIdx === 0) {
+      conditionsPassed = passed;
+    } else if (cond.logic === 'OR') {
+      conditionsPassed = conditionsPassed || passed;
+    } else {
+      conditionsPassed = conditionsPassed && passed;
+    }
+  }
+  return conditionsPassed;
+}
+
+/**
+ * Checks whether an active guard applies to a given work item based on its `when` applicability filter.
+ */
+export function isGuardApplicable(
+  guard: TransitionGuard,
+  item: Record<string, any> | null | undefined
+): boolean {
+  if (!guard || guard.enabled === false) return false;
+  if (!item || typeof item !== 'object') return false;
+  return evaluateGuardWhenClause(guard, item);
+}
+
+/**
+ * Evaluates all active TransitionGuards configured for `newStatus` against `item`.
+ * Supports arbitrary metadata predicates, nested dot notation, and `when` applicability filters.
+ * Returns `{ allowed: true, violations: [], errors: [] }` when all conditions pass, or
+ * `{ allowed: false, violations: string[], errors: string[] }` when one or more conditions fail.
+ */
+export function evaluateTransitionGuards(
   item: Record<string, any> | null | undefined,
   newStatus: string,
   projectSettings?: ProjectSettings | { settings?: ProjectSettings } | TransitionGuard[] | null,
   patchOrMetadata?: Record<string, any> | null
 ): TransitionGuardValidationResult {
   if (!newStatus || typeof newStatus !== 'string') {
-    return { allowed: true, errors: [] };
+    return { allowed: true, violations: [], errors: [] };
   }
 
   const { settings, guards } = normalizeSettingsInput(projectSettings);
   if (!guards || guards.length === 0) {
-    return { allowed: true, errors: [] };
+    return { allowed: true, violations: [], errors: [] };
   }
 
   const normalizedTarget = newStatus.trim();
   const candidateItem = mergeItemStateForGuard(item, normalizedTarget, patchOrMetadata);
-  const errors: string[] = [];
+  const violations: string[] = [];
 
   for (const guard of guards) {
     if (!guard || typeof guard !== 'object') continue;
@@ -173,6 +214,11 @@ export function validateTransitionGuards(
 
     const resolvedTarget = resolveGuardTargetStatus(guard.target_status, settings);
     if (!resolvedTarget || resolvedTarget !== normalizedTarget) {
+      continue;
+    }
+
+    // Dynamic 'when' applicability check: skip if item is exempt
+    if (!evaluateGuardWhenClause(guard, candidateItem)) {
       continue;
     }
 
@@ -188,18 +234,24 @@ export function validateTransitionGuards(
           condition.message && String(condition.message).trim().length > 0
             ? String(condition.message).trim()
             : `Missing or invalid required field: ${condition.field}`;
-        if (!errors.includes(message)) {
-          errors.push(message);
+        if (!violations.includes(message)) {
+          violations.push(message);
         }
       }
     }
   }
 
   return {
-    allowed: errors.length === 0,
-    errors,
+    allowed: violations.length === 0,
+    violations,
+    errors: violations,
   };
 }
+
+/**
+ * Backwards-compatible alias for evaluateTransitionGuards.
+ */
+export const validateTransitionGuards = evaluateTransitionGuards;
 
 /**
  * Returns unmet transition guard requirements for an item across all active guards
@@ -224,13 +276,18 @@ export function getUnmetTransitionGuards(
     if (!resolvedTarget) continue;
     if (targetStatusFilter && resolvedTarget !== targetStatusFilter) continue;
 
+    const candidateItem = mergeItemStateForGuard(item, resolvedTarget);
+    if (!evaluateGuardWhenClause(guard, candidateItem)) {
+      continue; // Item is exempt from this guard based on `when` filter
+    }
+
     const statusDef = statuses.find((s: any) => s?.id === resolvedTarget);
     const targetStatusLabel = statusDef?.label || resolvedTarget;
 
     const conditions = Array.isArray(guard.conditions) ? guard.conditions : [];
     for (const condition of conditions) {
       if (!condition || typeof condition !== 'object' || !condition.field) continue;
-      if (!matchesCondition(item, condition)) {
+      if (!matchesCondition(candidateItem, condition)) {
         const fieldKey = condition.field
           .trim()
           .replace(/^item\./, '')

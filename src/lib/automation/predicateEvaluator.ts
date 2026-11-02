@@ -77,6 +77,32 @@ export function resolveFieldValue(
   return undefined;
 }
 
+/**
+ * Resolves template tokens (e.g. `{{item.assignee}}` or `{{metadata.reviewer}}`) within a comparison value.
+ * If the value is an exact token match (e.g. `{{item.assignee}}`), returns the resolved value directly.
+ * Otherwise, interpolates tokens into the string.
+ */
+export function resolveTokenValue(
+  value: any,
+  item: Record<string, any> | null | undefined
+): any {
+  if (typeof value !== 'string' || !value.includes('{{')) {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  const exactMatch = trimmed.match(/^\{\{\s*([^}]+?)\s*\}\}$/);
+  if (exactMatch) {
+    const tokenPath = exactMatch[1].trim();
+    return resolveFieldValue(item, tokenPath);
+  }
+
+  return value.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, tokenPath: string) => {
+    const resolved = resolveFieldValue(item, tokenPath.trim());
+    return resolved !== undefined && resolved !== null ? String(resolved) : '';
+  });
+}
+
 function isConditionObject(val: any): val is ConditionPredicate {
   return Boolean(
     val &&
@@ -113,7 +139,7 @@ export function matchesCondition(
   }
 
   const actual = resolveFieldValue(item, condition.field);
-  const expected = condition.value;
+  const expected = resolveTokenValue(condition.value, item);
   const op = (condition.operator || '$eq').trim().toLowerCase();
 
   switch (op) {

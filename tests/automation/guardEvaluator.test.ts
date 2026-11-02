@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { matchesCondition, resolveFieldValue, isBlankValue } from '@/lib/automation/predicateEvaluator';
 import {
+  evaluateTransitionGuards,
   validateTransitionGuards,
   resolveGuardTargetStatus,
   getUnmetTransitionGuards,
+  isGuardApplicable,
 } from '@/lib/automation/guardEvaluator';
 import { updateWorkItemStatus, updateWorkItem } from '@/app/actions/trackerActions';
 import { PATCH as patchItemsHandler } from '@/app/api/v1/items/route';
@@ -147,6 +149,45 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
       ).toBe(true);
       expect(isBlankValue('  ')).toBe(true);
     });
+
+    it('resolves comparison tokens (e.g. {{item.assignee}}) dynamically against work item in matchesCondition', () => {
+      const item = {
+        id: 'item-tok-1',
+        assignee: 'alice',
+        status: 'in_review',
+        metadata: {
+          owner: 'alice',
+          lead_dev: 'bob',
+        },
+      };
+
+      // Exact match token comparison: metadata.owner == {{item.assignee}} (both 'alice')
+      expect(
+        matchesCondition(item, {
+          field: 'metadata.owner',
+          operator: '$eq',
+          value: '{{item.assignee}}',
+        })
+      ).toBe(true);
+
+      // Comparison where token does not match: metadata.lead_dev == {{item.assignee}} ('bob' != 'alice')
+      expect(
+        matchesCondition(item, {
+          field: 'metadata.lead_dev',
+          operator: '$eq',
+          value: '{{item.assignee}}',
+        })
+      ).toBe(false);
+
+      // Embedded token in string:
+      expect(
+        matchesCondition(item, {
+          field: 'assignee',
+          operator: '$eq',
+          value: '{{metadata.owner}}',
+        })
+      ).toBe(true);
+    });
   });
 
   describe('validateTransitionGuards & token interpolation', () => {
@@ -195,6 +236,7 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
 
       expect(validateTransitionGuards(item, 'in_progress', sampleSettings)).toEqual({
         allowed: true,
+        violations: [],
         errors: [],
       });
     });
@@ -500,6 +542,157 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
       expect(json.success).toBe(true);
       expect(json.item.status).toBe('in_review');
       expect(json.item.metadata.pr_url).toBe('https://github.com/sunshade/tracker/pull/155');
+    });
+  });
+
+  describe('TASK-TRK-GENERIC-GUARD-EVALUATOR: Schema-Driven Predicate and Applicability Evaluator', () => {
+    const dynamicSettings: ProjectSettings = {
+      schema_version: '1.0',
+      hierarchy: [
+        { type: 'story', label: 'Story', level: 1, allowed_parents: [] },
+        { type: 'task', label: 'Task', level: 2, allowed_parents: ['story'] },
+      ],
+      statuses: [
+        { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
+        { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+        { id: 'in_review', label: 'In Review', color: '#f59e0b', order: 3 },
+        { id: 'complete', label: 'Complete', color: '#10b981', order: 4, is_completed: true },
+      ],
+      custom_fields: ['pr_url', 'security_signoff', 'coverage_pct', 'requires_code'],
+      transition_guards: [
+        {
+          id: 'guard-conditional-code',
+          name: 'Require Security Signoff and High Coverage When Code Required',
+          enabled: true,
+          target_status: 'complete',
+          when: [
+            {
+              field: 'metadata.requires_code',
+              operator: '$eq',
+              value: true,
+            },
+          ],
+          conditions: [
+            {
+              field: 'metadata.security_signoff',
+              operator: '$is_not_null',
+              message: 'Security sign-off is required for code tasks.',
+            },
+            {
+              field: 'metadata.coverage_pct',
+              operator: '$gte',
+              value: 80,
+              message: 'Code coverage must be at least 80%.',
+            },
+          ],
+        },
+        {
+          id: 'guard-documentation-only',
+          name: 'Require Sign-off for Stories Only',
+          enabled: true,
+          target_status: 'in_review',
+          when: [
+            {
+              field: 'item_type',
+              operator: '$eq',
+              value: 'story',
+            },
+          ],
+          conditions: [
+            {
+              field: 'metadata.editorial_review',
+              operator: '$eq',
+              value: 'approved',
+              message: 'Stories require editorial review approval.',
+            },
+          ],
+        },
+      ],
+    };
+
+    it('evaluates guard.when: bypasses guard entirely when applicability condition is false', () => {
+      // Non-code task: requires_code is false
+      const nonCodeItem = {
+        id: 'task-doc-1',
+        item_type: 'task',
+        status: 'in_progress',
+        metadata: {
+          requires_code: false,
+        },
+      };
+
+      const result = evaluateTransitionGuards(nonCodeItem, 'complete', dynamicSettings);
+      expect(result.allowed).toBe(true);
+      expect(result.violations).toHaveLength(0);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('evaluates guard.when: enforces conditions when applicability condition is true', () => {
+      // Code task without signoff or coverage
+      const codeItem = {
+        id: 'task-code-1',
+        item_type: 'task',
+        status: 'in_progress',
+        metadata: {
+          requires_code: true,
+          coverage_pct: 75,
+        },
+      };
+
+      const result = evaluateTransitionGuards(codeItem, 'complete', dynamicSettings);
+      expect(result.allowed).toBe(false);
+      expect(result.violations).toContain('Security sign-off is required for code tasks.');
+      expect(result.violations).toContain('Code coverage must be at least 80%.');
+      expect(result.errors).toEqual(result.violations);
+    });
+
+    it('allows transition when all applicable multi-conditions pass', () => {
+      const codeItemPassing = {
+        id: 'task-code-2',
+        item_type: 'task',
+        status: 'in_progress',
+        metadata: {
+          requires_code: true,
+          security_signoff: 'sec-ops-alice',
+          coverage_pct: 92,
+        },
+      };
+
+      const result = evaluateTransitionGuards(codeItemPassing, 'complete', dynamicSettings);
+      expect(result.allowed).toBe(true);
+      expect(result.violations).toHaveLength(0);
+    });
+
+    it('isGuardApplicable returns boolean indicating whether item matches when filter', () => {
+      const guard = dynamicSettings.transition_guards![0];
+      expect(isGuardApplicable(guard, { metadata: { requires_code: true } })).toBe(true);
+      expect(isGuardApplicable(guard, { metadata: { requires_code: false } })).toBe(false);
+      expect(isGuardApplicable(guard, {})).toBe(false);
+    });
+
+    it('filters out exempt guards in getUnmetTransitionGuards based on when clause', () => {
+      const taskItem = {
+        id: 'task-unmet-1',
+        item_type: 'task',
+        status: 'in_progress',
+        metadata: {},
+      };
+
+      // Since item_type is 'task', the story-only guard is exempt
+      const unmet = getUnmetTransitionGuards(taskItem, dynamicSettings, 'in_review');
+      expect(unmet).toHaveLength(0);
+
+      // But for a story, it should flag editorial_review requirement
+      const storyItem = {
+        id: 'story-unmet-1',
+        item_type: 'story',
+        status: 'in_progress',
+        metadata: {},
+      };
+      const storyUnmet = getUnmetTransitionGuards(storyItem, dynamicSettings, 'in_review');
+      expect(storyUnmet).toHaveLength(1);
+      expect(storyUnmet[0].fieldKey).toBe('editorial_review');
+      expect(storyUnmet[0].message).toBe('Stories require editorial review approval.');
     });
   });
 });

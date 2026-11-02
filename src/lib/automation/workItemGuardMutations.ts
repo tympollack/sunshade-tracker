@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/db';
 import { calculateOrderIndex } from '@/lib/fractional-index';
 import type { ProjectSettings, WorkItem } from '@/types/tracker';
-import { validateTransitionGuards } from './guardEvaluator';
+import { evaluateTransitionGuards, validateTransitionGuards } from './guardEvaluator';
 
 export interface GuardMutationResult {
   success: boolean;
@@ -9,6 +9,7 @@ export interface GuardMutationResult {
   code?: 'GUARD_REJECTED' | string;
   error?: string;
   errors?: string[];
+  violations?: string[];
   item?: WorkItem | any;
 }
 
@@ -139,7 +140,7 @@ export async function performUpdateWorkItemStatus(
       ? providedSettings
       : await loadProjectSettings(existingItem.project_id);
 
-  const guardResult = validateTransitionGuards(
+  const guardResult = evaluateTransitionGuards(
     existingItem,
     targetStatus,
     projectSettings,
@@ -151,8 +152,9 @@ export async function performUpdateWorkItemStatus(
       success: false,
       status: 422,
       code: 'GUARD_REJECTED',
-      error: guardResult.errors.join('; '),
-      errors: guardResult.errors,
+      error: 'GUARD_REJECTED',
+      violations: guardResult.violations,
+      errors: guardResult.violations,
     };
   }
 
@@ -233,7 +235,7 @@ export async function performUpdateWorkItem(
         ? options.projectSettings
         : await loadProjectSettings(updates.project_id || existingItem.project_id);
 
-    const guardResult = validateTransitionGuards(
+    const guardResult = evaluateTransitionGuards(
       existingItem,
       targetStatus,
       projectSettings,
@@ -245,8 +247,9 @@ export async function performUpdateWorkItem(
         success: false,
         status: 422,
         code: 'GUARD_REJECTED',
-        error: guardResult.errors.join('; '),
-        errors: guardResult.errors,
+        error: 'GUARD_REJECTED',
+        violations: guardResult.violations,
+        errors: guardResult.violations,
       };
     }
   }
