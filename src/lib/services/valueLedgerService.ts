@@ -73,40 +73,120 @@ const DEFAULT_VELOCITY_FACTOR = '+18%';
 export const ECOSYSTEM_NOTE =
   'Built to eliminate busywork. Spend your reclaimed hours building, not managing administrative overhead.';
 
+export const COMPLETION_STATUSES = new Set(['complete', 'completed', 'done', 'closed', 'resolved']);
+
+const GIT_COMMIT_SHA_REGEX = /^(commit-|sha-)?[0-9a-f]{3,40}$/i;
+const PR_URL_REGEX = /^https?:\/\/[^\s/$.?#].[^\s]*(\/pull\/|\/merge_requests?\/|\/pull-requests?\/)\d+/i;
+const ZKP_PROOF_REGEX = /^[a-zA-Z0-9_\-]{8,128}$/;
+
 /**
  * Validates whether a completed item possesses verifiable artifact proof of execution.
- * Checks for commit hashes, pull requests, ZKP attestations, or AI telemetry logs.
+ * Checks for git commit hashes, pull requests, ZKP attestations, or structured AI telemetry logs.
  */
 export function hasVerifiableArtifactProof(
   item: WorkItemWithProjectMode
 ): ItemVerificationProof {
   const meta = item.metadata || {};
 
-  if (meta.commit_sha || meta.commit_hash) {
+  // 1. Git Commit SHA / Hash
+  if (meta.commit_sha && GIT_COMMIT_SHA_REGEX.test(String(meta.commit_sha).trim())) {
     return {
       hasArtifactProof: true,
       proofType: 'commit_sha',
-      proofRef: String(meta.commit_sha || meta.commit_hash),
+      proofRef: String(meta.commit_sha).trim(),
     };
   }
 
-  if (meta.pr_url || meta.pr_number) {
+  if (meta.commit_hash && GIT_COMMIT_SHA_REGEX.test(String(meta.commit_hash).trim())) {
     return {
       hasArtifactProof: true,
-      proofType: 'pr_url',
-      proofRef: String(meta.pr_url || meta.pr_number),
+      proofType: 'commit_sha',
+      proofRef: String(meta.commit_hash).trim(),
     };
   }
 
-  if (meta.zkp_attestation_id || meta.zkp_hash) {
-    return {
-      hasArtifactProof: true,
-      proofType: 'zkp_attestation_id',
-      proofRef: String(meta.zkp_attestation_id || meta.zkp_hash),
-    };
+  if (Array.isArray(meta.commit_hashes)) {
+    const validHash = meta.commit_hashes.find(
+      (h: any) => typeof h === 'string' && GIT_COMMIT_SHA_REGEX.test(h.trim())
+    );
+    if (validHash) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'commit_sha',
+        proofRef: String(validHash).trim(),
+      };
+    }
   }
 
-  if (meta.has_ai_logs === true || (Array.isArray(meta.ai_usage_logs) && meta.ai_usage_logs.length > 0)) {
+  // 2. Pull Request URL or Number
+  if (meta.pr_url && typeof meta.pr_url === 'string') {
+    const trimmed = meta.pr_url.trim();
+    if (PR_URL_REGEX.test(trimmed) || (trimmed.startsWith('http') && trimmed.includes('/pull/'))) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'pr_url',
+        proofRef: trimmed,
+      };
+    }
+  }
+
+  if (Array.isArray(meta.pr_urls)) {
+    const validUrl = meta.pr_urls.find(
+      (u: any) =>
+        typeof u === 'string' &&
+        (PR_URL_REGEX.test(u.trim()) || (u.trim().startsWith('http') && u.includes('/pull/')))
+    );
+    if (validUrl) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'pr_url',
+        proofRef: String(validUrl).trim(),
+      };
+    }
+  }
+
+  if (meta.pr_number !== undefined && meta.pr_number !== null) {
+    const isNum = typeof meta.pr_number === 'number' && Number.isInteger(meta.pr_number) && meta.pr_number > 0;
+    const isNumStr = typeof meta.pr_number === 'string' && /^\d+$/.test(meta.pr_number.trim()) && Number(meta.pr_number.trim()) > 0;
+    if (isNum || isNumStr) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'pr_url',
+        proofRef: String(meta.pr_number).trim(),
+      };
+    }
+  }
+
+  // 3. ZKP Attestation
+  if (meta.zkp_attestation_id) {
+    const s = String(meta.zkp_attestation_id).trim();
+    if (ZKP_PROOF_REGEX.test(s) && !/^(true|false|null|undefined)$/i.test(s)) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'zkp_attestation_id',
+        proofRef: s,
+      };
+    }
+  }
+
+  if (meta.zkp_hash) {
+    const s = String(meta.zkp_hash).trim();
+    if (ZKP_PROOF_REGEX.test(s) && !/^(true|false|null|undefined)$/i.test(s)) {
+      return {
+        hasArtifactProof: true,
+        proofType: 'zkp_attestation_id',
+        proofRef: s,
+      };
+    }
+  }
+
+  // 4. Structured AI Telemetry Logs
+  if (
+    Array.isArray(meta.ai_usage_logs) &&
+    meta.ai_usage_logs.length > 0 &&
+    typeof meta.ai_usage_logs[0] === 'object' &&
+    meta.ai_usage_logs[0] !== null
+  ) {
     return {
       hasArtifactProof: true,
       proofType: 'ai_usage_logs',
@@ -141,13 +221,34 @@ export function computeEfficiencyMetrics(
   let unverifiedExcludedCount = 0;
   let activeProjectsCount = opts.activeProjectsCount ?? 0;
   let totalItemsCount = opts.totalItemsCount ?? 0;
+  let effectiveProjectMonths = 0;
+
+  // Calculate period duration in months
+  let durationMonths = opts.periodMultiplier ?? 1;
+  if (!opts.periodMultiplier && opts.startDate && opts.endDate) {
+    const sMs = new Date(opts.startDate).getTime();
+    const eMs = new Date(opts.endDate).getTime();
+    if (!isNaN(sMs) && !isNaN(eMs) && eMs >= sMs) {
+      const days = (eMs - sMs) / (1000 * 60 * 60 * 24);
+      if (days >= 350 && days <= 370) {
+        durationMonths = 12;
+      } else if (days >= 85 && days <= 95) {
+        durationMonths = 3;
+      } else if (days >= 27 && days <= 32) {
+        durationMonths = 1;
+      } else {
+        durationMonths = Number(Math.max(1 / 30, days / 30.4375).toFixed(2));
+      }
+    }
+  }
 
   if (Array.isArray(opts.items)) {
     totalItemsCount = opts.items.length;
     const projectVerifiedCounts = new Map<string, number>();
 
     for (const item of opts.items) {
-      const isCompleted = item.status === 'complete';
+      const status = String(item.status || '').toLowerCase().trim();
+      const isCompleted = item.is_completed === true || COMPLETION_STATUSES.has(status);
       if (!isCompleted) continue;
 
       const ledgerMode: LedgerMode = item.project_ledger_mode || 'standard_workspace';
@@ -173,12 +274,49 @@ export function computeEfficiencyMetrics(
 
     // Projects qualifying for hierarchical status rollup: non-personal and >= 3 verified items
     let qualifyingProjects = 0;
-    for (const count of projectVerifiedCounts.values()) {
+    const qualifyingProjectIds = new Set<string>();
+    for (const [projId, count] of projectVerifiedCounts.entries()) {
       if (count >= 3) {
         qualifyingProjects++;
+        qualifyingProjectIds.add(projId);
       }
     }
     activeProjectsCount = qualifyingProjects;
+
+    // Track active months strictly for qualifying commercial projects
+    const qualifyingProjectMonthsMap = new Map<string, Set<string>>();
+    for (const item of opts.items) {
+      if (!item.project_id || !qualifyingProjectIds.has(item.project_id)) continue;
+      const tsList = [item.created_at, item.updated_at, item.metadata?.completed_at]
+        .filter(Boolean)
+        .map((t: string) => new Date(t).getTime())
+        .filter((ms: number) => !isNaN(ms) && ms > 0);
+      if (tsList.length > 0) {
+        if (!qualifyingProjectMonthsMap.has(item.project_id)) {
+          qualifyingProjectMonthsMap.set(item.project_id, new Set<string>());
+        }
+        const set = qualifyingProjectMonthsMap.get(item.project_id)!;
+        for (const ms of tsList) {
+          set.add(new Date(ms).toISOString().slice(0, 7));
+        }
+      }
+    }
+
+    let calculatedProjectMonths = 0;
+    for (const set of qualifyingProjectMonthsMap.values()) {
+      calculatedProjectMonths += set.size;
+    }
+    if (calculatedProjectMonths === 0 && qualifyingProjects > 0) {
+      calculatedProjectMonths = Number((qualifyingProjects * durationMonths).toFixed(2));
+    }
+
+    // If zero qualifying projects, hierarchy hours and project-months must strictly be 0
+    effectiveProjectMonths =
+      qualifyingProjects === 0
+        ? 0
+        : opts.projectMonths !== undefined
+        ? Math.min(opts.projectMonths, calculatedProjectMonths)
+        : calculatedProjectMonths;
   } else {
     // Fallback when aggregate counts are passed directly
     personalExcludedCount = opts.personalExcludedCount ?? 0;
@@ -198,6 +336,13 @@ export function computeEfficiencyMetrics(
     if (opts.qualifyingProjectsCount !== undefined) {
       activeProjectsCount = opts.qualifyingProjectsCount;
     }
+
+    effectiveProjectMonths =
+      activeProjectsCount === 0
+        ? 0
+        : opts.projectMonths !== undefined
+        ? opts.projectMonths
+        : activeProjectsCount * durationMonths;
   }
 
   const completedCount = standardOrAuditedCompletedCount;
@@ -208,32 +353,8 @@ export function computeEfficiencyMetrics(
       ? '0%'
       : DEFAULT_VELOCITY_FACTOR;
 
-  // Calculate period duration in months
-  let durationMonths = opts.periodMultiplier ?? 1;
-  if (!opts.periodMultiplier && opts.startDate && opts.endDate) {
-    const sMs = new Date(opts.startDate).getTime();
-    const eMs = new Date(opts.endDate).getTime();
-    if (!isNaN(sMs) && !isNaN(eMs) && eMs >= sMs) {
-      const days = (eMs - sMs) / (1000 * 60 * 60 * 24);
-      if (days >= 350 && days <= 370) {
-        durationMonths = 12;
-      } else if (days >= 85 && days <= 95) {
-        durationMonths = 3;
-      } else if (days >= 27 && days <= 32) {
-        durationMonths = 1;
-      } else {
-        durationMonths = Number(Math.max(1 / 30, days / 30.4375).toFixed(2));
-      }
-    }
-  }
-
   // ─── Itemized Yield Breakdown ──────────────────────────────────────────────
   // 1. Hierarchical Status Rollup: 2.0 hrs per qualifying active project/month
-  const effectiveProjectMonths =
-    opts.projectMonths !== undefined
-      ? opts.projectMonths
-      : activeProjectsCount * durationMonths;
-
   const hierarchyHours = Number((effectiveProjectMonths * 2.0).toFixed(2));
   const hierarchyValue = Number((hierarchyHours * rate).toFixed(2));
 

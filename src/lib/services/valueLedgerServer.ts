@@ -43,10 +43,10 @@ export async function getTenantEfficiencyMetrics(
     throw new Error(`Workspace "@${tenantSlug}" not found.`);
   }
 
-  // 2. Fetch projects with settings to resolve dynamic completion status mappings
+  // 2. Fetch projects with settings to resolve dynamic completion status mappings and ledger mode
   let projectQuery: any = service
     .from('projects')
-    .select('id, slug, name, settings')
+    .select('id, slug, name, settings, ledger_mode')
     .eq('tenant_id', tenant.id);
 
   if (typeof projectQuery.is === 'function') {
@@ -247,13 +247,52 @@ export async function getTenantEfficiencyMetrics(
       ? Number((activeProjectsCount * periodMultiplier).toFixed(2))
       : totalProjectMonths;
 
+  // Build project-specific ledger mode lookup map
+  const projectLedgerModeMap = new Map<string, any>();
+  for (const proj of projectList) {
+    const mode = proj.ledger_mode || proj.settings?.ledger_mode || 'standard_workspace';
+    projectLedgerModeMap.set(proj.id, mode);
+  }
+
+  // Map candidate items with resolved ledger modes and normalized completion statuses
+  const periodItems = itemList
+    .filter((item: any) => {
+      const completionTime = getCompletionTimestamp(item);
+      if (completionTime !== null) {
+        return isAllTime || (completionTime >= startMs && completionTime <= endMs);
+      }
+      const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+      return isAllTime || (createdMs >= startMs && createdMs <= endMs);
+    })
+    .map((item: any) => {
+      const allowed =
+        (item.project_id && projectCompletionMap.get(item.project_id)) ||
+        DEFAULT_COMPLETION_STATUSES;
+      const rawStatus = String(item.status || '').toLowerCase().trim();
+      const isCandidate = allowed.has(rawStatus);
+      const completionTime = isCandidate ? getCompletionTimestamp(item) : null;
+      const isCompleted =
+        completionTime !== null &&
+        (isAllTime || (completionTime >= startMs && completionTime <= endMs));
+
+      return {
+        id: item.id,
+        project_id: item.project_id,
+        project_ledger_mode: projectLedgerModeMap.get(item.project_id) || 'standard_workspace',
+        status: isCompleted ? 'complete' : item.status,
+        metadata: item.metadata || {},
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        assignee: item.assignee,
+        assignee_id: item.assignee_id,
+      };
+    });
+
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,
     tenantName: tenant.name,
     tier: tenant.tier,
-    completedItemsCount: completedCount,
-    activeProjectsCount,
-    totalItemsCount,
+    items: periodItems,
     startDate,
     endDate,
     periodMultiplier,

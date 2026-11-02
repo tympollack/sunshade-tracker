@@ -328,14 +328,14 @@ describe('Value Realization Ledger Service', () => {
           project_id: 'proj-a',
           project_ledger_mode: 'standard_workspace' as const,
           status: 'complete',
-          metadata: { commit_sha: 'sha-a1' },
+          metadata: { commit_sha: 'sha-a1b2c3d' },
         },
         {
           id: 'item-a2',
           project_id: 'proj-a',
           project_ledger_mode: 'standard_workspace' as const,
           status: 'complete',
-          metadata: { commit_sha: 'sha-a2' },
+          metadata: { commit_sha: 'sha-a2b2c3d' },
         },
         {
           id: 'item-b1',
@@ -370,6 +370,98 @@ describe('Value Realization Ledger Service', () => {
       const [hierarchy] = res.itemizedYields;
       expect(hierarchy.hoursReclaimed).toBe(2.0);
       expect(hierarchy.metric).toBe('1 active project (1 proj-mo)');
+    });
+
+    it('verifies array-only artifact records (commit_hashes and pr_urls arrays)', () => {
+      const items = [
+        {
+          id: 'item-arr-1',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'done',
+          metadata: { pr_urls: ['https://github.com/acme/app/pull/7'] },
+        },
+        {
+          id: 'item-arr-2',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'completed',
+          metadata: { commit_hashes: ['0123456789abcdef0123456789abcdef01234567'] },
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items,
+      });
+
+      expect(res.kpis.completedItemsCount).toBe(2);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(2);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(0);
+      expect(res.itemizedYields[2].hoursReclaimed).toBe(0.4); // 2 * 0.20 hrs
+    });
+
+    it('rejects fabricated or malformed artifact metadata', () => {
+      const fakeItems = [
+        {
+          id: 'fake-1',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { commit_sha: 'yes' }, // Too short / non-hex
+        },
+        {
+          id: 'fake-2',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { pr_url: 'http://example.com' }, // Not a pull request URL
+        },
+        {
+          id: 'fake-3',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { has_ai_logs: true }, // Boolean shortcut without telemetry objects
+        },
+        {
+          id: 'fake-4',
+          project_id: 'proj-1',
+          project_ledger_mode: 'standard_workspace' as const,
+          status: 'complete',
+          metadata: { zkp_attestation_id: 'true' }, // Invalid reserved token
+        },
+      ];
+
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'acme-corp',
+        items: fakeItems,
+      });
+
+      expect(res.kpis.completedItemsCount).toBe(4);
+      expect(res.kpis.breakdown?.verifiedArtifactCount).toBe(0);
+      expect(res.kpis.breakdown?.unverifiedExcludedCount).toBe(4);
+      expect(res.itemizedYields[2].hoursReclaimed).toBe(0); // 0 autonomous hours
+    });
+
+    it('returns zero hierarchy hours when only personal items exist, even if projectMonths is provided', () => {
+      const res = computeEfficiencyMetrics({
+        tenantSlug: 'demo',
+        items: [
+          {
+            id: '1',
+            project_id: 'p',
+            status: 'complete',
+            project_ledger_mode: 'personal_organizer' as const,
+          },
+        ],
+        projectMonths: 1,
+      });
+
+      expect(res.kpis.activeProjectsCount).toBe(0);
+      expect(res.kpis.totalHoursReclaimed).toBe(0);
+      expect(res.itemizedYields[0].hoursReclaimed).toBe(0);
+      expect(res.itemizedYields[0].realizedValue).toBe(0);
     });
   });
 });

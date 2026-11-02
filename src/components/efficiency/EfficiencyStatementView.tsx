@@ -337,6 +337,9 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
               <span className="text-xs font-bold uppercase tracking-wider text-slate-200 print:text-black">
                 Sovereign Token Yield & Verification Filter
               </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 print:hidden">
+                Projected Eligibility
+              </span>
             </div>
             <div className="flex items-center space-x-2 flex-wrap gap-y-1 print:hidden">
               <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
@@ -368,7 +371,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
                   <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
-                  Minted to System Bounty Escrow (3,000 tokens/item upkeep dividend)
+                  Projected Escrow Allocation (3,000 tokens/item upkeep dividend for commercial triage)
                 </p>
               </div>
             </div>
@@ -385,7 +388,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
                   <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
-                  Minted to Assignee Wallets (12,000 tokens baseline for verified artifacts)
+                  Projected Assignee Allocation (12,000 tokens baseline for verified artifacts, scaled by neglect multiplier)
                 </p>
               </div>
             </div>

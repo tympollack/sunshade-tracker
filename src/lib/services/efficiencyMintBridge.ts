@@ -71,7 +71,11 @@ export function calculateItemEfficiencyYield(
   // Stream B: Personal Execution Bounty
   const proof = hasVerifiableArtifactProof(item);
   const rawNeglect = Number(item.metadata?.neglect_multiplier ?? 1.0);
-  const neglectMultiplier = isNaN(rawNeglect) || rawNeglect < 1.0 ? 1.0 : rawNeglect;
+  // Neglect multiplier clamped to [1.0, 3.0] (3x maximum capacity yield cap) to prevent artificial inflation
+  const neglectMultiplier =
+    !Number.isFinite(rawNeglect) || rawNeglect < 1.0
+      ? 1.0
+      : Math.min(3.0, Number(rawNeglect.toFixed(4)));
 
   if (!proof.hasArtifactProof) {
     return {
@@ -150,11 +154,12 @@ export async function attestAndMintEfficiencyYield(
     };
   }
 
-  const workItemId = params?.workItemId || item.id;
-  const tenantId = params?.tenantId || item.tenant_id;
-  const projectId = params?.projectId || item.project_id;
-  const assignee = params?.assignee || item.assignee;
-  const recipientUserId = params?.recipientUserId || item.assignee_id || null;
+  // Authoritative identity derivation: strictly bound to verified work item to prevent reward redirection
+  const workItemId = item.id;
+  const tenantId = item.tenant_id;
+  const projectId = item.project_id;
+  const assignee = item.assignee;
+  const recipientUserId = item.assignee_id || null;
 
   const rpcPayload = {
     p_work_item_id: workItemId,

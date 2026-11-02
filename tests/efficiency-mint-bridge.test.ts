@@ -245,12 +245,65 @@ describe('Dual-Recipient Efficiency Mint Bridge Service', () => {
         project_id: 'p-1',
         project_ledger_mode: 'standard_workspace',
         status: 'complete',
-        metadata: { commit_sha: 'sha-abc' },
+        metadata: { commit_sha: 'commit-abcdef123456' },
       };
 
       await expect(attestAndMintEfficiencyYield(mockClient, item)).rejects.toThrow(
         'RPC attest_and_mint_efficiency_yield failed: Unique violation on work_item_id'
       );
+    });
+
+    it('clamps neglect_multiplier between 1.0 and 3.0 to prevent bounty inflation', () => {
+      const inflatedItem: WorkItemWithProjectMode = {
+        id: 'item-inflated',
+        project_id: 'p-1',
+        project_ledger_mode: 'standard_workspace',
+        status: 'complete',
+        metadata: {
+          commit_sha: 'commit-abcdef123456',
+          neglect_multiplier: 999.0, // Attempted 999x inflation
+        },
+      };
+
+      const res = calculateItemEfficiencyYield(inflatedItem);
+      expect(res.neglectMultiplier).toBe(3.0);
+      expect(res.bountyTokens).toBe(36000); // 0.20 hrs * 60,000 * 3.0
+    });
+
+    it('locks authoritative IDs strictly to the verified item, ignoring caller override attempts', async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: { status: 'attested', attestation: { id: 'att-1' } },
+        error: null,
+      });
+      const mockClient = { rpc: mockRpc };
+
+      const item: WorkItemWithProjectMode = {
+        id: 'real-item-id',
+        tenant_id: 'real-tenant-id',
+        project_id: 'real-project-id',
+        project_ledger_mode: 'standard_workspace',
+        status: 'complete',
+        assignee: 'real-runner',
+        assignee_id: 'real-user-id',
+        metadata: { commit_sha: 'commit-abcdef123456' },
+      };
+
+      // Attacker passes params attempting to redirect mint to evil IDs
+      await attestAndMintEfficiencyYield(mockClient, item, {
+        workItemId: 'evil-work-item-id',
+        tenantId: 'evil-tenant-id',
+        recipientUserId: 'evil-user-id',
+        assignee: 'evil-runner',
+      } as any);
+
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+      const [, rpcPayload] = mockRpc.mock.calls[0];
+
+      expect(rpcPayload.p_work_item_id).toBe('real-item-id');
+      expect(rpcPayload.p_tenant_id).toBe('real-tenant-id');
+      expect(rpcPayload.p_project_id).toBe('real-project-id');
+      expect(rpcPayload.p_assignee).toBe('real-runner');
+      expect(rpcPayload.p_recipient_user_id).toBe('real-user-id');
     });
   });
 });
