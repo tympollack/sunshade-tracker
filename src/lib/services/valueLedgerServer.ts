@@ -196,21 +196,30 @@ export async function getTenantEfficiencyMetrics(
 
   const totalItemsCount = itemList.length;
 
+  // Build project-specific ledger mode lookup map
+  const projectLedgerModeMap = new Map<string, any>();
+  for (const proj of projectList) {
+    const mode = proj.ledger_mode || proj.settings?.ledger_mode || 'standard_workspace';
+    projectLedgerModeMap.set(proj.id, mode);
+  }
+
   // Active projects and active project-months tracking (BUG-TRK-PROJECT-MONTH-SCALING)
-  // Track distinct calendar months (YYYY-MM) in which each project had activity within the window.
-  // This prevents brief activity (e.g. 1 task created in Jan) from receiving a full 12 months of savings in annual reports.
+  // Track distinct calendar months (YYYY-MM) in which each non-personal project had activity within the window.
   const projectActiveMonthsMap = new Map<string, Set<string>>();
 
   for (const item of itemList) {
     const projId = item.project_id;
     if (!projId) continue;
+    // Exclude personal organizer projects from commercial hierarchy tracking
+    const ledgerMode = projectLedgerModeMap.get(projId);
+    if (ledgerMode === 'personal_organizer') continue;
 
     const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
     const updatedMs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
     const completedMs = getCompletionTimestamp(item) || 0;
 
     const timestamps = [createdMs, updatedMs, completedMs].filter(
-      (ts) => ts > 0 && (isAllTime || (ts >= startMs && ts <= endMs))
+      (ts) => ts > 0 && ts >= startMs && ts <= endMs
     );
 
     if (timestamps.length > 0) {
@@ -247,51 +256,37 @@ export async function getTenantEfficiencyMetrics(
       ? Number((activeProjectsCount * periodMultiplier).toFixed(2))
       : totalProjectMonths;
 
-  // Build project-specific ledger mode lookup map
-  const projectLedgerModeMap = new Map<string, any>();
-  for (const proj of projectList) {
-    const mode = proj.ledger_mode || proj.settings?.ledger_mode || 'standard_workspace';
-    projectLedgerModeMap.set(proj.id, mode);
-  }
-
-  // Map candidate items with resolved ledger modes and normalized completion statuses
+  // Map candidate items completed within the period window with resolved ledger modes
   const periodItems = itemList
     .filter((item: any) => {
-      const completionTime = getCompletionTimestamp(item);
-      if (completionTime !== null) {
-        return isAllTime || (completionTime >= startMs && completionTime <= endMs);
-      }
-      const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
-      return isAllTime || (createdMs >= startMs && createdMs <= endMs);
-    })
-    .map((item: any) => {
       const allowed =
         (item.project_id && projectCompletionMap.get(item.project_id)) ||
         DEFAULT_COMPLETION_STATUSES;
       const rawStatus = String(item.status || '').toLowerCase().trim();
       const isCandidate = allowed.has(rawStatus);
       const completionTime = isCandidate ? getCompletionTimestamp(item) : null;
-      const isCompleted =
-        completionTime !== null &&
-        (isAllTime || (completionTime >= startMs && completionTime <= endMs));
-
-      return {
-        id: item.id,
-        project_id: item.project_id,
-        project_ledger_mode: projectLedgerModeMap.get(item.project_id) || 'standard_workspace',
-        status: isCompleted ? 'complete' : item.status,
-        metadata: item.metadata || {},
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        assignee: item.assignee,
-        assignee_id: item.assignee_id,
-      };
-    });
+      return completionTime !== null && completionTime >= startMs && completionTime <= endMs;
+    })
+    .map((item: any) => ({
+      id: item.id,
+      project_id: item.project_id,
+      project_ledger_mode: projectLedgerModeMap.get(item.project_id) || 'standard_workspace',
+      status: 'complete',
+      is_completed: true,
+      metadata: item.metadata || {},
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+      assignee: item.assignee,
+      assignee_id: item.assignee_id,
+    }));
 
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,
     tenantName: tenant.name,
     tier: tenant.tier,
+    completedItemsCount: completedCount,
+    activeProjectsCount,
+    totalItemsCount,
     items: periodItems,
     startDate,
     endDate,

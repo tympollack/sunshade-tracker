@@ -243,15 +243,20 @@ export function computeEfficiencyMetrics(
   }
 
   if (Array.isArray(opts.items)) {
-    totalItemsCount = opts.items.length;
+    totalItemsCount = opts.totalItemsCount ?? opts.items.length;
     const projectVerifiedCounts = new Map<string, number>();
+    let personalItemsCount = 0;
 
     for (const item of opts.items) {
       const status = String(item.status || '').toLowerCase().trim();
-      const isCompleted = item.is_completed === true || COMPLETION_STATUSES.has(status);
-      if (!isCompleted) continue;
+      const isCompleted = item.is_completed !== undefined ? Boolean(item.is_completed) : COMPLETION_STATUSES.has(status);
 
       const ledgerMode: LedgerMode = item.project_ledger_mode || 'standard_workspace';
+      if (ledgerMode === 'personal_organizer') {
+        personalItemsCount++;
+      }
+
+      if (!isCompleted) continue;
 
       if (ledgerMode === 'personal_organizer') {
         // Excluded from commercial statements
@@ -281,42 +286,59 @@ export function computeEfficiencyMetrics(
         qualifyingProjectIds.add(projId);
       }
     }
-    activeProjectsCount = qualifyingProjects;
 
-    // Track active months strictly for qualifying commercial projects
-    const qualifyingProjectMonthsMap = new Map<string, Set<string>>();
-    for (const item of opts.items) {
-      if (!item.project_id || !qualifyingProjectIds.has(item.project_id)) continue;
-      const tsList = [item.created_at, item.updated_at, item.metadata?.completed_at]
-        .filter(Boolean)
-        .map((t: string) => new Date(t).getTime())
-        .filter((ms: number) => !isNaN(ms) && ms > 0);
-      if (tsList.length > 0) {
-        if (!qualifyingProjectMonthsMap.has(item.project_id)) {
-          qualifyingProjectMonthsMap.set(item.project_id, new Set<string>());
-        }
-        const set = qualifyingProjectMonthsMap.get(item.project_id)!;
-        for (const ms of tsList) {
-          set.add(new Date(ms).toISOString().slice(0, 7));
+    // If activeProjectsCount is explicitly passed, respect it unless all items are personal organizer items
+    const isPersonalOnly = opts.items.length > 0 && personalItemsCount === opts.items.length;
+
+    if (isPersonalOnly) {
+      activeProjectsCount = 0;
+      effectiveProjectMonths = 0;
+    } else if (opts.activeProjectsCount !== undefined) {
+      activeProjectsCount = opts.activeProjectsCount;
+      effectiveProjectMonths =
+        activeProjectsCount === 0
+          ? 0
+          : opts.projectMonths !== undefined
+          ? opts.projectMonths
+          : activeProjectsCount * durationMonths;
+    } else {
+      activeProjectsCount = qualifyingProjects;
+
+      // Track active months strictly for qualifying commercial projects
+      const qualifyingProjectMonthsMap = new Map<string, Set<string>>();
+      for (const item of opts.items) {
+        if (!item.project_id || !qualifyingProjectIds.has(item.project_id)) continue;
+        const tsList = [item.created_at, item.updated_at, item.metadata?.completed_at]
+          .filter(Boolean)
+          .map((t: string) => new Date(t).getTime())
+          .filter((ms: number) => !isNaN(ms) && ms > 0);
+        if (tsList.length > 0) {
+          if (!qualifyingProjectMonthsMap.has(item.project_id)) {
+            qualifyingProjectMonthsMap.set(item.project_id, new Set<string>());
+          }
+          const set = qualifyingProjectMonthsMap.get(item.project_id)!;
+          for (const ms of tsList) {
+            set.add(new Date(ms).toISOString().slice(0, 7));
+          }
         }
       }
-    }
 
-    let calculatedProjectMonths = 0;
-    for (const set of qualifyingProjectMonthsMap.values()) {
-      calculatedProjectMonths += set.size;
-    }
-    if (calculatedProjectMonths === 0 && qualifyingProjects > 0) {
-      calculatedProjectMonths = Number((qualifyingProjects * durationMonths).toFixed(2));
-    }
+      let calculatedProjectMonths = 0;
+      for (const set of qualifyingProjectMonthsMap.values()) {
+        calculatedProjectMonths += set.size;
+      }
+      if (calculatedProjectMonths === 0 && qualifyingProjects > 0) {
+        calculatedProjectMonths = Number((qualifyingProjects * durationMonths).toFixed(2));
+      }
 
-    // If zero qualifying projects, hierarchy hours and project-months must strictly be 0
-    effectiveProjectMonths =
-      qualifyingProjects === 0
-        ? 0
-        : opts.projectMonths !== undefined
-        ? Math.min(opts.projectMonths, calculatedProjectMonths)
-        : calculatedProjectMonths;
+      // If zero qualifying projects, hierarchy hours and project-months must strictly be 0
+      effectiveProjectMonths =
+        qualifyingProjects === 0
+          ? 0
+          : opts.projectMonths !== undefined
+          ? Math.min(opts.projectMonths, calculatedProjectMonths)
+          : calculatedProjectMonths;
+    }
   } else {
     // Fallback when aggregate counts are passed directly
     personalExcludedCount = opts.personalExcludedCount ?? 0;
