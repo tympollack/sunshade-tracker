@@ -15,6 +15,7 @@ import { TreeViewContainer } from '@/components/views/TreeViewContainer';
 import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { SparkViewContainer } from '@/components/views/SparkViewContainer';
 import { SchemaViewContainer } from '@/components/views/SchemaViewContainer';
+import { LiveFlightDeckView } from '@/components/live/LiveFlightDeckView';
 import { ProjectModals } from '@/components/board/ProjectModals';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
@@ -74,6 +75,8 @@ interface TenantInfo {
   tier: string;
   api_key_preview: string | null;
   role?: string;
+  settings?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 interface ProjectInfo {
@@ -138,6 +141,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, []);
 
   const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
+  const [isKioskMode, setIsKioskMode] = useState(false);
+
+  const handleToggleKioskMode = useCallback(() => {
+    setIsKioskMode((prev) => {
+      const next = !prev;
+      if (typeof document !== 'undefined') {
+        try {
+          if (next) {
+            if (!document.fullscreenElement && typeof document.documentElement.requestFullscreen === 'function') {
+              document.documentElement.requestFullscreen().catch(() => {});
+            }
+          } else {
+            if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+              document.exitFullscreen().catch(() => {});
+            }
+          }
+        } catch {}
+      }
+      return next;
+    });
+  }, []);
 
   // Tree View Filtering & Sorting States
   const [treeSelectedStatuses, setTreeSelectedStatuses] = useState<string[] | null>(null);
@@ -3621,6 +3645,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden bg-[#090d16] text-slate-100">
       <WorkspaceShell
+        isKioskMode={isKioskMode && activeTab === 'live'}
         isLeftCollapsed={isLhnCollapsed}
         onToggleLeftCollapse={() => setIsLhnCollapsed((prev) => !prev)}
         isRightOpen={Boolean((isDesktopOrTablet && selectedDrawerItem) || selectedSprintForEdit)}
@@ -3737,8 +3762,36 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               </div>
             )}
 
-            <div className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+            <div
+              className={`flex-1 ${
+                isKioskMode && activeTab === 'live'
+                  ? 'p-0 max-w-none h-[100dvh]'
+                  : 'p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto'
+              } w-full max-w-full overflow-x-hidden`}
+            >
               <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>
+                {activeTab === 'live' && (
+                  <LiveFlightDeckView
+                    tenantSlug={tenantSlug}
+                    items={items}
+                    projects={allProjects}
+                    liveDashboardSettings={
+                      tenantInfo?.settings?.live_dashboard_settings ||
+                      tenantInfo?.metadata?.live_dashboard_settings ||
+                      null
+                    }
+                    initialPivot={typeof searchParams?.pivot === 'string' ? searchParams.pivot : null}
+                    selectedItemRef={
+                      selectedDrawerItem
+                        ? selectedDrawerItem.external_ref_id || selectedDrawerItem.id
+                        : null
+                    }
+                    onSelectItem={(item) => selectDrawerItem(item)}
+                    isKioskMode={isKioskMode}
+                    onToggleKioskMode={handleToggleKioskMode}
+                  />
+                )}
+
                 {activeTab === 'board' && (
                 <BoardViewContainer
                   hiddenBoardItems={hiddenBoardItems}
@@ -4208,15 +4261,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       )}
 
       {/* Mobile Bottom Navigation */}
-      <MobileBottomNav
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        pointMode={pointMode}
-        onPointModeChange={handlePointModeChange}
-        tenantSlug={tenantSlug}
-        projectSlug={projectSlug}
-        analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
-      />
+      {!(isKioskMode && activeTab === 'live') && (
+        <MobileBottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          pointMode={pointMode}
+          onPointModeChange={handlePointModeChange}
+          tenantSlug={tenantSlug}
+          projectSlug={projectSlug}
+          analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
+        />
+      )}
     </div>
   );
 }

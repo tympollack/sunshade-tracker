@@ -68,7 +68,7 @@ export function inferFallbackLifecycleCategory(
     settings?.completed_statuses ||
     settings?.sprint_metrics?.completed_statuses ||
     []
-  ).map((s) => String(s).toLowerCase().trim());
+  ).map((s: string) => String(s).toLowerCase().trim());
   if (completedList.includes(idLower)) {
     return 'terminal';
   }
@@ -77,7 +77,7 @@ export function inferFallbackLifecycleCategory(
     settings?.unstarted_statuses ||
     settings?.sprint_metrics?.unstarted_statuses ||
     []
-  ).map((s) => String(s).toLowerCase().trim());
+  ).map((s: string) => String(s).toLowerCase().trim());
   if (unstartedList.includes(idLower)) {
     return 'unstarted';
   }
@@ -86,7 +86,7 @@ export function inferFallbackLifecycleCategory(
     settings?.in_progress_statuses ||
     settings?.sprint_metrics?.in_progress_statuses ||
     []
-  ).map((s) => String(s).toLowerCase().trim());
+  ).map((s: string) => String(s).toLowerCase().trim());
   if (inProgressList.includes(idLower)) {
     return 'execution';
   }

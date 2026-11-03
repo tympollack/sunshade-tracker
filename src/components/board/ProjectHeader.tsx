@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Eye,
+  Radio,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
@@ -35,8 +36,8 @@ export interface ProjectHeaderProps {
   allWorkspaces: WorkspaceItem[];
   allProjects: { id: string; slug: string; name: string }[];
   isReadOnly: boolean;
-  activeTab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema';
-  onTabChange: (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema') => void;
+  activeTab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema' | 'live';
+  onTabChange: (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema' | 'live') => void;
   onOpenSearch: () => void;
   onOpenQuickAdd: () => void;
   deviations: SchemaDeviation[];
@@ -84,16 +85,18 @@ export function ProjectHeader(props: ProjectHeaderProps) {
 
       {/* View tabs */}
       <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:mx-2 lg:mx-3" data-testid="top-view-tabs">
-        {(['board', 'tree', 'sprint'] as const).map((tab) => {
+        {(['board', 'tree', 'sprint', 'live'] as const).map((tab) => {
           const icons = {
             board: <Kanban className="w-3.5 h-3.5" />,
             tree: <GitFork className="w-3.5 h-3.5" />,
             sprint: <Calendar className="w-3.5 h-3.5" />,
+            live: <Radio className="w-3.5 h-3.5" />,
           };
           const labels = {
             board: 'Kanban',
             tree: 'Hierarchy Tree',
             sprint: 'Sprint Planning',
+            live: 'Live Deck',
           };
           return (
             <button
