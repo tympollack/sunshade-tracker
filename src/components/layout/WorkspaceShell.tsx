@@ -14,6 +14,7 @@ export interface WorkspaceShellProps {
   onToggleMobileLeft?: () => void;
   isRightOpen?: boolean;
   onCloseRight?: () => void;
+  isKioskMode?: boolean;
   className?: string;
 }
 
@@ -35,6 +36,7 @@ export function WorkspaceShell({
   onToggleMobileLeft: externalOnToggleMobileLeft,
   isRightOpen = false,
   onCloseRight,
+  isKioskMode = false,
   className = '',
 }: WorkspaceShellProps) {
   const [internalIsLeftCollapsed, setInternalIsLeftCollapsed] = useState(false);
@@ -223,7 +225,7 @@ export function WorkspaceShell({
       className={`h-[100dvh] w-full flex flex-col overflow-hidden bg-[#090d16] text-slate-100 ${className}`}
     >
       {/* ── Top Header Bar (Fixed, shrink-0) ── */}
-      {header && (
+      {header && !isKioskMode && (
         <div data-testid="workspace-header" className="shrink-0 w-full z-30">
           {header}
         </div>
@@ -232,7 +234,7 @@ export function WorkspaceShell({
       {/* ── Three-Pane Body Row ── */}
       <div className="flex-1 min-h-0 w-full flex flex-row overflow-hidden relative">
         {/* ── Left Pane (LHN) ── */}
-        {leftPane && (
+        {leftPane && !isKioskMode && (
           <aside
             data-testid="workspace-lhn"
             style={{ width: isLeftCollapsed ? 56 : lhnWidth }}
@@ -340,7 +342,7 @@ export function WorkspaceShell({
         )}
 
         {/* Mobile Left Navigation Trigger (< md) */}
-        {leftPane && (
+        {leftPane && !isKioskMode && (
           <button
             type="button"
             data-testid="workspace-lhn-mobile-trigger"

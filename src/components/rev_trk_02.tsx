@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export type DashboardTab = 'board' | 'tree' | 'sprint' | 'spark' | 'schema';
+export type DashboardTab = 'board' | 'tree' | 'sprint' | 'spark' | 'schema' | 'live';
 
 export const VALID_DASHBOARD_TABS: readonly DashboardTab[] = [
   'board',
@@ -10,6 +10,7 @@ export const VALID_DASHBOARD_TABS: readonly DashboardTab[] = [
   'sprint',
   'spark',
   'schema',
+  'live',
 ] as const;
 
 export interface UseTabUrlSyncOptions {

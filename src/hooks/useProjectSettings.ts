@@ -13,10 +13,10 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     { type: 'task', label: 'Task', level: 4, allowed_parents: ['story', 'epic'], color: '#fbbf24' },
   ],
   statuses: [
-    { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
-    { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
-    { id: 'planned', label: 'Planned', color: '#a855f7', order: 3 },
-    { id: 'complete', label: 'Complete', color: '#22c55e', order: 4, is_completed: true },
+    { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1, lifecycle_category: 'unstarted' },
+    { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2, lifecycle_category: 'execution' },
+    { id: 'planned', label: 'Planned', color: '#a855f7', order: 3, lifecycle_category: 'unstarted' },
+    { id: 'complete', label: 'Complete', color: '#22c55e', order: 4, is_completed: true, lifecycle_category: 'terminal' },
   ],
   custom_fields: ['priority', 'complexity', 'timeline', 'commit_hash', 'source_type'],
 };
@@ -132,12 +132,26 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
                 id === 'released'
               );
 
+        const validLifecycleCategories = new Set([
+          'unstarted',
+          'execution',
+          'verification',
+          'staging',
+          'terminal',
+        ]);
+        const lifecycle_category =
+          typeof s.lifecycle_category === 'string' &&
+          validLifecycleCategories.has(s.lifecycle_category.trim().toLowerCase())
+            ? (s.lifecycle_category.trim().toLowerCase() as StatusDefinition['lifecycle_category'])
+            : undefined;
+
         return {
           id,
           label,
           color,
           order,
           is_completed,
+          ...(lifecycle_category ? { lifecycle_category } : {}),
         };
       });
   }

@@ -1,3 +1,86 @@
+export type LifecycleStage = 'unstarted' | 'execution' | 'verification' | 'staging' | 'terminal';
+
+export interface LifecycleCategoryDefinition {
+  key: LifecycleStage | string;
+  label: string;
+  order: number;
+  color: string;
+}
+
+export interface LiveDashboardSettings {
+  default_pivot: 'stage_flow' | 'project_swimlanes';
+  stagnation_median_multiplier: number;
+  stagnation_warning_label: string;
+  default_refresh_interval_ms: number;
+  lifecycle_categories: LifecycleCategoryDefinition[];
+  [key: string]: any;
+}
+
+export const DEFAULT_LIVE_DASHBOARD_SETTINGS: LiveDashboardSettings = {
+  default_pivot: 'stage_flow',
+  stagnation_median_multiplier: 1.5,
+  stagnation_warning_label: 'System Queue Stall',
+  default_refresh_interval_ms: 60000,
+  lifecycle_categories: [
+    { key: 'execution', label: 'Active Execution', order: 1, color: '#38BDF8' },
+    { key: 'verification', label: 'Verification & Review', order: 2, color: '#F59E0B' },
+    { key: 'staging', label: 'Pre-Delivery / Staged', order: 3, color: '#A855F7' },
+  ],
+};
+
+export interface TenantSettings {
+  live_dashboard_settings?: Partial<LiveDashboardSettings>;
+  velocity_conversion?: {
+    default_hours_per_point?: number;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+export function resolveLiveDashboardSettings(
+  tenantSettings?: TenantSettings | Record<string, any> | null
+): LiveDashboardSettings {
+  const raw = tenantSettings?.live_dashboard_settings;
+  if (!raw || typeof raw !== 'object') {
+    return {
+      ...DEFAULT_LIVE_DASHBOARD_SETTINGS,
+      lifecycle_categories: DEFAULT_LIVE_DASHBOARD_SETTINGS.lifecycle_categories.map((c) => ({ ...c })),
+    };
+  }
+  const categories =
+    Array.isArray(raw.lifecycle_categories) && raw.lifecycle_categories.length > 0
+      ? raw.lifecycle_categories
+          .filter((c: any) => c && typeof c === 'object' && typeof c.key === 'string')
+          .map((c: any, idx: number) => ({
+            key: String(c.key).trim(),
+            label: typeof c.label === 'string' && c.label.trim() ? c.label.trim() : String(c.key),
+            order: typeof c.order === 'number' && !isNaN(c.order) ? c.order : idx + 1,
+            color: typeof c.color === 'string' && c.color.trim() ? c.color.trim() : '#38BDF8',
+          }))
+          .sort((a: LifecycleCategoryDefinition, b: LifecycleCategoryDefinition) => a.order - b.order)
+      : DEFAULT_LIVE_DASHBOARD_SETTINGS.lifecycle_categories.map((c) => ({ ...c }));
+
+  return {
+    ...DEFAULT_LIVE_DASHBOARD_SETTINGS,
+    ...raw,
+    default_pivot:
+      raw.default_pivot === 'project_swimlanes' ? 'project_swimlanes' : 'stage_flow',
+    stagnation_median_multiplier:
+      typeof raw.stagnation_median_multiplier === 'number' && raw.stagnation_median_multiplier > 0
+        ? raw.stagnation_median_multiplier
+        : DEFAULT_LIVE_DASHBOARD_SETTINGS.stagnation_median_multiplier,
+    stagnation_warning_label:
+      typeof raw.stagnation_warning_label === 'string' && raw.stagnation_warning_label.trim()
+        ? raw.stagnation_warning_label.trim()
+        : DEFAULT_LIVE_DASHBOARD_SETTINGS.stagnation_warning_label,
+    default_refresh_interval_ms:
+      typeof raw.default_refresh_interval_ms === 'number' && raw.default_refresh_interval_ms >= 0
+        ? raw.default_refresh_interval_ms
+        : DEFAULT_LIVE_DASHBOARD_SETTINGS.default_refresh_interval_ms,
+    lifecycle_categories: categories,
+  };
+}
+
 export interface HierarchyLevel {
   type: string;
   label: string;
@@ -12,6 +95,7 @@ export interface StatusDefinition {
   color: string;
   order: number;
   is_completed?: boolean;
+  lifecycle_category?: LifecycleStage;
 }
 
 export interface HistoricalSprintSummary {
@@ -343,6 +427,7 @@ export interface ProjectSettings {
   custom_metadata_fields?: CustomMetadataFieldDefinition[];
   work_metric_config?: WorkMetricConfig;
   work_unit_field?: string;
+  wip_limit?: number;
   sprint_settings?: SprintSettings;
   sprint_metrics?: MetricRules;
   metric_rules?: MetricRules;
@@ -364,6 +449,7 @@ export interface Tenant {
   api_key_preview?: string | null;
   owner_id?: string | null;
   tier: string;
+  settings?: TenantSettings;
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;

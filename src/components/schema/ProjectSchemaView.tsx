@@ -126,6 +126,8 @@ export function ProjectSchemaView({
           custom_fields: sourceSettings.custom_fields || draftData.custom_fields,
           custom_metadata_fields: sourceSettings.custom_metadata_fields || draftData.custom_metadata_fields,
           work_metric_config: sourceSettings.work_metric_config || draftData.work_metric_config,
+          work_unit_field: sourceSettings.work_unit_field ?? draftData.work_unit_field,
+          wip_limit: sourceSettings.wip_limit ?? draftData.wip_limit,
         };
         setDraftData(updatedDraft);
         setRawText(JSON.stringify(updatedDraft, null, 2));

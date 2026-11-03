@@ -22,6 +22,14 @@ export const HierarchyLevelSchema = z.object({
     .optional(),
 });
 
+export const LifecycleStageEnum = z.enum([
+  'unstarted',
+  'execution',
+  'verification',
+  'staging',
+  'terminal',
+]);
+
 export const StatusDefinitionSchema = z.object({
   id: z
     .string({ required_error: 'Status ID is required' })
@@ -34,6 +42,7 @@ export const StatusDefinitionSchema = z.object({
     .regex(HexColorRegex, 'Color must be a valid hex string (e.g. #94a3b8)'),
   order: z.number({ required_error: 'Status order is required' }),
   is_completed: z.boolean().optional(),
+  lifecycle_category: LifecycleStageEnum.optional(),
 });
 
 export const CustomFieldSchema = z.union([
@@ -85,6 +94,7 @@ export const ProjectSettingsSchema = z
     custom_metadata_fields: z.array(z.any()).nullable().optional(),
     work_metric_config: WorkMetricConfigSchema.nullable().optional(),
     work_unit_field: z.string().nullable().optional(),
+    wip_limit: z.number().int().min(1).nullable().optional(),
     sprint_settings: z.record(z.any()).nullable().optional(),
     sprint_metrics: z.record(z.any()).nullable().optional(),
     metric_rules: z.record(z.any()).nullable().optional(),
