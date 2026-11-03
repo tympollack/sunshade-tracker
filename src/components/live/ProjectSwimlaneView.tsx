@@ -15,7 +15,7 @@ import {
   EnrichedInFlightItem,
   InFlightTelemetryPayload,
   ProjectSwimlaneSummary,
-} from '@/lib/services/inFlightTelemetryService';
+} from '@/lib/services/inFlightTelemetryCore';
 import { formatDwellDuration, getPriorityDotClass } from './StageFlowView';
 
 export const SWIMLANE_COLLAPSE_STORAGE_KEY = 'sunshade_live_collapsed_swimlanes';

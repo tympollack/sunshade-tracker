@@ -6,9 +6,9 @@ import { getInFlightTelemetry, InFlightTelemetryPayload } from '@/lib/services/i
 import { WorkItem } from '@/types/tracker';
 
 const CACHE_CONTROL_HEADER = 'private, no-cache, stale-while-revalidate=30';
-export const MAX_IDLE_POLL_AGE_MS = 5 * 60 * 1000; // 5 minutes before time-sensitive metrics must recompute
+const MAX_IDLE_POLL_AGE_MS = 5 * 60 * 1000; // 5 minutes before time-sensitive metrics must recompute
 
-export function computeTelemetryHash(
+function computeTelemetryHash(
   tenantId: string,
   view: string,
   maxItemUpdatedAt: string | null,

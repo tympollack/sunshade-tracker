@@ -6,7 +6,7 @@ import {
   EnrichedInFlightItem,
   InFlightTelemetryPayload,
   StageBucketSummary,
-} from '@/lib/services/inFlightTelemetryService';
+} from '@/lib/services/inFlightTelemetryCore';
 import { DEFAULT_LIVE_DASHBOARD_SETTINGS } from '@/types/tracker';
 
 export interface StageFlowViewProps {

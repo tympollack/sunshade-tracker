@@ -5,7 +5,7 @@ import {
   computeInFlightTelemetry,
   EnrichedInFlightItem,
   InFlightTelemetryPayload,
-} from '@/lib/services/inFlightTelemetryService';
+} from '@/lib/services/inFlightTelemetryCore';
 import { LiveDashboardSettings, ProjectSettings, WorkItem } from '@/types/tracker';
 import {
   LiveDashboardToolbar,

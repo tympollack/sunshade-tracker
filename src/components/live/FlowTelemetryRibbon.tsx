@@ -12,7 +12,7 @@ import {
   TrendingUp,
   Zap,
 } from 'lucide-react';
-import { InFlightTelemetryPayload, SystemicBlockerEntry } from '@/lib/services/inFlightTelemetryService';
+import { InFlightTelemetryPayload, SystemicBlockerEntry } from '@/lib/services/inFlightTelemetryCore';
 
 export interface FlowTelemetryRibbonProps {
   telemetry: InFlightTelemetryPayload;

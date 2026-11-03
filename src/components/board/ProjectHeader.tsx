@@ -85,18 +85,16 @@ export function ProjectHeader(props: ProjectHeaderProps) {
 
       {/* View tabs */}
       <div className="hidden md:flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs overflow-x-auto no-scrollbar shrink-0 my-auto self-center md:mx-2 lg:mx-3" data-testid="top-view-tabs">
-        {(['board', 'tree', 'sprint', 'live'] as const).map((tab) => {
+        {(['board', 'tree', 'sprint'] as const).map((tab) => {
           const icons = {
             board: <Kanban className="w-3.5 h-3.5" />,
             tree: <GitFork className="w-3.5 h-3.5" />,
             sprint: <Calendar className="w-3.5 h-3.5" />,
-            live: <Radio className="w-3.5 h-3.5" />,
           };
           const labels = {
             board: 'Kanban',
             tree: 'Hierarchy Tree',
             sprint: 'Sprint Planning',
-            live: 'Live Deck',
           };
           return (
             <button
@@ -113,6 +111,17 @@ export function ProjectHeader(props: ProjectHeaderProps) {
             </button>
           );
         })}
+        <button
+          onClick={() => onTabChange('live')}
+          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
+            activeTab === 'live'
+              ? 'bg-emerald-500 text-slate-950 shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Radio className="w-3.5 h-3.5" />
+          <span className="hidden xl:inline">Live Deck</span>
+        </button>
         <NavToolsDropdown activeTab={activeTab} onSelectTab={(tab) => handleTabChange(tab)} />
       </div>
 
