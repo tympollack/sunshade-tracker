@@ -7,6 +7,7 @@ const config: Config = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
     "./node_modules/@digitalcanopy/ui/**/*.{js,ts,jsx,tsx}",
+    "./node_modules/@digitalcanopy/notifications/dist/**/*.{js,mjs}",
   ],
   theme: {
     extend: {
