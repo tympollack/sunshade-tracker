@@ -147,6 +147,16 @@ export function validateProjectSettings(settings: any): ValidationResult {
     }
   }
 
+  // Validate wip_limit if present
+  if ('wip_limit' in settings && settings.wip_limit !== null && settings.wip_limit !== undefined) {
+    if (typeof settings.wip_limit !== 'number' || !Number.isFinite(settings.wip_limit) || settings.wip_limit < 1) {
+      errors.push({
+        path: 'wip_limit',
+        message: 'wip_limit must be a positive number >= 1',
+      });
+    }
+  }
+
   // 1. Validate automations if present
   if ('automations' in settings && settings.automations !== null && settings.automations !== undefined) {
     if (!Array.isArray(settings.automations)) {

@@ -132,12 +132,26 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
                 id === 'released'
               );
 
+        const validLifecycleCategories = new Set([
+          'unstarted',
+          'execution',
+          'verification',
+          'staging',
+          'terminal',
+        ]);
+        const lifecycle_category =
+          typeof s.lifecycle_category === 'string' &&
+          validLifecycleCategories.has(s.lifecycle_category.trim().toLowerCase())
+            ? (s.lifecycle_category.trim().toLowerCase() as StatusDefinition['lifecycle_category'])
+            : undefined;
+
         return {
           id,
           label,
           color,
           order,
           is_completed,
+          ...(lifecycle_category ? { lifecycle_category } : {}),
         };
       });
   }
