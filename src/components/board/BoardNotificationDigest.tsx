@@ -3,7 +3,7 @@
 import React from 'react';
 import { buildDigestRollup, notificationKey } from '@digitalcanopy/notifications';
 import { NotificationDigestCard } from '@digitalcanopy/notifications/react';
-import type { InAppNotification, WorkItem } from '@/types/tracker';
+import type { InAppNotification, StatusDefinition, WorkItem } from '@/types/tracker';
 import {
   ACTIVITY_SOURCE,
   activityToNotifications,
@@ -13,13 +13,14 @@ import {
 interface BoardNotificationDigestProps {
   tenantSlug: string;
   items: WorkItem[];
-  completedStatuses?: ReadonlySet<string>;
+  /** Resolves an item's own project status definitions (per-project schema). */
+  getItemStatuses?: (item: WorkItem) => readonly StatusDefinition[] | undefined;
 }
 
 const POLL_MS = 120000;
 
 /** Digest pinned above the Kanban columns: blocker flags + activity updates + unread delta polling. */
-export function BoardNotificationDigest({ tenantSlug, items, completedStatuses }: BoardNotificationDigestProps) {
+export function BoardNotificationDigest({ tenantSlug, items, getItemStatuses }: BoardNotificationDigestProps) {
   const [activity, setActivity] = React.useState<InAppNotification[]>([]);
   const [locallyRead, setLocallyRead] = React.useState<Set<string>>(new Set());
   const [dismissed, setDismissed] = React.useState<Set<string>>(new Set());
@@ -64,38 +65,57 @@ export function BoardNotificationDigest({ tenantSlug, items, completedStatuses }
   }, [fetchList, pollDelta]);
 
   const digest = React.useMemo(() => {
-    const all = [...blockersToNotifications(items, completedStatuses), ...activityToNotifications(activity)]
+    const all = [...blockersToNotifications(items, getItemStatuses), ...activityToNotifications(activity)]
       .filter((n) => !dismissed.has(notificationKey(n)))
       .map((n) => (locallyRead.has(notificationKey(n)) ? { ...n, read: true } : n));
     return buildDigestRollup(all);
-  }, [items, completedStatuses, activity, dismissed, locallyRead]);
+  }, [items, getItemStatuses, activity, dismissed, locallyRead]);
 
-  const patchRead = async (body: Record<string, unknown>) => {
+  /**
+   * Persists a read acknowledgement. On HTTP failure or `{ success: false }`, the
+   * optimistically-read keys are reverted so the digest matches the server/bell.
+   */
+  const patchRead = async (body: Record<string, unknown>, optimisticKeys: string[]) => {
+    const revert = () =>
+      setLocallyRead((prev) => {
+        const next = new Set(prev);
+        optimisticKeys.forEach((k) => next.delete(k));
+        return next;
+      });
     try {
       const res = await fetch('/api/v1/notifications', {
         method: 'PATCH',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) await fetchList();
+      const data = res.ok ? await res.json().catch(() => null) : null;
+      if (!res.ok || !data || data.success !== true) {
+        revert();
+        await fetchList();
+      }
     } catch {
+      revert();
       await fetchList();
     }
   };
 
   const markRead = (key: string) => {
-    setLocallyRead((prev) => new Set(prev).add(key));
     const prefix = `${ACTIVITY_SOURCE}:`;
-    if (key.startsWith(prefix)) void patchRead({ id: key.slice(prefix.length) });
+    const isActivity = key.startsWith(prefix);
+    const wasRead = locallyRead.has(key);
+    setLocallyRead((prev) => new Set(prev).add(key));
+    // Only revert keys we newly added; blocker keys are local-only.
+    if (isActivity) void patchRead({ id: key.slice(prefix.length) }, wasRead ? [] : [key]);
   };
 
   const markAllRead = () => {
+    const added = digest.items.map((n) => notificationKey(n)).filter((k) => !locallyRead.has(k));
     setLocallyRead((prev) => {
       const next = new Set(prev);
-      digest.items.forEach((n) => next.add(notificationKey(n)));
+      added.forEach((k) => next.add(k));
       return next;
     });
-    void patchRead({ all: true });
+    void patchRead({ all: true }, added.filter((k) => k.startsWith(`${ACTIVITY_SOURCE}:`)));
   };
 
   const dismiss = (key: string) => {

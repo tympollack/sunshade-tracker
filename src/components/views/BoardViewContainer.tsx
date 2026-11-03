@@ -310,7 +310,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
 
       {/* Notification Digest (TASK-NOTIF-CONSUME-TRACKER) */}
       {!loading && !isReadOnly && (
-        <BoardNotificationDigest tenantSlug={tenantSlug} items={items} completedStatuses={completionSet} />
+        <BoardNotificationDigest tenantSlug={tenantSlug} items={items} getItemStatuses={(item) => (getItemProjectSettings ? getItemProjectSettings(item) : projectSettings)?.statuses} />
       )}
 
       {/* Board Columns Canvas */}
