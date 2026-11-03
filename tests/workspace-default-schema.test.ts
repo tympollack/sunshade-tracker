@@ -139,6 +139,41 @@ describe('Workspace-Level Live Dashboard Configuration Schema (TASK-TRK-WORKSPAC
       expect(res.success).toBe(false);
       expect(res.settings).toEqual(DEFAULT_LIVE_DASHBOARD_SETTINGS);
     });
+
+    it('rejects unauthenticated requests for private workspaces', async () => {
+      mockGetUser.mockResolvedValue({
+        data: { user: null },
+      });
+
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            is: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'tenant-priv',
+                  slug: 'private-ws',
+                  tier: 'pro',
+                  owner_id: 'owner-99',
+                  settings: {
+                    live_dashboard_settings: {
+                      default_pivot: 'project_swimlanes',
+                    },
+                  },
+                  metadata: {},
+                },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      });
+
+      const res = await getLiveDashboardSettingsAction('private-ws');
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('Unauthorized');
+      expect(res.settings).toEqual(DEFAULT_LIVE_DASHBOARD_SETTINGS);
+    });
   });
 
   describe('updateLiveDashboardSettingsAction', () => {

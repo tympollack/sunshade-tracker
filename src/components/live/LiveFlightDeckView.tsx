@@ -61,6 +61,37 @@ export function LiveFlightDeckView({
     return 60000;
   });
 
+  // Sync workspace-configured defaults when tenantInfo loads asynchronously
+  const hasHydratedRemoteSettingsRef = useRef(Boolean(liveDashboardSettings));
+  useEffect(() => {
+    if (!liveDashboardSettings || hasHydratedRemoteSettingsRef.current) return;
+    hasHydratedRemoteSettingsRef.current = true;
+
+    const urlPivot =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('pivot')
+        : null;
+    if (
+      !initialPivot &&
+      urlPivot !== 'project_swimlanes' &&
+      urlPivot !== 'stage_flow' &&
+      (liveDashboardSettings.default_pivot === 'project_swimlanes' ||
+        liveDashboardSettings.default_pivot === 'stage_flow')
+    ) {
+      setActivePivot(liveDashboardSettings.default_pivot);
+    }
+
+    const rawInterval = liveDashboardSettings.default_refresh_interval_ms;
+    if (
+      rawInterval === 30000 ||
+      rawInterval === 60000 ||
+      rawInterval === 120000 ||
+      rawInterval === 0
+    ) {
+      setPollingCadenceMs(rawInterval);
+    }
+  }, [liveDashboardSettings, initialPivot]);
+
   // Compute baseline telemetry immediately from in-memory workspace items & projects
   const computedBaseline = useMemo<InFlightTelemetryPayload>(() => {
     return computeInFlightTelemetry({
@@ -74,6 +105,8 @@ export function LiveFlightDeckView({
   const [isSyncing, setIsSyncing] = useState(false);
   const lastSyncedAtRef = useRef<string | null>(null);
   const lastEtagRef = useRef<string | null>(null);
+  const activePivotRef = useRef<LivePivotMode>(activePivot);
+  activePivotRef.current = activePivot;
 
   const effectiveTelemetry = remoteTelemetry || computedBaseline;
 
@@ -88,7 +121,7 @@ export function LiveFlightDeckView({
       setIsSyncing(true);
       try {
         const params = new URLSearchParams();
-        params.set('view', activePivot);
+        params.set('view', activePivotRef.current);
         if (!forceFull && lastSyncedAtRef.current) {
           params.set('since', lastSyncedAtRef.current);
         }
@@ -126,16 +159,13 @@ export function LiveFlightDeckView({
         setIsSyncing(false);
       }
     },
-    [tenantSlug, activePivot]
+    [tenantSlug]
   );
 
-  // Initial fetch + interval polling based on selected cadence
-  useEffect(() => {
-    pollDeltaTelemetry(false);
-  }, [pollDeltaTelemetry]);
-
+  // Initial fetch + interval polling based on selected cadence (skipped when Paused)
   useEffect(() => {
     if (!pollingCadenceMs || pollingCadenceMs <= 0) return;
+    pollDeltaTelemetry(false);
     const timer = setInterval(() => {
       pollDeltaTelemetry(false);
     }, pollingCadenceMs);

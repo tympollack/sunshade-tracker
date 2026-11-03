@@ -1,4 +1,5 @@
 import { LifecycleStage, ProjectSettings, StatusDefinition, WorkItem } from '@/types/tracker';
+import { DEFAULT_METRIC_RULES } from './sprintAnalyticsService';
 
 export const TERMINAL_GRACE_PERIOD_MS = 12 * 60 * 60 * 1000; // 12 hours
 
@@ -34,7 +35,8 @@ export function parseLifecycleCategory(raw: unknown): LifecycleStage | undefined
  * 1. Explicit `lifecycle_category` on the matching status definition in `projectSettings.statuses`.
  * 2. Boolean `is_completed === true` on the status definition -> `'terminal'`.
  * 3. Configured project bucket arrays (`completed_statuses`, `unstarted_statuses`, `in_progress_statuses`).
- * 4. Graceful fallback to `'unstarted'`.
+ * 4. Compatibility fallback for legacy persisted schemas that omit `lifecycle_category` and bucket arrays.
+ * 5. Graceful fallback to `'unstarted'`.
  */
 export function resolveItemLifecycle(
   item: Pick<WorkItem, 'status'> | null | undefined,
@@ -95,22 +97,109 @@ export function resolveItemLifecycle(
     return 'execution';
   }
 
+  // Compatibility fallback for already-persisted schemas whose status definitions omit lifecycle_category
+  if (matchedStatus) {
+    if (
+      matchedStatus.is_completed !== false &&
+      DEFAULT_METRIC_RULES.completed_statuses.some(
+        (s) => s.trim().toLowerCase() === targetStatusId
+      )
+    ) {
+      return 'terminal';
+    }
+    if (
+      DEFAULT_METRIC_RULES.unstarted_statuses.some(
+        (s) => s.trim().toLowerCase() === targetStatusId
+      )
+    ) {
+      return 'unstarted';
+    }
+    if (
+      DEFAULT_METRIC_RULES.in_progress_statuses.some(
+        (s) => s.trim().toLowerCase() === targetStatusId
+      )
+    ) {
+      return 'execution';
+    }
+
+    // Positional fallback when no status in the schema has an explicit lifecycle_category
+    const hasAnyExplicitCategory = statuses.some((s) =>
+      Boolean(parseLifecycleCategory(s?.lifecycle_category))
+    );
+    if (!hasAnyExplicitCategory) {
+      const nonTerminalSorted = statuses
+        .filter((s) => s && !s.is_completed)
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const posIndex = nonTerminalSorted.findIndex(
+        (s) => s.id.trim().toLowerCase() === targetStatusId
+      );
+      if (posIndex > 0) {
+        return 'execution';
+      }
+    }
+  }
+
   return 'unstarted';
+}
+
+/**
+ * Resolves the completion timestamp (in epoch ms) for a terminal item.
+ * Prioritizes:
+ * 1. `item.metadata?.completed_at`
+ * 2. Transition timestamp from `stageEntryTimestamps` (audit log transition into terminal status)
+ * 3. `item.metadata?.stage_entered_at`
+ * 4. When `stageEntryTimestamps` is provided, falls back to `item.created_at` (avoiding general `updated_at`
+ *    so unrelated edits to old completed items do not re-count them as recent completions).
+ *    When `stageEntryTimestamps` is omitted, falls back to `item.updated_at || item.created_at`.
+ */
+export function resolveTerminalCompletionMs(
+  item: Pick<WorkItem, 'id' | 'created_at' | 'updated_at' | 'metadata'>,
+  stageEntryTimestamps?: Map<string, number>
+): number {
+  if (typeof item.metadata?.completed_at === 'string' && item.metadata.completed_at.trim()) {
+    const parsed = Date.parse(item.metadata.completed_at.trim());
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  if (stageEntryTimestamps && item.id && stageEntryTimestamps.has(item.id)) {
+    const transitionMs = stageEntryTimestamps.get(item.id)!;
+    if (!Number.isNaN(transitionMs)) return transitionMs;
+  }
+
+  if (typeof item.metadata?.stage_entered_at === 'string' && item.metadata.stage_entered_at.trim()) {
+    const parsed = Date.parse(item.metadata.stage_entered_at.trim());
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  const fallbackIso = stageEntryTimestamps
+    ? item.created_at
+    : item.updated_at || item.created_at;
+  if (typeof fallbackIso === 'string' && fallbackIso.trim()) {
+    return Date.parse(fallbackIso.trim());
+  }
+
+  return NaN;
 }
 
 /**
  * Determines whether a terminal item was completed within the recent grace window (default: 12 hours).
  */
 export function isWithinTerminalGracePeriod(
-  item: Pick<WorkItem, 'updated_at' | 'metadata'>,
+  item: Pick<WorkItem, 'updated_at' | 'metadata'> & Partial<Pick<WorkItem, 'id' | 'created_at'>>,
   nowMs: number = Date.now(),
-  gracePeriodMs: number = TERMINAL_GRACE_PERIOD_MS
+  gracePeriodMs: number = TERMINAL_GRACE_PERIOD_MS,
+  stageEntryTimestamps?: Map<string, number>
 ): boolean {
-  const rawTimestamp = item.metadata?.completed_at || item.updated_at;
-  if (typeof rawTimestamp !== 'string' || !rawTimestamp.trim()) {
-    return false;
-  }
-  const timestampMs = Date.parse(rawTimestamp);
+  const timestampMs = resolveTerminalCompletionMs(
+    {
+      id: item.id || '',
+      created_at: item.created_at || '',
+      updated_at: item.updated_at,
+      metadata: item.metadata,
+    },
+    stageEntryTimestamps
+  );
   if (Number.isNaN(timestampMs)) {
     return false;
   }
@@ -128,7 +217,8 @@ export function filterInFlightItems(
   items: WorkItem[],
   projectMap: Map<string, ProjectSettings>,
   nowMs: number = Date.now(),
-  gracePeriodMs: number = TERMINAL_GRACE_PERIOD_MS
+  gracePeriodMs: number = TERMINAL_GRACE_PERIOD_MS,
+  stageEntryTimestamps?: Map<string, number>
 ): WorkItem[] {
   if (!Array.isArray(items) || !(projectMap instanceof Map)) {
     return [];
@@ -147,7 +237,7 @@ export function filterInFlightItems(
     }
 
     if (stage === 'terminal') {
-      return isWithinTerminalGracePeriod(item, nowMs, gracePeriodMs);
+      return isWithinTerminalGracePeriod(item, nowMs, gracePeriodMs, stageEntryTimestamps);
     }
 
     return false;

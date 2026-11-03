@@ -100,7 +100,7 @@ describe('GET /api/v1/telemetry/live (TASK-TRK-DELTA-POLL-ROUTE)', () => {
     expect(json.delta_items).toHaveLength(1);
   });
 
-  it('returns 304 Not Modified immediately when ?since is passed and zero items or projects mutated', async () => {
+  it('returns 304 Not Modified immediately when ?since is within fresh window and zero items or projects mutated', async () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
@@ -113,14 +113,116 @@ describe('GET /api/v1/telemetry/live (TASK-TRK-DELTA-POLL-ROUTE)', () => {
       }),
     });
 
+    const freshSince = new Date(Date.now() - 30_000).toISOString();
     const req = new NextRequest(
-      'http://localhost:3000/api/v1/telemetry/live?since=2026-11-03T15:00:00.000Z&view=project_swimlanes'
+      `http://localhost:3000/api/v1/telemetry/live?since=${encodeURIComponent(freshSince)}&view=project_swimlanes`
     );
     const res = await GET(req);
 
     expect(res.status).toBe(304);
     expect(res.headers.get('cache-control')).toBe('private, no-cache, stale-while-revalidate=30');
     expect(mockGetInFlightTelemetry).not.toHaveBeenCalled();
+  });
+
+  it('recomputes time-based telemetry when ?since exceeds MAX_IDLE_POLL_AGE_MS even without DB row edits', async () => {
+    mockGetInFlightTelemetry.mockResolvedValue(MOCK_TELEMETRY);
+
+    const expiredSince = new Date(Date.now() - 10 * 60_000).toISOString();
+    const req = new NextRequest(
+      `http://localhost:3000/api/v1/telemetry/live?since=${encodeURIComponent(expiredSince)}&view=stage_flow`
+    );
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(mockGetInFlightTelemetry).toHaveBeenCalled();
+  });
+
+  it('produces a new ETag and returns 200 when project WIP configuration changes without item edits', async () => {
+    mockGetInFlightTelemetry.mockResolvedValueOnce({
+      ...MOCK_TELEMETRY,
+      total_wip_capacity: 8,
+      projects: [
+        {
+          project_id: 'proj-1',
+          project_slug: 'trk',
+          project_name: 'Tracker',
+          active_item_count: 1,
+          active_units: 5,
+          unit_label: 'pts',
+          wip_limit: 8,
+          wip_saturation_ratio: 0.125,
+          health_status: 'healthy',
+          items: [],
+        },
+      ],
+    });
+
+    const initialReq = new NextRequest('http://localhost:3000/api/v1/telemetry/live?view=stage_flow');
+    const initialRes = await GET(initialReq);
+    const oldEtag = initialRes.headers.get('etag')!;
+    expect(oldEtag).toBeTruthy();
+
+    // Project mutated (wip_limit changed from 8 to 4) while items did not
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'projects') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              gt: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue({
+                    data: [{ id: 'proj-1', updated_at: new Date().toISOString() }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            gt: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+              not: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        }),
+      };
+    });
+
+    mockGetInFlightTelemetry.mockResolvedValueOnce({
+      ...MOCK_TELEMETRY,
+      total_wip_capacity: 4,
+      projects: [
+        {
+          project_id: 'proj-1',
+          project_slug: 'trk',
+          project_name: 'Tracker',
+          active_item_count: 1,
+          active_units: 5,
+          unit_label: 'pts',
+          wip_limit: 4,
+          wip_saturation_ratio: 0.25,
+          health_status: 'healthy',
+          items: [],
+        },
+      ],
+    });
+
+    const freshSince = new Date(Date.now() - 30_000).toISOString();
+    const pollReq = new NextRequest(
+      `http://localhost:3000/api/v1/telemetry/live?since=${encodeURIComponent(freshSince)}&view=stage_flow`,
+      { headers: { 'if-none-match': oldEtag } }
+    );
+    const pollRes = await GET(pollReq);
+
+    expect(pollRes.status).toBe(200);
+    const newEtag = pollRes.headers.get('etag')!;
+    expect(newEtag).not.toBe(oldEtag);
   });
 
   it('recomputes telemetry and returns delta_items when mutations occurred after ?since', async () => {

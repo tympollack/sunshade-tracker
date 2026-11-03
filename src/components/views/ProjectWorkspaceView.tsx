@@ -1026,6 +1026,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           tier: ws.tier,
           api_key_preview: ws.api_key_preview,
           role: ws.role,
+          settings: ws.settings || {},
+          metadata: ws.metadata || {},
         });
         setAllProjects(ws.projects || []);
         if (ws.members) {

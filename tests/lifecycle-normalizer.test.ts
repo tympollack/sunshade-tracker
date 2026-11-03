@@ -142,6 +142,25 @@ describe('Dynamic Taxonomy Normalizer & Lifecycle Classifier (TASK-TRK-LIFECYCLE
         )
       ).toBe('unstarted');
     });
+
+    it('classifies in_progress as execution on legacy schemas omitting lifecycle_category and bucket arrays', () => {
+      const legacySchema: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [
+          { id: 'not_started', label: 'Not Started', color: '#94a3b8', order: 1 },
+          { id: 'in_progress', label: 'In Progress', color: '#38bdf8', order: 2 },
+          { id: 'planned', label: 'Planned', color: '#a855f7', order: 3 },
+          { id: 'complete', label: 'Complete', color: '#22c55e', order: 4, is_completed: true },
+        ],
+        custom_fields: [],
+      };
+
+      expect(resolveItemLifecycle({ status: 'not_started' }, legacySchema)).toBe('unstarted');
+      expect(resolveItemLifecycle({ status: 'in_progress' }, legacySchema)).toBe('execution');
+      expect(resolveItemLifecycle({ status: 'planned' }, legacySchema)).toBe('unstarted');
+      expect(resolveItemLifecycle({ status: 'complete' }, legacySchema)).toBe('terminal');
+    });
   });
 
   describe('isWithinTerminalGracePeriod', () => {

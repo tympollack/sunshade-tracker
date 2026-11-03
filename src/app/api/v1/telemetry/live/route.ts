@@ -6,15 +6,46 @@ import { getInFlightTelemetry, InFlightTelemetryPayload } from '@/lib/services/i
 import { WorkItem } from '@/types/tracker';
 
 const CACHE_CONTROL_HEADER = 'private, no-cache, stale-while-revalidate=30';
+export const MAX_IDLE_POLL_AGE_MS = 5 * 60 * 1000; // 5 minutes before time-sensitive metrics must recompute
 
 export function computeTelemetryHash(
   tenantId: string,
   view: string,
   maxItemUpdatedAt: string | null,
-  maxProjectUpdatedAt: string | null
+  maxProjectUpdatedAt: string | null,
+  timeBucket: number = Math.floor(Date.now() / MAX_IDLE_POLL_AGE_MS)
 ): string {
-  const raw = `${tenantId}:${view}:${maxItemUpdatedAt || '0'}:${maxProjectUpdatedAt || '0'}`;
+  const raw = `${tenantId}:${view}:${maxItemUpdatedAt || '0'}:${maxProjectUpdatedAt || '0'}:${timeBucket}`;
   return `"${createHash('sha1').update(raw).digest('hex').slice(0, 20)}"`;
+}
+
+function buildTelemetryFingerprint(
+  telemetry: InFlightTelemetryPayload,
+  tenantUpdatedAt?: string | null
+): string {
+  const projectsKey = (telemetry.projects || [])
+    .map(
+      (p) =>
+        `${p.project_id}:${p.wip_limit}:${p.unit_label}:${p.active_item_count}:${p.active_units}`
+    )
+    .join('|');
+  const stagesKey = (telemetry.stages || [])
+    .map((s) => `${s.stage}:${s.item_count}:${s.total_units}:${s.median_dwell_hours}`)
+    .join('|');
+  const radarKey = (telemetry.stage_dwell_radar || [])
+    .map((r) => `${r.item_id}:${r.dwell_hours}`)
+    .join('|');
+  return [
+    tenantUpdatedAt || '0',
+    telemetry.total_active_items,
+    telemetry.total_wip_capacity,
+    telemetry.rolling_24h_completed_items,
+    telemetry.rolling_24h_completed_units,
+    telemetry.in_flight_items.length,
+    projectsKey,
+    stagesKey,
+    radarKey,
+  ].join('::');
 }
 
 /**
@@ -50,8 +81,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Fast delta check when `since` or `If-None-Match` is supplied
-    if (sinceMs !== null) {
+    const nowMs = Date.now();
+    const tenantUpdatedMs = tenant.updated_at ? Date.parse(tenant.updated_at) : NaN;
+    const isFreshDeltaWindow =
+      sinceMs !== null &&
+      nowMs >= sinceMs &&
+      nowMs - sinceMs < MAX_IDLE_POLL_AGE_MS &&
+      (Number.isNaN(tenantUpdatedMs) || tenantUpdatedMs <= sinceMs);
+
+    // Fast delta check when `since` is within the bounded freshness window
+    if (sinceMs !== null && isFreshDeltaWindow) {
       const sinceIso = new Date(sinceMs).toISOString();
 
       let mutatedItemsQuery: any = supabaseAdmin
@@ -79,7 +118,13 @@ export async function GET(req: NextRequest) {
       const mutatedProjects = mutatedProjectsRes?.data || [];
 
       if (mutatedItems.length === 0 && mutatedProjects.length === 0) {
-        const idleEtag = computeTelemetryHash(tenant.id, view, sinceIso, sinceIso);
+        const idleEtag = computeTelemetryHash(
+          tenant.id,
+          view,
+          sinceIso,
+          tenant.updated_at || sinceIso,
+          Math.floor(nowMs / MAX_IDLE_POLL_AGE_MS)
+        );
         return new NextResponse(null, {
           status: 304,
           headers: {
@@ -91,9 +136,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Compute fresh InFlightTelemetryPayload
-    const telemetry: InFlightTelemetryPayload = await getInFlightTelemetry(tenant.slug);
+    const telemetry: InFlightTelemetryPayload = await getInFlightTelemetry(tenant.slug, {
+      nowMs,
+    });
 
-    // Compute deterministic ETag from active in-flight items
+    // Compute deterministic ETag from active in-flight items, project configs, and time bucket
     let maxItemUpdated = '';
     for (const it of telemetry.in_flight_items) {
       if (it.updated_at && it.updated_at > maxItemUpdated) {
@@ -101,11 +148,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const fingerprint = buildTelemetryFingerprint(telemetry, tenant.updated_at);
     const etag = computeTelemetryHash(
       tenant.id,
       view,
-      maxItemUpdated || telemetry.synced_at,
-      tenant.updated_at || null
+      maxItemUpdated || '0',
+      fingerprint,
+      Math.floor(nowMs / MAX_IDLE_POLL_AGE_MS)
     );
 
     if (ifNoneMatch && ifNoneMatch === etag && sinceMs !== null) {

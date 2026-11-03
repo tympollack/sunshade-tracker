@@ -11,11 +11,52 @@ import { normalizeProjectSettings } from '@/hooks/useProjectSettings';
 import {
   resolveItemLifecycle,
   filterInFlightItems,
+  resolveTerminalCompletionMs,
   TERMINAL_GRACE_PERIOD_MS,
 } from './lifecycleNormalizer';
 
 export const DEFAULT_PROJECT_WIP_LIMIT = 8;
 export const ROLLING_THROUGHPUT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Pages through Supabase PostgREST queries in 1000-row chunks to avoid the default
+ * 1000-row server cap on large workspaces. Falls back to direct await when `.range()`
+ * is not implemented on test doubles.
+ */
+async function fetchAllRows<T = any>(queryBuilder: any): Promise<{ data: T[]; error: any }> {
+  if (!queryBuilder) {
+    return { data: [], error: null };
+  }
+
+  if (typeof queryBuilder.range !== 'function') {
+    const res = await queryBuilder;
+    if (res?.error) return { data: [], error: res.error };
+    return { data: (res?.data || []) as T[], error: null };
+  }
+
+  const CHUNK_SIZE = 1000;
+  const allData: T[] = [];
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await queryBuilder.range(from, from + CHUNK_SIZE - 1);
+    if (error) {
+      return { data: allData, error };
+    }
+    if (!data || data.length === 0) {
+      break;
+    }
+    allData.push(...data);
+    if (data.length < CHUNK_SIZE) {
+      hasMore = false;
+    } else {
+      from += CHUNK_SIZE;
+    }
+  }
+
+  return { data: allData, error: null };
+}
 
 export interface StageDwellRadarEntry {
   item_id: string;
@@ -145,11 +186,9 @@ export function resolveItemWorkUnits(
 
   const meta = item.metadata || {};
   const rawVal =
-    meta[configuredKey] ??
-    meta.story_points ??
-    meta.points ??
-    meta.estimate ??
-    meta.complexity;
+    configuredKey === 'story_points'
+      ? meta.story_points ?? meta.points ?? meta.estimate ?? meta.complexity
+      : meta[configuredKey];
 
   if (typeof rawVal === 'number' && Number.isFinite(rawVal) && rawVal >= 0) {
     return { units: rawVal, unitLabel };
@@ -243,7 +282,8 @@ export function computeInFlightTelemetry(
     validItems,
     projectMap,
     nowMs,
-    TERMINAL_GRACE_PERIOD_MS
+    TERMINAL_GRACE_PERIOD_MS,
+    input.stageEntryTimestamps
   );
 
   // Separate active non-terminal in-flight items (execution, verification, staging) from terminal items
@@ -416,9 +456,12 @@ export function computeInFlightTelemetry(
       : 0;
 
   // Build dynamic stage buckets from liveSettings.lifecycle_categories
+  // Terminal stage buckets retain recently completed items within the 12h grace window,
+  // while activeEnrichedItems drives active WIP saturation and non-terminal columns.
   const stages: StageBucketSummary[] = liveSettings.lifecycle_categories.map((cat) => {
     const stageKey = cat.key as LifecycleStage;
-    const stageItems = activeEnrichedItems.filter((it) => it.lifecycle_stage === stageKey);
+    const candidatePool = stageKey === 'terminal' ? enrichedItems : activeEnrichedItems;
+    const stageItems = candidatePool.filter((it) => it.lifecycle_stage === stageKey);
     const stageUnits = Number(
       stageItems.reduce((sum, it) => sum + it.work_units, 0).toFixed(2)
     );
@@ -437,13 +480,35 @@ export function computeInFlightTelemetry(
     };
   });
 
-  // Identify bottleneck_stage: stage with the highest accumulated work unit volume
+  // Identify bottleneck_stage across active non-terminal stages.
+  // When projects share a uniform unit scale, compare total_units directly;
+  // when projects use heterogeneous unit labels (e.g. pts vs words), normalize
+  // each item's stage pressure against its project's WIP capacity so high-magnitude
+  // custom units do not artificially outweigh smaller unit scales.
+  const distinctUnitLabels = new Set(activeEnrichedItems.map((it) => it.unit_label));
+  const hasMixedUnits = distinctUnitLabels.size > 1;
+
   let bottleneckStage: LifecycleStage | null = null;
   let bottleneckStageUnits = 0;
+  let maxStageScore = 0;
+
   for (const st of stages) {
-    if (st.total_units > bottleneckStageUnits) {
-      bottleneckStageUnits = st.total_units;
+    if (st.stage === 'terminal' || st.item_count === 0) continue;
+    const stageScore = hasMixedUnits
+      ? st.items.reduce((sum, it) => {
+          const projSettings = projectMap.get(it.project_id);
+          const cap =
+            typeof projSettings?.wip_limit === 'number' && projSettings.wip_limit >= 1
+              ? projSettings.wip_limit
+              : DEFAULT_PROJECT_WIP_LIMIT;
+          return sum + 1 / cap;
+        }, 0)
+      : st.total_units;
+
+    if (stageScore > maxStageScore) {
+      maxStageScore = stageScore;
       bottleneckStage = st.stage;
+      bottleneckStageUnits = st.total_units;
     }
   }
 
@@ -454,8 +519,7 @@ export function computeInFlightTelemetry(
     const settings = projectMap.get(item.project_id);
     const stage = resolveItemLifecycle(item, settings);
     if (stage === 'terminal') {
-      const completedRaw = item.metadata?.completed_at || item.updated_at;
-      const completedMs = completedRaw ? Date.parse(completedRaw) : NaN;
+      const completedMs = resolveTerminalCompletionMs(item, input.stageEntryTimestamps);
       if (
         !Number.isNaN(completedMs) &&
         nowMs - completedMs >= 0 &&
@@ -572,7 +636,7 @@ export async function getInFlightTelemetry(
     throw new Error(`Workspace "@${cleanSlug}" not found.`);
   }
 
-  // 2. Fetch active projects and work items in parallel
+  // 2. Fetch active projects and paginated work items in parallel
   const [projectsRes, itemsRes] = await Promise.all([
     supabaseAdmin
       .from('projects')
@@ -580,12 +644,14 @@ export async function getInFlightTelemetry(
       .eq('tenant_id', tenant.id)
       .is('deleted_at', null)
       .order('order_index', { ascending: true }),
-    supabaseAdmin
-      .from('work_items')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .is('deleted_at', null)
-      .order('order_index', { ascending: true }),
+    fetchAllRows<WorkItem>(
+      supabaseAdmin
+        .from('work_items')
+        .select('*')
+        .eq('tenant_id', tenant.id)
+        .is('deleted_at', null)
+        .order('order_index', { ascending: true })
+    ),
   ]);
 
   if (projectsRes.error) {
@@ -598,20 +664,37 @@ export async function getInFlightTelemetry(
   const projects = projectsRes.data || [];
   const allItems = (itemsRes.data || []) as WorkItem[];
 
-  // Build project map to pre-filter in-flight items before querying audit logs
+  // Build project map to classify item lifecycles before querying audit logs
   const projectMap = new Map<string, ProjectSettings>();
   for (const p of projects) {
     projectMap.set(p.id, normalizeProjectSettings(p.settings));
   }
 
   const nowMs = options?.nowMs ?? Date.now();
-  const inFlightItems = filterInFlightItems(allItems, projectMap, nowMs);
 
-  // 3. Query audit_logs for stage transition timestamps on active in-flight items
+  // Include active in-flight items as well as terminal items edited within the last 24h
+  // so audit transition timestamps accurately distinguish true completions from later title/metadata edits.
+  const auditCandidateItems = allItems.filter((it) => {
+    if (!it || it.deleted_at) return false;
+    const stage = resolveItemLifecycle(it, projectMap.get(it.project_id));
+    if (stage === 'execution' || stage === 'verification' || stage === 'staging') {
+      return true;
+    }
+    if (stage === 'terminal') {
+      const updatedMs = it.updated_at ? Date.parse(it.updated_at) : NaN;
+      return !Number.isNaN(updatedMs) && nowMs - updatedMs <= ROLLING_THROUGHPUT_WINDOW_MS;
+    }
+    return false;
+  });
+
+  // 3. Query audit_logs for stage transition timestamps on active & recently-touched terminal items
   const stageEntryTimestamps = new Map<string, number>();
-  if (inFlightItems.length > 0) {
+  if (auditCandidateItems.length > 0) {
     try {
-      const candidateIds = inFlightItems.map((it) => it.id);
+      const candidateStatusById = new Map<string, string>(
+        auditCandidateItems.map((it) => [it.id, String(it.status || '').trim().toLowerCase()])
+      );
+      const candidateIds = auditCandidateItems.map((it) => it.id);
       const { data: auditRows, error: auditErr } = await supabaseAdmin
         .from('audit_logs')
         .select('item_id, changed_fields, created_at')
@@ -621,10 +704,15 @@ export async function getInFlightTelemetry(
 
       if (!auditErr && Array.isArray(auditRows)) {
         for (const row of auditRows) {
+          const afterStatus = String(row?.changed_fields?.status?.after || '')
+            .trim()
+            .toLowerCase();
+          const currentStatus = row?.item_id ? candidateStatusById.get(row.item_id) : undefined;
           if (
             row.item_id &&
             !stageEntryTimestamps.has(row.item_id) &&
-            row.changed_fields?.status?.after &&
+            afterStatus &&
+            (!currentStatus || afterStatus === currentStatus) &&
             row.created_at
           ) {
             const ts = Date.parse(row.created_at);

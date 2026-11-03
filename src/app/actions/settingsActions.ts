@@ -229,7 +229,7 @@ export async function getLiveDashboardSettingsAction(
     const cleanSlug = tenantSlug.replace(/^@/, '').trim();
     const { data: tenant, error: tenantErr } = await supabaseAdmin
       .from('tenants')
-      .select('id, slug, settings, metadata')
+      .select('id, slug, tier, owner_id, settings, metadata')
       .eq('slug', cleanSlug)
       .is('deleted_at', null)
       .maybeSingle();
@@ -240,6 +240,42 @@ export async function getLiveDashboardSettingsAction(
         settings: resolveLiveDashboardSettings(null),
         error: tenantErr?.message || `Workspace "@${cleanSlug}" not found.`,
       };
+    }
+
+    const isPublicWorkspace =
+      tenant.slug === 'sunshade' ||
+      tenant.tier === 'demo' ||
+      Boolean(tenant.metadata?.is_public);
+
+    if (!isPublicWorkspace) {
+      const supabase = await createServerClient();
+      const authRes = await supabase?.auth?.getUser?.();
+      const user = authRes?.data?.user;
+
+      if (!user) {
+        return {
+          success: false,
+          settings: resolveLiveDashboardSettings(null),
+          error: 'Unauthorized: Session required to view private workspace settings.',
+        };
+      }
+
+      if (tenant.owner_id !== user.id) {
+        const { data: member, error: memberErr } = await supabaseAdmin
+          .from('tenant_members')
+          .select('role')
+          .eq('tenant_id', tenant.id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (memberErr || !member) {
+          return {
+            success: false,
+            settings: resolveLiveDashboardSettings(null),
+            error: 'Forbidden: You do not have membership access to this workspace.',
+          };
+        }
+      }
     }
 
     const mergedSettingsSource = {

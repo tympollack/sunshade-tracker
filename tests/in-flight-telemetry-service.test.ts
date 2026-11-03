@@ -78,6 +78,11 @@ describe('Systemic Flow Telemetry & Blameless Health Aggregator (TASK-TRK-BLAMEL
       resolveItemWorkUnits({ metadata: { target_words: 1200 } }, EDITORIAL_PROJECT_SETTINGS)
     ).toEqual({ units: 1200, unitLabel: 'words' });
 
+    // Custom metric field should not borrow incompatible story_points values
+    expect(
+      resolveItemWorkUnits({ metadata: { story_points: 8 } }, EDITORIAL_PROJECT_SETTINGS)
+    ).toEqual({ units: 1, unitLabel: 'words' });
+
     expect(resolveItemWorkUnits({ metadata: {} }, ENG_PROJECT_SETTINGS)).toEqual({
       units: 1,
       unitLabel: 'pts',
@@ -159,8 +164,9 @@ describe('Systemic Flow Telemetry & Blameless Health Aggregator (TASK-TRK-BLAMEL
     expect(payload.total_wip_capacity).toBe(8); // 5 + 3
     expect(payload.wip_saturation_ratio).toBe(0.5); // 4 / 8
     expect(payload.total_active_units).toBe(1516); // 3 + 5 + 8 + 1500
-    expect(payload.bottleneck_stage).toBe('verification');
-    expect(payload.bottleneck_stage_units).toBe(1500);
+    // With mixed unit scales (pts vs words), bottleneck_stage normalizes by project WIP pressure (3/5 > 1/3)
+    expect(payload.bottleneck_stage).toBe('execution');
+    expect(payload.bottleneck_stage_units).toBe(16);
 
     // Stage dwell radar should flag exec-stalled with blameless label
     expect(payload.stage_dwell_radar).toHaveLength(1);
@@ -182,6 +188,51 @@ describe('Systemic Flow Telemetry & Blameless Health Aggregator (TASK-TRK-BLAMEL
     // Rolling 24h throughput
     expect(payload.rolling_24h_completed_items).toBe(1);
     expect(payload.rolling_24h_completed_units).toBe(5);
+  });
+
+  it('populates terminal stage column with recent completions when configured and ignores unrelated edits on old completed items', () => {
+    const nowMs = Date.parse('2026-11-03T12:00:00.000Z');
+    const items: WorkItem[] = [
+      makeWorkItem({
+        id: 'done-1h-ago',
+        project_id: 'proj-eng',
+        status: 'done',
+        created_at: '2026-11-01T00:00:00.000Z',
+        updated_at: '2026-11-03T11:00:00.000Z',
+        metadata: { story_points: 3, completed_at: '2026-11-03T11:00:00.000Z' },
+      }),
+      makeWorkItem({
+        id: 'done-last-week-edited-today',
+        project_id: 'proj-eng',
+        status: 'done',
+        created_at: '2026-10-20T00:00:00.000Z',
+        updated_at: '2026-11-03T11:30:00.000Z', // edited today without completed_at or recent transition
+        metadata: { story_points: 8 },
+      }),
+    ];
+
+    const stageEntryTimestamps = new Map<string, number>([
+      ['done-1h-ago', Date.parse('2026-11-03T11:00:00.000Z')],
+    ]);
+
+    const payload = computeInFlightTelemetry({
+      items,
+      projects: [{ id: 'proj-eng', slug: 'eng', name: 'Engineering', settings: ENG_PROJECT_SETTINGS }],
+      stageEntryTimestamps,
+      liveDashboardSettings: {
+        lifecycle_categories: [
+          { key: 'execution', label: 'Execution', order: 1, color: '#38BDF8' },
+          { key: 'terminal', label: 'Recently Completed', order: 2, color: '#22C55E' },
+        ],
+      },
+      nowMs,
+    });
+
+    const terminalStage = payload.stages.find((s) => s.stage === 'terminal');
+    expect(terminalStage?.item_count).toBe(1);
+    expect(terminalStage?.items[0].id).toBe('done-1h-ago');
+    expect(payload.rolling_24h_completed_items).toBe(1);
+    expect(payload.rolling_24h_completed_units).toBe(3);
   });
 
   it('queries Supabase and rolls up multi-project telemetry via getInFlightTelemetry', async () => {

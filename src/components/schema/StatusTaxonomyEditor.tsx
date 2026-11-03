@@ -197,7 +197,7 @@ export function StatusTaxonomyEditor({
     newStatuses[idx] = {
       ...newStatuses[idx],
       lifecycle_category: category,
-      is_completed: category === 'terminal' ? true : newStatuses[idx].is_completed,
+      is_completed: category === 'terminal',
     };
     onChange({ ...settings, statuses: newStatuses });
   };
