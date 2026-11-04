@@ -380,29 +380,56 @@ describe('Value Ledger Server Aggregator & API Route', () => {
   });
 
   it('scales annual efficiency metrics strictly by distinct project-months to avoid over-crediting brief activity', async () => {
-    // Proj-001 active in Jan and Feb (2 project-months)
-    // Proj-002 active in Mar only (1 project-month)
+    // Proj-001 active in Jan and Feb with >= 3 verified items (2 project-months)
+    // Proj-002 active in Mar with >= 3 verified items (1 project-month)
     // Total project-months = 3 (6.0 hrs), NOT 2 projects * 12 mos = 24 project-months (48.0 hrs)
-    const itemProj1Jan = {
-      id: 'item-p1-jan',
+    const itemProj1Jan1 = {
+      id: 'item-p1-jan-1',
       project_id: 'proj-001',
-      status: 'in_dev',
+      status: 'done',
       created_at: '2026-01-10T10:00:00.000Z',
       updated_at: '2026-01-10T10:00:00.000Z',
+      metadata: { commit_sha: 'commit-a1b2c3d4' },
+    };
+    const itemProj1Jan2 = {
+      id: 'item-p1-jan-2',
+      project_id: 'proj-001',
+      status: 'done',
+      created_at: '2026-01-15T10:00:00.000Z',
+      updated_at: '2026-01-15T10:00:00.000Z',
+      metadata: { commit_sha: 'commit-a2b2c3d4' },
     };
     const itemProj1Feb = {
       id: 'item-p1-feb',
       project_id: 'proj-001',
-      status: 'in_dev',
+      status: 'done',
       created_at: '2026-02-14T10:00:00.000Z',
       updated_at: '2026-02-14T10:00:00.000Z',
+      metadata: { commit_sha: 'commit-a3b2c3d4' },
     };
-    const itemProj2Mar = {
-      id: 'item-p2-mar',
+    const itemProj2Mar1 = {
+      id: 'item-p2-mar-1',
       project_id: 'proj-002',
-      status: 'in_dev',
+      status: 'complete',
       created_at: '2026-03-05T10:00:00.000Z',
       updated_at: '2026-03-05T10:00:00.000Z',
+      metadata: { pr_url: 'https://github.com/org/repo/pull/1' },
+    };
+    const itemProj2Mar2 = {
+      id: 'item-p2-mar-2',
+      project_id: 'proj-002',
+      status: 'complete',
+      created_at: '2026-03-10T10:00:00.000Z',
+      updated_at: '2026-03-10T10:00:00.000Z',
+      metadata: { pr_url: 'https://github.com/org/repo/pull/2' },
+    };
+    const itemProj2Mar3 = {
+      id: 'item-p2-mar-3',
+      project_id: 'proj-002',
+      status: 'complete',
+      created_at: '2026-03-15T10:00:00.000Z',
+      updated_at: '2026-03-15T10:00:00.000Z',
+      metadata: { pr_url: 'https://github.com/org/repo/pull/3' },
     };
 
     (supabaseAdmin.from as any).mockImplementation((table: string) => {
@@ -430,7 +457,10 @@ describe('Value Ledger Server Aggregator & API Route', () => {
         return {
           select: () => ({
             eq: () => ({
-              is: () => Promise.resolve({ data: [itemProj1Jan, itemProj1Feb, itemProj2Mar], error: null }),
+              is: () => Promise.resolve({
+                data: [itemProj1Jan1, itemProj1Jan2, itemProj1Feb, itemProj2Mar1, itemProj2Mar2, itemProj2Mar3],
+                error: null
+              }),
             }),
           }),
         };

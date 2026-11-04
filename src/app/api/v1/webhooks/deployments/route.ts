@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     '';
   const tenantSecret = tenant?.metadata?.deployment_webhook_secret;
 
-  let isValidSig = true;
+  let isValidSig = false;
   if (tenantSecret) {
     isValidSig = Boolean(signature && verifyHmacSignature(rawBody, signature, tenantSecret));
   } else if (globalSecret) {
@@ -92,15 +92,13 @@ export async function POST(req: NextRequest) {
       );
     }
     isValidSig = Boolean(signature && verifyHmacSignature(rawBody, signature, globalSecret));
-  } else if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_UNSIGNED_WEBHOOKS) {
-    // Production safety: reject unsigned webhooks when no secret is configured
+  } else if (process.env.ALLOW_UNSIGNED_WEBHOOKS === 'true' && process.env.NODE_ENV !== 'production') {
+    isValidSig = true;
+  } else {
     return NextResponse.json(
       { error: 'Unauthorized: Deployment webhooks require a secret configured on the workspace or platform' },
       { status: 401 }
     );
-  } else if (signature) {
-    // Signature header provided but secret was missing
-    isValidSig = false;
   }
 
   if (!isValidSig) {

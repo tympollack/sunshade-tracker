@@ -1774,6 +1774,44 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    // Evaluate declarative automations (status_transition / item_updated)
+    const automations = effectiveProjectSettings?.automations;
+    const hasActiveAutomations =
+      Array.isArray(automations) && automations.some((r: any) => r && r.enabled !== false);
+
+    if (hasActiveAutomations) {
+      const isStatusTransition = existingItem.status !== updated.status;
+      const eventType = isStatusTransition ? 'status_transition' : 'item_updated';
+
+      const runAutomations = () =>
+        import('@/lib/automation-engine')
+          .then(({ executeProjectAutomations }) =>
+            executeProjectAutomations({
+              tenantId: authCtx.tenant.id,
+              projectId: updated.project_id || existingItem.project_id,
+              settings: effectiveProjectSettings,
+              items: [updated],
+              itemMutationSnapshots: [{ item: updated, prior: existingItem }],
+              eventType,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
+            })
+          )
+          .catch((autoErr) => {
+            console.error('[tracker:items:automations] Background execution error:', autoErr);
+          });
+
+      try {
+        if (typeof (globalThis as any).after === 'function') {
+          (globalThis as any).after(runAutomations);
+        } else {
+          queueMicrotask(runAutomations);
+        }
+      } catch {
+        queueMicrotask(runAutomations);
+      }
+    }
+
     return NextResponse.json({ success: true, item: updated });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });

@@ -8,6 +8,7 @@ import {
   executeProjectAutomations,
   isAllowedChildType,
   resolveDefaultChildType,
+  isAllowedWebhookUrl,
 } from '@/lib/automation-engine';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
@@ -830,6 +831,203 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       // The second upsert call omitted sprint_id
       const secondCallPayload = upsertMock.mock.calls[1][0];
       expect(secondCallPayload[0]).not.toHaveProperty('sprint_id');
+    });
+  });
+
+  describe('isAllowedWebhookUrl SSRF Protection', () => {
+    it('rejects loopback, internal IPs, link-local, and internal domain names', () => {
+      // Loopback
+      expect(isAllowedWebhookUrl('http://localhost/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.0.0.1:8080/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.0.0.2/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.255.255.255/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://[::1]/hook')).toBe(false);
+
+      // Private ranges
+      expect(isAllowedWebhookUrl('http://10.0.0.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://192.168.1.100/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://172.16.0.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://172.31.255.255/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://100.64.0.1/')).toBe(false); // CGNAT
+
+      // Link-local & cloud metadata
+      expect(isAllowedWebhookUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+      expect(isAllowedWebhookUrl('http://169.254.1.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://instance-data/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://metadata.google.internal/')).toBe(false);
+
+      // IPv6 ULA & Link-local
+      expect(isAllowedWebhookUrl('http://[fc00::1]/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://[fe80::1]/')).toBe(false);
+
+      // Internal / single-label domains
+      expect(isAllowedWebhookUrl('http://intranet/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://redis/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://service.local/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://worker.internal/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://app.localhost/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://corp.lan/webhook')).toBe(false);
+    });
+
+    it('allows valid public webhook destinations', () => {
+      expect(isAllowedWebhookUrl('https://api.github.com/webhook')).toBe(true);
+      expect(isAllowedWebhookUrl('https://webhook.site/my-uuid')).toBe(true);
+      expect(isAllowedWebhookUrl('https://example.com/api/v1/sink')).toBe(true);
+    });
+
+    it('permits localhost only when ALLOW_LOCAL_WEBHOOKS=true is explicitly set', () => {
+      const orig = process.env.ALLOW_LOCAL_WEBHOOKS;
+      try {
+        process.env.ALLOW_LOCAL_WEBHOOKS = 'true';
+        expect(isAllowedWebhookUrl('http://localhost:3000/webhook')).toBe(true);
+      } finally {
+        process.env.ALLOW_LOCAL_WEBHOOKS = orig;
+      }
+    });
+  });
+
+  describe('Fortnightly Cadence & Collision Resolution in calculate_calendar_slot', () => {
+    it('schedules next slot 14 days after existing scheduled slot date', async () => {
+      const existingDate = new Date(Date.now() + 5 * 86400000).toISOString();
+      const mockSlots = [
+        {
+          id: 'existing-slot-item',
+          project_id: 'p-cadence',
+          status: 'in_progress',
+          metadata: { scheduled_slot_date: existingDate },
+        },
+      ];
+
+      const updateEqMock = vi.fn().mockResolvedValue({ data: null, error: null });
+      const selectEqMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          neq: vi.fn().mockResolvedValue({ data: mockSlots, error: null }),
+        }),
+      });
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: selectEqMock,
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: updateEqMock,
+            }),
+          }),
+        }),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-fortnightly',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Monday',
+                utc_time: '14:00',
+                collision_statuses: ['in_progress'],
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'new-slot-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence',
+        item_type: 'story',
+        status: 'open',
+        title: 'Fortnightly Cadence Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence',
+        settings,
+        items: [newItem],
+      });
+
+      expect(newItem.metadata.cadence_days).toBe(14);
+      expect(newItem.metadata.scheduled_slot_date).toBeDefined();
+
+      const baseMs = new Date(existingDate).getTime();
+      const scheduledMs = new Date(newItem.metadata.scheduled_slot_date).getTime();
+      // Should be scheduled at least 14 days after the existing slot
+      expect(scheduledMs).toBeGreaterThanOrEqual(baseMs + 13 * 86400000);
+    });
+  });
+
+  describe('Scoped DB Updates in executeProjectAutomations', () => {
+    it('scopes work_items patch_metadata updates strictly to tenant_id and project_id', async () => {
+      const tenantEqMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      const idEqMock = vi.fn().mockReturnValue({
+        eq: tenantEqMock,
+      });
+      const updateMock = vi.fn().mockReturnValue({
+        eq: idEqMock,
+      });
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-patch',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'patch_metadata',
+                metadata: { automated_tag: 'verified' },
+              },
+            ],
+          },
+        ],
+      };
+
+      const item: WorkItem = {
+        id: 'item-scoped-1',
+        tenant_id: 'tenant-abc',
+        project_id: 'project-xyz',
+        item_type: 'story',
+        status: 'open',
+        title: 'Scoped Patch Story',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 'tenant-abc',
+        projectId: 'project-xyz',
+        settings,
+        items: [item],
+      });
+
+      expect(updateMock).toHaveBeenCalled();
+      expect(idEqMock).toHaveBeenCalledWith('id', 'item-scoped-1');
+      expect(tenantEqMock).toHaveBeenCalledWith('tenant_id', 'tenant-abc');
     });
   });
 });

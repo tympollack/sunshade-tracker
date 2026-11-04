@@ -299,7 +299,7 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
         return {} as any;
       });
 
-      const res = await updateWorkItemStatus('task-1', 'in_review');
+      const res: any = await updateWorkItemStatus('task-1', 'in_review');
       expect(res.success).toBe(false);
       expect(res.status).toBe(422);
       expect(res.code).toBe('GUARD_REJECTED');
@@ -372,6 +372,62 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
           commit_hash: '9876543',
         },
       });
+    });
+
+    it('prevents caller from bypassing guards by supplying empty projectSettings in options', async () => {
+      const updateSpy = vi.fn();
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'task-1',
+                    project_id: 'proj-1',
+                    status: 'in_progress',
+                    metadata: {},
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+            update: updateSpy,
+          } as any;
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'proj-1', settings: sampleSettings },
+                  error: null,
+                }),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      // Caller attempts to pass empty projectSettings to bypass transition guards
+      const res: any = await updateWorkItemStatus('task-1', 'in_review', {
+        projectSettings: { transition_guards: [] },
+      });
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(422);
+      expect(res.code).toBe('GUARD_REJECTED');
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects updateWorkItemStatus with 401 when createServerClient throws auth error', async () => {
+      const { createServerClient } = await import('@/lib/supabase-server');
+      vi.mocked(createServerClient).mockRejectedValueOnce(new Error('Session cookie expired'));
+
+      const res = await updateWorkItemStatus('task-1', 'in_review');
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(401);
+      expect(res.error).toContain('Session cookie expired');
     });
   });
 

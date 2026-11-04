@@ -162,12 +162,27 @@ export async function assertRunnerWeeklyCapacity(params: {
     .eq('assignee', params.assignee)
     .neq('id', params.candidateItem.id);
 
+  const TERMINAL_STATUSES = new Set(['done', 'completed', 'complete', 'closed', 'cancelled']);
+
   const weeklyItems = (userItems || []).filter((it: any) => {
+    const rawStatus = String(it.status || '').toLowerCase().trim();
+    const isTerminal = TERMINAL_STATUSES.has(rawStatus);
+
+    // Ongoing active work consumes weekly capacity regardless of when it was started or last updated
+    if (!isTerminal) {
+      return true;
+    }
+
+    // For completed/closed work, check durable completion, claim, update, or creation within this week
+    const completedAt = it.metadata?.completed_at ? new Date(it.metadata.completed_at).getTime() : 0;
+    const claimedAt = it.metadata?.claimed_at ? new Date(it.metadata.claimed_at).getTime() : 0;
     const updated = it.updated_at ? new Date(it.updated_at).getTime() : 0;
     const created = it.created_at ? new Date(it.created_at).getTime() : 0;
     const startMs = startOfWeek.getTime();
     const endMs = endOfWeek.getTime();
-    return (updated >= startMs && updated <= endMs) || (created >= startMs && created <= endMs);
+
+    const inWeek = (ts: number) => ts >= startMs && ts <= endMs;
+    return inWeek(completedAt) || inWeek(claimedAt) || inWeek(updated) || inWeek(created);
   });
 
   const { totalTokens: currentWeeklyTokens } = computeUserWeeklyUtilization(weeklyItems);
