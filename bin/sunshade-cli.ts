@@ -190,15 +190,24 @@ export class SunshadeCliApi {
     return items[0];
   }
 
-  public async claimTask(idOrRef: string, runner?: string, projectSlug?: string): Promise<any> {
+  public async claimTask(
+    idOrRef: string,
+    runner?: string,
+    projectSlug?: string,
+    adminOverride?: boolean
+  ): Promise<any> {
     const item = await this.resolveItem(idOrRef, projectSlug);
     const assignedRunner = runner || process.env.SUNSHADE_RUNNER_ID || process.env.AGENT_NAME || 'agent-runner';
 
-    const patchPayload = {
+    const patchPayload: Record<string, any> = {
       id: item.id,
       status: 'in_progress',
       assignee: assignedRunner,
     };
+
+    if (adminOverride) {
+      patchPayload.capacity_override = true;
+    }
 
     const res = await this.request('/api/v1/items', {
       method: 'PATCH',
@@ -338,11 +347,12 @@ export function buildCliProgram(apiOverride?: SunshadeCliApi): Command {
     .description('Update status to in_progress and assign runner identity')
     .option('--runner <name>', 'Runner identity (defaults to agent-runner)')
     .option('--project <slug>', 'Target project slug')
+    .option('--override', 'Admin override to bypass weekly 20hr sovereign capacity cap')
     .option('--json', 'Output clean unadorned JSON')
     .action(async (refId, options) => {
       try {
         const api = getApi(options);
-        const claimed = await api.claimTask(refId, options.runner, options.project);
+        const claimed = await api.claimTask(refId, options.runner, options.project, options.override);
         if (isJson(options)) {
           console.log(JSON.stringify(claimed, null, 2));
         } else {

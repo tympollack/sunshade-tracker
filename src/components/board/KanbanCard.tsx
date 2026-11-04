@@ -22,18 +22,14 @@ import { SpYieldBadge } from '@/components/board/SpYieldBadge';
 
 function formatCardTimestamp(dateString?: string): string | null {
   if (!dateString) return null;
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return null;
-  const now = new Date();
-  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}h ago`;
-  const diffDay = Math.floor(diffHour / 24);
-  if (diffDay < 7) return `${diffDay}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const d = new Date(dateString);
+  if (isNaN(d.getTime())) return null;
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 604800) return `${Math.floor(sec / 86400)}d ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export interface KanbanCardProps {
@@ -49,6 +45,7 @@ export interface KanbanCardProps {
   isCardImmutable?: boolean;
   isReadOnly?: boolean;
   isBeingDragged?: boolean;
+  isGuardRejected?: boolean;
   compact?: boolean;
   onEditItem?: (item: WorkItem) => void;
   onDeleteItem?: (item: WorkItem) => void;
@@ -78,6 +75,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   isCardImmutable = false,
   isReadOnly = false,
   isBeingDragged = false,
+  isGuardRejected = false,
   compact = true,
   onEditItem,
   onDeleteItem,
@@ -189,9 +187,12 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         }}
         onDoubleClick={() => onEditItem?.(item)}
         data-testid={`kanban-card-${item.id}`}
+        data-guard-rejected={isGuardRejected ? 'true' : undefined}
         className={`p-2.5 rounded-lg border bg-slate-900/90 hover:bg-slate-900 cursor-pointer transition-all flex flex-col justify-between min-h-[76px] max-h-[88px] shadow-sm group hover:border-slate-700 ${
           isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
         } ${
+          isGuardRejected ? 'ring-2 ring-rose-500 border-rose-500/80 ' : ''
+        }${
           isBeingDragged
             ? 'opacity-40 border-dashed border-emerald-500'
             : isStalled
@@ -403,9 +404,12 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       onDrop={onDrop}
       onDoubleClick={() => onEditItem?.(item)}
       data-testid={`kanban-card-${item.id}`}
+      data-guard-rejected={isGuardRejected ? 'true' : undefined}
       className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
         isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
       } ${
+        isGuardRejected ? 'ring-2 ring-rose-500 border-rose-500/80 ' : ''
+      }${
         isBeingDragged
           ? 'opacity-40 border-dashed border-emerald-500'
           : isStalled

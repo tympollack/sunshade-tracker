@@ -3,6 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { createServerClient } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/db';
+import {
+  LiveDashboardSettings,
+  DEFAULT_LIVE_DASHBOARD_SETTINGS,
+  resolveLiveDashboardSettings,
+} from '@/types/tracker';
 
 export interface ProjectVelocityOverride {
   projectId: string;
@@ -204,5 +209,193 @@ export async function updateVelocitySettingsAction(
   } catch (err: any) {
     console.error('Error in updateVelocitySettingsAction:', err);
     return { success: false, error: err.message || 'Failed to update velocity settings.' };
+  }
+}
+
+export interface LiveDashboardSettingsResult {
+  success: boolean;
+  settings: LiveDashboardSettings;
+  error: string | null;
+}
+
+/**
+ * Server action to resolve workspace-level live dashboard configuration from tracker.tenants.settings,
+ * falling back to DEFAULT_LIVE_DASHBOARD_SETTINGS when unconfigured.
+ */
+export async function getLiveDashboardSettingsAction(
+  tenantSlug: string
+): Promise<LiveDashboardSettingsResult> {
+  try {
+    const cleanSlug = tenantSlug.replace(/^@/, '').trim();
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, slug, tier, owner_id, settings, metadata')
+      .eq('slug', cleanSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (tenantErr || !tenant) {
+      return {
+        success: false,
+        settings: resolveLiveDashboardSettings(null),
+        error: tenantErr?.message || `Workspace "@${cleanSlug}" not found.`,
+      };
+    }
+
+    const isPublicWorkspace =
+      tenant.slug === 'sunshade' ||
+      tenant.tier === 'demo' ||
+      Boolean(tenant.metadata?.is_public);
+
+    if (!isPublicWorkspace) {
+      const supabase = await createServerClient();
+      const authRes = await supabase?.auth?.getUser?.();
+      const user = authRes?.data?.user;
+
+      if (!user) {
+        return {
+          success: false,
+          settings: resolveLiveDashboardSettings(null),
+          error: 'Unauthorized: Session required to view private workspace settings.',
+        };
+      }
+
+      if (tenant.owner_id !== user.id) {
+        const { data: member, error: memberErr } = await supabaseAdmin
+          .from('tenant_members')
+          .select('role')
+          .eq('tenant_id', tenant.id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (memberErr || !member) {
+          return {
+            success: false,
+            settings: resolveLiveDashboardSettings(null),
+            error: 'Forbidden: You do not have membership access to this workspace.',
+          };
+        }
+      }
+    }
+
+    const mergedSettingsSource = {
+      ...(tenant.metadata || {}),
+      ...(tenant.settings || {}),
+    };
+
+    return {
+      success: true,
+      settings: resolveLiveDashboardSettings(mergedSettingsSource),
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      settings: resolveLiveDashboardSettings(null),
+      error: err.message || 'Failed to load live dashboard settings.',
+    };
+  }
+}
+
+/**
+ * Server action to update workspace-level live dashboard configuration in tracker.tenants.settings.
+ */
+export async function updateLiveDashboardSettingsAction(
+  tenantSlug: string,
+  updates: Partial<LiveDashboardSettings>
+): Promise<LiveDashboardSettingsResult> {
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const cleanSlug = tenantSlug.replace(/^@/, '').trim();
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, slug, owner_id, settings')
+      .eq('slug', cleanSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (tenantErr || !tenant) {
+      return {
+        success: false,
+        settings: resolveLiveDashboardSettings(null),
+        error: `Workspace "@${cleanSlug}" not found.`,
+      };
+    }
+
+    if (!user) {
+      return {
+        success: false,
+        settings: resolveLiveDashboardSettings(tenant.settings),
+        error: 'Unauthorized: Session required to modify workspace settings.',
+      };
+    }
+
+    if (tenant.owner_id !== user.id) {
+      const { data: member, error: memberErr } = await supabaseAdmin
+        .from('tenant_members')
+        .select('role')
+        .eq('tenant_id', tenant.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (memberErr || !member || member.role === 'viewer') {
+        return {
+          success: false,
+          settings: resolveLiveDashboardSettings(tenant.settings),
+          error: 'Forbidden: You do not have permissions to edit workspace settings.',
+        };
+      }
+    }
+
+    const existingSettings = tenant.settings || {};
+    const mergedLiveSettings = resolveLiveDashboardSettings({
+      live_dashboard_settings: {
+        ...(existingSettings.live_dashboard_settings || DEFAULT_LIVE_DASHBOARD_SETTINGS),
+        ...updates,
+      },
+    });
+
+    const updatedTenantSettings = {
+      ...existingSettings,
+      live_dashboard_settings: mergedLiveSettings,
+    };
+
+    const { error: updateErr } = await supabaseAdmin
+      .from('tenants')
+      .update({
+        settings: updatedTenantSettings,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tenant.id);
+
+    if (updateErr) {
+      return {
+        success: false,
+        settings: resolveLiveDashboardSettings(tenant.settings),
+        error: `Failed to update live dashboard settings: ${updateErr.message}`,
+      };
+    }
+
+    try {
+      revalidatePath(`/${cleanSlug}/all`);
+    } catch {
+      // Safe catch outside request context
+    }
+
+    return {
+      success: true,
+      settings: mergedLiveSettings,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      settings: resolveLiveDashboardSettings(null),
+      error: err.message || 'Failed to update live dashboard settings.',
+    };
   }
 }

@@ -15,6 +15,7 @@ import { TreeViewContainer } from '@/components/views/TreeViewContainer';
 import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { SparkViewContainer } from '@/components/views/SparkViewContainer';
 import { SchemaViewContainer } from '@/components/views/SchemaViewContainer';
+import { LiveFlightDeckView } from '@/components/live/LiveFlightDeckView';
 import { ProjectModals } from '@/components/board/ProjectModals';
 import { QuickAddPayload } from '@/components/QuickAddModal';
 import { BulkActionsToolbar } from '@/components/BulkActionsToolbar';
@@ -58,6 +59,8 @@ import {
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
 import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
+import { validateTransitionGuards, formatGuardRejectionMessage } from '@/lib/automation/guardEvaluator';
+import { GuardRejectionToast } from '@/components/board/TransitionGuardFeedback';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -72,6 +75,8 @@ interface TenantInfo {
   tier: string;
   api_key_preview: string | null;
   role?: string;
+  settings?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 interface ProjectInfo {
@@ -136,6 +141,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, []);
 
   const [isLhnCollapsed, setIsLhnCollapsed] = useState(false);
+  const [isKioskMode, setIsKioskMode] = useState(false);
+
+  const handleToggleKioskMode = useCallback(() => {
+    setIsKioskMode((prev) => {
+      const next = !prev;
+      if (typeof document !== 'undefined') {
+        try {
+          if (next) {
+            if (!document.fullscreenElement && typeof document.documentElement.requestFullscreen === 'function') {
+              document.documentElement.requestFullscreen().catch(() => {});
+            }
+          } else {
+            if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+              document.exitFullscreen().catch(() => {});
+            }
+          }
+        } catch {}
+      }
+      return next;
+    });
+  }, []);
 
   // Tree View Filtering & Sorting States
   const [treeSelectedStatuses, setTreeSelectedStatuses] = useState<string[] | null>(null);
@@ -390,6 +416,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkToast, setBulkToast] = useState<string | null>(null);
+  const [guardToast, setGuardToast] = useState<{ message: string; errors?: string[] } | null>(null);
+  const [guardRejectedItemIds, setGuardRejectedItemIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
@@ -998,6 +1026,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           tier: ws.tier,
           api_key_preview: ws.api_key_preview,
           role: ws.role,
+          settings: ws.settings || {},
+          metadata: ws.metadata || {},
         });
         setAllProjects(ws.projects || []);
         if (ws.members) {
@@ -1336,6 +1366,38 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   }, []);
 
+  const triggerGuardRejection = useCallback(
+    (
+      itemId: string,
+      targetStatus: string,
+      errors: string[] | string | undefined | null,
+      customStatuses?: Array<{ id: string; label?: string }> | null
+    ) => {
+      const msg = formatGuardRejectionMessage(
+        targetStatus,
+        errors,
+        customStatuses || projectSettings.statuses
+      );
+      setGuardToast({
+        message: msg,
+        errors: Array.isArray(errors) ? errors : undefined,
+      });
+      setGuardRejectedItemIds((prev) => {
+        const next = new Set(prev);
+        next.add(itemId);
+        return next;
+      });
+      setTimeout(() => {
+        setGuardRejectedItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(itemId);
+          return next;
+        });
+      }, 3000);
+    },
+    [projectSettings.statuses]
+  );
+
   const executeStatusChange = useCallback(
     async (
       itemId: string,
@@ -1345,6 +1407,18 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     ) => {
       const item = items.find((i) => i.id === itemId);
       if (!item) return;
+
+      const effectiveSettings = getItemProjectSettings(item);
+      const guardResult = validateTransitionGuards(item, newStatus, effectiveSettings);
+      if (!guardResult.allowed) {
+        triggerGuardRejection(
+          itemId,
+          newStatus,
+          guardResult.errors,
+          effectiveSettings?.statuses || projectSettings.statuses
+        );
+        return;
+      }
 
       let newOrder = item.order_index;
       if (prevOrder !== undefined || nextOrder !== undefined) {
@@ -1370,7 +1444,28 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           }),
         });
         if (!res.ok) {
-          fetchData();
+          const errData = await res.json().catch(() => ({}));
+          // Smoothly revert the card's column placement without a full page refresh
+          setItems((prev) =>
+            prev
+              .map((it) =>
+                it.id === itemId
+                  ? { ...it, status: item.status, order_index: item.order_index }
+                  : it
+              )
+              .sort((a, b) => a.order_index - b.order_index)
+          );
+
+          if (errData.code === 'GUARD_REJECTED') {
+            triggerGuardRejection(
+              itemId,
+              newStatus,
+              errData.errors || errData.error,
+              effectiveSettings?.statuses || projectSettings.statuses
+            );
+          } else {
+            fetchData();
+          }
           return;
         }
 
@@ -1395,10 +1490,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
           }
         }
       } catch {
+        setItems((prev) =>
+          prev
+            .map((it) =>
+              it.id === itemId
+                ? { ...it, status: item.status, order_index: item.order_index }
+                : it
+            )
+            .sort((a, b) => a.order_index - b.order_index)
+        );
         fetchData();
       }
     },
-    [items, apiFetch, fetchData, isCompleteStatus]
+    [
+      items,
+      apiFetch,
+      fetchData,
+      isCompleteStatus,
+      getItemProjectSettings,
+      projectSettings.statuses,
+      triggerGuardRejection,
+    ]
   );
 
   const initiateStatusChange = useCallback(
@@ -2143,6 +2255,34 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     updates: Partial<WorkItem> & { metadata?: Record<string, any> }
   ) => {
     const originalItem = items.find((it) => it.id === id);
+    if (!originalItem) return;
+
+    if (updates.status && updates.status !== originalItem.status) {
+      const effectiveSettings = getItemProjectSettings(originalItem);
+      const hypotheticalItem = {
+        ...originalItem,
+        ...updates,
+        metadata: {
+          ...(originalItem.metadata || {}),
+          ...(updates.metadata || {}),
+        },
+      };
+      const guardResult = validateTransitionGuards(
+        hypotheticalItem,
+        updates.status,
+        effectiveSettings
+      );
+      if (!guardResult.allowed) {
+        triggerGuardRejection(
+          id,
+          updates.status,
+          guardResult.errors,
+          effectiveSettings?.statuses || projectSettings.statuses
+        );
+        return;
+      }
+    }
+
     setItems((prev) =>
       prev.map((it) => (it.id === id ? { ...it, ...updates } : it))
     );
@@ -2169,6 +2309,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const errJson = await res.json().catch(() => ({}));
         if (originalItem) {
           setItems((prev) => prev.map(rollbackItemUpdates));
+        }
+        if (errJson.code === 'GUARD_REJECTED') {
+          const effectiveSettings = getItemProjectSettings(originalItem);
+          const targetStatus = updates.status || originalItem.status;
+          triggerGuardRejection(
+            id,
+            targetStatus,
+            errJson.errors || errJson.error,
+            effectiveSettings?.statuses || projectSettings.statuses
+          );
+          return;
         }
         fetchData();
         throw new Error(errJson.error || `Failed to update item (${res.status})`);
@@ -2675,8 +2826,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        setBulkToast(`Failed to update status: ${err.error || 'Server rejected update'}`);
-        setTimeout(() => setBulkToast(null), 4000);
+        if (err.code === 'GUARD_REJECTED') {
+          const msg = formatGuardRejectionMessage(
+            targetStatus,
+            err.errors || err.error,
+            projectSettings.statuses
+          );
+          setGuardToast({
+            message: msg,
+            errors: Array.isArray(err.errors) ? err.errors : undefined,
+          });
+          setGuardRejectedItemIds(new Set(mutableIds));
+          setTimeout(() => {
+            setGuardRejectedItemIds(new Set());
+          }, 3000);
+        } else {
+          setBulkToast(`Failed to update status: ${err.error || 'Server rejected update'}`);
+          setTimeout(() => setBulkToast(null), 4000);
+        }
         fetchData();
       } else {
         setBulkToast(`Updated status for ${mutableIds.length} items.`);
@@ -3480,6 +3647,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden bg-[#090d16] text-slate-100">
       <WorkspaceShell
+        isKioskMode={isKioskMode && activeTab === 'live'}
         isLeftCollapsed={isLhnCollapsed}
         onToggleLeftCollapse={() => setIsLhnCollapsed((prev) => !prev)}
         isRightOpen={Boolean((isDesktopOrTablet && selectedDrawerItem) || selectedSprintForEdit)}
@@ -3596,8 +3764,36 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               </div>
             )}
 
-            <div className="flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden">
+            <div
+              className={
+                isKioskMode && activeTab === 'live'
+                  ? 'flex-1 p-0 max-w-none h-[100dvh] w-full max-w-full overflow-x-hidden'
+                  : 'flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden'
+              }
+            >
               <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>
+                {activeTab === 'live' && (
+                  <LiveFlightDeckView
+                    tenantSlug={tenantSlug}
+                    items={items}
+                    projects={allProjects}
+                    liveDashboardSettings={
+                      tenantInfo?.settings?.live_dashboard_settings ||
+                      tenantInfo?.metadata?.live_dashboard_settings ||
+                      null
+                    }
+                    initialPivot={typeof searchParams?.pivot === 'string' ? searchParams.pivot : null}
+                    selectedItemRef={
+                      selectedDrawerItem
+                        ? selectedDrawerItem.external_ref_id || selectedDrawerItem.id
+                        : null
+                    }
+                    onSelectItem={(item) => selectDrawerItem(item)}
+                    isKioskMode={isKioskMode}
+                    onToggleKioskMode={handleToggleKioskMode}
+                  />
+                )}
+
                 {activeTab === 'board' && (
                 <BoardViewContainer
                   hiddenBoardItems={hiddenBoardItems}
@@ -3677,6 +3873,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   coldCount={coldCount}
                   isLoadingColdArchive={isLoadingColdArchive}
                   onLoadColdArchive={loadColdArchive}
+                  guardRejectedItemIds={guardRejectedItemIds}
                 />
               )}
 
@@ -4056,16 +4253,27 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         </div>
       )}
 
+      {/* High-Contrast Transition Guard Rejection Toast Notification */}
+      {guardToast && (
+        <GuardRejectionToast
+          message={guardToast.message}
+          errors={guardToast.errors}
+          onDismiss={() => setGuardToast(null)}
+        />
+      )}
+
       {/* Mobile Bottom Navigation */}
-      <MobileBottomNav
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        pointMode={pointMode}
-        onPointModeChange={handlePointModeChange}
-        tenantSlug={tenantSlug}
-        projectSlug={projectSlug}
-        analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
-      />
+      {!(isKioskMode && activeTab === 'live') && (
+        <MobileBottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          pointMode={pointMode}
+          onPointModeChange={handlePointModeChange}
+          tenantSlug={tenantSlug}
+          projectSlug={projectSlug}
+          analyticsHref={`/${tenantSlug}/${projectSlug}/analytics`}
+        />
+      )}
     </div>
   );
 }

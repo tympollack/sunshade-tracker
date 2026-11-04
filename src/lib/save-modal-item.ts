@@ -65,6 +65,7 @@ export async function saveModalItem({
     const moveResult = await reassignProjectFn(itemId, updates.project_id, tenantSlug, {
       status: updates.status,
       item_type: updates.item_type,
+      metadata: updates.metadata,
     });
     if (!moveResult.success) {
       throw new Error(moveResult.error || 'Failed to reassign work item project');
@@ -74,6 +75,7 @@ export async function saveModalItem({
     delete otherUpdates.project_id;
     if (otherUpdates.status === updates.status) delete otherUpdates.status;
     if (otherUpdates.item_type === updates.item_type) delete otherUpdates.item_type;
+    if (updates.metadata) delete otherUpdates.metadata;
     if (Object.keys(otherUpdates).length > 0) {
       const res = await apiFetch('/api/v1/items', {
         method: 'PATCH',

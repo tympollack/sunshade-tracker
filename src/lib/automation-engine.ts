@@ -1,7 +1,14 @@
 import { createHmac } from 'node:crypto';
+import net from 'node:net';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
+import { matchesCondition } from '@/lib/automation/predicateEvaluator';
+import {
+  formatCiBugRefId,
+  sanitizeLogSecrets,
+  synthesizeCiAgentPrompt,
+} from '@/lib/ci/failureReporter';
 import type {
   AutomationAction,
   AutomationRule,
@@ -26,11 +33,14 @@ export function matchesTrigger(
   // 1. Verify event if explicitly specified
   const expectedEvent = trigger.event || trigger.type;
   if (expectedEvent && expectedEvent !== eventType) {
-    return false;
+    // If a status transition occurred, rules targeting general item updates should also match
+    if (!(expectedEvent === 'item_updated' && eventType === 'status_transition')) {
+      return false;
+    }
   }
 
   // 2. Reserved keys that should not be evaluated as field predicates
-  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action']);
+  const reservedKeys = new Set(['id', 'event', 'type', 'name', 'description', 'enabled', 'actions', 'action', 'conditions']);
 
   for (const [key, expectedValue] of Object.entries(trigger)) {
     if (reservedKeys.has(key)) continue;
@@ -75,23 +85,55 @@ export function matchesTrigger(
 }
 
 /**
- * Replaces {{key}} and {{metadata.key}} mustache-style placeholders
- * in a template string with values from the context item.
+ * Traverses an object using a dot-separated path.
+ */
+function getByDotPath(obj: Record<string, any> | null | undefined, path: string): any {
+  if (!obj || typeof obj !== 'object' || !path) return undefined;
+  const parts = path.split('.');
+  let current: any = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+/**
+ * Replaces {{key}}, {{item.key}}, {{metadata.key}}, {{settings.key}}, and {{NOW()}}/{{TODAY}}
+ * placeholders in a template string with values from the context item.
  */
 export function interpolate(templateString: string, contextItem: Record<string, any>): string {
   if (!templateString) return '';
   if (!contextItem) return templateString;
 
-  return templateString.replace(/{{\s*([\w.]+)\s*}}/g, (_match, path: string) => {
+  return templateString.replace(/{{\s*([\w().]+)\s*}}/g, (_match, rawPath: string) => {
+    const path = rawPath.trim();
+    if (path === 'NOW()' || path === 'NOW') {
+      return new Date().toISOString();
+    }
+    if (path === 'TODAY()' || path === 'TODAY') {
+      return new Date().toISOString().split('T')[0];
+    }
+
+    let lookupPath = path;
+    if (lookupPath.startsWith('item.')) {
+      lookupPath = lookupPath.slice(5);
+    }
+
     let resolved: any;
 
-    if (path.startsWith('metadata.')) {
-      const metaKey = path.slice('metadata.'.length);
+    if (lookupPath.startsWith('metadata.')) {
+      const metaKey = lookupPath.slice('metadata.'.length);
       resolved = contextItem.metadata?.[metaKey];
+    } else if (lookupPath.startsWith('settings.')) {
+      const settingsKey = lookupPath.slice('settings.'.length);
+      resolved = getByDotPath(contextItem.settings, settingsKey);
     } else {
-      resolved = contextItem[path];
+      resolved = contextItem[lookupPath];
       if (resolved === undefined && contextItem.metadata) {
-        resolved = contextItem.metadata[path];
+        resolved = contextItem.metadata[lookupPath];
       }
     }
 
@@ -469,21 +511,77 @@ export function isAllowedWebhookUrl(urlStr: string): boolean {
       return false;
     }
 
-    if (process.env.NODE_ENV === 'test' || process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
+    if (process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
       return true;
     }
 
-    const host = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase();
+    // Strip enclosing IPv6 brackets if present
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
+    }
+
+    // Block local and internal hostnames
     if (
       host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '0.0.0.0' ||
-      host === '::1' ||
-      host === '169.254.169.254' ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.endsWith('.lan') ||
+      host.endsWith('.localdomain') ||
+      host.endsWith('.home.arpa') ||
+      host.endsWith('.corp') ||
+      host.endsWith('.intranet') ||
+      host.endsWith('.private') ||
+      host === 'instance-data' ||
+      host === 'metadata.google.internal' ||
+      host === 'metadata'
     ) {
+      return false;
+    }
+
+    // Validate IPv4 addresses
+    if (net.isIPv4(host)) {
+      const [a, b, c] = host.split('.').map((p) => parseInt(p, 10));
+      if (
+        a === 0 || // 0.0.0.0/8
+        a === 10 || // 10.0.0.0/8
+        a === 127 || // 127.0.0.0/8 (loopback)
+        (a === 169 && b === 254) || // 169.254.0.0/16 (link-local, cloud metadata)
+        (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+        (a === 192 && b === 168) || // 192.168.0.0/16
+        (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 (CGNAT)
+        (a === 192 && b === 0 && c === 2) || // TEST-NET-1
+        (a === 198 && (b === 18 || b === 19)) || // Benchmark
+        (a === 198 && b === 51 && c === 100) || // TEST-NET-2
+        (a === 203 && b === 0 && c === 113) || // TEST-NET-3
+        a >= 224 // Multicast & Reserved
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // Validate IPv6 addresses
+    if (net.isIPv6(host)) {
+      if (
+        host === '::1' ||
+        host === '::' ||
+        host.startsWith('::ffff:') ||
+        host.startsWith('fe8') ||
+        host.startsWith('fe9') ||
+        host.startsWith('fea') ||
+        host.startsWith('feb') ||
+        host.startsWith('fc') ||
+        host.startsWith('fd')
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // Disallow single-label hostnames without any domain dot (e.g. http://intranet, http://redis, http://db)
+    if (!host.includes('.')) {
       return false;
     }
 
@@ -558,46 +656,315 @@ export async function dispatchWebhook(
 export interface ExecuteAutomationsOptions {
   tenantId: string;
   projectId: string;
-  settings: ProjectSettings;
-  items: WorkItem[];
+  settings?: ProjectSettings | null;
+  items?: WorkItem[];
   itemMutationSnapshots?: Array<{ item: any; prior: any }>;
   actorId?: string | null;
   actorName?: string | null;
+  eventType?: string;
+  eventPayload?: Record<string, any>;
+  event?: string;
+  source?: string;
+  event_type?: string;
+  payload?: Record<string, any>;
+}
+
+export interface ExecuteAutomationsResult {
+  executedRuleIds: string[];
+  updatedItems: WorkItem[];
+  createdItems: WorkItem[];
 }
 
 /**
- * Evaluates active project automations against newly ingested items
- * and triggers templates or webhooks accordingly.
+ * Auto-provisions a Critical bug task card in tracker.work_items for CI test/build failures,
+ * with failing stack traces and error logs pre-populated in agent_prompt.
  */
-export async function executeProjectAutomations(options: ExecuteAutomationsOptions): Promise<void> {
-  const { tenantId, projectId, settings, items, itemMutationSnapshots, actorId, actorName } = options;
-  if (!settings?.automations || !Array.isArray(settings.automations) || settings.automations.length === 0) {
-    return;
+export async function provisionCiFailureBugItem(options: {
+  tenantId: string;
+  projectId: string;
+  settings?: ProjectSettings | null;
+  payload: Record<string, any>;
+}): Promise<WorkItem | null> {
+  const { tenantId, projectId, settings, payload } = options;
+
+  const commitSha = sanitizeLogSecrets(String(payload.commit_sha || '')).slice(0, 64);
+  const branch = sanitizeLogSecrets(String(payload.branch || 'main')).slice(0, 128);
+  const failedStep = sanitizeLogSecrets(String(payload.failed_step || payload.job || 'Build Step')).slice(0, 200);
+  const runId = sanitizeLogSecrets(String(payload.run_id || '')).slice(0, 64);
+  const actor = sanitizeLogSecrets(String(payload.actor || 'CI Runner')).slice(0, 128);
+
+  const rawErrorLog = String(payload.error_log || payload.error || '');
+  const truncatedErrorLog = rawErrorLog.slice(0, 32000);
+  const sanitizedTrace = sanitizeLogSecrets(truncatedErrorLog);
+
+  const shortSha = commitSha ? commitSha.slice(0, 8) : 'unknown';
+  const externalRefId = payload.external_ref_id || formatCiBugRefId(commitSha, failedStep);
+
+  const title = `CI Failure: ${failedStep} on ${branch}${commitSha ? ` (${shortSha})` : ''}`;
+  const trimmedStack = sanitizedTrace.split('\n').slice(0, 30).join('\n');
+
+  const description = `### Automated CI Failure Report\n> **Step:** \`${failedStep}\`\n> **Branch:** \`${branch}\`\n> **Commit:** \`${commitSha}\`\n> **Run ID:** \`${runId}\`\n> **Actor:** ${actor}\n\n\`\`\`\n${trimmedStack || 'No stack trace captured.'}\n\`\`\``;
+
+  const agentPrompt = synthesizeCiAgentPrompt({
+    commitSha: commitSha || 'HEAD',
+    jobName: failedStep,
+    errorMessage: sanitizedTrace.slice(0, 300),
+  }) + (sanitizedTrace ? `\n\n### FAILING TRACE / ERROR LOG\n\`\`\`\n${sanitizedTrace.slice(0, 3000)}\n\`\`\`` : '');
+
+  // Determine item_type from hierarchy
+  const hierarchy = settings?.hierarchy || [];
+  const bugType = hierarchy.find((h) => h.type === 'bug' || h.type === 'defect')?.type || hierarchy[0]?.type || 'task';
+
+  // Determine default status
+  const statuses = settings?.statuses || [];
+  const defaultStatus = statuses[0]?.id || 'not_started';
+
+  // Check if item with externalRefId already exists
+  let existingItem: any = null;
+  if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.select === 'function') {
+        const { data: found } = await wiTable
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('external_ref_id', externalRefId)
+          .maybeSingle();
+        existingItem = found;
+      }
+    } catch {
+      existingItem = null;
+    }
   }
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    return;
+
+  const record: any = {
+    tenant_id: tenantId,
+    project_id: projectId,
+    external_ref_id: externalRefId,
+    item_type: bugType,
+    status: defaultStatus,
+    title,
+    description,
+    order_index: 0,
+    metadata: {
+      priority: 'Critical',
+      severity: 'High',
+      agent_prompt: agentPrompt,
+      error_log: sanitizedTrace.slice(0, 16000),
+      failed_step: failedStep,
+      branch,
+      commit_sha: commitSha,
+      run_id: runId,
+      actor,
+      source: 'ci_runner',
+      auto_generated: true,
+      created_by: 'ci_runner',
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingItem) {
+    if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      const existingHistory = Array.isArray(existingItem.metadata?.run_history)
+        ? existingItem.metadata.run_history
+        : existingItem.metadata?.run_id
+        ? [
+            {
+              run_id: existingItem.metadata.run_id,
+              commit_sha: existingItem.metadata.commit_sha,
+              failed_step: existingItem.metadata.failed_step,
+              error_log: existingItem.metadata.error_log ? String(existingItem.metadata.error_log).slice(0, 5000) : '',
+              timestamp: existingItem.updated_at || existingItem.created_at,
+            },
+          ]
+        : [];
+
+      const updatedHistory = [
+        ...existingHistory,
+        {
+          run_id: runId,
+          commit_sha: commitSha,
+          failed_step: failedStep,
+          error_log: sanitizedTrace.slice(0, 5000),
+          timestamp: new Date().toISOString(),
+        },
+      ].slice(-10);
+
+      const updatedDescription = `${existingItem.description || ''}\n\n---\n#### Additional CI Run Failure (Run #${runId || 'N/A'})\n> **Step:** \`${failedStep}\` | **Actor:** ${actor} | **Timestamp:** ${new Date().toISOString()}\n\`\`\`\n${trimmedStack || 'No stack trace captured.'}\n\`\`\``;
+
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.update === 'function') {
+        const { data: updated, error: updateErr } = await wiTable
+          .update({
+            description: updatedDescription,
+            metadata: {
+              ...(existingItem.metadata || {}),
+              ...record.metadata,
+              run_history: updatedHistory,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingItem.id)
+          .select()
+          .single();
+
+        if (updateErr) {
+          console.error('[ci-provision] Failed to update existing CI failure card:', updateErr);
+          return null;
+        }
+        return updated || null;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      const wiTable = supabaseAdmin.from('work_items');
+      if (wiTable && typeof wiTable.insert === 'function') {
+        let { data: inserted, error: insertErr } = await wiTable
+          .insert(record)
+          .select()
+          .single();
+
+        if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+          const fallback: Record<string, any> = { ...record };
+          delete fallback.sprint_id;
+          const retry = await wiTable.insert(fallback).select().single();
+          inserted = retry.data;
+          insertErr = retry.error;
+        }
+
+        if (insertErr) {
+          console.error('[ci-provision] Failed to insert CI failure card:', insertErr);
+          return null;
+        }
+
+        return inserted || null;
+      }
+      return null;
+    } catch (err) {
+      console.error('[ci-provision] Exception inserting CI failure card:', err);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Evaluates active project automations against newly ingested items or event payloads,
+ * executing templates, webhooks, metadata patches, or defect creations accordingly.
+ */
+export async function executeProjectAutomations(
+  options: ExecuteAutomationsOptions
+): Promise<ExecuteAutomationsResult | void> {
+  const { tenantId, projectId, settings, items = [], itemMutationSnapshots, actorId, actorName, eventType: explicitEventType, eventPayload } = options;
+  const result: ExecuteAutomationsResult = {
+    executedRuleIds: [],
+    updatedItems: [],
+    createdItems: [],
+  };
+
+  const effectivePayload = options.eventPayload || options.payload || {};
+  const effectiveEventType = options.eventType || options.event || options.event_type || 'item_created';
+  const effectiveSource = options.source || effectivePayload.source;
+
+  const isCiFailure =
+    (effectiveSource === 'ci_runner' || effectivePayload.source === 'ci_runner') &&
+    (effectiveEventType === 'webhook_received' || options.event_type === 'build_failed' || effectivePayload.event_type === 'build_failed');
+
+  if (!settings?.automations || !Array.isArray(settings.automations) || settings.automations.length === 0) {
+    if (isCiFailure && result.createdItems.length === 0) {
+      const spawned = await provisionCiFailureBugItem({
+        tenantId,
+        projectId,
+        settings,
+        payload: effectivePayload,
+      });
+      if (spawned) {
+        result.createdItems.push(spawned);
+      }
+    }
+    return result;
+  }
+
+  // If items array is empty but an eventPayload is supplied, treat eventPayload as a context item
+  const targetItems: any[] = items.length > 0 ? items : (effectivePayload ? [effectivePayload] : []);
+  if (targetItems.length === 0) {
+    if (isCiFailure && result.createdItems.length === 0) {
+      const spawned = await provisionCiFailureBugItem({
+        tenantId,
+        projectId,
+        settings,
+        payload: effectivePayload,
+      });
+      if (spawned) {
+        result.createdItems.push(spawned);
+      }
+    }
+    return result;
   }
 
   const pendingWebhooks: Promise<any>[] = [];
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+  for (let i = 0; i < targetItems.length; i++) {
+    const item = targetItems[i];
     const snap = itemMutationSnapshots?.[i];
 
-    let eventType: 'item_created' | 'item_updated' | 'item_restored' = 'item_created';
-    if (snap) {
+    let eventType: string = effectiveEventType;
+    if (!options.eventType && !options.event && snap) {
       if (!snap.prior) {
         eventType = 'item_created';
       } else if (snap.prior.deleted_at !== null) {
         eventType = 'item_restored';
+      } else if (snap.prior.status !== item.status) {
+        eventType = 'status_transition';
       } else {
         eventType = 'item_updated';
       }
     }
 
+    const contextItem = {
+      source: effectiveSource,
+      event_type: options.event_type || effectivePayload.event_type || eventType,
+      previous_status: snap?.prior?.status,
+      prior_status: snap?.prior?.status,
+      ...(effectivePayload || {}),
+      ...item,
+      settings,
+      metadata: {
+        ...(effectivePayload?.metadata || {}),
+        ...(item?.metadata || {}),
+      },
+    };
+
     for (const rule of settings.automations) {
       if (rule.enabled === false) continue;
-      if (!matchesTrigger(rule.trigger, item, eventType)) continue;
+      if (!matchesTrigger(rule.trigger, contextItem, eventType)) continue;
+
+      // Evaluate rule condition filters if specified
+      if (Array.isArray(rule.conditions) && rule.conditions.length > 0) {
+        let conditionsPassed = true;
+        for (let cIdx = 0; cIdx < rule.conditions.length; cIdx++) {
+          const cond = rule.conditions[cIdx];
+          const passed = matchesCondition(contextItem, cond);
+          if (cIdx === 0) {
+            conditionsPassed = passed;
+          } else if (cond.logic === 'OR') {
+            conditionsPassed = conditionsPassed || passed;
+          } else {
+            conditionsPassed = conditionsPassed && passed;
+          }
+        }
+        if (!conditionsPassed) continue;
+      }
+
+      if (rule.id) {
+        result.executedRuleIds.push(rule.id);
+      }
 
       const actionsList: AutomationAction[] = Array.isArray(rule.actions)
         ? rule.actions
@@ -630,7 +997,7 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
             }
 
             if (templateItems && Array.isArray(templateItems) && templateItems.length > 0) {
-              await expandTemplate({
+              const children = await expandTemplate({
                 tenantId,
                 projectId,
                 template: templateItems,
@@ -639,6 +1006,114 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
                 actorId,
                 actorName,
               });
+              result.createdItems.push(...children);
+            }
+          } else if (actionType === 'patch_metadata' || actionType === 'patch_item') {
+            const metaSource = (action as any).metadata || (action as any).fields || {};
+            const patchedFields: Record<string, any> = {};
+
+            for (const [k, v] of Object.entries(metaSource)) {
+              patchedFields[k] = typeof v === 'string' ? interpolate(v, contextItem) : v;
+            }
+
+            if (eventPayload?.deployment_url && patchedFields.deployment_url === undefined) {
+              patchedFields.deployment_url = eventPayload.deployment_url;
+            }
+            if (eventPayload?.deployment_status && patchedFields.deployment_status === undefined) {
+              patchedFields.deployment_status = eventPayload.deployment_status;
+            }
+
+            const nextMetadata = { ...(item.metadata || {}), ...patchedFields };
+            item.metadata = nextMetadata;
+
+            if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              let updateBuilder: any = supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMetadata,
+                  updated_at: new Date().toISOString(),
+                });
+
+              if (typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('id', item.id);
+              }
+              if (tenantId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('tenant_id', tenantId);
+              }
+              if (projectId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('project_id', projectId);
+              }
+
+              await updateBuilder;
+            }
+
+            if (!result.updatedItems.some((u) => u.id === item.id)) {
+              result.updatedItems.push(item);
+            }
+          } else if (actionType === 'create_item' || actionType === 'create_bug' || actionType === 'create_defect') {
+            const targetType = (action as any).item_type || 'bug';
+            const targetStatus = (action as any).status || resolveDefaultChildStatus(settings);
+            const targetPriority = (action as any).priority || eventPayload?.priority || 'Critical';
+            const title = interpolate((action as any).title || eventPayload?.title || 'Automated Defect Card', contextItem);
+            const description = interpolate((action as any).description || eventPayload?.description || '', contextItem);
+
+            const itemMetadata: Record<string, any> = {
+              ...(eventPayload?.metadata || {}),
+              ...((action as any).metadata || {}),
+              priority: targetPriority,
+            };
+
+            for (const [k, v] of Object.entries(itemMetadata)) {
+              if (typeof v === 'string') {
+                itemMetadata[k] = interpolate(v, contextItem);
+              }
+            }
+
+            const newItemRecord = {
+              tenant_id: tenantId,
+              project_id: projectId,
+              parent_id: (action as any).parent_id || eventPayload?.parent_id || null,
+              external_ref_id: (action as any).external_ref_id
+                ? interpolate((action as any).external_ref_id, contextItem)
+                : eventPayload?.external_ref_id || null,
+              item_type: targetType,
+              status: targetStatus,
+              title,
+              description,
+              order_index: (action as any).order_index ?? 1000.0,
+              sprint_id: eventPayload?.sprint_id || null,
+              metadata: itemMetadata,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+
+            let inserted: any = null;
+            if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              let { data: insertedData, error: insertErr } = await supabaseAdmin
+                .from('work_items')
+                .insert(newItemRecord)
+                .select()
+                .single();
+
+              if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+                const fallback: Record<string, any> = { ...newItemRecord };
+                delete fallback.sprint_id;
+                const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
+                insertedData = retry.data;
+                insertErr = retry.error;
+              }
+
+              if (insertErr) {
+                console.error(`[tracker:automation] Failed to create item in rule "${rule.name || rule.id}":`, insertErr);
+              } else if (insertedData) {
+                inserted = insertedData;
+              }
+            } else {
+              inserted = newItemRecord;
+            }
+
+            if (inserted) {
+              result.createdItems.push(inserted as WorkItem);
             }
           } else if (actionType === 'dispatch_webhook') {
             const webhookAction = action as DispatchWebhookAction;
@@ -669,6 +1144,169 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
                 console.error(`[tracker:automation] Webhook dispatch error in rule "${rule.name || rule.id}":`, actionErr);
               })
             );
+          } else if (actionType === 'calculate_calendar_slot' || actionType === 'calculate_cadence') {
+            const cadenceDays = Math.max(1, Number((action as any).cadence_days) || 7);
+            const targetWeekday = (action as any).weekday || 'Monday';
+            const targetUtcTime = (action as any).utc_time || '14:00';
+            const collisionStatuses = Array.isArray((action as any).collision_statuses)
+              ? (action as any).collision_statuses
+              : ['in_progress', 'in_review'];
+
+            // Compute concrete next scheduled calendar slot date
+            const weekdayMap: Record<string, number> = {
+              sunday: 0,
+              monday: 1,
+              tuesday: 2,
+              wednesday: 3,
+              thursday: 4,
+              friday: 5,
+              saturday: 6,
+            };
+            const targetDayNum = weekdayMap[targetWeekday.toLowerCase()] ?? 1;
+
+            const now = new Date();
+            const [hours, minutes] = targetUtcTime.split(':').map((s: string) => parseInt(s, 10) || 0);
+
+            // Fetch existing scheduled slots in the project first (excluding soft-deleted rows)
+            let existingSlots: any[] = [];
+            if (projectId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              try {
+                let slotQuery: any = supabaseAdmin
+                  .from('work_items')
+                  .select('id, metadata, status, deleted_at')
+                  .eq('project_id', projectId);
+                if (typeof slotQuery?.is === 'function') {
+                  slotQuery = slotQuery.is('deleted_at', null);
+                }
+                if (item.id && typeof slotQuery?.neq === 'function') {
+                  slotQuery = slotQuery.neq('id', item.id);
+                }
+
+                const { data } = await slotQuery;
+                existingSlots = (data || []).filter((s: any) => !s.deleted_at);
+              } catch {
+                existingSlots = [];
+              }
+            }
+
+            // Associate scheduled items with this specific cadence/rule (Comment #4)
+            const matchingRuleSlots = existingSlots.filter((s: any) => {
+              const meta = s.metadata || {};
+              if (rule.id && meta.cadence_rule_id) {
+                return meta.cadence_rule_id === rule.id;
+              }
+              if (meta.scheduled_weekday) {
+                return String(meta.scheduled_weekday).toLowerCase() === targetWeekday.toLowerCase();
+              }
+              return true;
+            });
+
+            // Find latest scheduled slot date strictly among this rule's previous occurrences
+            const existingScheduledDates = matchingRuleSlots
+              .map((s: any) => s.metadata?.scheduled_slot_date)
+              .filter(Boolean)
+              .map((d: string) => new Date(d).getTime())
+              .filter((ts: number) => !isNaN(ts))
+              .sort((a: number, b: number) => b - a);
+
+            const latestScheduledMs = existingScheduledDates.length > 0 ? existingScheduledDates[0] : null;
+
+            // Helper to advance date by minimum days and strictly restore targetWeekday (Comment #3)
+            const advanceAndAlignWeekday = (date: Date, minDays: number) => {
+              date.setUTCDate(date.getUTCDate() + minDays);
+              const dayDiff = (targetDayNum - date.getUTCDay() + 7) % 7;
+              if (dayDiff > 0) {
+                date.setUTCDate(date.getUTCDate() + dayDiff);
+              }
+            };
+
+            let candidateDate: Date;
+            if (latestScheduledMs !== null) {
+              const baseDate = new Date(latestScheduledMs);
+              baseDate.setUTCHours(hours, minutes, 0, 0);
+              advanceAndAlignWeekday(baseDate, cadenceDays);
+              candidateDate = baseDate;
+            } else {
+              candidateDate = new Date(Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate(),
+                hours,
+                minutes,
+                0,
+                0
+              ));
+              let daysToAdd = (targetDayNum - candidateDate.getUTCDay() + 7) % 7;
+              if (daysToAdd === 0 && candidateDate.getTime() <= now.getTime()) {
+                daysToAdd = 7;
+              }
+              candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
+            }
+
+            // Advance candidateDate if overdue while strictly preserving targetWeekday
+            while (candidateDate.getTime() <= now.getTime()) {
+              advanceAndAlignWeekday(candidateDate, Math.max(cadenceDays, 7));
+            }
+
+            // Resolve collisions against tasks with collisionStatuses while strictly preserving targetWeekday
+            let maxAttempts = 52;
+            while (
+              maxAttempts > 0 &&
+              existingSlots.some(
+                (s: any) =>
+                  collisionStatuses.includes(s.status) &&
+                  s.metadata?.scheduled_slot_date === candidateDate.toISOString()
+              )
+            ) {
+              advanceAndAlignWeekday(candidateDate, cadenceDays);
+              maxAttempts--;
+            }
+
+            const scheduledSlotDate = candidateDate.toISOString();
+            const hasCollision = existingSlots.some(
+              (s: any) =>
+                collisionStatuses.includes(s.status) &&
+                s.metadata?.scheduled_slot_date === scheduledSlotDate
+            );
+
+            const patchedFields: Record<string, any> = {
+              cadence_rule_id: rule.id || null,
+              cadence_days: cadenceDays,
+              scheduled_weekday: targetWeekday,
+              scheduled_utc_time: targetUtcTime,
+              scheduled_slot_date: scheduledSlotDate,
+              collision_statuses: collisionStatuses,
+              has_collision: hasCollision,
+              calculated_at: new Date().toISOString(),
+            };
+
+            const nextMetadata = { ...(item.metadata || {}), ...patchedFields };
+            item.metadata = nextMetadata;
+
+            if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+              let updateBuilder: any = supabaseAdmin
+                .from('work_items')
+                .update({
+                  metadata: nextMetadata,
+                  updated_at: new Date().toISOString(),
+                });
+
+              if (typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('id', item.id);
+              }
+              if (tenantId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('tenant_id', tenantId);
+              }
+              if (projectId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('project_id', projectId);
+              }
+
+              await updateBuilder;
+            }
+
+            if (!result.updatedItems.some((u) => u.id === item.id)) {
+              result.updatedItems.push(item);
+            }
           }
         } catch (actionErr) {
           console.error(`[tracker:automation] Error executing action in rule "${rule.name || rule.id}":`, actionErr);
@@ -681,4 +1319,320 @@ export async function executeProjectAutomations(options: ExecuteAutomationsOptio
   if (pendingWebhooks.length > 0) {
     await Promise.allSettled(pendingWebhooks);
   }
+
+  // Auto-provision CI failure bug card if not already created by a matching project automation rule
+  const hasCiBugItem = result.createdItems.some(
+    (item) => item?.metadata?.source === 'ci_runner' || item?.metadata?.auto_generated
+  );
+  if (isCiFailure && !hasCiBugItem) {
+    const spawned = await provisionCiFailureBugItem({
+      tenantId,
+      projectId,
+      settings,
+      payload: effectivePayload,
+    });
+    if (spawned) {
+      result.createdItems.push(spawned);
+    }
+  }
+
+  return result;
+}
+
+export interface TriggerAutomationEventOptions {
+  tenantId: string;
+  projectId: string;
+  settings?: ProjectSettings | null;
+  event: string;
+  payload?: Record<string, any>;
+  matchedItems?: WorkItem[];
+  actorId?: string | null;
+  actorName?: string | null;
+}
+
+export interface TriggerAutomationEventResult {
+  success: boolean;
+  event: string;
+  matchedItems: WorkItem[];
+  updatedItems: WorkItem[];
+  createdItems: WorkItem[];
+  executedRules: string[];
+}
+
+/**
+ * Triggers a custom automation event (e.g. deployment_completed, observability_alert)
+ * against project automations. If no custom rule consumes the event, default platform rules
+ * execute (patching deployment preview URLs or auto-spawning defect cards under triage epic).
+ */
+export async function triggerAutomationEvent(
+  options: TriggerAutomationEventOptions
+): Promise<TriggerAutomationEventResult> {
+  const { tenantId, projectId, event, payload = {}, matchedItems = [], actorId, actorName } = options;
+
+  let effectiveSettings: ProjectSettings = options.settings as ProjectSettings;
+  if (!effectiveSettings && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+    try {
+      const { data: proj } = await supabaseAdmin
+        .from('projects')
+        .select('id, settings')
+        .eq('id', projectId)
+        .maybeSingle();
+      effectiveSettings = (proj?.settings || {}) as ProjectSettings;
+    } catch {
+      effectiveSettings = {} as ProjectSettings;
+    }
+  }
+  if (!effectiveSettings) {
+    effectiveSettings = {} as ProjectSettings;
+  }
+
+  const result = await executeProjectAutomations({
+    tenantId,
+    projectId,
+    settings: effectiveSettings,
+    items: matchedItems,
+    eventType: event,
+    eventPayload: payload,
+    actorId,
+    actorName,
+  });
+
+  const updatedItems = [...(result?.updatedItems || [])];
+  const createdItems = [...(result?.createdItems || [])];
+
+  // 1. Platform automation rule for deployment_completed:
+  // Ensures metadata.deployment_url, deployment_status, deployment_environment, and deployed_at are set on all matched items
+  if (event === 'deployment_completed' && matchedItems.length > 0) {
+    const deploymentUrl = payload.deployment_url || payload.url;
+    const deploymentStatus = payload.deployment_status || payload.status || 'succeeded';
+    const environment = payload.environment || payload.target || 'preview';
+
+    for (const item of matchedItems) {
+      const nextMeta = {
+        ...(item.metadata || {}),
+        deployment_url: deploymentUrl || item.metadata?.deployment_url,
+        deployment_status: deploymentStatus || item.metadata?.deployment_status || 'succeeded',
+        deployment_environment: environment || item.metadata?.deployment_environment || 'preview',
+        deployed_at: payload.deployed_at || new Date().toISOString(),
+      };
+      item.metadata = nextMeta;
+
+      if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        await supabaseAdmin
+          .from('work_items')
+          .update({
+            metadata: nextMeta,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', item.id);
+      }
+
+      if (!updatedItems.some((u) => u.id === item.id)) {
+        updatedItems.push(item);
+      }
+    }
+  }
+
+  // 2. Default platform automation rule for observability_alert:
+  // If no custom rule created a defect item, auto-spawns an incident bug card under the triage epic
+  if (event === 'observability_alert' && createdItems.length === 0) {
+    const source = payload.source || 'observability';
+    const errorSignature = payload.error_signature || payload.incident_id || payload.id || 'ANOMALY';
+    const externalRefId = payload.external_ref_id || `BUG-${String(source).toUpperCase().replace(/[^A-Z0-9]/g, '')}-${String(errorSignature).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24)}`;
+
+    let triageEpicId: string | null = payload.parent_id || null;
+    let activeSprintId: string | null = payload.sprint_id || null;
+    let activeSprintName: string | null = payload.sprint_name || null;
+
+    // Resolve active sprint if not passed
+    if (!activeSprintId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        let sprintQuery: any = supabaseAdmin
+          .from('sprints')
+          .select('id, name, status, is_active')
+          .eq('project_id', projectId);
+
+        if (typeof sprintQuery.is === 'function') {
+          sprintQuery = sprintQuery.is('deleted_at', null);
+        }
+
+        const { data: dbSprints } = await sprintQuery;
+        const activeDb = (dbSprints || []).find((s: any) => s.is_active === true || String(s.status).toLowerCase() === 'active');
+        if (activeDb) {
+          activeSprintId = activeDb.id;
+          activeSprintName = activeDb.name;
+        }
+      } catch {
+        // Fallback to project settings sprint_settings
+      }
+
+      if (!activeSprintId && effectiveSettings.sprint_settings?.sprints) {
+        const activeDef = effectiveSettings.sprint_settings.sprints.find((s: any) => s.is_current === true || String(s.status).toLowerCase() === 'active');
+        if (activeDef) {
+          activeSprintId = activeDef.id || null;
+          activeSprintName = activeDef.name || null;
+        }
+      }
+    }
+
+    // Defend against Issue #6 (ANALYSIS_0001): Only assign relational sprint_id if valid UUID
+    const relationalSprintId = activeSprintId && isUuid(activeSprintId) ? activeSprintId : null;
+
+    // Resolve triage epic if not passed
+    if (!triageEpicId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        const { data: epics } = await supabaseAdmin
+          .from('work_items')
+          .select('id, external_ref_id, title')
+          .eq('project_id', projectId)
+          .eq('item_type', 'epic');
+
+        const foundEpic = (epics || []).find((e: any) =>
+          String(e.external_ref_id || '').toUpperCase().includes('TRIAGE') ||
+          String(e.title || '').toLowerCase().includes('triage')
+        );
+
+        if (foundEpic) {
+          triageEpicId = foundEpic.id;
+        } else {
+          // Auto-create triage epic
+          const { data: newEpic } = await supabaseAdmin
+            .from('work_items')
+            .insert({
+              tenant_id: tenantId,
+              project_id: projectId,
+              external_ref_id: 'EPIC-TRIAGE',
+              item_type: 'epic',
+              status: 'in_progress',
+              title: 'Production Incident Triage',
+              description: 'Epic grouping incoming production incidents and observability anomalies.',
+              order_index: 0,
+              metadata: { priority: 'Critical' },
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+
+          if (newEpic) {
+            triageEpicId = newEpic.id;
+          }
+        }
+      } catch {
+        // Continue with null triageEpicId if lookup fails
+      }
+    }
+
+    // Check if an item with externalRefId already exists
+    let existingItem: any = null;
+    if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+      try {
+        const { data: found } = await supabaseAdmin
+          .from('work_items')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('external_ref_id', externalRefId)
+          .maybeSingle();
+        existingItem = found;
+      } catch {
+        existingItem = null;
+      }
+    }
+
+    if (existingItem) {
+      const occurrenceCount = (existingItem.metadata?.occurrence_count || 1) + 1;
+      const updatedMeta = {
+        ...(existingItem.metadata || {}),
+        ...(payload.metadata || {}),
+        occurrence_count: occurrenceCount,
+        last_seen_at: new Date().toISOString(),
+      };
+
+      // Defend against Issue #10 (ANALYSIS_0005): Update incident description with latest logs & stack trace
+      const updatedDesc = payload.description || existingItem.description;
+
+      if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        const { data: updated } = await supabaseAdmin
+          .from('work_items')
+          .update({
+            description: updatedDesc,
+            metadata: updatedMeta,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingItem.id)
+          .select()
+          .single();
+        updatedItems.push(updated || { ...existingItem, description: updatedDesc, metadata: updatedMeta });
+      } else {
+        existingItem.description = updatedDesc;
+        existingItem.metadata = updatedMeta;
+        updatedItems.push(existingItem);
+      }
+    } else {
+      const bugPayload = {
+        tenant_id: tenantId,
+        project_id: projectId,
+        parent_id: triageEpicId,
+        external_ref_id: externalRefId,
+        item_type: 'bug',
+        status: 'not_started',
+        title: payload.title || `Production Incident: ${payload.service || 'System'} anomaly`,
+        description: payload.description || 'Observability alert reported.',
+        order_index: 1000.0,
+        sprint_id: relationalSprintId,
+        metadata: {
+          ...(payload.metadata || {}),
+          priority: 'Critical',
+          severity: 'Critical',
+          observability_source: source,
+          service_name: payload.service || payload.service_name || 'unknown',
+          error_signature: errorSignature,
+          sprint: activeSprintName || undefined,
+          sprint_id: activeSprintId || undefined,
+          reported_at: payload.reported_at || new Date().toISOString(),
+          occurrence_count: 1,
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      let insertedBug: any = null;
+      if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
+        let { data: inserted, error: insertErr } = await supabaseAdmin
+          .from('work_items')
+          .insert(bugPayload)
+          .select()
+          .single();
+
+        if (insertErr && isMissingSprintIdColumnError(insertErr)) {
+          const fallback: Record<string, any> = { ...bugPayload };
+          delete fallback.sprint_id;
+          const retry = await supabaseAdmin.from('work_items').insert(fallback).select().single();
+          inserted = retry.data;
+          insertErr = retry.error;
+        }
+
+        if (insertErr) {
+          console.error('[tracker:automation] Failed to insert incident bug:', insertErr);
+        } else if (inserted) {
+          insertedBug = inserted;
+        }
+      } else {
+        insertedBug = bugPayload;
+      }
+
+      if (insertedBug) {
+        createdItems.push(insertedBug as WorkItem);
+      }
+    }
+  }
+
+  return {
+    success: true,
+    event,
+    matchedItems,
+    updatedItems,
+    createdItems,
+    executedRules: result?.executedRuleIds || [],
+  };
 }

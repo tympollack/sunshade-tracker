@@ -51,6 +51,9 @@ const CANONICAL_IN_PROGRESS_SUGGESTIONS = [
   'in_progress',
   'doing',
   'active',
+  'outlining',
+  'drafting',
+  'writing',
   'review',
   'in_review',
   'qa',
@@ -65,6 +68,10 @@ const CANONICAL_COMPLETED_SUGGESTIONS = [
   'closed',
   'shipped',
   'released',
+  'published',
+  'syndicated',
+  'archived',
+  'approved',
 ];
 
 // Reusable Tag / Chip Input with autocomplete and keyboard control

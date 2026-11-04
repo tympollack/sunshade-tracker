@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
@@ -21,6 +21,7 @@ import {
   isItemCompleted,
 } from '@/lib/sprint-utils';
 import { getDescendantIds } from '@/lib/tree';
+import { evaluateTransitionGuards, validateTransitionGuards } from '@/lib/automation/guardEvaluator';
 
 /**
  * Automatically pages through Supabase PostgREST queries in 1000-row chunks
@@ -1118,7 +1119,14 @@ export async function PATCH(req: NextRequest) {
         governance_bypass: isCallerAdmin && requestedBulkGovernanceBypass,
       });
       if (!bulkRes.success) {
-        return NextResponse.json({ error: bulkRes.error }, { status: bulkRes.status || 400 });
+        return NextResponse.json(
+          {
+            error: bulkRes.error,
+            ...(bulkRes.code ? { code: bulkRes.code } : {}),
+            ...(bulkRes.errors ? { errors: bulkRes.errors } : {}),
+          },
+          { status: bulkRes.status || 400 }
+        );
       }
       return NextResponse.json({
         success: true,
@@ -1375,6 +1383,33 @@ export async function PATCH(req: NextRequest) {
         }
       }
       if (status !== undefined) {
+        if (status !== existingItem.status) {
+          const candidateMetadata =
+            resolvedMetadata !== undefined
+              ? resolvedMetadata
+              : (existingItem.metadata || {});
+
+          const guardResult = evaluateTransitionGuards(
+            existingItem,
+            status,
+            effectiveProjectSettings,
+            {
+              ...updateFields,
+              metadata: candidateMetadata,
+            }
+          );
+          if (!guardResult.allowed) {
+            return NextResponse.json(
+              {
+                error: 'GUARD_REJECTED',
+                code: 'GUARD_REJECTED',
+                violations: guardResult.violations,
+                errors: guardResult.violations,
+              },
+              { status: 422 }
+            );
+          }
+        }
         updateFields.status = status;
       }
     }
@@ -1511,6 +1546,49 @@ export async function PATCH(req: NextRequest) {
           );
         }
         return NextResponse.json({ error: err.message || 'Sprint intake rejected' }, { status: 400 });
+      }
+    }
+
+    // Capacity Guardrail: Enforce 20-hr weekly sovereign capacity cap on task claims
+    const effectiveAssignee = updateFields.assignee !== undefined ? updateFields.assignee : existingItem.assignee;
+    const isClaimTransition =
+      effectiveAssignee &&
+      ((updateFields.status === 'in_progress' && existingItem.status !== 'in_progress') ||
+        (updateFields.assignee && updateFields.assignee !== existingItem.assignee));
+
+    if (isClaimTransition) {
+      const { assertRunnerWeeklyCapacity } = await import('@/lib/bounties/flexLedgerService');
+      const candidateItem = {
+        ...existingItem,
+        ...updateFields,
+        metadata: resolvedMetadata !== undefined ? resolvedMetadata : (existingItem.metadata || {}),
+      };
+
+      const adminOverride =
+        isCallerAdmin &&
+        Boolean(
+          body.capacity_override ||
+            body.admin_override ||
+            req.headers.get('x-capacity-override') === 'true'
+        );
+
+      const capacityResult = await assertRunnerWeeklyCapacity({
+        supabaseClient: supabaseAdmin,
+        tenantId: authCtx.tenant.id,
+        assignee: effectiveAssignee,
+        candidateItem,
+        adminOverride,
+      });
+
+      if (!capacityResult.allowed) {
+        return NextResponse.json(
+          {
+            error: capacityResult.reason,
+            code: 'WEEKLY_CAPACITY_EXCEEDED',
+            details: capacityResult,
+          },
+          { status: 422 }
+        );
       }
     }
 
@@ -1693,6 +1771,44 @@ export async function PATCH(req: NextRequest) {
             }
           })
           .catch(() => {});
+      }
+    }
+
+    // Evaluate declarative automations (status_transition / item_updated)
+    const automations = effectiveProjectSettings?.automations;
+    const hasActiveAutomations =
+      Array.isArray(automations) && automations.some((r: any) => r && r.enabled !== false);
+
+    if (hasActiveAutomations) {
+      const isStatusTransition = existingItem.status !== updated.status;
+      const eventType = isStatusTransition ? 'status_transition' : 'item_updated';
+
+      const runAutomations = () =>
+        import('@/lib/automation-engine')
+          .then(({ executeProjectAutomations }) =>
+            executeProjectAutomations({
+              tenantId: authCtx.tenant.id,
+              projectId: updated.project_id || existingItem.project_id,
+              settings: effectiveProjectSettings,
+              items: [updated],
+              itemMutationSnapshots: [{ item: updated, prior: existingItem }],
+              eventType,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
+            })
+          )
+          .catch((autoErr) => {
+            console.error('[tracker:items:automations] Background execution error:', autoErr);
+          });
+
+      try {
+        if (typeof after === 'function') {
+          after(runAutomations);
+        } else {
+          queueMicrotask(runAutomations);
+        }
+      } catch {
+        queueMicrotask(runAutomations);
       }
     }
 

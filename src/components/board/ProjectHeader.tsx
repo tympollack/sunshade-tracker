@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Eye,
+  Radio,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
@@ -35,8 +36,8 @@ export interface ProjectHeaderProps {
   allWorkspaces: WorkspaceItem[];
   allProjects: { id: string; slug: string; name: string }[];
   isReadOnly: boolean;
-  activeTab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema';
-  onTabChange: (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema') => void;
+  activeTab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema' | 'live';
+  onTabChange: (tab: 'board' | 'tree' | 'sprint' | 'spark' | 'schema' | 'live') => void;
   onOpenSearch: () => void;
   onOpenQuickAdd: () => void;
   deviations: SchemaDeviation[];
@@ -110,6 +111,17 @@ export function ProjectHeader(props: ProjectHeaderProps) {
             </button>
           );
         })}
+        <button
+          onClick={() => onTabChange('live')}
+          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-medium transition-colors shrink-0 ${
+            activeTab === 'live'
+              ? 'bg-emerald-500 text-slate-950 shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Radio className="w-3.5 h-3.5" />
+          <span className="hidden xl:inline">Live Deck</span>
+        </button>
         <NavToolsDropdown activeTab={activeTab} onSelectTab={(tab) => handleTabChange(tab)} />
       </div>
 

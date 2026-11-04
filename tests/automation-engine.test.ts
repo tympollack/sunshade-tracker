@@ -8,6 +8,7 @@ import {
   executeProjectAutomations,
   isAllowedChildType,
   resolveDefaultChildType,
+  isAllowedWebhookUrl,
 } from '@/lib/automation-engine';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyHmacSignature } from '@/lib/webhooks/verify-hmac';
@@ -118,6 +119,25 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
     it('replaces missing placeholders with empty strings', () => {
       const template = 'Domain: {{metadata.missing_field}} and {{non_existent}}';
       expect(interpolate(template, contextItem)).toBe('Domain:  and ');
+    });
+
+    it('resolves item-prefixed paths, settings variables, and NOW/TODAY timestamps', () => {
+      const itemWithSettings = {
+        ...contextItem,
+        settings: {
+          editorial: { cadence: 14 },
+          github_repo: 'tympollack/sunshade-tracker',
+        },
+      };
+
+      const template = '{{item.title}} on {{settings.github_repo}} every {{settings.editorial.cadence}} days';
+      expect(interpolate(template, itemWithSettings)).toBe(
+        'Acme Onboarding Story on tympollack/sunshade-tracker every 14 days'
+      );
+
+      const withTimestamps = 'Date: {{TODAY}} at {{NOW()}}';
+      const output = interpolate(withTimestamps, itemWithSettings);
+      expect(output).toMatch(/^Date: \d{4}-\d{2}-\d{2} at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
   });
 
@@ -440,6 +460,138 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       // The creation rule fires exactly once (for the creation snapshot), not suppressed by the subsequent update!
       expect(upsertMock).toHaveBeenCalledTimes(1);
     });
+
+    it('evaluates rule conditions filter before executing actions', async () => {
+      const updateMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-filtered',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            conditions: [
+              {
+                field: 'priority',
+                operator: '$eq',
+                value: 'Critical',
+              },
+            ],
+            actions: [
+              {
+                type: 'patch_metadata',
+                metadata: { expedited: true },
+              },
+            ],
+          },
+        ],
+      };
+
+      const regularItem: WorkItem = {
+        id: 'reg-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'open',
+        title: 'Regular Task',
+        order_index: 10,
+        metadata: { priority: 'Low' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const criticalItem: WorkItem = {
+        id: 'crit-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'task',
+        status: 'open',
+        title: 'Critical Task',
+        order_index: 20,
+        metadata: { priority: 'Critical' },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const result = await executeProjectAutomations({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        settings,
+        items: [regularItem, criticalItem],
+      });
+
+      expect(result?.executedRuleIds).toEqual(['rule-filtered']);
+      expect(regularItem.metadata.expedited).toBeUndefined();
+      expect(criticalItem.metadata.expedited).toBe(true);
+    });
+
+    it('executes calculate_calendar_slot action and updates work item metadata', async () => {
+      const updateMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-cadence',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Wednesday',
+                utc_time: '18:00',
+                collision_statuses: ['in_progress'],
+              },
+            ],
+          },
+        ],
+      };
+
+      const item: WorkItem = {
+        id: 'item-slot-1',
+        tenant_id: 't-1',
+        project_id: 'p-1',
+        item_type: 'story',
+        status: 'open',
+        title: 'Release Story',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const result = await executeProjectAutomations({
+        tenantId: 't-1',
+        projectId: 'p-1',
+        settings,
+        items: [item],
+      });
+
+      expect(result?.executedRuleIds).toContain('rule-cadence');
+      expect(item.metadata.cadence_days).toBe(14);
+      expect(item.metadata.scheduled_weekday).toBe('Wednesday');
+      expect(item.metadata.scheduled_utc_time).toBe('18:00');
+      expect(item.metadata.collision_statuses).toEqual(['in_progress']);
+      expect(item.metadata.calculated_at).toBeDefined();
+    });
   });
 
   describe('Taxonomy Resolution in buildTemplateRecords', () => {
@@ -679,6 +831,377 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       // The second upsert call omitted sprint_id
       const secondCallPayload = upsertMock.mock.calls[1][0];
       expect(secondCallPayload[0]).not.toHaveProperty('sprint_id');
+    });
+  });
+
+  describe('isAllowedWebhookUrl SSRF Protection', () => {
+    it('rejects loopback, internal IPs, link-local, and internal domain names', () => {
+      // Loopback
+      expect(isAllowedWebhookUrl('http://localhost/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.0.0.1:8080/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.0.0.2/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://127.255.255.255/hook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://[::1]/hook')).toBe(false);
+
+      // Private ranges
+      expect(isAllowedWebhookUrl('http://10.0.0.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://192.168.1.100/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://172.16.0.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://172.31.255.255/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://100.64.0.1/')).toBe(false); // CGNAT
+
+      // Link-local & cloud metadata
+      expect(isAllowedWebhookUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+      expect(isAllowedWebhookUrl('http://169.254.1.1/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://instance-data/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://metadata.google.internal/')).toBe(false);
+
+      // IPv6 ULA & Link-local
+      expect(isAllowedWebhookUrl('http://[fc00::1]/')).toBe(false);
+      expect(isAllowedWebhookUrl('http://[fe80::1]/')).toBe(false);
+
+      // Internal / single-label domains
+      expect(isAllowedWebhookUrl('http://intranet/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://redis/api')).toBe(false);
+      expect(isAllowedWebhookUrl('http://service.local/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://worker.internal/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://app.localhost/webhook')).toBe(false);
+      expect(isAllowedWebhookUrl('http://corp.lan/webhook')).toBe(false);
+    });
+
+    it('allows valid public webhook destinations', () => {
+      expect(isAllowedWebhookUrl('https://api.github.com/webhook')).toBe(true);
+      expect(isAllowedWebhookUrl('https://webhook.site/my-uuid')).toBe(true);
+      expect(isAllowedWebhookUrl('https://example.com/api/v1/sink')).toBe(true);
+    });
+
+    it('permits localhost only when ALLOW_LOCAL_WEBHOOKS=true is explicitly set', () => {
+      const orig = process.env.ALLOW_LOCAL_WEBHOOKS;
+      try {
+        process.env.ALLOW_LOCAL_WEBHOOKS = 'true';
+        expect(isAllowedWebhookUrl('http://localhost:3000/webhook')).toBe(true);
+      } finally {
+        process.env.ALLOW_LOCAL_WEBHOOKS = orig;
+      }
+    });
+  });
+
+  describe('Fortnightly Cadence & Collision Resolution in calculate_calendar_slot', () => {
+    it('schedules next slot 14 days after existing scheduled slot date', async () => {
+      const existingDate = new Date(Date.now() + 5 * 86400000).toISOString();
+      const mockSlots = [
+        {
+          id: 'existing-slot-item',
+          project_id: 'p-cadence',
+          status: 'in_progress',
+          metadata: { scheduled_slot_date: existingDate },
+        },
+      ];
+
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-fortnightly',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Monday',
+                utc_time: '14:00',
+                collision_statuses: ['in_progress'],
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'new-slot-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence',
+        item_type: 'story',
+        status: 'open',
+        title: 'Fortnightly Cadence Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence',
+        settings,
+        items: [newItem],
+      });
+
+      expect(newItem.metadata.cadence_days).toBe(14);
+      expect(newItem.metadata.scheduled_slot_date).toBeDefined();
+
+      const baseMs = new Date(existingDate).getTime();
+      const scheduledMs = new Date(newItem.metadata.scheduled_slot_date).getTime();
+      // Should be scheduled at least 14 days after the existing slot
+      expect(scheduledMs).toBeGreaterThanOrEqual(baseMs + 13 * 86400000);
+    });
+
+    it('strictly preserves configured weekday when cadence is not a multiple of 7 (e.g. 10-day Monday cadence)', async () => {
+      // Prior slot on October 5 (Monday)
+      const priorDate = new Date(Date.UTC(2026, 9, 5, 14, 0, 0)).toISOString();
+      const mockSlots = [
+        {
+          id: 'past-slot-item',
+          project_id: 'p-cadence-10',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-ten-day',
+            scheduled_weekday: 'Monday',
+            scheduled_slot_date: priorDate,
+          },
+        },
+      ];
+
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-ten-day',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 10,
+                weekday: 'Monday',
+                utc_time: '14:00',
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'new-ten-day-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence-10',
+        item_type: 'story',
+        status: 'open',
+        title: 'Ten-day Monday Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence-10',
+        settings,
+        items: [newItem],
+      });
+
+      expect(newItem.metadata.scheduled_slot_date).toBeDefined();
+      const scheduledDate = new Date(newItem.metadata.scheduled_slot_date);
+      // Monday is UTCDay 1
+      expect(scheduledDate.getUTCDay()).toBe(1);
+      expect(scheduledDate.getUTCHours()).toBe(14);
+      expect(scheduledDate.getUTCMinutes()).toBe(0);
+    });
+
+    it('does not delay recurrence base when unrelated rule in the same project has a future slot date', async () => {
+      // Monday fortnightly task was scheduled for 2026-11-02
+      const mondaySlotDate = new Date(Date.UTC(2026, 10, 2, 14, 0, 0)).toISOString();
+      // Unrelated Friday release rule has a far-future slot scheduled for 2026-12-04
+      const fridayFutureSlotDate = new Date(Date.UTC(2026, 11, 4, 18, 0, 0)).toISOString();
+
+      const mockSlots = [
+        {
+          id: 'monday-rule-item',
+          project_id: 'p-cadence-shared',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-monday-fortnightly',
+            scheduled_weekday: 'Monday',
+            scheduled_slot_date: mondaySlotDate,
+          },
+        },
+        {
+          id: 'friday-rule-item',
+          project_id: 'p-cadence-shared',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-friday-release',
+            scheduled_weekday: 'Friday',
+            scheduled_slot_date: fridayFutureSlotDate,
+          },
+        },
+      ];
+
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-monday-fortnightly',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Monday',
+                utc_time: '14:00',
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'next-monday-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence-shared',
+        item_type: 'story',
+        status: 'open',
+        title: 'Next Monday Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence-shared',
+        settings,
+        items: [newItem],
+      });
+
+      const scheduledDate = new Date(newItem.metadata.scheduled_slot_date);
+      // The scheduled date must be based on Monday Nov 2 + 14 days = Nov 16, NOT pushed to mid-December
+      expect(scheduledDate.getUTCMonth()).toBe(10); // November (0-indexed 10 = Nov)
+      expect(scheduledDate.getUTCDate()).toBe(16);
+      expect(scheduledDate.getUTCDay()).toBe(1); // Monday
+    });
+  });
+
+  describe('Scoped DB Updates in executeProjectAutomations', () => {
+    it('scopes work_items patch_metadata updates strictly to tenant_id and project_id', async () => {
+      const tenantEqMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+      const idEqMock = vi.fn().mockReturnValue({
+        eq: tenantEqMock,
+      });
+      const updateMock = vi.fn().mockReturnValue({
+        eq: idEqMock,
+      });
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        update: updateMock,
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-patch',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'patch_metadata',
+                metadata: { automated_tag: 'verified' },
+              },
+            ],
+          },
+        ],
+      };
+
+      const item: WorkItem = {
+        id: 'item-scoped-1',
+        tenant_id: 'tenant-abc',
+        project_id: 'project-xyz',
+        item_type: 'story',
+        status: 'open',
+        title: 'Scoped Patch Story',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 'tenant-abc',
+        projectId: 'project-xyz',
+        settings,
+        items: [item],
+      });
+
+      expect(updateMock).toHaveBeenCalled();
+      expect(idEqMock).toHaveBeenCalledWith('id', 'item-scoped-1');
+      expect(tenantEqMock).toHaveBeenCalledWith('tenant_id', 'tenant-abc');
     });
   });
 });

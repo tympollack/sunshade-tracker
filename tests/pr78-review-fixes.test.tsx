@@ -180,6 +180,23 @@ describe('PR-78 Review Fixes Verification Suite', () => {
           status: 'complete',
           created_at: '2026-10-01T10:00:00Z',
           completed_at: '2026-10-03T10:00:00Z',
+          metadata: { commit_sha: 'sha-001' },
+        },
+        {
+          id: 'item-2',
+          project_id: 'proj-1',
+          status: 'complete',
+          created_at: '2026-10-01T10:00:00Z',
+          completed_at: '2026-10-03T10:00:00Z',
+          metadata: { pr_url: 'https://github.com/org/repo/pull/1' },
+        },
+        {
+          id: 'item-3',
+          project_id: 'proj-1',
+          status: 'complete',
+          created_at: '2026-10-01T10:00:00Z',
+          completed_at: '2026-10-03T10:00:00Z',
+          metadata: { commit_sha: 'sha-003' },
         },
       ];
 

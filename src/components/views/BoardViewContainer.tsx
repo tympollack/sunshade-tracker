@@ -19,6 +19,7 @@ import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect'
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
+import { BoardNotificationDigest } from '@/components/board/BoardNotificationDigest';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
 import { SprintTimelineScrubber, TimelineSnapshotPoint } from '@/components/sprints/SprintTimelineScrubber';
 
@@ -98,6 +99,7 @@ export interface BoardViewContainerProps {
   activeTimelineSnapshot?: TimelineSnapshotPoint | null;
   onSelectTimelineSnapshot?: (snap: TimelineSnapshotPoint | null) => void;
   onOpenDiffModal?: (baseId: string, targetId: string) => void;
+  guardRejectedItemIds?: Set<string>;
 }
 
 export function BoardViewContainer(props: BoardViewContainerProps) {
@@ -172,6 +174,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     activeTimelineSnapshot = null,
     onSelectTimelineSnapshot,
     onOpenDiffModal,
+    guardRejectedItemIds,
   } = props;
 
   const isEffectivelyReadOnly = isReadOnly || Boolean(activeTimelineSnapshot);
@@ -303,6 +306,11 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           onSelectSnapshot={onSelectTimelineSnapshot}
           onOpenDiffModal={onOpenDiffModal}
         />
+      )}
+
+      {/* Notification Digest (TASK-NOTIF-CONSUME-TRACKER) */}
+      {!loading && !isReadOnly && (
+        <BoardNotificationDigest tenantSlug={tenantSlug} items={items} getItemStatuses={(item) => (getItemProjectSettings ? getItemProjectSettings(item) : projectSettings)?.statuses} />
       )}
 
       {/* Board Columns Canvas */}
@@ -588,6 +596,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                               isCardImmutable={isCardImmutable}
                               isReadOnly={isEffectivelyReadOnly}
                               isBeingDragged={isBeingDragged}
+                              isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
                               onEditItem={setEditingItem}
                               onDeleteItem={setDeleteConfirmItem}
                               onUpdateStatus={handleUpdateStatus}
@@ -643,6 +652,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       isAllProjects={isAllProjects}
                       isCardImmutable={isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs)}
                       isReadOnly={isEffectivelyReadOnly}
+                      isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
                       onEditItem={setEditingItem}
                       onDeleteItem={setDeleteConfirmItem}
                       onUpdateStatus={handleUpdateStatus}

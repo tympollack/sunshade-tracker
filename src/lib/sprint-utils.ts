@@ -9,6 +9,11 @@ export const DEFAULT_COMPLETED_STATUS_IDS = new Set([
   'approved',
   'published',
   'resolved',
+  'syndicated',
+  'archived',
+  'released',
+  'finished',
+  'live',
 ]);
 
 /**

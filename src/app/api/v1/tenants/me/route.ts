@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     const checkPublicGuestWorkspace = async (slugToTest: string) => {
       let q: any = service
         .from('tenants')
-        .select('id, slug, name, tier, owner_id, metadata, created_at, deleted_at')
+        .select('id, slug, name, tier, owner_id, settings, metadata, created_at, deleted_at')
         .eq('slug', slugToTest);
       if (typeof q.is === 'function') {
         q = q.is('deleted_at', null);
@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
           projects: sortedDemoProjects || [],
           members: [],
           is_public: true,
+          settings: publicTenant.settings || {},
           metadata: publicTenant.metadata || {},
         };
       }
@@ -109,6 +110,7 @@ export async function GET(req: NextRequest) {
           name,
           tier,
           owner_id,
+          settings,
           metadata,
           api_key,
           api_key_preview,
@@ -274,6 +276,7 @@ export async function GET(req: NextRequest) {
           tenant.slug === 'sunshade' ||
           tenant.tier === 'demo' ||
           Boolean(tenant.metadata?.is_public),
+        settings: tenant.settings || {},
         metadata: tenant.metadata || {},
       };
     });

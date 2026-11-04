@@ -21,6 +21,9 @@ import {
 } from '@/lib/governance/sprint-rules';
 import { SprintGovernanceForm } from './SprintGovernanceForm';
 import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
+import { StatusTaxonomyEditor } from './StatusTaxonomyEditor';
+import { TransitionGuardsEditor } from './TransitionGuardsEditor';
+import { AutomationPipelineEditor } from './AutomationPipelineEditor';
 
 export {
   ProjectSettingsSchema,
@@ -243,6 +246,13 @@ export function ProjectSchemaEditor({
         settings={settings}
         onChange={onChange}
         activeItems={activeItems}
+        readOnly={readOnly}
+      />
+
+      {/* 2b. Live Deck Lifecycle Category & WIP Limit Configurator */}
+      <StatusTaxonomyEditor
+        settings={settings}
+        onChange={onChange}
         readOnly={readOnly}
       />
 
@@ -479,6 +489,20 @@ export function ProjectSchemaEditor({
           </div>
         </div>
       </div>
+
+      {/* 4. Visual Transition Guardrails Editor */}
+      <TransitionGuardsEditor
+        settings={settings}
+        onChange={onChange}
+        readOnly={readOnly}
+      />
+
+      {/* 5. Visual Automation Pipelines Editor */}
+      <AutomationPipelineEditor
+        settings={settings}
+        onChange={onChange}
+        readOnly={readOnly}
+      />
     </div>
   );
 }

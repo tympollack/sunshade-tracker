@@ -228,4 +228,54 @@ describe('EfficiencyStatementPage Component', () => {
       expect(screen.getByText('Network connection failed')).toBeDefined();
     });
   });
+
+  it('renders Sovereign Token Yield & Verification Filter section with Stream A and Stream B metrics', async () => {
+    const payloadWithBreakdown = {
+      ...mockEfficiencyData,
+      kpis: {
+        ...mockEfficiencyData.kpis,
+        completedItemsCount: 10,
+        breakdown: {
+          verifiedArtifactCount: 8,
+          personalExcludedCount: 5,
+          unverifiedExcludedCount: 2,
+          totalConsideredCount: 15,
+        },
+      },
+    };
+
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v1/tenants/me')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ workspaces: [{ slug: 'pym-energy', name: 'Pym Energy' }] }),
+        });
+      }
+      if (url.includes('/api/v1/tenants/efficiency')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => payloadWithBreakdown,
+        });
+      }
+      return Promise.reject(new Error(`Unhandled URL: ${url}`));
+    });
+
+    await act(async () => {
+      render(
+        <EfficiencyStatementPage
+          params={Promise.resolve({ tenantSlug: 'pym-energy' })}
+        />
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sovereign Token Yield & Verification Filter')).toBeDefined();
+    });
+
+    expect(screen.getByText(/8 Artifact-Verified/i)).toBeDefined();
+    expect(screen.getByText(/2 Unverified Commercial/i)).toBeDefined();
+    expect(screen.getByText(/5 Personal \/ Chores Excluded/i)).toBeDefined();
+    expect(screen.getByText('Stream A: Ecosystem Upkeep Pool')).toBeDefined();
+    expect(screen.getByText('Stream B: Personal Execution Bounties')).toBeDefined();
+  });
 });
