@@ -311,4 +311,48 @@ describe('TASK-TRK-20HR-FLEX-LEDGER: 20-Hour Weekly Sovereign Capacity Ledger', 
     expect(res.currentWeeklyHours).toBe(18.0);
     expect(res.tokensExceeded).toBe(120000);
   });
+
+  it('does not count untouched old not_started backlog assigned in prior weeks towards current weekly capacity', async () => {
+    // 20 unstarted cards assigned last month (30 days ago) without edits this week
+    const lastMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const oldBacklogItems = Array.from({ length: 20 }, (_, i) => ({
+      id: `old-backlog-${i}`,
+      status: 'not_started',
+      created_at: lastMonth,
+      updated_at: lastMonth,
+      metadata: { estimated_hours: 1.0 },
+    }));
+
+    const mockClient = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              neq: vi.fn().mockResolvedValue({
+                data: oldBacklogItems,
+                error: null,
+              }),
+            })),
+          })),
+        })),
+      })),
+    };
+
+    const candidateItem = {
+      id: 'candidate-bounty-3',
+      metadata: { bounty_hours: 1.0 },
+    };
+
+    const res = await assertRunnerWeeklyCapacity({
+      supabaseClient: mockClient as any,
+      tenantId: 'tenant-1',
+      assignee: 'runner-tym',
+      candidateItem,
+    });
+
+    // Old unstarted backlog should NOT count, so currentWeeklyHours is 0 and 1hr claim is allowed
+    expect(res.allowed).toBe(true);
+    expect(res.currentWeeklyHours).toBe(0);
+    expect(res.projectedHours).toBe(1.0);
+  });
 });

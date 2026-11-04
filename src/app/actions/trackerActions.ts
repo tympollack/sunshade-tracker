@@ -1287,14 +1287,19 @@ export async function updateWorkItem(
     };
   }
 
-  // Strip caller-supplied projectSettings to prevent guard bypass (Comment #8)
+  // Strip caller-supplied projectSettings to prevent guard bypass and unmapped column DB failures
   const sanitizedPayload =
     typeof itemIdOrPayload === 'string'
       ? itemIdOrPayload
-      : {
-          ...itemIdOrPayload,
-          projectSettings: undefined,
-        };
+      : { ...itemIdOrPayload };
+  if (typeof sanitizedPayload === 'object' && sanitizedPayload !== null) {
+    delete (sanitizedPayload as any).projectSettings;
+  }
+
+  const sanitizedUpdates = updates ? { ...updates } : undefined;
+  if (sanitizedUpdates && 'projectSettings' in sanitizedUpdates) {
+    delete (sanitizedUpdates as any).projectSettings;
+  }
 
   const sanitizedOptions = options
     ? {
@@ -1304,7 +1309,7 @@ export async function updateWorkItem(
     : undefined;
 
   const { performUpdateWorkItem } = await import('@/lib/automation/workItemGuardMutations');
-  return performUpdateWorkItem(sanitizedPayload as any, updates, sanitizedOptions);
+  return performUpdateWorkItem(sanitizedPayload as any, sanitizedUpdates, sanitizedOptions);
 }
 
 

@@ -374,6 +374,66 @@ describe('Transition Guard Evaluator & Mutation Pipeline (TASK-TRK-GUARD-EVALUAT
       });
     });
 
+    it('strips projectSettings from updates parameter to prevent persisting unsupported properties to DB', async () => {
+      let capturedUpdate: any = null;
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'work_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'task-1',
+                    project_id: 'proj-1',
+                    status: 'in_progress',
+                    metadata: {},
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+            update: vi.fn((fields: any) => {
+              capturedUpdate = fields;
+              return {
+                eq: vi.fn(() => ({
+                  select: vi.fn(() => ({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { id: 'task-1', ...fields },
+                      error: null,
+                    }),
+                  })),
+                })),
+              };
+            }),
+          } as any;
+        }
+        if (table === 'projects') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'proj-1', settings: sampleSettings },
+                  error: null,
+                }),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const res: any = await updateWorkItem('task-1', {
+        title: 'Updated title',
+        projectSettings: { transition_guards: [] },
+      } as any);
+
+      expect(res.success).toBe(true);
+      expect(capturedUpdate).toBeDefined();
+      expect(capturedUpdate.title).toBe('Updated title');
+      // projectSettings must NOT be present in database updateFields
+      expect(capturedUpdate.projectSettings).toBeUndefined();
+    });
+
     it('prevents caller from bypassing guards by supplying empty projectSettings in options', async () => {
       const updateSpy = vi.fn();
       vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {

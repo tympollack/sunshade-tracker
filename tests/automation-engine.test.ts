@@ -898,22 +898,20 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
         },
       ];
 
-      const updateEqMock = vi.fn().mockResolvedValue({ data: null, error: null });
-      const selectEqMock = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          neq: vi.fn().mockResolvedValue({ data: mockSlots, error: null }),
-        }),
-      });
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
 
       vi.mocked(supabaseAdmin.from).mockReturnValue({
-        select: selectEqMock,
-        update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: updateEqMock,
-            }),
-          }),
-        }),
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
       } as any);
 
       const settings: ProjectSettings = {
@@ -966,6 +964,182 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       const scheduledMs = new Date(newItem.metadata.scheduled_slot_date).getTime();
       // Should be scheduled at least 14 days after the existing slot
       expect(scheduledMs).toBeGreaterThanOrEqual(baseMs + 13 * 86400000);
+    });
+
+    it('strictly preserves configured weekday when cadence is not a multiple of 7 (e.g. 10-day Monday cadence)', async () => {
+      // Prior slot on October 5 (Monday)
+      const priorDate = new Date(Date.UTC(2026, 9, 5, 14, 0, 0)).toISOString();
+      const mockSlots = [
+        {
+          id: 'past-slot-item',
+          project_id: 'p-cadence-10',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-ten-day',
+            scheduled_weekday: 'Monday',
+            scheduled_slot_date: priorDate,
+          },
+        },
+      ];
+
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-ten-day',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 10,
+                weekday: 'Monday',
+                utc_time: '14:00',
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'new-ten-day-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence-10',
+        item_type: 'story',
+        status: 'open',
+        title: 'Ten-day Monday Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence-10',
+        settings,
+        items: [newItem],
+      });
+
+      expect(newItem.metadata.scheduled_slot_date).toBeDefined();
+      const scheduledDate = new Date(newItem.metadata.scheduled_slot_date);
+      // Monday is UTCDay 1
+      expect(scheduledDate.getUTCDay()).toBe(1);
+      expect(scheduledDate.getUTCHours()).toBe(14);
+      expect(scheduledDate.getUTCMinutes()).toBe(0);
+    });
+
+    it('does not delay recurrence base when unrelated rule in the same project has a future slot date', async () => {
+      // Monday fortnightly task was scheduled for 2026-11-02
+      const mondaySlotDate = new Date(Date.UTC(2026, 10, 2, 14, 0, 0)).toISOString();
+      // Unrelated Friday release rule has a far-future slot scheduled for 2026-12-04
+      const fridayFutureSlotDate = new Date(Date.UTC(2026, 11, 4, 18, 0, 0)).toISOString();
+
+      const mockSlots = [
+        {
+          id: 'monday-rule-item',
+          project_id: 'p-cadence-shared',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-monday-fortnightly',
+            scheduled_weekday: 'Monday',
+            scheduled_slot_date: mondaySlotDate,
+          },
+        },
+        {
+          id: 'friday-rule-item',
+          project_id: 'p-cadence-shared',
+          status: 'in_progress',
+          metadata: {
+            cadence_rule_id: 'rule-friday-release',
+            scheduled_weekday: 'Friday',
+            scheduled_slot_date: fridayFutureSlotDate,
+          },
+        },
+      ];
+
+      const selectQuery = {
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: mockSlots, error: null })),
+      };
+      const updateQuery = {
+        eq: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve) => resolve({ data: null, error: null })),
+      };
+
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        select: vi.fn(() => selectQuery),
+        update: vi.fn(() => updateQuery),
+      } as any);
+
+      const settings: ProjectSettings = {
+        schema_version: '1.0',
+        hierarchy: [],
+        statuses: [],
+        custom_fields: [],
+        automations: [
+          {
+            id: 'rule-monday-fortnightly',
+            enabled: true,
+            trigger: { event: 'item_created' },
+            actions: [
+              {
+                type: 'calculate_calendar_slot',
+                cadence_days: 14,
+                weekday: 'Monday',
+                utc_time: '14:00',
+              },
+            ],
+          },
+        ],
+      };
+
+      const newItem: WorkItem = {
+        id: 'next-monday-item',
+        tenant_id: 't-cadence',
+        project_id: 'p-cadence-shared',
+        item_type: 'story',
+        status: 'open',
+        title: 'Next Monday Task',
+        order_index: 10,
+        metadata: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await executeProjectAutomations({
+        tenantId: 't-cadence',
+        projectId: 'p-cadence-shared',
+        settings,
+        items: [newItem],
+      });
+
+      const scheduledDate = new Date(newItem.metadata.scheduled_slot_date);
+      // The scheduled date must be based on Monday Nov 2 + 14 days = Nov 16, NOT pushed to mid-December
+      expect(scheduledDate.getUTCMonth()).toBe(10); // November (0-indexed 10 = Nov)
+      expect(scheduledDate.getUTCDate()).toBe(16);
+      expect(scheduledDate.getUTCDay()).toBe(1); // Monday
     });
   });
 

@@ -186,18 +186,16 @@ export async function performUpdateWorkItemStatus(
   if (targetStatus !== existingItem.status && projectSettings?.automations?.length) {
     try {
       const { executeProjectAutomations } = await import('@/lib/automation-engine');
-      executeProjectAutomations({
+      await executeProjectAutomations({
         tenantId: existingItem.tenant_id,
         projectId: existingItem.project_id,
         settings: projectSettings,
         items: [finalItem],
         itemMutationSnapshots: [{ item: finalItem, prior: existingItem }],
         eventType: 'status_transition',
-      }).catch((autoErr) => {
-        console.error('[tracker:status_transition:automations] Execution error:', autoErr);
       });
-    } catch {
-      // Ignore background automation dispatch failures
+    } catch (autoErr) {
+      console.error('[tracker:status_transition:automations] Execution error:', autoErr);
     }
   }
 
@@ -275,6 +273,7 @@ export async function performUpdateWorkItem(
     ...updates,
     updated_at: new Date().toISOString(),
   };
+  delete updateFields.projectSettings;
 
   if (updates.metadata && typeof updates.metadata === 'object') {
     updateFields.metadata = {
@@ -301,19 +300,17 @@ export async function performUpdateWorkItem(
       const projectSettings = dbSettings || options?.projectSettings;
       if (projectSettings?.automations?.length) {
         const { executeProjectAutomations } = await import('@/lib/automation-engine');
-        executeProjectAutomations({
+        await executeProjectAutomations({
           tenantId: existingItem.tenant_id,
           projectId: targetProjId,
           settings: projectSettings,
           items: [finalItem],
           itemMutationSnapshots: [{ item: finalItem, prior: existingItem }],
           eventType: 'status_transition',
-        }).catch((autoErr) => {
-          console.error('[tracker:status_transition:automations] Execution error:', autoErr);
         });
       }
-    } catch {
-      // Ignore background automation dispatch failures
+    } catch (autoErr) {
+      console.error('[tracker:status_transition:automations] Execution error:', autoErr);
     }
   }
 

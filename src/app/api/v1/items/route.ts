@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
@@ -1802,8 +1802,8 @@ export async function PATCH(req: NextRequest) {
           });
 
       try {
-        if (typeof (globalThis as any).after === 'function') {
-          (globalThis as any).after(runAutomations);
+        if (typeof after === 'function') {
+          after(runAutomations);
         } else {
           queueMicrotask(runAutomations);
         }

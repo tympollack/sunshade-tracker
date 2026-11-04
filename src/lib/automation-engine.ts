@@ -1167,27 +1167,42 @@ export async function executeProjectAutomations(
             const now = new Date();
             const [hours, minutes] = targetUtcTime.split(':').map((s: string) => parseInt(s, 10) || 0);
 
-            // Fetch existing scheduled slots in the project first
+            // Fetch existing scheduled slots in the project first (excluding soft-deleted rows)
             let existingSlots: any[] = [];
             if (projectId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
               try {
                 let slotQuery: any = supabaseAdmin
                   .from('work_items')
-                  .select('id, metadata, status')
+                  .select('id, metadata, status, deleted_at')
                   .eq('project_id', projectId);
+                if (typeof slotQuery?.is === 'function') {
+                  slotQuery = slotQuery.is('deleted_at', null);
+                }
                 if (item.id && typeof slotQuery?.neq === 'function') {
                   slotQuery = slotQuery.neq('id', item.id);
                 }
 
                 const { data } = await slotQuery;
-                existingSlots = data || [];
+                existingSlots = (data || []).filter((s: any) => !s.deleted_at);
               } catch {
                 existingSlots = [];
               }
             }
 
-            // Find latest scheduled slot date among project items to respect recurring cadence
-            const existingScheduledDates = existingSlots
+            // Associate scheduled items with this specific cadence/rule (Comment #4)
+            const matchingRuleSlots = existingSlots.filter((s: any) => {
+              const meta = s.metadata || {};
+              if (rule.id && meta.cadence_rule_id) {
+                return meta.cadence_rule_id === rule.id;
+              }
+              if (meta.scheduled_weekday) {
+                return String(meta.scheduled_weekday).toLowerCase() === targetWeekday.toLowerCase();
+              }
+              return true;
+            });
+
+            // Find latest scheduled slot date strictly among this rule's previous occurrences
+            const existingScheduledDates = matchingRuleSlots
               .map((s: any) => s.metadata?.scheduled_slot_date)
               .filter(Boolean)
               .map((d: string) => new Date(d).getTime())
@@ -1196,13 +1211,20 @@ export async function executeProjectAutomations(
 
             const latestScheduledMs = existingScheduledDates.length > 0 ? existingScheduledDates[0] : null;
 
+            // Helper to advance date by minimum days and strictly restore targetWeekday (Comment #3)
+            const advanceAndAlignWeekday = (date: Date, minDays: number) => {
+              date.setUTCDate(date.getUTCDate() + minDays);
+              const dayDiff = (targetDayNum - date.getUTCDay() + 7) % 7;
+              if (dayDiff > 0) {
+                date.setUTCDate(date.getUTCDate() + dayDiff);
+              }
+            };
+
             let candidateDate: Date;
             if (latestScheduledMs !== null) {
               const baseDate = new Date(latestScheduledMs);
-              baseDate.setUTCDate(baseDate.getUTCDate() + cadenceDays);
               baseDate.setUTCHours(hours, minutes, 0, 0);
-              const dayDiff = (targetDayNum - baseDate.getUTCDay() + 7) % 7;
-              baseDate.setUTCDate(baseDate.getUTCDate() + dayDiff);
+              advanceAndAlignWeekday(baseDate, cadenceDays);
               candidateDate = baseDate;
             } else {
               candidateDate = new Date(Date.UTC(
@@ -1221,12 +1243,12 @@ export async function executeProjectAutomations(
               candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
             }
 
-            // Advance candidateDate if in the past relative to now
+            // Advance candidateDate if overdue while strictly preserving targetWeekday
             while (candidateDate.getTime() <= now.getTime()) {
-              candidateDate.setUTCDate(candidateDate.getUTCDate() + Math.max(cadenceDays, 7));
+              advanceAndAlignWeekday(candidateDate, Math.max(cadenceDays, 7));
             }
 
-            // Resolve collisions against tasks with collisionStatuses
+            // Resolve collisions against tasks with collisionStatuses while strictly preserving targetWeekday
             let maxAttempts = 52;
             while (
               maxAttempts > 0 &&
@@ -1236,7 +1258,7 @@ export async function executeProjectAutomations(
                   s.metadata?.scheduled_slot_date === candidateDate.toISOString()
               )
             ) {
-              candidateDate.setUTCDate(candidateDate.getUTCDate() + cadenceDays);
+              advanceAndAlignWeekday(candidateDate, cadenceDays);
               maxAttempts--;
             }
 
@@ -1248,6 +1270,7 @@ export async function executeProjectAutomations(
             );
 
             const patchedFields: Record<string, any> = {
+              cadence_rule_id: rule.id || null,
               cadence_days: cadenceDays,
               scheduled_weekday: targetWeekday,
               scheduled_utc_time: targetUtcTime,
