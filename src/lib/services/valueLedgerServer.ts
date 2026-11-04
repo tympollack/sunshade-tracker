@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/db';
 import {
   computeEfficiencyMetrics,
   EfficiencyMetricsPayload,
+  hasVerifiableArtifactProof,
 } from './valueLedgerService';
 
 export interface GetEfficiencyOptions {
@@ -46,7 +47,7 @@ export async function getTenantEfficiencyMetrics(
   // 2. Fetch projects with settings to resolve dynamic completion status mappings and ledger mode
   let projectQuery: any = service
     .from('projects')
-    .select('id, slug, name, settings, ledger_mode')
+    .select('id, slug, name, settings')
     .eq('tenant_id', tenant.id);
 
   if (typeof projectQuery.is === 'function') {
@@ -199,62 +200,9 @@ export async function getTenantEfficiencyMetrics(
   // Build project-specific ledger mode lookup map
   const projectLedgerModeMap = new Map<string, any>();
   for (const proj of projectList) {
-    const mode = proj.ledger_mode || proj.settings?.ledger_mode || 'standard_workspace';
+    const mode = proj.settings?.ledger_mode || (proj as any).ledger_mode || 'standard_workspace';
     projectLedgerModeMap.set(proj.id, mode);
   }
-
-  // Active projects and active project-months tracking (BUG-TRK-PROJECT-MONTH-SCALING)
-  // Track distinct calendar months (YYYY-MM) in which each non-personal project had activity within the window.
-  const projectActiveMonthsMap = new Map<string, Set<string>>();
-
-  for (const item of itemList) {
-    const projId = item.project_id;
-    if (!projId) continue;
-    // Exclude personal organizer projects from commercial hierarchy tracking
-    const ledgerMode = projectLedgerModeMap.get(projId);
-    if (ledgerMode === 'personal_organizer') continue;
-
-    const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
-    const updatedMs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
-    const completedMs = getCompletionTimestamp(item) || 0;
-
-    const timestamps = [createdMs, updatedMs, completedMs].filter(
-      (ts) => ts > 0 && ts >= startMs && ts <= endMs
-    );
-
-    if (timestamps.length > 0) {
-      if (!projectActiveMonthsMap.has(projId)) {
-        projectActiveMonthsMap.set(projId, new Set<string>());
-      }
-      const monthsSet = projectActiveMonthsMap.get(projId)!;
-      for (const ts of timestamps) {
-        const ym = new Date(ts).toISOString().slice(0, 7);
-        monthsSet.add(ym);
-      }
-    }
-  }
-
-  const activeProjectsCount = projectActiveMonthsMap.size;
-  let totalProjectMonths = 0;
-  for (const monthsSet of projectActiveMonthsMap.values()) {
-    totalProjectMonths += monthsSet.size;
-  }
-
-  // Determine multiplier for period if specified or custom
-  let periodMultiplier = options?.periodMultiplier;
-  if (!periodMultiplier) {
-    if (options?.period === 'quarter') periodMultiplier = 3;
-    else if (options?.period === 'year') periodMultiplier = 12;
-    else if (options?.period === 'monthly' || options?.period === 'month') periodMultiplier = 1;
-    else if (options?.period === 'week' || options?.period === 'weekly') periodMultiplier = 0.25;
-  }
-
-  // Scale projectMonths for sub-monthly periods (e.g. weekly reports with periodMultiplier = 0.25)
-  // to avoid awarding a full calendar-month allowance (2.0 hrs) for 1 week of activity (0.5 hrs).
-  const effectiveProjectMonths =
-    periodMultiplier !== undefined && periodMultiplier < 1
-      ? Number((activeProjectsCount * periodMultiplier).toFixed(2))
-      : totalProjectMonths;
 
   // Map candidate items completed within the period window with resolved ledger modes
   const periodItems = itemList
@@ -279,6 +227,89 @@ export async function getTenantEfficiencyMetrics(
       assignee: item.assignee,
       assignee_id: item.assignee_id,
     }));
+
+  // Count verified completed items per project in the reporting period
+  const projectVerifiedMap = new Map<string, number>();
+  for (const item of periodItems) {
+    if (item.project_ledger_mode === 'personal_organizer') continue;
+    const proof = hasVerifiableArtifactProof(item);
+    if (proof.hasArtifactProof) {
+      projectVerifiedMap.set(item.project_id, (projectVerifiedMap.get(item.project_id) || 0) + 1);
+    }
+  }
+
+  // Projects qualifying for hierarchical status rollup: non-personal and >= 3 verified completed items
+  const qualifyingProjectIds = new Set<string>();
+  for (const [projId, count] of projectVerifiedMap.entries()) {
+    if (count >= 3) {
+      qualifyingProjectIds.add(projId);
+    }
+  }
+
+  // Active projects and active project-months tracking (BUG-TRK-PROJECT-MONTH-SCALING)
+  // Track distinct calendar months (YYYY-MM) in which projects had activity within the window.
+  const allActiveProjectsMap = new Map<string, Set<string>>();
+  const qualifyingProjectActiveMonthsMap = new Map<string, Set<string>>();
+
+  for (const item of itemList) {
+    const projId = item.project_id;
+    if (!projId) continue;
+    const ledgerMode = projectLedgerModeMap.get(projId);
+    if (ledgerMode === 'personal_organizer') continue;
+
+    const createdMs = item.created_at ? new Date(item.created_at).getTime() : 0;
+    const updatedMs = item.updated_at ? new Date(item.updated_at).getTime() : 0;
+    const completedMs = getCompletionTimestamp(item) || 0;
+
+    const timestamps = [createdMs, updatedMs, completedMs].filter(
+      (ts) => ts > 0 && ts >= startMs && ts <= endMs
+    );
+
+    if (timestamps.length > 0) {
+      if (!allActiveProjectsMap.has(projId)) {
+        allActiveProjectsMap.set(projId, new Set<string>());
+      }
+      const allMonths = allActiveProjectsMap.get(projId)!;
+      for (const ts of timestamps) {
+        allMonths.add(new Date(ts).toISOString().slice(0, 7));
+      }
+
+      if (qualifyingProjectIds.has(projId)) {
+        if (!qualifyingProjectActiveMonthsMap.has(projId)) {
+          qualifyingProjectActiveMonthsMap.set(projId, new Set<string>());
+        }
+        const qMonths = qualifyingProjectActiveMonthsMap.get(projId)!;
+        for (const ts of timestamps) {
+          qMonths.add(new Date(ts).toISOString().slice(0, 7));
+        }
+      }
+    }
+  }
+
+  const activeProjectsCount = allActiveProjectsMap.size;
+  const qualifyingProjectsCount = qualifyingProjectActiveMonthsMap.size;
+
+  let totalQualifyingProjectMonths = 0;
+  for (const monthsSet of qualifyingProjectActiveMonthsMap.values()) {
+    totalQualifyingProjectMonths += monthsSet.size;
+  }
+
+  // Determine multiplier for period if specified or custom
+  let periodMultiplier = options?.periodMultiplier;
+  if (!periodMultiplier) {
+    if (options?.period === 'quarter') periodMultiplier = 3;
+    else if (options?.period === 'year') periodMultiplier = 12;
+    else if (options?.period === 'monthly' || options?.period === 'month') periodMultiplier = 1;
+    else if (options?.period === 'week' || options?.period === 'weekly') periodMultiplier = 0.25;
+  }
+
+  // Scale projectMonths strictly for qualifying commercial projects (>= 3 verified items)
+  const effectiveProjectMonths =
+    qualifyingProjectsCount === 0
+      ? 0
+      : periodMultiplier !== undefined && periodMultiplier < 1
+      ? Number((qualifyingProjectsCount * periodMultiplier).toFixed(2))
+      : totalQualifyingProjectMonths;
 
   return computeEfficiencyMetrics({
     tenantSlug: tenant.slug,

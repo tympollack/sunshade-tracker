@@ -1194,12 +1194,32 @@ export async function updateWorkItemStatus(
         }
       }
     }
-  } catch {
-    // If called outside request store (e.g. non-request test execution), fall through
+  } catch (authErr: any) {
+    return {
+      success: false,
+      status: 401,
+      error: authErr?.message || 'Unauthorized: Valid user session required',
+    };
   }
 
+  // Strip caller-supplied projectSettings to prevent guard bypass (Comment #8)
+  const sanitizedParams =
+    typeof itemIdOrParams === 'string'
+      ? itemIdOrParams
+      : {
+          ...itemIdOrParams,
+          projectSettings: undefined,
+        };
+
+  const sanitizedOptions = options
+    ? {
+        ...options,
+        projectSettings: undefined,
+      }
+    : undefined;
+
   const { performUpdateWorkItemStatus } = await import('@/lib/automation/workItemGuardMutations');
-  return performUpdateWorkItemStatus(itemIdOrParams, newStatus, options);
+  return performUpdateWorkItemStatus(sanitizedParams, newStatus, sanitizedOptions);
 }
 
 /**
@@ -1259,12 +1279,37 @@ export async function updateWorkItem(
         }
       }
     }
-  } catch {
-    // If called outside request store (e.g. non-request test execution), fall through
+  } catch (authErr: any) {
+    return {
+      success: false,
+      status: 401,
+      error: authErr?.message || 'Unauthorized: Valid user session required',
+    };
   }
 
+  // Strip caller-supplied projectSettings to prevent guard bypass and unmapped column DB failures
+  const sanitizedPayload =
+    typeof itemIdOrPayload === 'string'
+      ? itemIdOrPayload
+      : { ...itemIdOrPayload };
+  if (typeof sanitizedPayload === 'object' && sanitizedPayload !== null) {
+    delete (sanitizedPayload as any).projectSettings;
+  }
+
+  const sanitizedUpdates = updates ? { ...updates } : undefined;
+  if (sanitizedUpdates && 'projectSettings' in sanitizedUpdates) {
+    delete (sanitizedUpdates as any).projectSettings;
+  }
+
+  const sanitizedOptions = options
+    ? {
+        ...options,
+        projectSettings: undefined,
+      }
+    : undefined;
+
   const { performUpdateWorkItem } = await import('@/lib/automation/workItemGuardMutations');
-  return performUpdateWorkItem(itemIdOrPayload as any, updates, options);
+  return performUpdateWorkItem(sanitizedPayload as any, sanitizedUpdates, sanitizedOptions);
 }
 
 

@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import net from 'node:net';
 import { supabaseAdmin } from '@/lib/db';
 import { computeChangedFields, recordBulkAuditLogs } from '@/lib/audit-log';
 import { isUuid, isMissingSprintIdColumnError } from '@/lib/bulk-items';
@@ -32,7 +33,10 @@ export function matchesTrigger(
   // 1. Verify event if explicitly specified
   const expectedEvent = trigger.event || trigger.type;
   if (expectedEvent && expectedEvent !== eventType) {
-    return false;
+    // If a status transition occurred, rules targeting general item updates should also match
+    if (!(expectedEvent === 'item_updated' && eventType === 'status_transition')) {
+      return false;
+    }
   }
 
   // 2. Reserved keys that should not be evaluated as field predicates
@@ -507,21 +511,77 @@ export function isAllowedWebhookUrl(urlStr: string): boolean {
       return false;
     }
 
-    if (process.env.NODE_ENV === 'test' || process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
+    if (process.env.ALLOW_LOCAL_WEBHOOKS === 'true') {
       return true;
     }
 
-    const host = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase();
+    // Strip enclosing IPv6 brackets if present
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
+    }
+
+    // Block local and internal hostnames
     if (
       host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '0.0.0.0' ||
-      host === '::1' ||
-      host === '169.254.169.254' ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.endsWith('.lan') ||
+      host.endsWith('.localdomain') ||
+      host.endsWith('.home.arpa') ||
+      host.endsWith('.corp') ||
+      host.endsWith('.intranet') ||
+      host.endsWith('.private') ||
+      host === 'instance-data' ||
+      host === 'metadata.google.internal' ||
+      host === 'metadata'
     ) {
+      return false;
+    }
+
+    // Validate IPv4 addresses
+    if (net.isIPv4(host)) {
+      const [a, b, c] = host.split('.').map((p) => parseInt(p, 10));
+      if (
+        a === 0 || // 0.0.0.0/8
+        a === 10 || // 10.0.0.0/8
+        a === 127 || // 127.0.0.0/8 (loopback)
+        (a === 169 && b === 254) || // 169.254.0.0/16 (link-local, cloud metadata)
+        (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+        (a === 192 && b === 168) || // 192.168.0.0/16
+        (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 (CGNAT)
+        (a === 192 && b === 0 && c === 2) || // TEST-NET-1
+        (a === 198 && (b === 18 || b === 19)) || // Benchmark
+        (a === 198 && b === 51 && c === 100) || // TEST-NET-2
+        (a === 203 && b === 0 && c === 113) || // TEST-NET-3
+        a >= 224 // Multicast & Reserved
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // Validate IPv6 addresses
+    if (net.isIPv6(host)) {
+      if (
+        host === '::1' ||
+        host === '::' ||
+        host.startsWith('::ffff:') ||
+        host.startsWith('fe8') ||
+        host.startsWith('fe9') ||
+        host.startsWith('fea') ||
+        host.startsWith('feb') ||
+        host.startsWith('fc') ||
+        host.startsWith('fd')
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    // Disallow single-label hostnames without any domain dot (e.g. http://intranet, http://redis, http://db)
+    if (!host.includes('.')) {
       return false;
     }
 
@@ -860,6 +920,8 @@ export async function executeProjectAutomations(
         eventType = 'item_created';
       } else if (snap.prior.deleted_at !== null) {
         eventType = 'item_restored';
+      } else if (snap.prior.status !== item.status) {
+        eventType = 'status_transition';
       } else {
         eventType = 'item_updated';
       }
@@ -867,7 +929,9 @@ export async function executeProjectAutomations(
 
     const contextItem = {
       source: effectiveSource,
-      event_type: options.event_type || effectivePayload.event_type,
+      event_type: options.event_type || effectivePayload.event_type || eventType,
+      previous_status: snap?.prior?.status,
+      prior_status: snap?.prior?.status,
       ...(effectivePayload || {}),
       ...item,
       settings,
@@ -963,13 +1027,24 @@ export async function executeProjectAutomations(
             item.metadata = nextMetadata;
 
             if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-              await supabaseAdmin
+              let updateBuilder: any = supabaseAdmin
                 .from('work_items')
                 .update({
                   metadata: nextMetadata,
                   updated_at: new Date().toISOString(),
-                })
-                .eq('id', item.id);
+                });
+
+              if (typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('id', item.id);
+              }
+              if (tenantId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('tenant_id', tenantId);
+              }
+              if (projectId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('project_id', projectId);
+              }
+
+              await updateBuilder;
             }
 
             if (!result.updatedItems.some((u) => u.id === item.id)) {
@@ -1070,7 +1145,7 @@ export async function executeProjectAutomations(
               })
             );
           } else if (actionType === 'calculate_calendar_slot' || actionType === 'calculate_cadence') {
-            const cadenceDays = Number((action as any).cadence_days) || 7;
+            const cadenceDays = Math.max(1, Number((action as any).cadence_days) || 7);
             const targetWeekday = (action as any).weekday || 'Monday';
             const targetUtcTime = (action as any).utc_time || '14:00';
             const collisionStatuses = Array.isArray((action as any).collision_statuses)
@@ -1092,44 +1167,110 @@ export async function executeProjectAutomations(
             const now = new Date();
             const [hours, minutes] = targetUtcTime.split(':').map((s: string) => parseInt(s, 10) || 0);
 
-            const candidateDate = new Date(Date.UTC(
-              now.getUTCFullYear(),
-              now.getUTCMonth(),
-              now.getUTCDate(),
-              hours,
-              minutes,
-              0,
-              0
-            ));
-
-            let daysToAdd = (targetDayNum - candidateDate.getUTCDay() + 7) % 7;
-            if (daysToAdd === 0 && candidateDate.getTime() <= now.getTime()) {
-              daysToAdd = 7;
-            }
-            candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
-            const scheduledSlotDate = candidateDate.toISOString();
-
-            let hasCollision = false;
+            // Fetch existing scheduled slots in the project first (excluding soft-deleted rows)
+            let existingSlots: any[] = [];
             if (projectId && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
               try {
-                const { data: existingSlots } = await supabaseAdmin
+                let slotQuery: any = supabaseAdmin
                   .from('work_items')
-                  .select('id, metadata, status')
-                  .eq('project_id', projectId)
-                  .in('status', collisionStatuses)
-                  .neq('id', item.id || '');
-
-                if (existingSlots && existingSlots.length > 0) {
-                  hasCollision = existingSlots.some(
-                    (s: any) => s.metadata?.scheduled_slot_date === scheduledSlotDate
-                  );
+                  .select('id, metadata, status, deleted_at')
+                  .eq('project_id', projectId);
+                if (typeof slotQuery?.is === 'function') {
+                  slotQuery = slotQuery.is('deleted_at', null);
                 }
+                if (item.id && typeof slotQuery?.neq === 'function') {
+                  slotQuery = slotQuery.neq('id', item.id);
+                }
+
+                const { data } = await slotQuery;
+                existingSlots = (data || []).filter((s: any) => !s.deleted_at);
               } catch {
-                // Ignore collision check lookup failure
+                existingSlots = [];
               }
             }
 
+            // Associate scheduled items with this specific cadence/rule (Comment #4)
+            const matchingRuleSlots = existingSlots.filter((s: any) => {
+              const meta = s.metadata || {};
+              if (rule.id && meta.cadence_rule_id) {
+                return meta.cadence_rule_id === rule.id;
+              }
+              if (meta.scheduled_weekday) {
+                return String(meta.scheduled_weekday).toLowerCase() === targetWeekday.toLowerCase();
+              }
+              return true;
+            });
+
+            // Find latest scheduled slot date strictly among this rule's previous occurrences
+            const existingScheduledDates = matchingRuleSlots
+              .map((s: any) => s.metadata?.scheduled_slot_date)
+              .filter(Boolean)
+              .map((d: string) => new Date(d).getTime())
+              .filter((ts: number) => !isNaN(ts))
+              .sort((a: number, b: number) => b - a);
+
+            const latestScheduledMs = existingScheduledDates.length > 0 ? existingScheduledDates[0] : null;
+
+            // Helper to advance date by minimum days and strictly restore targetWeekday (Comment #3)
+            const advanceAndAlignWeekday = (date: Date, minDays: number) => {
+              date.setUTCDate(date.getUTCDate() + minDays);
+              const dayDiff = (targetDayNum - date.getUTCDay() + 7) % 7;
+              if (dayDiff > 0) {
+                date.setUTCDate(date.getUTCDate() + dayDiff);
+              }
+            };
+
+            let candidateDate: Date;
+            if (latestScheduledMs !== null) {
+              const baseDate = new Date(latestScheduledMs);
+              baseDate.setUTCHours(hours, minutes, 0, 0);
+              advanceAndAlignWeekday(baseDate, cadenceDays);
+              candidateDate = baseDate;
+            } else {
+              candidateDate = new Date(Date.UTC(
+                now.getUTCFullYear(),
+                now.getUTCMonth(),
+                now.getUTCDate(),
+                hours,
+                minutes,
+                0,
+                0
+              ));
+              let daysToAdd = (targetDayNum - candidateDate.getUTCDay() + 7) % 7;
+              if (daysToAdd === 0 && candidateDate.getTime() <= now.getTime()) {
+                daysToAdd = 7;
+              }
+              candidateDate.setUTCDate(candidateDate.getUTCDate() + daysToAdd);
+            }
+
+            // Advance candidateDate if overdue while strictly preserving targetWeekday
+            while (candidateDate.getTime() <= now.getTime()) {
+              advanceAndAlignWeekday(candidateDate, Math.max(cadenceDays, 7));
+            }
+
+            // Resolve collisions against tasks with collisionStatuses while strictly preserving targetWeekday
+            let maxAttempts = 52;
+            while (
+              maxAttempts > 0 &&
+              existingSlots.some(
+                (s: any) =>
+                  collisionStatuses.includes(s.status) &&
+                  s.metadata?.scheduled_slot_date === candidateDate.toISOString()
+              )
+            ) {
+              advanceAndAlignWeekday(candidateDate, cadenceDays);
+              maxAttempts--;
+            }
+
+            const scheduledSlotDate = candidateDate.toISOString();
+            const hasCollision = existingSlots.some(
+              (s: any) =>
+                collisionStatuses.includes(s.status) &&
+                s.metadata?.scheduled_slot_date === scheduledSlotDate
+            );
+
             const patchedFields: Record<string, any> = {
+              cadence_rule_id: rule.id || null,
               cadence_days: cadenceDays,
               scheduled_weekday: targetWeekday,
               scheduled_utc_time: targetUtcTime,
@@ -1143,13 +1284,24 @@ export async function executeProjectAutomations(
             item.metadata = nextMetadata;
 
             if (item.id && supabaseAdmin && typeof supabaseAdmin.from === 'function') {
-              await supabaseAdmin
+              let updateBuilder: any = supabaseAdmin
                 .from('work_items')
                 .update({
                   metadata: nextMetadata,
                   updated_at: new Date().toISOString(),
-                })
-                .eq('id', item.id);
+                });
+
+              if (typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('id', item.id);
+              }
+              if (tenantId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('tenant_id', tenantId);
+              }
+              if (projectId && typeof updateBuilder?.eq === 'function') {
+                updateBuilder = updateBuilder.eq('project_id', projectId);
+              }
+
+              await updateBuilder;
             }
 
             if (!result.updatedItems.some((u) => u.id === item.id)) {

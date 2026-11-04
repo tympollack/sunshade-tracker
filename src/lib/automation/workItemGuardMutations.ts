@@ -135,10 +135,8 @@ export async function performUpdateWorkItemStatus(
     };
   }
 
-  const projectSettings =
-    providedSettings !== undefined
-      ? providedSettings
-      : await loadProjectSettings(existingItem.project_id);
+  const dbSettings = await loadProjectSettings(existingItem.project_id);
+  const projectSettings = dbSettings || providedSettings;
 
   const guardResult = evaluateTransitionGuards(
     existingItem,
@@ -183,10 +181,28 @@ export async function performUpdateWorkItemStatus(
     };
   }
 
+  const finalItem = updated || { ...existingItem, ...updateFields };
+
+  if (targetStatus !== existingItem.status && projectSettings?.automations?.length) {
+    try {
+      const { executeProjectAutomations } = await import('@/lib/automation-engine');
+      await executeProjectAutomations({
+        tenantId: existingItem.tenant_id,
+        projectId: existingItem.project_id,
+        settings: projectSettings,
+        items: [finalItem],
+        itemMutationSnapshots: [{ item: finalItem, prior: existingItem }],
+        eventType: 'status_transition',
+      });
+    } catch (autoErr) {
+      console.error('[tracker:status_transition:automations] Execution error:', autoErr);
+    }
+  }
+
   return {
     success: true,
     status: 200,
-    item: updated || { ...existingItem, ...updateFields },
+    item: finalItem,
   };
 }
 
@@ -230,10 +246,9 @@ export async function performUpdateWorkItem(
 
   const targetStatus = updates.status;
   if (targetStatus !== undefined && targetStatus !== existingItem.status) {
-    const projectSettings =
-      options?.projectSettings !== undefined
-        ? options.projectSettings
-        : await loadProjectSettings(updates.project_id || existingItem.project_id);
+    const targetProjId = updates.project_id || existingItem.project_id;
+    const dbSettings = await loadProjectSettings(targetProjId);
+    const projectSettings = dbSettings || options?.projectSettings;
 
     const guardResult = evaluateTransitionGuards(
       existingItem,
@@ -258,6 +273,7 @@ export async function performUpdateWorkItem(
     ...updates,
     updated_at: new Date().toISOString(),
   };
+  delete updateFields.projectSettings;
 
   if (updates.metadata && typeof updates.metadata === 'object') {
     updateFields.metadata = {
@@ -275,9 +291,32 @@ export async function performUpdateWorkItem(
     };
   }
 
+  const finalItem = updated || { ...existingItem, ...updateFields };
+  const targetProjId = updates.project_id || existingItem.project_id;
+
+  if (targetStatus !== undefined && targetStatus !== existingItem.status) {
+    try {
+      const dbSettings = await loadProjectSettings(targetProjId);
+      const projectSettings = dbSettings || options?.projectSettings;
+      if (projectSettings?.automations?.length) {
+        const { executeProjectAutomations } = await import('@/lib/automation-engine');
+        await executeProjectAutomations({
+          tenantId: existingItem.tenant_id,
+          projectId: targetProjId,
+          settings: projectSettings,
+          items: [finalItem],
+          itemMutationSnapshots: [{ item: finalItem, prior: existingItem }],
+          eventType: 'status_transition',
+        });
+      }
+    } catch (autoErr) {
+      console.error('[tracker:status_transition:automations] Execution error:', autoErr);
+    }
+  }
+
   return {
     success: true,
     status: 200,
-    item: updated || { ...existingItem, ...updateFields },
+    item: finalItem,
   };
 }

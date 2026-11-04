@@ -296,7 +296,7 @@ export function computeEfficiencyMetrics(
     } else if (opts.activeProjectsCount !== undefined) {
       activeProjectsCount = opts.activeProjectsCount;
       effectiveProjectMonths =
-        activeProjectsCount === 0
+        qualifyingProjects === 0
           ? 0
           : opts.projectMonths !== undefined
           ? opts.projectMonths

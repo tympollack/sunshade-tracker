@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { authenticate } from '@/lib/auth-guard';
 import { calculateOrderIndex, validateHierarchyNesting } from '@/lib/fractional-index';
@@ -1771,6 +1771,44 @@ export async function PATCH(req: NextRequest) {
             }
           })
           .catch(() => {});
+      }
+    }
+
+    // Evaluate declarative automations (status_transition / item_updated)
+    const automations = effectiveProjectSettings?.automations;
+    const hasActiveAutomations =
+      Array.isArray(automations) && automations.some((r: any) => r && r.enabled !== false);
+
+    if (hasActiveAutomations) {
+      const isStatusTransition = existingItem.status !== updated.status;
+      const eventType = isStatusTransition ? 'status_transition' : 'item_updated';
+
+      const runAutomations = () =>
+        import('@/lib/automation-engine')
+          .then(({ executeProjectAutomations }) =>
+            executeProjectAutomations({
+              tenantId: authCtx.tenant.id,
+              projectId: updated.project_id || existingItem.project_id,
+              settings: effectiveProjectSettings,
+              items: [updated],
+              itemMutationSnapshots: [{ item: updated, prior: existingItem }],
+              eventType,
+              actorId: authCtx.userId || null,
+              actorName: authCtx.userName || (authCtx.userId ? 'User' : 'API Client'),
+            })
+          )
+          .catch((autoErr) => {
+            console.error('[tracker:items:automations] Background execution error:', autoErr);
+          });
+
+      try {
+        if (typeof after === 'function') {
+          after(runAutomations);
+        } else {
+          queueMicrotask(runAutomations);
+        }
+      } catch {
+        queueMicrotask(runAutomations);
       }
     }
 

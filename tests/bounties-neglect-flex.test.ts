@@ -268,4 +268,91 @@ describe('TASK-TRK-20HR-FLEX-LEDGER: 20-Hour Weekly Sovereign Capacity Ledger', 
     expect(overrideRes.allowed).toBe(true);
     expect(overrideRes.tokensExceeded).toBe(120000);
   });
+
+  it('counts long-running in_progress tasks claimed in previous weeks towards current weekly capacity', async () => {
+    // Task started 10 days ago (prior week) without edits this week
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const mockClient = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              neq: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'long-running-claim-1',
+                    status: 'in_progress',
+                    created_at: tenDaysAgo,
+                    updated_at: tenDaysAgo,
+                    metadata: { bounty_hours: 18.0 },
+                  },
+                ],
+                error: null,
+              }),
+            })),
+          })),
+        })),
+      })),
+    };
+
+    const candidateItem = {
+      id: 'candidate-bounty-2',
+      metadata: { bounty_hours: 4.0 },
+    };
+
+    const res = await assertRunnerWeeklyCapacity({
+      supabaseClient: mockClient as any,
+      tenantId: 'tenant-1',
+      assignee: 'runner-tym',
+      candidateItem,
+    });
+
+    expect(res.allowed).toBe(false);
+    expect(res.currentWeeklyHours).toBe(18.0);
+    expect(res.tokensExceeded).toBe(120000);
+  });
+
+  it('does not count untouched old not_started backlog assigned in prior weeks towards current weekly capacity', async () => {
+    // 20 unstarted cards assigned last month (30 days ago) without edits this week
+    const lastMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const oldBacklogItems = Array.from({ length: 20 }, (_, i) => ({
+      id: `old-backlog-${i}`,
+      status: 'not_started',
+      created_at: lastMonth,
+      updated_at: lastMonth,
+      metadata: { estimated_hours: 1.0 },
+    }));
+
+    const mockClient = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              neq: vi.fn().mockResolvedValue({
+                data: oldBacklogItems,
+                error: null,
+              }),
+            })),
+          })),
+        })),
+      })),
+    };
+
+    const candidateItem = {
+      id: 'candidate-bounty-3',
+      metadata: { bounty_hours: 1.0 },
+    };
+
+    const res = await assertRunnerWeeklyCapacity({
+      supabaseClient: mockClient as any,
+      tenantId: 'tenant-1',
+      assignee: 'runner-tym',
+      candidateItem,
+    });
+
+    // Old unstarted backlog should NOT count, so currentWeeklyHours is 0 and 1hr claim is allowed
+    expect(res.allowed).toBe(true);
+    expect(res.currentWeeklyHours).toBe(0);
+    expect(res.projectedHours).toBe(1.0);
+  });
 });

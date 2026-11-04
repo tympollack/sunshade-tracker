@@ -55,13 +55,14 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Tenant Resolution & Strict Workspace Scoping
-  const tenantSlug =
+  const requestedTenantSlug =
     req.headers.get('x-tenant-slug') ||
     body.tenant_slug ||
     body.tenant ||
-    new URL(req.url).searchParams.get('tenant') ||
-    process.env.TRACKER_TENANT ||
-    'pym-energy';
+    new URL(req.url).searchParams.get('tenant');
+  const defaultTenantSlug = process.env.TRACKER_TENANT || 'pym-energy';
+  const tenantSlug = requestedTenantSlug || defaultTenantSlug;
+  const isDefaultTenant = !requestedTenantSlug || requestedTenantSlug === defaultTenantSlug;
 
   let tenant: any = null;
   if (supabaseAdmin && typeof supabaseAdmin.from === 'function') {
@@ -95,16 +96,20 @@ export async function POST(req: NextRequest) {
 
   let isAuthorized = false;
 
-  if (bearerToken) {
-    if (tenantSecret && bearerToken === tenantSecret) {
+  if (tenantSecret) {
+    // If the workspace has a dedicated secret configured, it MUST match the workspace's secret.
+    // Platform/global secret is rejected to prevent cross-workspace unauthorized access.
+    if (bearerToken && bearerToken === tenantSecret) {
       isAuthorized = true;
-    } else if (globalSecret && bearerToken === globalSecret) {
+    } else if (signature && verifyHmacSignature(rawBody, signature, tenantSecret)) {
       isAuthorized = true;
     }
-  } else if (signature) {
-    if (tenantSecret && verifyHmacSignature(rawBody, signature, tenantSecret)) {
+  } else if (globalSecret && isDefaultTenant) {
+    // Platform/global secret is only permitted for the platform default workspace when no dedicated secret is configured.
+    // Callers cannot use the global secret to unlock arbitrary workspaces via x-tenant-slug.
+    if (bearerToken && bearerToken === globalSecret) {
       isAuthorized = true;
-    } else if (globalSecret && verifyHmacSignature(rawBody, signature, globalSecret)) {
+    } else if (signature && verifyHmacSignature(rawBody, signature, globalSecret)) {
       isAuthorized = true;
     }
   }

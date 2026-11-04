@@ -196,6 +196,49 @@ describe('STORY-TRK-OBSERVABILITY-AUTOMATIONS: CI/CD & Observability Webhook Ing
         expect(json.error).toContain('Unauthorized');
       });
 
+      it('rejects unsigned webhook with 401 when ALLOW_UNSIGNED_WEBHOOKS is explicitly false and no secret configured', async () => {
+        const originalEnv = process.env.ALLOW_UNSIGNED_WEBHOOKS;
+        const originalNodeEnv = process.env.NODE_ENV;
+        try {
+          process.env.ALLOW_UNSIGNED_WEBHOOKS = 'false';
+          (process.env as any).NODE_ENV = 'production';
+          const tenantWithoutSecret = {
+            id: 'tenant-no-secret',
+            slug: 'unprotected-workspace',
+            name: 'Unprotected',
+            tier: 'pro',
+            metadata: {},
+          };
+          vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+            if (table === 'tenants') {
+              return {
+                select: vi.fn().mockReturnThis(),
+                eq: vi.fn().mockReturnThis(),
+                is: vi.fn().mockReturnThis(),
+                maybeSingle: vi.fn().mockResolvedValue({ data: tenantWithoutSecret, error: null }),
+              } as any;
+            }
+            return {} as any;
+          });
+
+          const req = new NextRequest('https://track.sunshade.icu/api/v1/webhooks/deployments', {
+            method: 'POST',
+            headers: {
+              'x-tenant-slug': 'unprotected-workspace',
+            },
+            body: JSON.stringify({ type: 'deployment.succeeded' }),
+          });
+
+          const res = await deploymentWebhookHandler(req);
+          expect(res.status).toBe(401);
+          const json = await res.json();
+          expect(json.error).toContain('Unauthorized');
+        } finally {
+          process.env.ALLOW_UNSIGNED_WEBHOOKS = originalEnv;
+          (process.env as any).NODE_ENV = originalNodeEnv;
+        }
+      });
+
       it('receives valid Vercel deployment payload and updates matched story metadata with live preview link', async () => {
         const targetStory: WorkItem = {
           id: 'story-uuid-1',

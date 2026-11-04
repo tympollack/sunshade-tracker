@@ -97,6 +97,73 @@ describe('TASK-TRK-CI-WEBHOOK-RECEIVER: CI Runner Failure Webhook Endpoint', () 
       const res = await POST(req);
       expect(res.status).toBe(401);
     });
+
+    it('rejects global secret when workspace has a dedicated secret configured', async () => {
+      process.env.WEBHOOK_SIGNING_SECRET = 'global-platform-secret-xyz';
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/webhooks/ci-runner', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer global-platform-secret-xyz',
+        },
+        body: JSON.stringify({ project_slug: 'sunshade-tracker' }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects global secret when caller requests an arbitrary workspace via x-tenant-slug without dedicated secret', async () => {
+      process.env.WEBHOOK_SIGNING_SECRET = 'global-platform-secret-xyz';
+      const externalTenant = {
+        id: 'external-tenant-uuid',
+        slug: 'external-workspace',
+        name: 'External Workspace',
+        metadata: {},
+      };
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                is: vi.fn(() => ({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: externalTenant, error: null }),
+                })),
+              })),
+            })),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/v1/webhooks/ci-runner', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-slug': 'external-workspace',
+          Authorization: 'Bearer global-platform-secret-xyz',
+        },
+        body: JSON.stringify({ project_slug: 'some-project' }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(401);
+    });
   });
 
   describe('Project Resolution & Payload Validation', () => {

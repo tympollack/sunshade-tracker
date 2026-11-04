@@ -162,12 +162,27 @@ export async function assertRunnerWeeklyCapacity(params: {
     .eq('assignee', params.assignee)
     .neq('id', params.candidateItem.id);
 
+  const ACTIVE_COMMITMENT_STATUSES = new Set(['in_progress', 'in_review']);
+
   const weeklyItems = (userItems || []).filter((it: any) => {
+    const rawStatus = String(it.status || '').toLowerCase().trim();
+
+    // Ongoing active commitments (e.g. in_progress, in_review) consume capacity across week boundaries
+    if (ACTIVE_COMMITMENT_STATUSES.has(rawStatus)) {
+      return true;
+    }
+
+    // For other statuses (e.g. not_started backlog or completed/closed), check if claimed, completed,
+    // created, or updated within the current calendar week window
+    const completedAt = it.metadata?.completed_at ? new Date(it.metadata.completed_at).getTime() : 0;
+    const claimedAt = it.metadata?.claimed_at ? new Date(it.metadata.claimed_at).getTime() : 0;
     const updated = it.updated_at ? new Date(it.updated_at).getTime() : 0;
     const created = it.created_at ? new Date(it.created_at).getTime() : 0;
     const startMs = startOfWeek.getTime();
     const endMs = endOfWeek.getTime();
-    return (updated >= startMs && updated <= endMs) || (created >= startMs && created <= endMs);
+
+    const inWeek = (ts: number) => ts >= startMs && ts <= endMs;
+    return inWeek(claimedAt) || inWeek(completedAt) || inWeek(updated) || inWeek(created);
   });
 
   const { totalTokens: currentWeeklyTokens } = computeUserWeeklyUtilization(weeklyItems);
