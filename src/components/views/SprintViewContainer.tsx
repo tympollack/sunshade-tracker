@@ -20,6 +20,8 @@ import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLev
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
+import { ProjectGroupDivider } from '@/components/sprint/ProjectGroupDivider';
+import { isProjectSort } from '@/lib/utils/sortUtils';
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { buildTree, getDescendantIds } from '@/lib/tree';
 import { SchemaDeviation } from '@/lib/schema-deviation';
@@ -167,6 +169,22 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
   const completionSet = getCompletedStatusSet(projectSettings?.statuses);
 
+  const showProjectGroups = isAllProjects && isProjectSort(sprintSortBy);
+
+  // Renders a project boundary divider when the project changes between adjacent rows
+  const renderProjectDivider = (current: WorkItem, previous: WorkItem | undefined, pool: WorkItem[]): React.ReactNode => {
+    if (!showProjectGroups) return null;
+    if (previous && previous.project_id === current.project_id) return null;
+    const projectItems = pool.filter((it) => it.project_id === current.project_id);
+    return (
+      <ProjectGroupDivider
+        projectId={current.project_id}
+        projectName={allProjects.find((p) => p.id === current.project_id)?.name || ''}
+        points={calculateSprintLeafPoints(projectItems, projectSettings)}
+      />
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header & Overview */}
@@ -285,6 +303,12 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               <option value="points_asc">Points (Low to High)</option>
               <option value="title_asc">Title (A to Z)</option>
               <option value="title_desc">Title (Z to A)</option>
+              {isAllProjects && (
+                <>
+                  <option value="project_asc">Project (A to Z)</option>
+                  <option value="project_desc">Project (Z to A)</option>
+                </>
+              )}
             </select>
           </div>
           {((effectiveSprintStatuses.length < projectSettings.statuses.length) ||
@@ -616,14 +640,20 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       </div>
                     )
                   ) : sprintViewMode === 'tree' ? (
-                    buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node) => renderSprintTreeNode(node))
+                    buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node, idx, arr) => (
+                      <React.Fragment key={node.id}>
+                        {renderProjectDivider(node, arr[idx - 1], sprintItems)}
+                        {renderSprintTreeNode(node)}
+                      </React.Fragment>
+                    ))
                   ) : (
-                    sprintItems.map((item) => {
+                    sprintItems.map((item, itemIdx) => {
                       const isImmutable =
                         isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
+                        <React.Fragment key={item.id}>
+                        {renderProjectDivider(item, sprintItems[itemIdx - 1], sprintItems)}
                         <SprintItemRow
-                          key={item.id}
                           item={item}
                           isSelected={selectedItemIds.has(item.id)}
                           onToggleSelect={(id, e) =>
@@ -646,6 +676,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           currentSprintName={sprintName}
                           isTreeMode={false}
                         />
+                        </React.Fragment>
                       );
                     })
                   )}
