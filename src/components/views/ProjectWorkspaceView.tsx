@@ -408,13 +408,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     } catch {}
   }, []);
 
+  // Restore the persisted preference on mount and whenever the portfolio view becomes active again,
+  // since the single-project fallback below only resets live state (never the stored preference).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const stored = localStorage.getItem(SPRINT_SORT_STORAGE_KEY);
-      if (isValidSortValue(stored)) setSprintSortBy(stored);
+      if (!isValidSortValue(stored)) return;
+      if (!isAllProjects && (stored === 'project_asc' || stored === 'project_desc')) return;
+      setSprintSortBy(stored);
     } catch {}
-  }, []);
+  }, [isAllProjects]);
 
   // Project sorting only applies in the multi-project workspace; fall back to manual order otherwise
   useEffect(() => {
