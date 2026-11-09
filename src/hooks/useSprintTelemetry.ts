@@ -6,6 +6,7 @@ import { BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 import { MonteCarloSimulationResult, runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
+import { ProjectTelemetry } from '@/lib/analytics/portfolio-aggregator';
 import { calculateRollingVelocity, calculateSayDoRatio, calculateSprintVolatility } from '@/lib/analytics/velocity-forecaster';
 
 export interface UseSprintTelemetryOptions {
@@ -24,6 +25,7 @@ export interface UseSprintTelemetryResult {
   isCfdLoading: boolean;
   cfdError: string | null;
   kpiMetrics: KpiMetrics;
+  projectsTelemetry: ProjectTelemetry[];
   burndownData: BurndownDataPoint[];
   churnData: ScopeChurnData;
   cfdData: CfdDataPoint[];
@@ -58,6 +60,7 @@ export function useSprintTelemetry({
     scopeVolatility: 0,
     remainingPoints: 0,
   });
+  const [projectsTelemetry, setProjectsTelemetry] = useState<ProjectTelemetry[]>([]);
   const [simulationVelocities, setSimulationVelocities] = useState<number[]>([]);
   const [burndownData, setBurndownData] = useState<BurndownDataPoint[]>([]);
   const [churnData, setChurnData] = useState<ScopeChurnData>({
@@ -118,6 +121,8 @@ export function useSprintTelemetry({
         if (typeof sprintData.scopeCreepPercent === 'number') {
           reportedVolatility = sprintData.scopeCreepPercent;
         }
+
+        setProjectsTelemetry(Array.isArray(sprintData.projects_telemetry) ? sprintData.projects_telemetry : []);
 
         const histList = sprintData.historicalSprints || sprintData.historical_sprints;
         if (Array.isArray(histList) && histList.length > 0) {
@@ -250,6 +255,7 @@ export function useSprintTelemetry({
     isCfdLoading,
     cfdError,
     kpiMetrics,
+    projectsTelemetry,
     burndownData,
     churnData,
     cfdData,

@@ -8,6 +8,7 @@ import {
 } from './sprintAnalyticsService';
 import { SprintDefinition, WorkItem, MetricRules } from '@/types/tracker';
 import { calculateSprintLeafPoints } from '@/lib/sprint-utils';
+import { aggregatePortfolioTelemetry, PortfolioReport } from '@/lib/analytics/portfolio-aggregator';
 
 /**
  * Server-only service querying Supabase to build enterprise sprint velocity and KPI telemetry.
@@ -274,4 +275,78 @@ export async function getSprintHealthReport(
     metricKey: targetMetricKey,
     now,
   });
+}
+
+export const PORTFOLIO_SLUGS = ['all', 'portfolio'];
+
+export function isPortfolioSlug(slug?: string | null): boolean {
+  return !!slug && PORTFOLIO_SLUGS.includes(slug.toLowerCase());
+}
+
+/**
+ * Aggregates sprint health across every active project of a tenant (matching the sprint by name),
+ * returning portfolio totals plus a per-project telemetry breakdown.
+ */
+export async function getPortfolioHealthReport(
+  tenantSlug: string,
+  sprintIdOrName: string,
+  now?: Date | string | number
+): Promise<PortfolioReport & { sprintId: string; sprintName: string }> {
+  let tenantQuery: any = supabaseAdmin.from('tenants').select('id, slug').eq('slug', tenantSlug);
+  if (typeof tenantQuery.is === 'function') tenantQuery = tenantQuery.is('deleted_at', null);
+  const { data: tenant, error: tenantErr } = await tenantQuery.maybeSingle();
+  if (tenantErr || !tenant) {
+    throw new Error(`Workspace "@${tenantSlug}" not found: ${tenantErr?.message || 'tenant null'}`);
+  }
+
+  let projQuery: any = supabaseAdmin
+    .from('projects')
+    .select('id, name, slug, settings')
+    .eq('tenant_id', tenant.id);
+  if (typeof projQuery.is === 'function') projQuery = projQuery.is('deleted_at', null);
+  const { data: projects } = await projQuery;
+  const projectList: any[] = projects || [];
+
+  // Resolve a canonical sprint name so it can be matched across projects
+  let sprintName = sprintIdOrName;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintIdOrName);
+  if (isUuid) {
+    let resolved: string | null = null;
+    try {
+      const { data: row } = await supabaseAdmin
+        .from('sprints')
+        .select('name')
+        .eq('tenant_id', tenant.id)
+        .eq('id', sprintIdOrName)
+        .maybeSingle();
+      resolved = (row as any)?.name || null;
+    } catch {
+      // sprints table may be unavailable
+    }
+    if (!resolved) {
+      for (const p of projectList) {
+        const found = (p.settings?.sprint_settings?.sprints || []).find((s: SprintDefinition) => s.id === sprintIdOrName);
+        if (found) {
+          resolved = found.name;
+          break;
+        }
+      }
+    }
+    if (resolved) sprintName = resolved;
+  }
+
+  const entries = await Promise.all(
+    projectList.map(async (p: any) => {
+      try {
+        const report = await getSprintHealthReport(tenantSlug, sprintName, p.id, now);
+        return { projectId: p.id, projectSlug: p.slug, projectName: p.name, report };
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const valid = entries.filter((e): e is NonNullable<typeof e> => e !== null);
+  const aggregated = aggregatePortfolioTelemetry(sprintName, valid as any);
+  return { ...aggregated, sprintId: sprintIdOrName, sprintName };
 }
