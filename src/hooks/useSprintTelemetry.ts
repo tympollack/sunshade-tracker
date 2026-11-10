@@ -6,7 +6,7 @@ import { BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 import { MonteCarloSimulationResult, runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
-import { ProjectTelemetry } from '@/lib/analytics/portfolio-aggregator';
+import { ProjectTelemetry, PortfolioFailedProject } from '@/lib/analytics/portfolio-aggregator';
 import { calculateRollingVelocity, calculateSayDoRatio, calculateSprintVolatility } from '@/lib/analytics/velocity-forecaster';
 
 export interface UseSprintTelemetryOptions {
@@ -26,6 +26,7 @@ export interface UseSprintTelemetryResult {
   cfdError: string | null;
   kpiMetrics: KpiMetrics;
   projectsTelemetry: ProjectTelemetry[];
+  failedProjects: PortfolioFailedProject[];
   burndownData: BurndownDataPoint[];
   churnData: ScopeChurnData;
   cfdData: CfdDataPoint[];
@@ -61,6 +62,7 @@ export function useSprintTelemetry({
     remainingPoints: 0,
   });
   const [projectsTelemetry, setProjectsTelemetry] = useState<ProjectTelemetry[]>([]);
+  const [failedProjects, setFailedProjects] = useState<PortfolioFailedProject[]>([]);
   const [simulationVelocities, setSimulationVelocities] = useState<number[]>([]);
   const [burndownData, setBurndownData] = useState<BurndownDataPoint[]>([]);
   const [churnData, setChurnData] = useState<ScopeChurnData>({
@@ -123,6 +125,7 @@ export function useSprintTelemetry({
         }
 
         setProjectsTelemetry(Array.isArray(sprintData.projects_telemetry) ? sprintData.projects_telemetry : []);
+        setFailedProjects(Array.isArray(sprintData.failedProjects) ? sprintData.failedProjects : []);
 
         const histList = sprintData.historicalSprints || sprintData.historical_sprints;
         if (Array.isArray(histList) && histList.length > 0) {
@@ -162,8 +165,11 @@ export function useSprintTelemetry({
         finalDelivered: deliveredPts,
       });
 
+      // Snapshot and CFD endpoints are project-scoped; the virtual all/portfolio slug has no such data
+      const isPortfolioView = projectSlug === 'all' || projectSlug === 'portfolio';
+
       // 2. Fetch Burndown Snapshots for selected sprint
-      if (selectedSprintId) {
+      if (!isPortfolioView && selectedSprintId) {
         const snapRes = await fetch(
           `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/snapshots?sprint_id=${encodeURIComponent(
             selectedSprintId
@@ -191,10 +197,14 @@ export function useSprintTelemetry({
       setIsCfdLoading(true);
       setCfdError(null);
       try {
-        const cfdRes = await fetch(
-          `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/cfd?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&tenant_slug=${encodeURIComponent(tenantSlug)}`
-        );
-        if (cfdRes.ok) {
+        const cfdRes = isPortfolioView
+          ? null
+          : await fetch(
+              `/api/v1/projects/${encodeURIComponent(projectSlug)}/analytics/cfd?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&tenant_slug=${encodeURIComponent(tenantSlug)}`
+            );
+        if (!cfdRes) {
+          setCfdData([]);
+        } else if (cfdRes.ok) {
           const cfdJson = await cfdRes.json();
           if (Array.isArray(cfdJson.series)) {
             setCfdData(cfdJson.series);
@@ -256,6 +266,7 @@ export function useSprintTelemetry({
     cfdError,
     kpiMetrics,
     projectsTelemetry,
+    failedProjects,
     burndownData,
     churnData,
     cfdData,

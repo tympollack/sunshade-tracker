@@ -12,6 +12,7 @@ import { AnalyticsDashboardSkeleton } from './AnalyticsDashboardSkeleton';
 import { PortfolioHealthMatrix } from './PortfolioHealthMatrix';
 import { AnalyticsMetricFilters } from './AnalyticsMetricFilters';
 import {
+  PortfolioFailedProject,
   ProjectTelemetry,
   StabilityFilter,
   computePortfolioTotals,
@@ -35,6 +36,7 @@ export interface SprintAnalyticsViewProps {
   projectSlug: string;
   tenantSlug?: string;
   projectsTelemetry?: ProjectTelemetry[];
+  failedProjects?: PortfolioFailedProject[];
   selectedSprintId: string;
   simulationVelocities?: number[];
   forecastStartDate: string;
@@ -54,6 +56,7 @@ function SprintAnalyticsViewContent({
   projectSlug,
   tenantSlug,
   projectsTelemetry = [],
+  failedProjects = [],
   selectedSprintId,
   simulationVelocities = [],
   forecastStartDate,
@@ -147,6 +150,17 @@ function SprintAnalyticsViewContent({
         )}
       </section>
 
+      {isPortfolio && failedProjects.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300"
+          data-testid="portfolio-partial-warning"
+        >
+          Incomplete data: totals exclude {failedProjects.length} project{failedProjects.length === 1 ? '' : 's'} that failed to load (
+          {failedProjects.map((p) => p.projectName).join(', ')}).
+        </div>
+      )}
+
       {isPortfolio && tenantSlug && (
         <PortfolioHealthMatrix
           tenantSlug={tenantSlug}
@@ -156,11 +170,13 @@ function SprintAnalyticsViewContent({
       )}
 
       {/* Analytics Visualizations Grid */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Burndown Slot */}
-        <div className="w-full">
-          <BurndownChart data={burndownData} isLoading={false} />
-        </div>
+      <section className={"grid grid-cols-1 gap-6 ${isPortfolio ? '' : 'lg:grid-cols-2'}"}>
+        {/* Burndown Slot (project-scoped snapshots; not available for portfolio rollups) */}
+        {!isPortfolio && (
+          <div className="w-full">
+            <BurndownChart data={burndownData} isLoading={false} />
+          </div>
+        )}
 
         {/* Scope Churn Waterfall Slot */}
         <div className="w-full">
@@ -168,15 +184,17 @@ function SprintAnalyticsViewContent({
         </div>
       </section>
 
-      {/* Cumulative Flow Diagram Slot */}
-      <section className="w-full">
-        <CumulativeFlowChart
-          data={cfdData}
-          isLoading={isCfdLoading && (!cfdData || cfdData.length === 0)}
-          isValidating={isValidating || isRefreshing || isCfdLoading}
-          error={cfdError}
-        />
-      </section>
+      {/* Cumulative Flow Diagram Slot (project-scoped; hidden for portfolio rollups) */}
+      {!isPortfolio && (
+        <section className="w-full">
+          <CumulativeFlowChart
+            data={cfdData}
+            isLoading={isCfdLoading && (!cfdData || cfdData.length === 0)}
+            isValidating={isValidating || isRefreshing || isCfdLoading}
+            error={cfdError}
+          />
+        </section>
+      )}
 
       {/* Monte Carlo Release Forecasting */}
       <MonteCarloSimulator
@@ -207,6 +225,7 @@ export function SprintAnalyticsView({
   projectSlug,
   tenantSlug,
   projectsTelemetry = [],
+  failedProjects = [],
   selectedSprintId,
   simulationVelocities = [],
   forecastStartDate,
@@ -231,6 +250,7 @@ export function SprintAnalyticsView({
         projectSlug={projectSlug}
         tenantSlug={tenantSlug}
         projectsTelemetry={projectsTelemetry}
+        failedProjects={failedProjects}
         selectedSprintId={selectedSprintId}
         simulationVelocities={simulationVelocities}
         forecastStartDate={forecastStartDate}

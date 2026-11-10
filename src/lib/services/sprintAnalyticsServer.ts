@@ -291,7 +291,14 @@ export async function getPortfolioHealthReport(
   tenantSlug: string,
   sprintIdOrName: string,
   now?: Date | string | number
-): Promise<PortfolioReport & { sprintId: string; sprintName: string }> {
+): Promise<
+  PortfolioReport & {
+    sprintId: string;
+    sprintName: string;
+    isPartial: boolean;
+    failedProjects: Array<{ projectId: string; projectSlug: string; projectName: string; error: string }>;
+  }
+> {
   let tenantQuery: any = supabaseAdmin.from('tenants').select('id, slug').eq('slug', tenantSlug);
   if (typeof tenantQuery.is === 'function') tenantQuery = tenantQuery.is('deleted_at', null);
   const { data: tenant, error: tenantErr } = await tenantQuery.maybeSingle();
@@ -310,8 +317,8 @@ export async function getPortfolioHealthReport(
   // Resolve a canonical sprint name so it can be matched across projects
   let sprintName = sprintIdOrName;
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sprintIdOrName);
+  let resolved: string | null = null;
   if (isUuid) {
-    let resolved: string | null = null;
     try {
       const { data: row } = await supabaseAdmin
         .from('sprints')
@@ -323,24 +330,34 @@ export async function getPortfolioHealthReport(
     } catch {
       // sprints table may be unavailable
     }
-    if (!resolved) {
-      for (const p of projectList) {
-        const found = (p.settings?.sprint_settings?.sprints || []).find((s: SprintDefinition) => s.id === sprintIdOrName);
-        if (found) {
-          resolved = found.name;
-          break;
-        }
+  }
+  // Legacy (non-UUID) settings IDs and UUIDs missing from the sprints table resolve via project settings
+  if (!resolved) {
+    for (const p of projectList) {
+      const found = (p.settings?.sprint_settings?.sprints || []).find(
+        (s: SprintDefinition) => s.id === sprintIdOrName
+      );
+      if (found) {
+        resolved = found.name;
+        break;
       }
     }
-    if (resolved) sprintName = resolved;
   }
+  if (resolved) sprintName = resolved;
 
+  const failedProjects: Array<{ projectId: string; projectSlug: string; projectName: string; error: string }> = [];
   const entries = await Promise.all(
     projectList.map(async (p: any) => {
       try {
         const report = await getSprintHealthReport(tenantSlug, sprintName, p.id, now);
         return { projectId: p.id, projectSlug: p.slug, projectName: p.name, report };
-      } catch {
+      } catch (err: any) {
+        failedProjects.push({
+          projectId: p.id,
+          projectSlug: p.slug,
+          projectName: p.name,
+          error: err?.message || 'Failed to load project telemetry',
+        });
         return null;
       }
     })
@@ -348,5 +365,12 @@ export async function getPortfolioHealthReport(
 
   const valid = entries.filter((e): e is NonNullable<typeof e> => e !== null);
   const aggregated = aggregatePortfolioTelemetry(sprintName, valid as any);
-  return { ...aggregated, sprintId: sprintIdOrName, sprintName };
+  // Surface incomplete rollups explicitly instead of silently shrinking totals
+  return {
+    ...aggregated,
+    sprintId: sprintIdOrName,
+    sprintName,
+    isPartial: failedProjects.length > 0,
+    failedProjects,
+  };
 }

@@ -44,6 +44,13 @@ export interface PortfolioTotals {
   volatilityPct: number;
 }
 
+export interface PortfolioFailedProject {
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+  error: string;
+}
+
 export interface PortfolioReport extends PortfolioTotals {
   sprintName: string;
   projects_telemetry: ProjectTelemetry[];
