@@ -33,16 +33,21 @@ describe('TASK-TRK-COLUMN-SCROLL-VIEWPORT-LOCK: Viewport Height Lock & Independe
       expect(board.className).toContain('p-4');
     });
 
-    it('BoardViewContainer source code contains board stage lock classes', () => {
+    it('BoardViewContainer source code contains board stage lock classes and globals.css defines header/toolbar heights', () => {
       const containerPath = path.resolve('src/components/views/BoardViewContainer.tsx');
       const content = fs.readFileSync(containerPath, 'utf8');
       expect(content).toContain('h-[calc(100dvh-var(--header-height)-var(--toolbar-height))]');
       expect(content).toContain('overflow-y-hidden');
+
+      const cssPath = path.resolve('src/app/globals.css');
+      const css = fs.readFileSync(cssPath, 'utf8');
+      expect(css).toContain('--header-height: 56px;');
+      expect(css).toContain('--toolbar-height: 48px;');
     });
   });
 
   describe('Column Geometry and Sticky Column Header', () => {
-    it('BoardColumn enforces min-w-[280px] max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50', () => {
+    it('BoardColumn enforces w-full min-w-0 on mobile and md:min-w-[280px] md:max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50 on desktop', () => {
       render(
         <BoardColumn column={mockStatus} itemCount={5}>
           <div data-testid="card-slot">Card Content</div>
@@ -50,8 +55,10 @@ describe('TASK-TRK-COLUMN-SCROLL-VIEWPORT-LOCK: Viewport Height Lock & Independe
       );
 
       const col = screen.getByTestId('board-column-in_progress');
-      expect(col.className).toContain('min-w-[280px]');
-      expect(col.className).toContain('max-w-[340px]');
+      expect(col.className).toContain('w-full');
+      expect(col.className).toContain('min-w-0');
+      expect(col.className).toContain('md:min-w-[280px]');
+      expect(col.className).toContain('md:max-w-[340px]');
       expect(col.className).toContain('flex-1');
       expect(col.className).toContain('flex-col');
       expect(col.className).toContain('h-full');

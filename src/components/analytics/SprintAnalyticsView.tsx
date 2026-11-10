@@ -135,22 +135,37 @@ function SprintAnalyticsViewContent({
 
   const effectiveSimVelocities = React.useMemo(() => {
     if (!isFiltered) return simulationVelocities;
-    return subsetTotals.rollingVelocity > 0 ? [subsetTotals.rollingVelocity] : [];
-  }, [isFiltered, simulationVelocities, subsetTotals.rollingVelocity]);
+    // Align historical sprint velocities across filtered projects to preserve variation and confidence intervals
+    const maxSprints = Math.max(0, ...filteredProjects.map((p) => (p.historicalVelocities || []).length));
+    if (maxSprints > 0) {
+      const aligned: number[] = [];
+      for (let i = 0; i < maxSprints; i++) {
+        const sumAtI = filteredProjects.reduce(
+          (acc, p) => acc + (p.historicalVelocities?.[i] || 0),
+          0
+        );
+        aligned.push(sumAtI);
+      }
+      return aligned;
+    }
+    // If historical sprint breakdown is unavailable, avoid sampling a single average as a probabilistic distribution
+    return [];
+  }, [isFiltered, simulationVelocities, filteredProjects]);
 
   const effectiveMonteCarlo = React.useMemo(() => {
     if (!isFiltered) return monteCarlo;
-    if (subsetTotals.remainingPts > 0 && subsetTotals.rollingVelocity > 0) {
+    const hasPositiveVelocity = effectiveSimVelocities.some((v) => v > 0);
+    if (subsetTotals.remainingPts > 0 && hasPositiveVelocity) {
       return runMonteCarloSimulation({
         remainingStoryPoints: subsetTotals.remainingPts,
-        historicalVelocities: [subsetTotals.rollingVelocity],
+        historicalVelocities: effectiveSimVelocities,
         iterations: 1000,
         sprintLengthDays: 14,
         startDate: forecastStartDate,
       });
     }
     return null;
-  }, [isFiltered, monteCarlo, subsetTotals.remainingPts, subsetTotals.rollingVelocity, forecastStartDate]);
+  }, [isFiltered, monteCarlo, subsetTotals.remainingPts, effectiveSimVelocities, forecastStartDate]);
 
   return (
     <div className="space-y-6" data-testid="sprint-analytics-view">

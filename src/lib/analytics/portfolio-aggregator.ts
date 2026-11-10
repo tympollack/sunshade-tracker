@@ -31,6 +31,7 @@ export interface ProjectTelemetry {
   sayDoPct: number;
   volatilityPct: number;
   healthStatus: ProjectHealthStatus;
+  historicalVelocities?: number[];
 }
 
 export interface PortfolioTotals {
@@ -66,6 +67,8 @@ export interface ProjectReportInput {
   pointsAddedMidSprint?: number;
   pointsDroppedMidSprint?: number;
   rollingVelocity?: number;
+  historicalVelocities?: number[];
+  historicalSprints?: Array<{ completed_points?: number; [key: string]: any }>;
   runwayElapsedRatio?: number;
   rules?: { scope_creep_danger_threshold?: number };
 }
@@ -107,6 +110,11 @@ export function summarizeProjectTelemetry(
     const deliveredPts = num(report.completedPoints);
     const sayDoPct = calculateSayDoRatio(baselinePts, deliveredPts);
     const volatilityPct = calculateSprintVolatility(baselinePts, addedPts, droppedPts);
+    const historicalVelocities: number[] = Array.isArray(report.historicalVelocities)
+      ? report.historicalVelocities.map(num)
+      : Array.isArray(report.historicalSprints)
+      ? report.historicalSprints.map((s) => num(s.completed_points))
+      : [];
     return {
       projectId,
       projectSlug,
@@ -118,6 +126,7 @@ export function summarizeProjectTelemetry(
       deliveredPts,
       remainingPts: num(report.remainingPoints),
       rollingVelocity: num(report.rollingVelocity),
+      historicalVelocities,
       sayDoPct,
       volatilityPct,
       healthStatus: classifyProjectStability({

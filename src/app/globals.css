@@ -5,6 +5,8 @@
 :root {
   --background: #090d16;
   --foreground: #f1f5f9;
+  --header-height: 56px;
+  --toolbar-height: 48px;
 }
 
 html,

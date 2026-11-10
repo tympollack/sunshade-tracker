@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { isGitHubMetadataKey } from '@/lib/github-metadata';
 
 export interface CardMetadataChipsProps {
   itemId: string;
@@ -43,6 +44,7 @@ export function CardMetadataChips({
     return Object.entries(metadata)
       .filter(([k, v]) => {
         if (IGNORED_KEYS.has(k.toLowerCase())) return false;
+        if (isGitHubMetadataKey(k)) return false;
         if (v === undefined || v === null || v === '') return false;
         return true;
       })

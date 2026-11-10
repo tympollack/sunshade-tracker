@@ -125,30 +125,31 @@ describe('TASK-TRK-CARD-PILL-CONTAINMENT: Kanban Card Pillbox Containment & Over
       expect(capsule.className).toContain('cursor-pointer');
     });
 
-    it('opens popover displaying all associated metadata on click/hover', () => {
+    it('does not render GitHub fields as chips so they do not displace custom metadata', () => {
       render(
         <CardMetadataChips
-          itemId="item-popover-test"
+          itemId="item-gh"
           metadata={{
+            pr_url: 'https://github.com/org/repo/pull/152',
+            commit_hash: 'abcdef123456',
             sprint: 'Sprint 2026-Q4',
-            priority: 'Critical',
+            priority: 'High',
             complexity: 2,
-            source_type: 'ui_defect',
           }}
         />
       );
 
-      const capsule = screen.getByTestId('card-overflow-capsule-item-popover-test');
-      expect(screen.queryByTestId('card-metadata-popover-item-popover-test')).not.toBeInTheDocument();
+      // GitHub fields must NOT be rendered as chips
+      expect(screen.queryByTestId('card-tag-chip-pr_url')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('card-tag-chip-commit_hash')).not.toBeInTheDocument();
 
-      // Click to open popover
-      fireEvent.click(capsule);
+      // Priority and sprint must be visible
+      expect(screen.getByTestId('card-tag-chip-sprint')).toBeInTheDocument();
+      expect(screen.getByTestId('card-tag-chip-priority')).toBeInTheDocument();
 
-      const popover = screen.getByTestId('card-metadata-popover-item-popover-test');
-      expect(popover).toBeInTheDocument();
-      expect(popover).toHaveTextContent('Metadata Attributes');
-      expect(popover).toHaveTextContent('complexity:');
-      expect(popover).toHaveTextContent('source_type:');
+      // Overflow capsule must only count non-GitHub tags (complexity = +1 more)
+      const capsule = screen.getByTestId('card-overflow-capsule-item-gh');
+      expect(capsule).toHaveTextContent('+1 more');
     });
   });
 });

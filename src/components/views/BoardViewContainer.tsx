@@ -18,6 +18,7 @@ import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefi
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
+import { BoardView } from '@/components/board/BoardView';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
 import { BoardNotificationDigest } from '@/components/board/BoardNotificationDigest';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
@@ -321,10 +322,10 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           ))}
         </div>
       ) : (
-        <div
+        <BoardView
           ref={boardScrollRef}
           onWheel={handleBoardWheel}
-          data-testid="board-scroll-canvas"
+          dataTestId="board-scroll-canvas"
           className={`board-scroll-container ${
             effectiveOrientation === 'stack'
               ? 'flex flex-col items-stretch gap-4 overflow-x-hidden pb-4'
@@ -382,7 +383,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 data-testid={`column-container-${col.id}`}
                 className={`w-full ${
                   effectiveOrientation === 'columns'
-                    ? 'min-w-[280px] max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50 border border-slate-800/80 rounded-xl md:w-80 md:min-w-[320px] md:max-w-[320px]'
+                    ? 'min-w-0 md:min-w-[280px] md:max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50 border border-slate-800/80 rounded-xl md:w-80 md:min-w-[320px] md:max-w-[320px]'
                     : ''
                 } shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col transition-all shadow-sm ${
                   isCollapsedUp ? 'h-auto' : effectiveOrientation === 'columns' ? 'h-full' : ''
@@ -666,7 +667,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
               </div>
             </div>
           )}
-        </div>
+        </BoardView>
       )}
     </div>
   );

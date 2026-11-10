@@ -389,6 +389,7 @@ export async function getPortfolioHealthReport(
           // Zero trailing velocity for non-participating projects so historical velocity does not inflate portfolio forecast
           report.rollingVelocity = 0;
           report.rollingVelocity3Sprint = 0;
+          report.historicalSprints = [];
         }
         return { projectId: p.id, projectSlug: p.slug, projectName: p.name, report };
       } catch (err: any) {

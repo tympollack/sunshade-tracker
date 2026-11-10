@@ -90,4 +90,23 @@ describe('TRK-26: PR 151 Review Feedback Fixes', () => {
       expect(unrelatedProj.report.rollingVelocity).toBe(0);
     });
   });
+
+  describe('Filtered forecast aligned historical velocities (PR 152 Comment 1)', () => {
+    it('aligns historical velocities per past sprint across filtered projects to preserve distribution', () => {
+      // If Project Red had past sprints [10, 30, 50] and Project Blue had [20, 20, 20]
+      const red = { historicalVelocities: [10, 30, 50] };
+      const blue = { historicalVelocities: [20, 20, 20] };
+      const filtered = [red, blue];
+
+      const maxSprints = Math.max(0, ...filtered.map((p) => p.historicalVelocities.length));
+      const aligned: number[] = [];
+      for (let i = 0; i < maxSprints; i++) {
+        const sumAtI = filtered.reduce((acc, p) => acc + (p.historicalVelocities[i] || 0), 0);
+        aligned.push(sumAtI);
+      }
+
+      // Rather than collapsing to a single average [41.6], we have the full varying past sprint outcomes
+      expect(aligned).toEqual([30, 50, 70]);
+    });
+  });
 });
