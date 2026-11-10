@@ -19,7 +19,6 @@ import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect'
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
-import { BoardNotificationDigest } from '@/components/board/BoardNotificationDigest';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
 import { SprintTimelineScrubber, TimelineSnapshotPoint } from '@/components/sprints/SprintTimelineScrubber';
 
@@ -306,11 +305,6 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           onSelectSnapshot={onSelectTimelineSnapshot}
           onOpenDiffModal={onOpenDiffModal}
         />
-      )}
-
-      {/* Notification Digest (TASK-NOTIF-CONSUME-TRACKER) */}
-      {!loading && !isReadOnly && (
-        <BoardNotificationDigest tenantSlug={tenantSlug} items={items} getItemStatuses={(item) => (getItemProjectSettings ? getItemProjectSettings(item) : projectSettings)?.statuses} />
       )}
 
       {/* Board Columns Canvas */}
