@@ -7,7 +7,7 @@ import { ScopeChurnWaterfall, ScopeChurnData } from './ScopeChurnWaterfall';
 import { CumulativeFlowChart } from './CumulativeFlowChart';
 import { MonteCarloSimulator } from './MonteCarloSimulator';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
-import { MonteCarloSimulationResult } from '@/lib/analytics/monte-carlo';
+import { MonteCarloSimulationResult, runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
 import { AnalyticsDashboardSkeleton } from './AnalyticsDashboardSkeleton';
 import { PortfolioHealthMatrix } from './PortfolioHealthMatrix';
 import { AnalyticsMetricFilters } from './AnalyticsMetricFilters';
@@ -133,6 +133,40 @@ function SprintAnalyticsViewContent({
       }
     : baseChurn;
 
+  const effectiveSimVelocities = React.useMemo(() => {
+    if (!isFiltered) return simulationVelocities;
+    // Align historical sprint velocities across filtered projects to preserve variation and confidence intervals
+    const maxSprints = Math.max(0, ...filteredProjects.map((p) => (p.historicalVelocities || []).length));
+    if (maxSprints > 0) {
+      const aligned: number[] = [];
+      for (let i = 0; i < maxSprints; i++) {
+        const sumAtI = filteredProjects.reduce(
+          (acc, p) => acc + (p.historicalVelocities?.[i] || 0),
+          0
+        );
+        aligned.push(sumAtI);
+      }
+      return aligned;
+    }
+    // If historical sprint breakdown is unavailable, avoid sampling a single average as a probabilistic distribution
+    return [];
+  }, [isFiltered, simulationVelocities, filteredProjects]);
+
+  const effectiveMonteCarlo = React.useMemo(() => {
+    if (!isFiltered) return monteCarlo;
+    const hasPositiveVelocity = effectiveSimVelocities.some((v) => v > 0);
+    if (subsetTotals.remainingPts > 0 && hasPositiveVelocity) {
+      return runMonteCarloSimulation({
+        remainingStoryPoints: subsetTotals.remainingPts,
+        historicalVelocities: effectiveSimVelocities,
+        iterations: 1000,
+        sprintLengthDays: 14,
+        startDate: forecastStartDate,
+      });
+    }
+    return null;
+  }, [isFiltered, monteCarlo, subsetTotals.remainingPts, effectiveSimVelocities, forecastStartDate]);
+
   return (
     <div className="space-y-6" data-testid="sprint-analytics-view">
       {isPortfolio && (
@@ -170,7 +204,7 @@ function SprintAnalyticsViewContent({
       )}
 
       {/* Analytics Visualizations Grid */}
-      <section className={"grid grid-cols-1 gap-6 ${isPortfolio ? '' : 'lg:grid-cols-2'}"}>
+      <section className={`grid grid-cols-1 gap-6 ${isPortfolio ? '' : 'lg:grid-cols-2'}`}>
         {/* Burndown Slot (project-scoped snapshots; not available for portfolio rollups) */}
         {!isPortfolio && (
           <div className="w-full">
@@ -198,12 +232,12 @@ function SprintAnalyticsViewContent({
 
       {/* Monte Carlo Release Forecasting */}
       <MonteCarloSimulator
-        simulation={monteCarlo}
+        simulation={effectiveMonteCarlo}
         isLoading={false}
         projectId={projectSlug}
         sprintId={selectedSprintId}
         remainingStoryPoints={effectiveMetrics.remainingPoints}
-        historicalVelocities={simulationVelocities}
+        historicalVelocities={effectiveSimVelocities}
         startDate={forecastStartDate}
         sprintLengthDays={14}
       />

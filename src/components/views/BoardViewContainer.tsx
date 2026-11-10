@@ -18,6 +18,7 @@ import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefi
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
+import { BoardView } from '@/components/board/BoardView';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
 import { BoardNotificationDigest } from '@/components/board/BoardNotificationDigest';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
@@ -321,14 +322,14 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           ))}
         </div>
       ) : (
-        <div
+        <BoardView
           ref={boardScrollRef}
           onWheel={handleBoardWheel}
-          data-testid="board-scroll-canvas"
+          dataTestId="board-scroll-canvas"
           className={`board-scroll-container ${
             effectiveOrientation === 'stack'
               ? 'flex flex-col items-stretch gap-4 overflow-x-hidden pb-4'
-              : 'flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4'
+              : 'flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4 h-[calc(100dvh-var(--header-height)-var(--toolbar-height))] w-full overflow-y-hidden flex gap-4 p-4'
           } custom-scrollbar select-none ${
             boardHeightMode === 'compact'
               ? 'h-auto md:h-[460px] md:min-h-[460px]'
@@ -381,7 +382,9 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 onDrop={(e) => handleDropOnColEnd(e, col.id)}
                 data-testid={`column-container-${col.id}`}
                 className={`w-full ${
-                  effectiveOrientation === 'columns' ? 'md:w-80 md:min-w-[320px] md:max-w-[320px]' : ''
+                  effectiveOrientation === 'columns'
+                    ? 'min-w-0 md:min-w-[280px] md:max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50 border border-slate-800/80 rounded-xl md:w-80 md:min-w-[320px] md:max-w-[320px]'
+                    : ''
                 } shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col transition-all shadow-sm ${
                   isCollapsedUp ? 'h-auto' : effectiveOrientation === 'columns' ? 'h-full' : ''
                 }`}
@@ -393,7 +396,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       toggleCollapseUp(col.id);
                     }
                   }}
-                  className={`px-4 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 bg-slate-950/40 rounded-t-xl ${
+                  className={`shrink-0 p-3 border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-10 flex items-center justify-between rounded-t-xl px-4 py-3 ${
                     effectiveOrientation === 'stack' || isCollapsedUp ? 'cursor-pointer hover:bg-slate-900/60 transition-colors' : ''
                   }`}
                 >
@@ -554,10 +557,10 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 {/* Cards Container */}
                 {!isCollapsedUp && (
                   <div
-                    className={`board-column-scroll p-3 custom-scrollbar ${
+                    className={`board-column-scroll p-2 space-y-2.5 custom-scrollbar ${
                       effectiveOrientation === 'stack'
                         ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3'
-                        : 'space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0'
+                        : 'flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-2.5 custom-scrollbar min-h-0 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full space-y-3 p-3'
                     }`}
                   >
                     {colItems.length === 0 ? (
@@ -664,7 +667,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
               </div>
             </div>
           )}
-        </div>
+        </BoardView>
       )}
     </div>
   );
