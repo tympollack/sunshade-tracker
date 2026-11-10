@@ -41,6 +41,8 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     isCfdLoading,
     cfdError,
     kpiMetrics,
+    projectsTelemetry,
+    failedProjects,
     burndownData,
     churnData,
     cfdData,
@@ -340,6 +342,9 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           cfdData={cfdData}
           monteCarlo={monteCarlo}
           projectSlug={projectSlug}
+          tenantSlug={tenantSlug}
+          projectsTelemetry={projectsTelemetry}
+          failedProjects={failedProjects}
           selectedSprintId={selectedSprintId}
           simulationVelocities={simulationVelocities}
           forecastStartDate={forecastStartDate}

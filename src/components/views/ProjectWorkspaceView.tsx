@@ -1,5 +1,6 @@
 'use client';
 
+import { createItemComparator, isValidSortValue, SPRINT_SORT_STORAGE_KEY } from '@/lib/utils/sortUtils';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -174,48 +175,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [sprintSelectedLevels, setSprintSelectedLevels] = useState<string[] | null>(null);
   const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
   const [activeSprintPopover, setActiveSprintPopover] = useState<string | null>(null);
-
-  const treeSortComparator = useMemo(() => {
-    return (a: WorkItem, b: WorkItem): number => {
-      if (treeSortBy === 'points_desc') {
-        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
-        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
-        if (pB !== pA) return pB - pA;
-      } else if (treeSortBy === 'points_asc') {
-        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
-        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
-        if (pA !== pB) return pA - pB;
-      } else if (treeSortBy === 'title_asc') {
-        const cmp = (a.title || '').localeCompare(b.title || '');
-        if (cmp !== 0) return cmp;
-      } else if (treeSortBy === 'title_desc') {
-        const cmp = (b.title || '').localeCompare(a.title || '');
-        if (cmp !== 0) return cmp;
-      }
-      return (a.order_index ?? 0) - (b.order_index ?? 0);
-    };
-  }, [treeSortBy]);
-
-  const sprintComparator = useMemo(() => {
-    return (a: WorkItem, b: WorkItem): number => {
-      if (sprintSortBy === 'points_desc') {
-        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
-        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
-        if (pB !== pA) return pB - pA;
-      } else if (sprintSortBy === 'points_asc') {
-        const pA = Number(a.metadata?.story_points ?? a.metadata?.points ?? a.metadata?.estimate ?? 0) || 0;
-        const pB = Number(b.metadata?.story_points ?? b.metadata?.points ?? b.metadata?.estimate ?? 0) || 0;
-        if (pA !== pB) return pA - pB;
-      } else if (sprintSortBy === 'title_asc') {
-        const cmp = (a.title || '').localeCompare(b.title || '');
-        if (cmp !== 0) return cmp;
-      } else if (sprintSortBy === 'title_desc') {
-        const cmp = (b.title || '').localeCompare(a.title || '');
-        if (cmp !== 0) return cmp;
-      }
-      return (a.order_index ?? 0) - (b.order_index ?? 0);
-    };
-  }, [sprintSortBy]);
 
   // Interactive Hierarchy Tree states
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
@@ -440,6 +399,36 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     () => allProjects.find((p) => p.slug === projectSlug)?.id,
     [allProjects, projectSlug]
   );
+  // Persist sprint sort preference (user-initiated changes only)
+  const handleSetSprintSortBy = useCallback((val: string) => {
+    setSprintSortBy(val);
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(SPRINT_SORT_STORAGE_KEY, val);
+    } catch {}
+  }, []);
+
+  // Restore the persisted preference on mount and whenever the portfolio view becomes active again,
+  // since the single-project fallback below only resets live state (never the stored preference).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(SPRINT_SORT_STORAGE_KEY);
+      if (!isValidSortValue(stored)) return;
+      if (!isAllProjects && (stored === 'project_asc' || stored === 'project_desc')) return;
+      setSprintSortBy(stored);
+    } catch {}
+  }, [isAllProjects]);
+
+  // Project sorting only applies in the multi-project workspace; fall back to manual order otherwise
+  useEffect(() => {
+    if (isAllProjects || allProjects.length === 0) return;
+    if (sprintSortBy === 'project_asc' || sprintSortBy === 'project_desc') setSprintSortBy('order_index');
+    if (treeSortBy === 'project_asc' || treeSortBy === 'project_desc') setTreeSortBy('order_index');
+  }, [isAllProjects, allProjects, sprintSortBy, treeSortBy]);
+  const treeSortComparator = useMemo(() => createItemComparator(treeSortBy, allProjects), [treeSortBy, allProjects]);
+  const sprintComparator = useMemo(() => createItemComparator(sprintSortBy, allProjects), [sprintSortBy, allProjects]);
+
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -3895,6 +3884,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   effectiveTreeAssignees={effectiveTreeAssignees}
                   setTreeSelectedAssignees={setTreeSelectedAssignees}
                   treeSortBy={treeSortBy}
+                  isAllProjects={isAllProjects}
                   setTreeSortBy={setTreeSortBy}
                   pointMode={pointMode}
                   handlePointModeChange={handlePointModeChange}
@@ -3950,7 +3940,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   effectiveSprintLevels={effectiveSprintLevels}
                   setSprintSelectedLevels={setSprintSelectedLevels}
                   sprintSortBy={sprintSortBy}
-                  setSprintSortBy={setSprintSortBy}
+                  setSprintSortBy={handleSetSprintSortBy}
                   setIsManageSprintsOpen={setIsManageSprintsOpen}
                   visibleSprints={visibleSprints}
                   availableSprints={availableSprints}

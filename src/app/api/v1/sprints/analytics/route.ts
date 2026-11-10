@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticate } from '@/lib/auth-guard';
 import { supabaseAdmin } from '@/lib/db';
-import { getSprintHealthReport } from '@/lib/services/sprintAnalyticsServer';
+import {
+  getSprintHealthReport,
+  getPortfolioHealthReport,
+  isPortfolioSlug,
+} from '@/lib/services/sprintAnalyticsServer';
 
 /**
  * GET /api/v1/sprints/analytics?sprint_id=...
@@ -40,10 +44,14 @@ export async function GET(req: NextRequest) {
       searchParams.get('sprint_name') ||
       searchParams.get('sprint');
 
-    const projectIdOrSlug =
+    const rawProjectParam =
       searchParams.get('project_id') ||
       searchParams.get('project_slug') ||
       searchParams.get('project');
+
+    // 'all' / 'portfolio' request workspace-wide rollups across every project in the tenant
+    const isPortfolio = isPortfolioSlug(rawProjectParam);
+    const projectIdOrSlug = isPortfolio ? null : rawProjectParam;
 
     if (!sprintId) {
       const sprintOptions: Array<{
@@ -150,6 +158,25 @@ export async function GET(req: NextRequest) {
       }
 
       return NextResponse.json({ sprints: sprintOptions }, { status: 200 });
+    }
+
+    if (isPortfolio) {
+      const portfolio = await getPortfolioHealthReport(targetSlug, sprintId);
+      return NextResponse.json(
+        {
+          ...portfolio,
+          // Aliases consumed by the shared sprint telemetry hook
+          committedPoints: portfolio.baselinePts,
+          completedPoints: portfolio.deliveredPts,
+          remainingPoints: portfolio.remainingPts,
+          pointsAddedMidSprint: portfolio.addedPts,
+          churn_dropped_points: portfolio.droppedPts,
+          scopeCreepPercent: portfolio.volatilityPct,
+          commitmentReliabilityPercent: portfolio.sayDoPct,
+          rollingVelocity: portfolio.rollingVelocity,
+        },
+        { status: 200 }
+      );
     }
 
     const report = await getSprintHealthReport(targetSlug, sprintId, projectIdOrSlug);
