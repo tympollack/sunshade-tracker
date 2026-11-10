@@ -24,6 +24,7 @@ export interface TreeViewContainerProps {
   effectiveTreeAssignees: string[];
   setTreeSelectedAssignees: (val: string[] | null) => void;
   treeSortBy: string;
+  isAllProjects?: boolean;
   setTreeSortBy: (val: string) => void;
   pointMode: 'macro' | 'granular';
   handlePointModeChange: (mode: 'macro' | 'granular') => void;
@@ -72,6 +73,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
     effectiveTreeAssignees,
     setTreeSelectedAssignees,
     treeSortBy,
+    isAllProjects = false,
     setTreeSortBy,
     pointMode,
     handlePointModeChange,
@@ -177,6 +179,12 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
               <option value="points_asc">Points (Low to High)</option>
               <option value="title_asc">Title (A to Z)</option>
               <option value="title_desc">Title (Z to A)</option>
+              {isAllProjects && (
+                <>
+                  <option value="project_asc">Project (A to Z)</option>
+                  <option value="project_desc">Project (Z to A)</option>
+                </>
+              )}
             </select>
           </div>
           <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
