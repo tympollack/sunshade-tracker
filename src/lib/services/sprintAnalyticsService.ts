@@ -212,6 +212,7 @@ export interface SprintHealthReport {
   remainingPoints: number;
   inProgressPoints: number;
   pointsAddedMidSprint: number;
+  pointsDroppedMidSprint: number;
   scopeCreepPercent: number;
   commitmentReliabilityPercent: number;
   reliabilityStatus: 'green' | 'amber' | 'red';
@@ -519,6 +520,11 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     pointsAddedMidSprint = totalCurrentPoints - committed;
   }
 
+  // Scope conservation: current = committed + added - dropped, so any shortfall against the
+  // committed baseline (after accounting for added scope) is scope dropped from the sprint.
+  const pointsDroppedMidSprint =
+    committed > 0 ? Math.max(0, committed + pointsAddedMidSprint - totalCurrentPoints) : 0;
+
   // 1. Rolling velocity across configured window (default: 3)
   const velocityWindow = rules.velocity_window;
   const rollingVelocity = calculateRollingVelocity(historicalSprints, velocityWindow);
@@ -601,6 +607,7 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     remainingPoints,
     inProgressPoints,
     pointsAddedMidSprint,
+    pointsDroppedMidSprint,
     scopeCreepPercent,
     commitmentReliabilityPercent,
     reliabilityStatus,
