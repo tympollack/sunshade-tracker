@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
 
         const pRes = await projQuery;
         projData = pRes.data || [];
-        if (projData.length > 0 && !targetProjectId) {
+        if (projectIdOrSlug && projData.length > 0 && !targetProjectId) {
           targetProjectId = projData[0].id || null;
         }
       } catch {

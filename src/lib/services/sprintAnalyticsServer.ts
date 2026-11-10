@@ -311,7 +311,8 @@ export async function getPortfolioHealthReport(
     .select('id, name, slug, settings')
     .eq('tenant_id', tenant.id);
   if (typeof projQuery.is === 'function') projQuery = projQuery.is('deleted_at', null);
-  const { data: projects } = await projQuery;
+  const { data: projects, error: projectsErr } = await projQuery;
+  if (projectsErr) throw new Error(`Failed to load portfolio projects: ${projectsErr.message}`);
   const projectList: any[] = projects || [];
 
   // Resolve a canonical sprint name so it can be matched across projects
@@ -345,11 +346,50 @@ export async function getPortfolioHealthReport(
   }
   if (resolved) sprintName = resolved;
 
+  // Track which projects actually participate in this sprint
+  const participatingProjectIds = new Set<string>();
+  try {
+    let sprintRowsQuery: any = supabaseAdmin
+      .from('sprints')
+      .select('project_id, name, id')
+      .eq('tenant_id', tenant.id);
+    const { data: dbSprints } = await sprintRowsQuery;
+    if (dbSprints && Array.isArray(dbSprints)) {
+      for (const s of dbSprints) {
+        if (s.project_id && (s.name === sprintName || s.id === sprintIdOrName)) {
+          participatingProjectIds.add(s.project_id);
+        }
+      }
+    }
+  } catch {
+    // Sprints table query fallback
+  }
+
+  for (const p of projectList) {
+    const hasInSettings = (p.settings?.sprint_settings?.sprints || []).some(
+      (s: SprintDefinition) => s.name === sprintName || s.id === sprintIdOrName
+    );
+    if (hasInSettings) {
+      participatingProjectIds.add(p.id);
+    }
+  }
+
   const failedProjects: Array<{ projectId: string; projectSlug: string; projectName: string; error: string }> = [];
   const entries = await Promise.all(
     projectList.map(async (p: any) => {
       try {
         const report = await getSprintHealthReport(tenantSlug, sprintName, p.id, now);
+        const hasSprintActivity =
+          (report.currentSprintPoints || 0) > 0 ||
+          (report.completedPoints || 0) > 0 ||
+          (report.committedPoints || 0) > 0 ||
+          (report.pointsAddedMidSprint || 0) > 0;
+        const participates = participatingProjectIds.has(p.id) || hasSprintActivity;
+        if (!participates) {
+          // Zero trailing velocity for non-participating projects so historical velocity does not inflate portfolio forecast
+          report.rollingVelocity = 0;
+          report.rollingVelocity3Sprint = 0;
+        }
         return { projectId: p.id, projectSlug: p.slug, projectName: p.name, report };
       } catch (err: any) {
         failedProjects.push({

@@ -182,11 +182,15 @@ export function isStabilityFilter(v: unknown): v is StabilityFilter {
 export function matchesStabilityFilter(p: ProjectTelemetry, filter: StabilityFilter): boolean {
   switch (filter) {
     case 'high_stability':
-      return p.volatilityPct < 10 && p.sayDoPct > 85;
+      return p.healthStatus === 'high_stability';
     case 'high_volatility':
-      return p.volatilityPct > HIGH_CHURN_THRESHOLD;
+      return (
+        p.healthStatus === 'high_churn' ||
+        p.healthStatus === 'scope_volatile' ||
+        p.volatilityPct > HIGH_CHURN_THRESHOLD
+      );
     case 'under_delivering':
-      return p.baselinePts > 0 && p.sayDoPct < 70;
+      return (p.baselinePts > 0 && p.sayDoPct < 70) || p.healthStatus === 'stalled';
     case 'zero_burn':
       return p.deliveredPts === 0;
     default:

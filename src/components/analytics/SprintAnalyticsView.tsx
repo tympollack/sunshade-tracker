@@ -7,7 +7,7 @@ import { ScopeChurnWaterfall, ScopeChurnData } from './ScopeChurnWaterfall';
 import { CumulativeFlowChart } from './CumulativeFlowChart';
 import { MonteCarloSimulator } from './MonteCarloSimulator';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
-import { MonteCarloSimulationResult } from '@/lib/analytics/monte-carlo';
+import { MonteCarloSimulationResult, runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
 import { AnalyticsDashboardSkeleton } from './AnalyticsDashboardSkeleton';
 import { PortfolioHealthMatrix } from './PortfolioHealthMatrix';
 import { AnalyticsMetricFilters } from './AnalyticsMetricFilters';
@@ -133,6 +133,25 @@ function SprintAnalyticsViewContent({
       }
     : baseChurn;
 
+  const effectiveSimVelocities = React.useMemo(() => {
+    if (!isFiltered) return simulationVelocities;
+    return subsetTotals.rollingVelocity > 0 ? [subsetTotals.rollingVelocity] : [];
+  }, [isFiltered, simulationVelocities, subsetTotals.rollingVelocity]);
+
+  const effectiveMonteCarlo = React.useMemo(() => {
+    if (!isFiltered) return monteCarlo;
+    if (subsetTotals.remainingPts > 0 && subsetTotals.rollingVelocity > 0) {
+      return runMonteCarloSimulation({
+        remainingStoryPoints: subsetTotals.remainingPts,
+        historicalVelocities: [subsetTotals.rollingVelocity],
+        iterations: 1000,
+        sprintLengthDays: 14,
+        startDate: forecastStartDate,
+      });
+    }
+    return null;
+  }, [isFiltered, monteCarlo, subsetTotals.remainingPts, subsetTotals.rollingVelocity, forecastStartDate]);
+
   return (
     <div className="space-y-6" data-testid="sprint-analytics-view">
       {isPortfolio && (
@@ -170,7 +189,7 @@ function SprintAnalyticsViewContent({
       )}
 
       {/* Analytics Visualizations Grid */}
-      <section className={"grid grid-cols-1 gap-6 ${isPortfolio ? '' : 'lg:grid-cols-2'}"}>
+      <section className={`grid grid-cols-1 gap-6 ${isPortfolio ? '' : 'lg:grid-cols-2'}`}>
         {/* Burndown Slot (project-scoped snapshots; not available for portfolio rollups) */}
         {!isPortfolio && (
           <div className="w-full">
@@ -198,12 +217,12 @@ function SprintAnalyticsViewContent({
 
       {/* Monte Carlo Release Forecasting */}
       <MonteCarloSimulator
-        simulation={monteCarlo}
+        simulation={effectiveMonteCarlo}
         isLoading={false}
         projectId={projectSlug}
         sprintId={selectedSprintId}
         remainingStoryPoints={effectiveMetrics.remainingPoints}
-        historicalVelocities={simulationVelocities}
+        historicalVelocities={effectiveSimVelocities}
         startDate={forecastStartDate}
         sprintLengthDays={14}
       />
