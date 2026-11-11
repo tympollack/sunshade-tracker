@@ -2,27 +2,30 @@ import { describe, it, expect } from 'vitest';
 import {
   matchesStabilityFilter,
   classifyProjectStability,
+  summarizeProjectTelemetry,
+  alignFilteredHistoricalVelocities,
   ProjectTelemetry,
 } from '@/lib/analytics/portfolio-aggregator';
 
 describe('TRK-26: PR 151 Review Feedback Fixes', () => {
+  const makeProject = (overrides: Partial<ProjectTelemetry>): ProjectTelemetry => ({
+    projectId: 'p-1',
+    projectSlug: 'proj-1',
+    projectName: 'Project 1',
+    sprintId: 's-1',
+    baselinePts: 100,
+    addedPts: 5,
+    droppedPts: 0,
+    deliveredPts: 95,
+    remainingPts: 10,
+    rollingVelocity: 30,
+    sayDoPct: 95,
+    volatilityPct: 5,
+    healthStatus: 'high_stability',
+    ...overrides,
+  });
+
   describe('Stability filter threshold alignment with badge (Comment 6)', () => {
-    const makeProject = (overrides: Partial<ProjectTelemetry>): ProjectTelemetry => ({
-      projectId: 'p-1',
-      projectSlug: 'proj-1',
-      projectName: 'Project 1',
-      sprintId: 's-1',
-      baselinePts: 100,
-      addedPts: 5,
-      droppedPts: 0,
-      deliveredPts: 95,
-      remainingPts: 10,
-      rollingVelocity: 30,
-      sayDoPct: 95,
-      volatilityPct: 5,
-      healthStatus: 'high_stability',
-      ...overrides,
-    });
 
     it('matches high_stability filter based on healthStatus classification', () => {
       const stable = makeProject({
@@ -91,22 +94,47 @@ describe('TRK-26: PR 151 Review Feedback Fixes', () => {
     });
   });
 
-  describe('Filtered forecast aligned historical velocities (PR 152 Comment 1)', () => {
-    it('aligns historical velocities per past sprint across filtered projects to preserve distribution', () => {
-      // If Project Red had past sprints [10, 30, 50] and Project Blue had [20, 20, 20]
-      const red = { historicalVelocities: [10, 30, 50] };
-      const blue = { historicalVelocities: [20, 20, 20] };
-      const filtered = [red, blue];
+  describe('Filtered forecast aligned historical velocities (PR 152 Comment 1 & PR 154 Comment 3)', () => {
+    it('aligns historical sprints by shared period key when projects skipped sprints (treats absent project as 0)', () => {
+      const telemetry = summarizeProjectTelemetry([
+        {
+          projectId: 'p-a',
+          projectSlug: 'proj-a',
+          projectName: 'Project A',
+          report: {
+            committedPoints: 30,
+            completedPoints: 30,
+            historicalSprints: [
+              { id: 'a-c', name: 'Sprint C', ends_at: '2026-10-30T00:00:00Z', completed_points: 10 },
+              { id: 'a-a', name: 'Sprint A', ends_at: '2026-10-02T00:00:00Z', completed_points: 30 },
+            ],
+          },
+        },
+        {
+          projectId: 'p-b',
+          projectSlug: 'proj-b',
+          projectName: 'Project B',
+          report: {
+            committedPoints: 50,
+            completedPoints: 50,
+            historicalSprints: [
+              { id: 'b-c', name: 'Sprint C', ends_at: '2026-10-30T00:00:00Z', completed_points: 20 },
+              { id: 'b-b', name: 'Sprint B', ends_at: '2026-10-16T00:00:00Z', completed_points: 40 },
+              { id: 'b-a', name: 'Sprint A', ends_at: '2026-10-02T00:00:00Z', completed_points: 50 },
+            ],
+          },
+        },
+      ]);
 
-      const maxSprints = Math.max(0, ...filtered.map((p) => p.historicalVelocities.length));
-      const aligned: number[] = [];
-      for (let i = 0; i < maxSprints; i++) {
-        const sumAtI = filtered.reduce((acc, p) => acc + (p.historicalVelocities[i] || 0), 0);
-        aligned.push(sumAtI);
-      }
+      expect(telemetry[0].historicalSprints).toHaveLength(2);
+      // C=10+20=30, B=0+40=40, A=30+50=80 (not positional [30, 70, 50])
+      expect(alignFilteredHistoricalVelocities(telemetry)).toEqual([30, 40, 80]);
+    });
 
-      // Rather than collapsing to a single average [41.6], we have the full varying past sprint outcomes
-      expect(aligned).toEqual([30, 50, 70]);
+    it('falls back to positional alignment only when period metadata is absent', () => {
+      const red = makeProject({ projectId: 'r', historicalVelocities: [10, 30, 50] });
+      const blue = makeProject({ projectId: 'b', historicalVelocities: [20, 20, 20] });
+      expect(alignFilteredHistoricalVelocities([red, blue])).toEqual([30, 50, 70]);
     });
   });
 });

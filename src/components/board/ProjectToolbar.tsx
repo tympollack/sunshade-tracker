@@ -9,6 +9,8 @@ import {
   RotateCcw,
   Columns,
   Rows,
+  AlignJustify,
+  LayoutList,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, getWorkMetricConfig } from '@/types/tracker';
 import { getItemWorkMetric } from '@/lib/sprint-utils';
@@ -33,6 +35,8 @@ export interface ProjectToolbarProps {
   expandAllColumns: () => void;
   boardOrientation?: 'columns' | 'stack';
   onOrientationChange?: (orientation: 'columns' | 'stack') => void;
+  cardDensity?: 'compact' | 'detailed';
+  onCardDensityChange?: (density: 'compact' | 'detailed') => void;
 }
 
 /**
@@ -57,8 +61,51 @@ export function ProjectToolbar({
   expandAllColumns,
   boardOrientation = 'columns',
   onOrientationChange,
+  cardDensity = 'compact',
+  onCardDensityChange,
 }: ProjectToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const renderCardDensityToggle = (isMicro: boolean) => {
+    if (!onCardDensityChange) return null;
+    const heightClass = isMicro ? 'min-h-[32px]' : 'min-h-[36px]';
+    const paddingClass = isMicro ? 'px-2 py-1' : 'px-2.5 py-1';
+    return (
+      <div
+        data-testid="card-density-toggle"
+        className={`flex items-center bg-slate-900${isMicro ? '/90' : ''} border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap ${heightClass}`}
+      >
+        <button
+          type="button"
+          onClick={() => onCardDensityChange('compact')}
+          data-testid="card-density-compact-btn"
+          className={`flex items-center space-x-1 ${paddingClass} rounded text-[11px] font-medium transition-colors cursor-pointer ${
+            cardDensity === 'compact'
+              ? 'bg-slate-800 text-emerald-400 shadow-sm'
+              : 'text-slate-400 hover:text-white'
+          }`}
+          title="Compact cards (3-line summary)"
+        >
+          <AlignJustify className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Compact</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onCardDensityChange('detailed')}
+          data-testid="card-density-detailed-btn"
+          className={`flex items-center space-x-1 ${paddingClass} rounded text-[11px] font-medium transition-colors cursor-pointer ${
+            cardDensity === 'detailed'
+              ? 'bg-slate-800 text-emerald-400 shadow-sm'
+              : 'text-slate-400 hover:text-white'
+          }`}
+          title="Detailed cards (descriptions and metadata chips)"
+        >
+          <LayoutList className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Detailed</span>
+        </button>
+      </div>
+    );
+  };
 
   const metricConfig = getWorkMetricConfig(projectSettings);
   const unitLabel = metricConfig.unit_label || 'pts';
@@ -176,6 +223,7 @@ export function ProjectToolbar({
                 </button>
               </div>
             )}
+            {renderCardDensityToggle(true)}
             <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
             <div className="flex items-center space-x-1 bg-slate-900/90 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[32px]">
               <button
@@ -305,6 +353,8 @@ export function ProjectToolbar({
                 </button>
               </div>
             )}
+
+            {renderCardDensityToggle(false)}
 
             {/* Quick Collapse / Expand Columns */}
             <div className="flex items-center space-x-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0 whitespace-nowrap min-h-[36px]">

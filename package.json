@@ -26,7 +26,6 @@
     "sunshade-cli": "./bin/sunshade-cli.ts"
   },
   "dependencies": {
-    "@digitalcanopy/notifications": "^0.1.2",
     "@digitalcanopy/supabase": "^0.1.0",
     "@digitalcanopy/ui": "^0.1.2",
     "@dnd-kit/core": "^6.3.1",

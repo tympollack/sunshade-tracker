@@ -17,6 +17,13 @@ export const HEALTH_STATUS_LABELS: Record<ProjectHealthStatus, string> = {
   no_activity: 'No Activity',
 };
 
+export interface HistoricalSprintSummary {
+  id?: string;
+  name: string;
+  endsAt?: string | null;
+  completedPoints: number;
+}
+
 export interface ProjectTelemetry {
   projectId: string;
   projectSlug: string;
@@ -32,6 +39,7 @@ export interface ProjectTelemetry {
   volatilityPct: number;
   healthStatus: ProjectHealthStatus;
   historicalVelocities?: number[];
+  historicalSprints?: HistoricalSprintSummary[];
 }
 
 export interface PortfolioTotals {
@@ -68,7 +76,16 @@ export interface ProjectReportInput {
   pointsDroppedMidSprint?: number;
   rollingVelocity?: number;
   historicalVelocities?: number[];
-  historicalSprints?: Array<{ completed_points?: number; [key: string]: any }>;
+  historicalSprints?: Array<{
+    id?: string;
+    name?: string;
+    ends_at?: string | null;
+    endsAt?: string | null;
+    end_date?: string | null;
+    completed_points?: number;
+    completedPoints?: number;
+    [key: string]: any;
+  }>;
   runwayElapsedRatio?: number;
   rules?: { scope_creep_danger_threshold?: number };
 }
@@ -110,11 +127,17 @@ export function summarizeProjectTelemetry(
     const deliveredPts = num(report.completedPoints);
     const sayDoPct = calculateSayDoRatio(baselinePts, deliveredPts);
     const volatilityPct = calculateSprintVolatility(baselinePts, addedPts, droppedPts);
+    const historicalSprints: HistoricalSprintSummary[] = Array.isArray(report.historicalSprints)
+      ? report.historicalSprints.map((s) => ({
+          id: typeof s.id === 'string' ? s.id : undefined,
+          name: String(s.name ?? '').trim(),
+          endsAt: (s.ends_at ?? s.endsAt ?? s.end_date ?? null) as string | null,
+          completedPoints: num(s.completed_points ?? s.completedPoints),
+        }))
+      : [];
     const historicalVelocities: number[] = Array.isArray(report.historicalVelocities)
       ? report.historicalVelocities.map(num)
-      : Array.isArray(report.historicalSprints)
-      ? report.historicalSprints.map((s) => num(s.completed_points))
-      : [];
+      : historicalSprints.map((s) => s.completedPoints);
     return {
       projectId,
       projectSlug,
@@ -127,6 +150,7 @@ export function summarizeProjectTelemetry(
       remainingPts: num(report.remainingPoints),
       rollingVelocity: num(report.rollingVelocity),
       historicalVelocities,
+      historicalSprints,
       sayDoPct,
       volatilityPct,
       healthStatus: classifyProjectStability({
@@ -205,4 +229,74 @@ export function matchesStabilityFilter(p: ProjectTelemetry, filter: StabilityFil
     default:
       return true;
   }
+}
+
+function getHistoricalPeriodKey(s: HistoricalSprintSummary): string | null {
+  const name = String(s.name ?? '').toLowerCase().trim();
+  if (name) return `name:${name}`;
+  const endsAt = s.endsAt ? String(s.endsAt).trim() : '';
+  if (endsAt) return `date:${endsAt.slice(0, 10)}`;
+  if (s.id) return `id:${s.id}`;
+  return null;
+}
+
+/**
+ * Aligns historical sprint velocities across a filtered subset of projects by a shared
+ * sprint period key (canonical sprint name, falling back to end date or id) so unrelated
+ * sprints are never summed by positional index when projects skipped sprints.
+ *
+ * Absent-project rule: when a project in the filtered subset has no closed sprint record
+ * for a given period `K` (e.g., it skipped or pre-dated that sprint), it contributes `0`
+ * points to the subset's throughput for period `K`.
+ */
+export function alignFilteredHistoricalVelocities(projects: readonly ProjectTelemetry[]): number[] {
+  const hasPeriodMetadata = projects.some(
+    (p) => Array.isArray(p.historicalSprints) && p.historicalSprints.length > 0
+  );
+
+  if (hasPeriodMetadata) {
+    const periods = new Map<string, { totalPoints: number; sortTime: number | null; order: number }>();
+    let order = 0;
+
+    for (const proj of projects) {
+      for (const sprint of proj.historicalSprints || []) {
+        const key = getHistoricalPeriodKey(sprint);
+        if (!key) continue;
+        const parsedTime = sprint.endsAt ? Date.parse(sprint.endsAt) : NaN;
+        const sortTime = Number.isFinite(parsedTime) ? parsedTime : null;
+        const existing = periods.get(key);
+        if (existing) {
+          existing.totalPoints += num(sprint.completedPoints);
+          if (existing.sortTime === null && sortTime !== null) {
+            existing.sortTime = sortTime;
+          }
+        } else {
+          periods.set(key, {
+            totalPoints: num(sprint.completedPoints),
+            sortTime,
+            order: order++,
+          });
+        }
+      }
+    }
+
+    return Array.from(periods.values())
+      .sort((a, b) => {
+        if (a.sortTime !== null && b.sortTime !== null && a.sortTime !== b.sortTime) {
+          return b.sortTime - a.sortTime;
+        }
+        return a.order - b.order;
+      })
+      .map((entry) => entry.totalPoints);
+  }
+
+  // Fallback for synthetic inputs that provide only numeric historicalVelocities without period metadata
+  const maxSprints = Math.max(0, ...projects.map((p) => (p.historicalVelocities || []).length));
+  if (maxSprints === 0) return [];
+  const aligned: number[] = [];
+  for (let i = 0; i < maxSprints; i++) {
+    const sumAtI = projects.reduce((acc, p) => acc + (p.historicalVelocities?.[i] || 0), 0);
+    aligned.push(sumAtI);
+  }
+  return aligned;
 }

@@ -15,6 +15,7 @@ import {
   PortfolioFailedProject,
   ProjectTelemetry,
   StabilityFilter,
+  alignFilteredHistoricalVelocities,
   computePortfolioTotals,
   isStabilityFilter,
   matchesStabilityFilter,
@@ -135,21 +136,7 @@ function SprintAnalyticsViewContent({
 
   const effectiveSimVelocities = React.useMemo(() => {
     if (!isFiltered) return simulationVelocities;
-    // Align historical sprint velocities across filtered projects to preserve variation and confidence intervals
-    const maxSprints = Math.max(0, ...filteredProjects.map((p) => (p.historicalVelocities || []).length));
-    if (maxSprints > 0) {
-      const aligned: number[] = [];
-      for (let i = 0; i < maxSprints; i++) {
-        const sumAtI = filteredProjects.reduce(
-          (acc, p) => acc + (p.historicalVelocities?.[i] || 0),
-          0
-        );
-        aligned.push(sumAtI);
-      }
-      return aligned;
-    }
-    // If historical sprint breakdown is unavailable, avoid sampling a single average as a probabilistic distribution
-    return [];
+    return alignFilteredHistoricalVelocities(filteredProjects);
   }, [isFiltered, simulationVelocities, filteredProjects]);
 
   const effectiveMonteCarlo = React.useMemo(() => {
