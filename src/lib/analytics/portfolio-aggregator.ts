@@ -232,34 +232,42 @@ export function matchesStabilityFilter(p: ProjectTelemetry, filter: StabilityFil
 }
 
 function getHistoricalPeriodKey(s: HistoricalSprintSummary): string | null {
+  const endsAt = s.endsAt ? String(s.endsAt).trim() : '';
+  if (endsAt) {
+    const parsed = Date.parse(endsAt);
+    if (Number.isFinite(parsed)) {
+      return `date:${new Date(parsed).toISOString().slice(0, 10)}`;
+    }
+    return `date:${endsAt.slice(0, 10)}`;
+  }
   const name = String(s.name ?? '').toLowerCase().trim();
   if (name) return `name:${name}`;
-  const endsAt = s.endsAt ? String(s.endsAt).trim() : '';
-  if (endsAt) return `date:${endsAt.slice(0, 10)}`;
   if (s.id) return `id:${s.id}`;
   return null;
 }
 
 /**
  * Aligns historical sprint velocities across a filtered subset of projects by a shared
- * sprint period key (canonical sprint name, falling back to end date or id) so unrelated
- * sprints are never summed by positional index when projects skipped sprints.
+ * sprint period key (normalized UTC `endsAt` date `YYYY-MM-DD`, falling back to canonical
+ * sprint name or id for undated sprints) so unrelated sprints are never merged by name
+ * or positional index.
  *
- * Absent-project rule: when a project in the filtered subset has no closed sprint record
- * for a given period `K` (e.g., it skipped or pre-dated that sprint), it contributes `0`
- * points to the subset's throughput for period `K`.
+ * Alignment policies:
+ * - Absent-period rule: when a metadata-backed project has no closed sprint record for a
+ *   given period `K`, it contributes `0` points to period `K`.
+ * - Mixed-telemetry rule: when some projects only carry numeric `historicalVelocities`
+ *   (no `historicalSprints` metadata), their newest-first samples are aligned by recency
+ *   index onto the sorted timeline (extending beyond `periodSeries.length` if longer) so
+ *   recorded numeric throughput is never dropped.
  */
 export function alignFilteredHistoricalVelocities(projects: readonly ProjectTelemetry[]): number[] {
-  const hasPeriodMetadata = projects.some(
-    (p) => Array.isArray(p.historicalSprints) && p.historicalSprints.length > 0
-  );
+  const periods = new Map<string, { totalPoints: number; sortTime: number | null; order: number }>();
+  const numericOnlyProjects: ProjectTelemetry[] = [];
+  let order = 0;
 
-  if (hasPeriodMetadata) {
-    const periods = new Map<string, { totalPoints: number; sortTime: number | null; order: number }>();
-    let order = 0;
-
-    for (const proj of projects) {
-      for (const sprint of proj.historicalSprints || []) {
+  for (const proj of projects) {
+    if (Array.isArray(proj.historicalSprints) && proj.historicalSprints.length > 0) {
+      for (const sprint of proj.historicalSprints) {
         const key = getHistoricalPeriodKey(sprint);
         if (!key) continue;
         const parsedTime = sprint.endsAt ? Date.parse(sprint.endsAt) : NaN;
@@ -278,25 +286,34 @@ export function alignFilteredHistoricalVelocities(projects: readonly ProjectTele
           });
         }
       }
+    } else if (Array.isArray(proj.historicalVelocities) && proj.historicalVelocities.length > 0) {
+      numericOnlyProjects.push(proj);
     }
-
-    return Array.from(periods.values())
-      .sort((a, b) => {
-        if (a.sortTime !== null && b.sortTime !== null && a.sortTime !== b.sortTime) {
-          return b.sortTime - a.sortTime;
-        }
-        return a.order - b.order;
-      })
-      .map((entry) => entry.totalPoints);
   }
 
-  // Fallback for synthetic inputs that provide only numeric historicalVelocities without period metadata
-  const maxSprints = Math.max(0, ...projects.map((p) => (p.historicalVelocities || []).length));
-  if (maxSprints === 0) return [];
+  const periodSeries = Array.from(periods.values())
+    .sort((a, b) => {
+      if (a.sortTime !== null && b.sortTime !== null && a.sortTime !== b.sortTime) {
+        return b.sortTime - a.sortTime;
+      }
+      return a.order - b.order;
+    })
+    .map((entry) => entry.totalPoints);
+
+  const maxLen = Math.max(
+    periodSeries.length,
+    ...numericOnlyProjects.map((p) => (p.historicalVelocities || []).length)
+  );
+  if (maxLen === 0) return [];
+
   const aligned: number[] = [];
-  for (let i = 0; i < maxSprints; i++) {
-    const sumAtI = projects.reduce((acc, p) => acc + (p.historicalVelocities?.[i] || 0), 0);
-    aligned.push(sumAtI);
+  for (let i = 0; i < maxLen; i++) {
+    const metadataPoints = periodSeries[i] ?? 0;
+    const numericPoints = numericOnlyProjects.reduce(
+      (acc, p) => acc + num(p.historicalVelocities?.[i]),
+      0
+    );
+    aligned.push(metadataPoints + numericPoints);
   }
   return aligned;
 }

@@ -136,5 +136,96 @@ describe('TRK-26: PR 151 Review Feedback Fixes', () => {
       const blue = makeProject({ projectId: 'b', historicalVelocities: [20, 20, 20] });
       expect(alignFilteredHistoricalVelocities([red, blue])).toEqual([30, 50, 70]);
     });
+
+    it('separates same-named sprints when their end dates differ (PR 155 Comment 1)', () => {
+      const telemetry = summarizeProjectTelemetry([
+        {
+          projectId: 'p-a',
+          projectSlug: 'proj-a',
+          projectName: 'Project A',
+          report: {
+            historicalSprints: [
+              { id: 'a1', name: 'Sprint 1', ends_at: '2026-10-02T00:00:00Z', completed_points: 10 },
+            ],
+          },
+        },
+        {
+          projectId: 'p-b',
+          projectSlug: 'proj-b',
+          projectName: 'Project B',
+          report: {
+            historicalSprints: [
+              { id: 'b1', name: 'Sprint 1', ends_at: '2026-10-16T00:00:00Z', completed_points: 20 },
+            ],
+          },
+        },
+      ]);
+
+      expect(alignFilteredHistoricalVelocities(telemetry)).toEqual([20, 10]);
+    });
+
+    it('combines different-named sprints that share the same normalized end date', () => {
+      const telemetry = summarizeProjectTelemetry([
+        {
+          projectId: 'p-a',
+          projectSlug: 'proj-a',
+          projectName: 'Project A',
+          report: {
+            historicalSprints: [
+              { id: 'a1', name: 'Alpha Wk 1', ends_at: '2026-10-02T09:00:00Z', completed_points: 15 },
+            ],
+          },
+        },
+        {
+          projectId: 'p-b',
+          projectSlug: 'proj-b',
+          projectName: 'Project B',
+          report: {
+            historicalSprints: [
+              { id: 'b1', name: 'Beta Cycle 1', ends_at: '2026-10-02T18:30:00Z', completed_points: 25 },
+            ],
+          },
+        },
+      ]);
+
+      expect(alignFilteredHistoricalVelocities(telemetry)).toEqual([40]);
+    });
+
+    it('falls back to normalized sprint name when endsAt is omitted', () => {
+      const telemetry = summarizeProjectTelemetry([
+        {
+          projectId: 'p-a',
+          projectSlug: 'proj-a',
+          projectName: 'Project A',
+          report: {
+            historicalSprints: [{ id: 'a1', name: 'Sprint One', completed_points: 12 }],
+          },
+        },
+        {
+          projectId: 'p-b',
+          projectSlug: 'proj-b',
+          projectName: 'Project B',
+          report: {
+            historicalSprints: [{ id: 'b1', name: ' sprint one ', completed_points: 18 }],
+          },
+        },
+      ]);
+
+      expect(alignFilteredHistoricalVelocities(telemetry)).toEqual([30]);
+    });
+
+    it('incorporates numeric-only projects alongside metadata-backed projects (PR 155 Comment 2)', () => {
+      const withMetadata = makeProject({
+        projectId: 'meta',
+        historicalSprints: [{ id: 'm1', name: 'Sprint 1', endsAt: '2026-10-16T00:00:00Z', completedPoints: 10 }],
+        historicalVelocities: [10],
+      });
+      const numericOnly = makeProject({
+        projectId: 'num',
+        historicalVelocities: [20, 15],
+      });
+
+      expect(alignFilteredHistoricalVelocities([withMetadata, numericOnly])).toEqual([30, 15]);
+    });
   });
 });
