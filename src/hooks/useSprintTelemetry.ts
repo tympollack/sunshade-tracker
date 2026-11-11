@@ -6,7 +6,7 @@ import { BurndownDataPoint } from '@/components/analytics/BurndownChart';
 import { ScopeChurnData } from '@/components/analytics/ScopeChurnWaterfall';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 import { MonteCarloSimulationResult, runMonteCarloSimulation } from '@/lib/analytics/monte-carlo';
-import { ProjectTelemetry, PortfolioFailedProject } from '@/lib/analytics/portfolio-aggregator';
+import { ProjectTelemetry, PortfolioFailedProject, alignFilteredHistoricalVelocities } from '@/lib/analytics/portfolio-aggregator';
 import { calculateRollingVelocity, calculateSayDoRatio, calculateSprintVolatility } from '@/lib/analytics/velocity-forecaster';
 
 export interface UseSprintTelemetryOptions {
@@ -132,6 +132,8 @@ export function useSprintTelemetry({
           historicalVelocities = histList.map(
             (h: any) => h.completed_points ?? h.completedPoints ?? 0
           );
+        } else if (Array.isArray(sprintData.projects_telemetry) && sprintData.projects_telemetry.length > 0) {
+          historicalVelocities = alignFilteredHistoricalVelocities(sprintData.projects_telemetry);
         }
       }
 

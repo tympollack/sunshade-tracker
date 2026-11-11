@@ -315,5 +315,179 @@ describe('TASK-TRK-VIEW-ORIENTATION-TOGGLE: Toolbar Orientation Toggle & Desktop
       fireEvent.click(verticalBtn);
       expect(handleToggleCollapseUp).toHaveBeenCalledWith('backlog');
     });
+
+    it('Wide Stack omits overflow-y-hidden and fixed desktop heights across all boardHeightMode values', () => {
+      const modes: Array<'compact' | 'standard' | 'full'> = ['compact', 'standard', 'full'];
+      for (const boardHeightMode of modes) {
+        const { unmount } = render(
+          <BoardViewContainer
+            {...({
+              items: sampleItems,
+              projectSettings: sampleSettings,
+              projectSlug: 'sunshade-tracker',
+              tenantSlug: 'sunshade',
+              isReadOnly: false,
+              loading: false,
+              setEditingItem: () => {},
+              setDeleteConfirmItem: () => {},
+              handleUpdateStatus: () => {},
+              handleUpdateType: () => {},
+              handleDragStart: () => {},
+              handleDragEnd: () => {},
+              handleDragOverCard: () => {},
+              handleDrop: () => {},
+              childCountMap: new Map(),
+              pointsRollupMap: new Map(),
+              allProjects: [],
+              isAllProjects: false,
+              pointMode: 'granular',
+              handlePointModeChange: () => {},
+              getItemHierarchy: () => sampleSettings.hierarchy,
+              getItemStatuses: () => sampleSettings.statuses,
+              displayedStatuses: sampleSettings.statuses,
+              columnsItemsMap: { backlog: sampleItems, in_progress: [] },
+              collapsedColumnsUp: new Set(),
+              collapsedColumnsSideways: new Set(),
+              statusFilterOptions: [],
+              effectiveSelectedStatuses: [],
+              setSelectedStatuses: () => {},
+              levelFilterOptions: [],
+              effectiveSelectedLevels: [],
+              setSelectedLevels: () => {},
+              selectedSprint: 'all',
+              setSelectedSprint: () => {},
+              availableSprints: [],
+              collapseAllColumns: () => {},
+              expandAllColumns: () => {},
+              toggleCollapseUp: () => {},
+              toggleCollapseSideways: () => {},
+              boardHeightMode,
+              setBoardHeightMode: () => {},
+              boardScrollRef: { current: null },
+              handleBoardWheel: () => {},
+              columnCounts: { backlog: 1, in_progress: 0 },
+              draggedItemId: null,
+              dragOverTarget: null,
+              quickAddColId: null,
+              setQuickAddColId: () => {},
+              quickAddTitle: '',
+              setQuickAddTitle: () => {},
+              isCreatingQuickItem: false,
+              handleCreateQuickInlineItem: () => {},
+              hiddenBoardItems: [],
+              dismissedBoardDeviationBanner: false,
+              setDismissedBoardDeviationBanner: () => {},
+              onOpenReconciliation: () => {},
+              boardOrientation: 'stack',
+            } as any)}
+          />
+        );
+
+        const canvas = screen.getByTestId('board-scroll-canvas');
+        expect(canvas.className).toContain('h-auto');
+        expect(canvas.className).toContain('overflow-y-visible');
+        expect(canvas.className).not.toContain('overflow-y-hidden');
+        expect(canvas.className).not.toContain('md:h-[460px]');
+        expect(canvas.className).not.toContain('md:h-[calc(100vh-140px)]');
+        expect(canvas.className).not.toContain('md:h-[calc(100vh-200px)]');
+        expect(screen.getByTestId('board-column-backlog')).toBeInTheDocument();
+        unmount();
+      }
+    });
+  });
+
+  describe('Card Density Toggle (Compact vs Detailed CardMetadataChips)', () => {
+    it('defaults to Compact mode and reveals CardMetadataChips when toggled to Detailed', () => {
+      try {
+        window.localStorage.removeItem('sunshade_board_card_density');
+      } catch {}
+
+      const itemWithMetadata: WorkItem = {
+        ...sampleItems[0],
+        id: 'task-meta',
+        description: 'Detailed item summary',
+        metadata: {
+          service: 'api',
+          env: 'staging',
+          team: 'core',
+        },
+      };
+
+      render(
+        <BoardViewContainer
+          {...({
+            items: [itemWithMetadata],
+            projectSettings: sampleSettings,
+            projectSlug: 'sunshade-tracker',
+            tenantSlug: 'sunshade',
+            isReadOnly: false,
+            loading: false,
+            setEditingItem: () => {},
+            setDeleteConfirmItem: () => {},
+            handleUpdateStatus: () => {},
+            handleUpdateType: () => {},
+            handleDragStart: () => {},
+            handleDragEnd: () => {},
+            handleDragOverCard: () => {},
+            handleDrop: () => {},
+            childCountMap: new Map(),
+            pointsRollupMap: new Map(),
+            allProjects: [],
+            isAllProjects: false,
+            pointMode: 'granular',
+            handlePointModeChange: () => {},
+            getItemHierarchy: () => sampleSettings.hierarchy,
+            getItemStatuses: () => sampleSettings.statuses,
+            displayedStatuses: sampleSettings.statuses,
+            columnsItemsMap: { backlog: [itemWithMetadata], in_progress: [] },
+            collapsedColumnsUp: new Set(),
+            collapsedColumnsSideways: new Set(),
+            statusFilterOptions: [],
+            effectiveSelectedStatuses: [],
+            setSelectedStatuses: () => {},
+            levelFilterOptions: [],
+            effectiveSelectedLevels: [],
+            setSelectedLevels: () => {},
+            selectedSprint: 'all',
+            setSelectedSprint: () => {},
+            availableSprints: [],
+            collapseAllColumns: () => {},
+            expandAllColumns: () => {},
+            toggleCollapseUp: () => {},
+            toggleCollapseSideways: () => {},
+            boardHeightMode: 'standard',
+            setBoardHeightMode: () => {},
+            boardScrollRef: { current: null },
+            handleBoardWheel: () => {},
+            columnCounts: { backlog: 1, in_progress: 0 },
+            draggedItemId: null,
+            dragOverTarget: null,
+            quickAddColId: null,
+            setQuickAddColId: () => {},
+            quickAddTitle: '',
+            setQuickAddTitle: () => {},
+            isCreatingQuickItem: false,
+            handleCreateQuickInlineItem: () => {},
+            hiddenBoardItems: [],
+            dismissedBoardDeviationBanner: false,
+            setDismissedBoardDeviationBanner: () => {},
+            onOpenReconciliation: () => {},
+            boardOrientation: 'columns',
+          } as any)}
+        />
+      );
+
+      // Default compact mode hides CardMetadataChips
+      expect(screen.queryByTestId('card-metadata-chips-task-meta')).not.toBeInTheDocument();
+
+      // Switch to Detailed mode
+      fireEvent.click(screen.getByTestId('card-density-detailed-btn'));
+      expect(screen.getByTestId('card-metadata-chips-task-meta')).toBeInTheDocument();
+      expect(screen.getByText('+1 more')).toBeInTheDocument();
+
+      // Switch back to Compact mode
+      fireEvent.click(screen.getByTestId('card-density-compact-btn'));
+      expect(screen.queryByTestId('card-metadata-chips-task-meta')).not.toBeInTheDocument();
+    });
   });
 });

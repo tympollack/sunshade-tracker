@@ -11,6 +11,8 @@ describe('BUG-TRK-BOARD-SCROLL, TASK-TRK-BOARD-RESPONSIVE-LAYOUT, and TASK-TRK-B
     'src/components/board/ProjectHeader.tsx',
     'src/components/board/ProjectModals.tsx',
     'src/components/views/BoardViewContainer.tsx',
+    'src/components/board/BoardColumn.tsx',
+    'src/components/board/BoardView.tsx',
   ];
   const pageContent = pageFiles
     .map((f) => path.resolve(f))
@@ -53,7 +55,7 @@ describe('BUG-TRK-BOARD-SCROLL, TASK-TRK-BOARD-RESPONSIVE-LAYOUT, and TASK-TRK-B
 
     it('renders accordion toggle for collapsing/expanding columns upward', () => {
       expect(pageContent).toContain('toggleCollapseUp');
-      expect(pageContent).toContain('title="Collapse column upward"');
+      expect(pageContent).toContain('Collapse column upward');
     });
   });
 

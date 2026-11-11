@@ -6,12 +6,8 @@ import {
   AlertTriangle,
   Eye,
   Calendar,
-  ChevronUp,
-  ChevronDown,
-  ChevronsLeftRight,
   Maximize2,
   Minimize2,
-  Plus,
   RefreshCw,
 } from 'lucide-react';
 import { WorkItem, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition } from '@/types/tracker';
@@ -19,6 +15,7 @@ import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect'
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { KanbanCard } from '@/components/board/KanbanCard';
 import { BoardView } from '@/components/board/BoardView';
+import { BoardColumn } from '@/components/board/BoardColumn';
 import { ProjectToolbar } from '@/components/board/ProjectToolbar';
 import { isItemImmutableDueToCompletedSprint, getCompletedStatusSet } from '@/lib/sprint-utils';
 import { SprintTimelineScrubber, TimelineSnapshotPoint } from '@/components/sprints/SprintTimelineScrubber';
@@ -91,6 +88,8 @@ export interface BoardViewContainerProps {
   availableSprintDefs?: SprintDefinition[];
   boardOrientation?: 'columns' | 'stack';
   onOrientationChange?: (mode: 'columns' | 'stack') => void;
+  cardDensity?: 'compact' | 'detailed';
+  onCardDensityChange?: (density: 'compact' | 'detailed') => void;
   getItemProjectSettings?: (item: WorkItem) => ProjectSettings;
   coldCount?: number;
   isLoadingColdArchive?: boolean;
@@ -106,6 +105,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
   const {
     boardOrientation: propBoardOrientation,
     onOrientationChange: propOnOrientationChange,
+    cardDensity: propCardDensity,
+    onCardDensityChange: propOnCardDensityChange,
     hiddenBoardItems = [],
     dismissedBoardDeviationBanner,
     setDismissedBoardDeviationBanner,
@@ -203,6 +204,30 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
     }
   };
 
+  const [internalCardDensity, setInternalCardDensity] = React.useState<'compact' | 'detailed'>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sunshade_board_card_density');
+        if (saved === 'compact' || saved === 'detailed') return saved;
+      } catch {}
+    }
+    return 'compact';
+  });
+
+  const effectiveCardDensity = propCardDensity ?? internalCardDensity;
+  const handleCardDensityChange = (density: 'compact' | 'detailed') => {
+    if (propOnCardDensityChange) {
+      propOnCardDensityChange(density);
+    } else {
+      setInternalCardDensity(density);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('sunshade_board_card_density', density);
+        } catch {}
+      }
+    }
+  };
+
   const completionSet = React.useMemo(() => {
     return getCompletedStatusSet(props.projectSettings?.statuses);
   }, [props.projectSettings?.statuses]);
@@ -293,6 +318,8 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
           expandAllColumns={expandAllColumns}
           boardOrientation={effectiveOrientation}
           onOrientationChange={handleOrientationChange}
+          cardDensity={effectiveCardDensity}
+          onCardDensityChange={handleCardDensityChange}
         />
       </div>
 
@@ -319,307 +346,197 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
         <BoardView
           ref={boardScrollRef}
           onWheel={handleBoardWheel}
+          orientation={effectiveOrientation}
           dataTestId="board-scroll-canvas"
           className={`board-scroll-container ${
             effectiveOrientation === 'stack'
-              ? 'flex flex-col items-stretch gap-4 overflow-x-hidden pb-4'
-              : 'flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4 h-[calc(100dvh-var(--header-height)-var(--toolbar-height))] w-full overflow-y-hidden flex gap-4 p-4'
-          } custom-scrollbar select-none ${
-            boardHeightMode === 'compact'
-              ? 'h-auto md:h-[460px] md:min-h-[460px]'
-              : boardHeightMode === 'full'
-              ? 'h-auto md:h-[calc(100vh-140px)] md:min-h-[500px]'
-              : 'h-auto md:h-[calc(100vh-200px)] md:min-h-[420px]'
-          }`}
+              ? 'flex flex-col items-stretch gap-4 overflow-x-hidden overflow-y-visible h-auto pb-4'
+              : `flex flex-col md:flex-row items-stretch gap-4 overflow-x-hidden md:overflow-x-auto pb-4 h-auto md:h-[calc(100dvh-var(--header-height)-var(--toolbar-height))] w-full overflow-y-visible md:overflow-y-hidden p-4 ${
+                  boardHeightMode === 'compact'
+                    ? 'h-auto md:h-[460px] md:min-h-[460px]'
+                    : boardHeightMode === 'full'
+                    ? 'h-auto md:h-[calc(100vh-140px)] md:min-h-[500px]'
+                    : 'h-auto md:h-[calc(100vh-200px)] md:min-h-[420px]'
+                }`
+          } custom-scrollbar select-none`}
         >
           {displayedStatuses.map((col) => {
             const colItems = columnsItemsMap[col.id] || [];
             const isCollapsedSideways = effectiveOrientation === 'columns' && collapsedColumnsSideways.has(col.id);
             const isCollapsedUp = collapsedColumnsUp.has(col.id);
+            const hasColdBanner = col.id === targetColdColId && coldCount > 0;
+            const hasQuickAdd = quickAddColId === col.id && !isEffectivelyReadOnly;
 
-            if (isCollapsedSideways) {
-              return (
-                <div
-                  key={col.id}
-                  onClick={() => toggleCollapseSideways(col.id)}
-                  data-testid={`collapsed-rail-${col.id}`}
-                  className="w-12 min-w-[48px] max-w-[48px] shrink-0 bg-slate-900/30 border border-slate-800/60 hover:border-slate-700/80 rounded-xl flex flex-col items-center py-4 cursor-pointer transition-colors group h-full"
-                  title={`Expand ${col.label} (${colItems.length})`}
-                >
-                  {/* Grouped status dot and item count pill at top of rail (TASK-TRK-COLLAPSED-RAIL-ALIGN) */}
-                  <div
-                    data-testid={`collapsed-rail-header-${col.id}`}
-                    className="flex flex-col items-center gap-1.5 shrink-0 mb-4"
-                  >
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: col.color || '#94a3b8' }}
-                    />
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono shrink-0">
-                      {colItems.length}
-                    </span>
-                  </div>
-                  <span className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold tracking-wider uppercase text-slate-400 group-hover:text-slate-200 transition-colors my-auto select-none">
-                    {col.label}
-                  </span>
-                </div>
-              );
-            }
+            const columnBannerSlot =
+              hasColdBanner || hasQuickAdd ? (
+                <>
+                  {hasColdBanner && (
+                    <div
+                      data-testid="cold-archive-banner"
+                      className="mx-3 my-2 px-3 py-2 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 shrink-0"
+                    >
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        Showing recent (last 14d)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onLoadColdArchive?.();
+                        }}
+                        disabled={isLoadingColdArchive}
+                        data-testid="load-older-completed-btn"
+                        className="text-[11px] text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap disabled:opacity-50 transition-colors underline cursor-pointer"
+                      >
+                        {isLoadingColdArchive
+                          ? 'Loading older tasks...'
+                          : `Load older completed tasks (${coldCount} items)`}
+                      </button>
+                    </div>
+                  )}
+
+                  {hasQuickAdd && (
+                    <div className="p-3 border-b border-slate-800/80 bg-slate-950/60 animate-in fade-in">
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleCreateQuickInlineItem(col.id);
+                        }}
+                        className="space-y-2"
+                      >
+                        <input
+                          type="text"
+                          placeholder="Item title..."
+                          value={quickAddTitle}
+                          onChange={(e) => setQuickAddTitle(e.target.value)}
+                          autoFocus
+                          disabled={isCreatingQuickItem}
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                        />
+                        <div className="flex items-center justify-end space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQuickAddColId(null);
+                              setQuickAddTitle('');
+                            }}
+                            className="px-2 py-1 text-[11px] text-slate-400 hover:text-white"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!quickAddTitle.trim() || isCreatingQuickItem}
+                            className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-medium disabled:opacity-50"
+                          >
+                            {isCreatingQuickItem ? 'Adding...' : 'Add'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </>
+              ) : undefined;
 
             return (
-              <div
+              <BoardColumn
                 key={col.id}
+                column={col}
+                itemCount={colItems.length}
+                orientation={effectiveOrientation}
+                isCollapsed={isCollapsedSideways}
+                isCollapsedUp={isCollapsedUp}
+                onToggleCollapse={() => toggleCollapseSideways(col.id)}
+                onToggleCollapseUp={() => toggleCollapseUp(col.id)}
+                onQuickAdd={
+                  isEffectivelyReadOnly
+                    ? undefined
+                    : () => {
+                        const opening = quickAddColId !== col.id;
+                        setQuickAddColId(opening ? col.id : null);
+                        setQuickAddTitle('');
+                        if (opening && isCollapsedUp) {
+                          toggleCollapseUp(col.id);
+                        }
+                      }
+                }
+                isReadOnly={isEffectivelyReadOnly}
+                collapseButtonTestId={`column-collapse-sideways-btn-${col.id}`}
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }}
                 onDrop={(e) => handleDropOnColEnd(e, col.id)}
-                data-testid={`column-container-${col.id}`}
-                className={`w-full ${
-                  effectiveOrientation === 'columns'
-                    ? 'min-w-0 md:min-w-[280px] md:max-w-[340px] flex-1 flex flex-col h-full bg-slate-950/50 border border-slate-800/80 rounded-xl md:w-80 md:min-w-[320px] md:max-w-[320px]'
-                    : ''
-                } shrink-0 bg-slate-900/40 border border-slate-800/80 rounded-xl flex flex-col transition-all shadow-sm ${
-                  isCollapsedUp ? 'h-auto' : effectiveOrientation === 'columns' ? 'h-full' : ''
-                }`}
+                bannerSlot={columnBannerSlot}
               >
-                {/* Column Header */}
-                <div
-                  onClick={() => {
-                    if (effectiveOrientation === 'stack' || isCollapsedUp) {
-                      toggleCollapseUp(col.id);
-                    }
-                  }}
-                  className={`shrink-0 p-3 border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-10 flex items-center justify-between rounded-t-xl px-4 py-3 ${
-                    effectiveOrientation === 'stack' || isCollapsedUp ? 'cursor-pointer hover:bg-slate-900/60 transition-colors' : ''
-                  }`}
-                >
-                  <div className="flex items-center space-x-2 min-w-0">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: col.color || '#94a3b8' }}
-                    />
-                    <span className="font-semibold text-xs tracking-wider uppercase text-slate-300 truncate">
-                      {col.label}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono shrink-0">
-                      {colItems.length}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center space-x-1 shrink-0">
-                    {!isEffectivelyReadOnly && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setQuickAddColId(quickAddColId === col.id ? null : col.id);
-                          setQuickAddTitle('');
-                        }}
-                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title={`Add item to ${col.label}`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {/* Vertical collapse chevron: retired from desktop horizontal columns, active in Wide Stack and on mobile */}
-                    {effectiveOrientation === 'stack' ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCollapseUp(col.id);
-                        }}
-                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title={isCollapsedUp ? `Expand ${col.label}` : 'Collapse column upward'}
-                        data-testid={`column-collapse-up-btn-${col.id}`}
-                      >
-                        {isCollapsedUp ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                      </button>
-                    ) : isCollapsedUp ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCollapseUp(col.id);
-                        }}
-                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title={`Expand ${col.label}`}
-                        data-testid={`column-collapse-up-btn-${col.id}`}
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCollapseUp(col.id);
-                        }}
-                        className="md:hidden p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title="Collapse column upward"
-                        data-testid={`column-collapse-up-btn-${col.id}`}
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {effectiveOrientation === 'columns' && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCollapseSideways(col.id);
-                        }}
-                        className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                        title="Collapse column sideways"
-                        data-testid={`column-collapse-sideways-btn-${col.id}`}
-                      >
-                        <ChevronsLeftRight className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Cold Archive Partition Banner (TASK-TRK-COLD-ARCHIVE-PARTITION) */}
-                {col.id === targetColdColId && coldCount > 0 && !isCollapsedUp && (
+                {colItems.length === 0 ? (
                   <div
-                    data-testid="cold-archive-banner"
-                    className="mx-3 my-2 px-3 py-2 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5 shrink-0"
-                  >
-                    <span className="text-[11px] text-slate-400 font-medium">
-                      Showing recent (last 14d)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onLoadColdArchive?.();
-                      }}
-                      disabled={isLoadingColdArchive}
-                      data-testid="load-older-completed-btn"
-                      className="text-[11px] text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap disabled:opacity-50 transition-colors underline cursor-pointer"
-                    >
-                      {isLoadingColdArchive
-                        ? 'Loading older tasks...'
-                        : `Load older completed tasks (${coldCount} items)`}
-                    </button>
-                  </div>
-                )}
-
-                {/* Inline Quick Add Input */}
-                {quickAddColId === col.id && !isEffectivelyReadOnly && (
-                  <div className="p-3 border-b border-slate-800/80 bg-slate-950/60 animate-in fade-in">
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleCreateQuickInlineItem(col.id);
-                      }}
-                      className="space-y-2"
-                    >
-                      <input
-                        type="text"
-                        placeholder="Item title..."
-                        value={quickAddTitle}
-                        onChange={(e) => setQuickAddTitle(e.target.value)}
-                        autoFocus
-                        disabled={isCreatingQuickItem}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                      />
-                      <div className="flex items-center justify-end space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setQuickAddColId(null);
-                            setQuickAddTitle('');
-                          }}
-                          className="px-2 py-1 text-[11px] text-slate-400 hover:text-white"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!quickAddTitle.trim() || isCreatingQuickItem}
-                          className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-medium disabled:opacity-50"
-                        >
-                          {isCreatingQuickItem ? 'Adding...' : 'Add'}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-
-                {/* Cards Container */}
-                {!isCollapsedUp && (
-                  <div
-                    className={`board-column-scroll p-2 space-y-2.5 custom-scrollbar ${
-                      effectiveOrientation === 'stack'
-                        ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3'
-                        : 'flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-2.5 custom-scrollbar min-h-0 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full space-y-3 p-3'
+                    className={`flex items-center justify-center border-2 border-dashed border-slate-800/60 rounded-lg text-slate-600 text-xs select-none ${
+                      effectiveOrientation === 'stack' ? 'h-24 col-span-full' : 'h-28'
                     }`}
                   >
-                    {colItems.length === 0 ? (
-                      <div
-                        className={`flex items-center justify-center border-2 border-dashed border-slate-800/60 rounded-lg text-slate-600 text-xs select-none ${
-                          effectiveOrientation === 'stack' ? 'h-24 col-span-full' : 'h-28'
-                        }`}
-                      >
-                        No items
-                      </div>
-                    ) : (
-                      colItems.map((item, index) => {
-                        const itemHierarchy = getItemHierarchy(item);
-                        const isBeingDragged = draggedItemId === item.id;
-                        const isDragTarget =
-                          dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
-                        const itemProjectSettings = getItemProjectSettings ? getItemProjectSettings(item) : projectSettings;
-                        const isCardImmutable = isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs);
-
-                        return (
-                          <div key={item.id} className="relative">
-                            {/* Insertion Indicator line */}
-                            {isDragTarget && (
-                              <div className="h-1 bg-emerald-400 rounded-full my-1 shadow-lg shadow-emerald-400/50 animate-pulse" />
-                            )}
-
-                            <KanbanCard
-                              item={item}
-                              childCount={childCountMap.get(item.id) || 0}
-                              rollupPoints={pointsRollupMap.get(item.id) || 0}
-                              pointMode={pointMode}
-                              projectSettings={itemProjectSettings}
-                              itemHierarchy={itemHierarchy}
-                              allProjects={allProjects}
-                              isAllProjects={isAllProjects}
-                              isCardImmutable={isCardImmutable}
-                              isReadOnly={isEffectivelyReadOnly}
-                              isBeingDragged={isBeingDragged}
-                              isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
-                              onEditItem={setEditingItem}
-                              onDeleteItem={setDeleteConfirmItem}
-                              onUpdateStatus={handleUpdateStatus}
-                              onUpdateType={handleUpdateType}
-                              getItemStatuses={getItemStatuses}
-                              onDragStart={isEffectivelyReadOnly ? () => {} : handleDragStart}
-                              onDragEnd={handleDragEnd}
-                              onDragOver={(e) => handleDragOverCard(e, col.id, index)}
-                              onDrop={(e) => {
-                                e.stopPropagation();
-                                handleDrop(e, col.id, index);
-                              }}
-                            />
-                          </div>
-                        );
-                      })
-                    )}
+                    No items
                   </div>
+                ) : (
+                  colItems.map((item, index) => {
+                    const itemHierarchy = getItemHierarchy(item);
+                    const isBeingDragged = draggedItemId === item.id;
+                    const isDragTarget =
+                      dragOverTarget?.colId === col.id && dragOverTarget?.index === index;
+                    const itemProjectSettings = getItemProjectSettings ? getItemProjectSettings(item) : projectSettings;
+                    const isCardImmutable = isItemImmutableDueToCompletedSprint(item, itemProjectSettings, availableSprintDefs);
+
+                    return (
+                      <div key={item.id} className="relative">
+                        {/* Insertion Indicator line */}
+                        {isDragTarget && (
+                          <div className="h-1 bg-emerald-400 rounded-full my-1 shadow-lg shadow-emerald-400/50 animate-pulse" />
+                        )}
+
+                        <KanbanCard
+                          item={item}
+                          compact={effectiveCardDensity === 'compact'}
+                          childCount={childCountMap.get(item.id) || 0}
+                          rollupPoints={pointsRollupMap.get(item.id) || 0}
+                          pointMode={pointMode}
+                          projectSettings={itemProjectSettings}
+                          itemHierarchy={itemHierarchy}
+                          allProjects={allProjects}
+                          isAllProjects={isAllProjects}
+                          isCardImmutable={isCardImmutable}
+                          isReadOnly={isEffectivelyReadOnly}
+                          isBeingDragged={isBeingDragged}
+                          isGuardRejected={Boolean(guardRejectedItemIds?.has(item.id))}
+                          onEditItem={setEditingItem}
+                          onDeleteItem={setDeleteConfirmItem}
+                          onUpdateStatus={handleUpdateStatus}
+                          onUpdateType={handleUpdateType}
+                          getItemStatuses={getItemStatuses}
+                          onDragStart={isEffectivelyReadOnly ? () => {} : handleDragStart}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={(e) => handleDragOverCard(e, col.id, index)}
+                          onDrop={(e) => {
+                            e.stopPropagation();
+                            handleDrop(e, col.id, index);
+                          }}
+                        />
+                      </div>
+                    );
+                  })
                 )}
-              </div>
+              </BoardColumn>
             );
           })}
 
           {/* Uncategorized Fallback Column */}
           {unmappedItems.length > 0 && (
-            <div className="w-full md:w-80 md:min-w-[320px] md:max-w-[320px] shrink-0 bg-slate-900/40 border border-amber-500/40 rounded-xl flex flex-col h-full shadow-sm">
+            <div
+              className={`${
+                effectiveOrientation === 'columns'
+                  ? 'w-full md:w-80 md:min-w-[320px] md:max-w-[320px] h-full'
+                  : 'w-full h-auto'
+              } shrink-0 bg-slate-900/40 border border-amber-500/40 rounded-xl flex flex-col shadow-sm`}
+            >
               <div className="px-4 py-3 border-b border-amber-500/30 flex items-center justify-between shrink-0 bg-amber-500/10 rounded-t-xl">
                 <div className="flex items-center space-x-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
@@ -633,13 +550,20 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                 <span className="text-[10px] text-amber-400/80 italic">Unmapped status</span>
               </div>
 
-              <div className="board-column-scroll p-3 space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0 custom-scrollbar">
+              <div
+                className={
+                  effectiveOrientation === 'stack'
+                    ? 'board-column-scroll p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 custom-scrollbar'
+                    : 'board-column-scroll p-3 space-y-3 flex-1 overflow-y-visible max-h-none md:overflow-y-auto md:max-h-full min-h-0 custom-scrollbar'
+                }
+              >
                 {unmappedItems.map((item) => {
                   const itemProjectSettings = getItemProjectSettings ? getItemProjectSettings(item) : projectSettings;
                   return (
                     <KanbanCard
                       key={item.id}
                       item={item}
+                      compact={effectiveCardDensity === 'compact'}
                       childCount={childCountMap.get(item.id) || 0}
                       rollupPoints={pointsRollupMap.get(item.id) || 0}
                       pointMode={pointMode}

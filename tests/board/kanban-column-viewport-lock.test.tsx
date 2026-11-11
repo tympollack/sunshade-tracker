@@ -33,6 +33,21 @@ describe('TASK-TRK-COLUMN-SCROLL-VIEWPORT-LOCK: Viewport Height Lock & Independe
       expect(board.className).toContain('p-4');
     });
 
+    it('BoardView omits viewport height lock and vertical clipping when orientation is stack', () => {
+      render(
+        <BoardView orientation="stack" dataTestId="test-board-stack-view">
+          <div>Column 1</div>
+        </BoardView>
+      );
+
+      const board = screen.getByTestId('test-board-stack-view');
+      expect(board.className).toContain('h-auto');
+      expect(board.className).toContain('overflow-y-visible');
+      expect(board.className).toContain('flex-col');
+      expect(board.className).not.toContain('overflow-y-hidden');
+      expect(board.className).not.toContain('h-[calc(100dvh-var(--header-height)-var(--toolbar-height))]');
+    });
+
     it('BoardViewContainer source code contains board stage lock classes and globals.css defines header/toolbar heights', () => {
       const containerPath = path.resolve('src/components/views/BoardViewContainer.tsx');
       const content = fs.readFileSync(containerPath, 'utf8');
@@ -115,13 +130,18 @@ describe('TASK-TRK-COLUMN-SCROLL-VIEWPORT-LOCK: Viewport Height Lock & Independe
       expect(scrollParent?.className).toContain('min-h-0');
     });
 
-    it('BoardViewContainer enforces sticky header and independent column scroll classes', () => {
+    it('BoardViewContainer mounts BoardColumn which enforces sticky header and independent column scroll classes', () => {
       const containerPath = path.resolve('src/components/views/BoardViewContainer.tsx');
-      const content = fs.readFileSync(containerPath, 'utf8');
+      const containerContent = fs.readFileSync(containerPath, 'utf8');
+      expect(containerContent).toContain('<BoardColumn');
+
+      const columnPath = path.resolve('src/components/board/BoardColumn.tsx');
+      const content = fs.readFileSync(columnPath, 'utf8');
       expect(content).toContain('sticky top-0 z-10');
       expect(content).toContain('min-w-[280px]');
       expect(content).toContain('max-w-[340px]');
-      expect(content).toContain('overflow-y-auto overflow-x-hidden');
+      expect(content).toContain('md:overflow-y-auto');
+      expect(content).toContain('overflow-x-hidden');
     });
   });
 });
