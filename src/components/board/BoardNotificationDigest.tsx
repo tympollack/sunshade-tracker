@@ -124,7 +124,10 @@ export function BoardNotificationDigest({ tenantSlug, items, getItemStatuses }: 
   };
 
   return (
-    <div data-testid="board-notification-digest">
+    <div
+      data-testid="board-notification-digest"
+      className="w-full text-slate-100 [&_[data-testid='notification-digest-card']]:!bg-slate-900 [&_[data-testid='notification-digest-card']]:!border-slate-800 [&_[data-testid='notification-digest-card']]:text-slate-100 [&_.text-slate-600]:!text-slate-400 [&_.text-slate-500]:!text-slate-400 [&_.divide-slate-100]:!divide-slate-800 [&_button]:!text-slate-200 hover:[&_button]:!text-white"
+    >
       <NotificationDigestCard
         digest={digest}
         title="Notifications"
@@ -133,7 +136,7 @@ export function BoardNotificationDigest({ tenantSlug, items, getItemStatuses }: 
         onMarkRead={markRead}
         onMarkAllRead={markAllRead}
         onDismiss={dismiss}
-        emptyState={<p className="px-4 py-3 text-sm text-slate-500">No blockers or new updates.</p>}
+        emptyState={<p className="px-4 py-3 text-sm text-slate-400">No blockers or new updates.</p>}
       />
     </div>
   );
