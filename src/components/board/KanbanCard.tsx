@@ -19,6 +19,7 @@ import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
 import { PointBadge } from '@/components/common/PointBadge';
 import { SpYieldBadge } from '@/components/board/SpYieldBadge';
+import { CardMetadataChips } from '@/components/board/CardMetadataChips';
 
 function formatCardTimestamp(dateString?: string): string | null {
   if (!dateString) return null;
@@ -188,7 +189,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         onDoubleClick={() => onEditItem?.(item)}
         data-testid={`kanban-card-${item.id}`}
         data-guard-rejected={isGuardRejected ? 'true' : undefined}
-        className={`p-2.5 rounded-lg border bg-slate-900/90 hover:bg-slate-900 cursor-pointer transition-all flex flex-col justify-between min-h-[76px] max-h-[88px] shadow-sm group hover:border-slate-700 ${
+        className={`w-full min-w-0 overflow-hidden relative p-2.5 rounded-lg border bg-slate-900/90 hover:bg-slate-900 cursor-pointer transition-all flex flex-col justify-between min-h-[76px] max-h-[88px] shadow-sm group hover:border-slate-700 ${
           isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
         } ${
           isGuardRejected ? 'ring-2 ring-rose-500 border-rose-500/80 ' : ''
@@ -207,7 +208,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
         {/* Line 1: Identity & Points */}
         <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
           <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
-            <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
+            <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-0" />
 
             {/* Static Level Badge */}
             <div className="relative inline-flex items-center shrink-0">
@@ -405,7 +406,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       onDoubleClick={() => onEditItem?.(item)}
       data-testid={`kanban-card-${item.id}`}
       data-guard-rejected={isGuardRejected ? 'true' : undefined}
-      className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
+      className={`w-full min-w-0 overflow-hidden relative p-3.5 rounded-lg border border-slate-800 bg-slate-900/90 transition-all space-y-2.5 shadow-sm group hover:border-slate-700 max-h-[380px] overflow-y-auto overscroll-contain custom-scrollbar ${
         isCardImmutable || isReadOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
       } ${
         isGuardRejected ? 'ring-2 ring-rose-500 border-rose-500/80 ' : ''
@@ -424,7 +425,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       {/* Card Top: Level Selector Badge, Reference ID, Dual Point Badge, Project Badge, Edit & Delete */}
       <div className="flex items-center justify-between text-xs gap-2 min-w-0 w-full mb-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
-          <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 -ml-1" />
+          <GripVertical className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-0" />
 
           {/* Quick Level Selector */}
           <div className="relative inline-flex items-center shrink-0">
@@ -663,49 +664,32 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
       {item.metadata && Object.keys(item.metadata).length > 0 && (() => {
         const parentProject = allProjects?.find((p) => p.id === item.project_id || p.slug === item.project_id);
         const parentGithubRepo = parentProject?.settings?.github_repo || parentProject?.settings?.github_repository;
-        const { prUrl, commitHash, isGitHubField, repo, owner } = extractGitHubMetadata(item.metadata, parentGithubRepo);
-        const nonGitHubEntries = Object.entries(item.metadata).filter(([k]) => {
-          if (isGitHubField(k)) return false;
-          // Filter out points/sprint already rendered in headers/badges to keep card clean
-          if (['story_points', 'points', 'estimate'].includes(k)) return false;
-          return true;
-        });
-        const hasAnyDisplay = prUrl || commitHash || nonGitHubEntries.length > 0;
-        if (!hasAnyDisplay) return null;
+        const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata, parentGithubRepo);
 
         return (
-          <div className="flex flex-wrap gap-1 pt-0.5">
-            {prUrl && (
-              <GitHubBadge
-                type="pr"
-                value={prUrl}
-                repo={repo}
-                owner={owner}
-              />
+          <div className="space-y-1 pt-0.5 w-full min-w-0 overflow-hidden">
+            {(prUrl || commitHash) && (
+              <div className="flex flex-wrap gap-1 w-full min-w-0 overflow-hidden">
+                {prUrl && (
+                  <GitHubBadge
+                    type="pr"
+                    value={prUrl}
+                    repo={repo}
+                    owner={owner}
+                  />
+                )}
+                {commitHash && (
+                  <GitHubBadge
+                    type="commit"
+                    value={commitHash}
+                    prUrl={prUrl}
+                    repo={repo}
+                    owner={owner}
+                  />
+                )}
+              </div>
             )}
-            {commitHash && (
-              <GitHubBadge
-                type="commit"
-                value={commitHash}
-                prUrl={prUrl}
-                repo={repo}
-                owner={owner}
-              />
-            )}
-            {nonGitHubEntries.map(([k, v]) => {
-              const rawVal = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-              const displayVal = rawVal.replace(/\s+/g, ' ').trim();
-              const truncated = displayVal.length > 28 ? displayVal.slice(0, 28) + '...' : displayVal;
-              return (
-                <span
-                  key={k}
-                  title={`${k}: ${rawVal}`}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800/60 font-mono max-w-full truncate inline-block"
-                >
-                  <span className="text-slate-500">{k}:</span> {truncated}
-                </span>
-              );
-            })}
+            <CardMetadataChips itemId={item.id} metadata={item.metadata} />
           </div>
         );
       })()}
