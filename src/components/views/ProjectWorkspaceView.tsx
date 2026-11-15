@@ -1149,66 +1149,121 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setFetchError(null);
     try {
       let targetProjectId: string | undefined = undefined;
-      const settingsRes = await apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
-      if (settingsRes.ok) {
-        const sData = await settingsRes.json();
-        if (Array.isArray(sData.projects)) {
-          setAllProjects(sData.projects);
-        }
-        if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
-          setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
-          const portfolioSettings = mergeProjectSettings(sData.projects);
-          setProjectSettings(normalizeProjectSettings(portfolioSettings));
-          setLoadedProjectSlug(projectSlug);
-        } else if (!isAllProjects) {
-          const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
-          if (proj) {
-            targetProjectId = proj.id;
-            const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
-            if (detailRes.ok) {
-              const detail = await detailRes.json();
-              if (detail.settings) {
-                const normalized = normalizeProjectSettings(detail.settings);
-                const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
-                  ...h,
-                  color: h.color || getDefaultLevelHex(h.level),
-                }));
-                const enrichedSettings: ProjectSettings = {
-                  ...normalized,
-                  hierarchy: enrichedHierarchy,
-                };
-                setProjectSettings(enrichedSettings);
-                if (enrichedSettings.statuses?.length) {
-                  setSelectedStatuses((prev) => {
-                    if (prev === null) return null;
-                    const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
-                    return prev.filter((id) => validIds.has(id));
-                  });
-                }
-                if (enrichedSettings.hierarchy?.length) {
-                  setSelectedLevels((prev) => {
-                    if (prev === null) return null;
-                    const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
-                    return prev.filter((t) => validTypes.has(t));
-                  });
-                }
-              }
-            }
-            setLoadedProjectSlug(projectSlug);
-          }
-        }
-      }
-
-      // Fallback targetProjectId from known projects if projects fetch failed or omitted selected project
-      if (!isAllProjects && !targetProjectId) {
-        targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
-      }
 
       const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true&include_archived=true' : '';
       const itemsUrl = isAllProjects
         ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}${coldQuery}`
         : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}${coldQuery}`;
-      const itemsRes = await apiFetch(itemsUrl);
+
+      const sprintsUrl = isAllProjects
+        ? `/api/v1/sprints?tenant_slug=${tenantSlug}`
+        : `/api/v1/sprints?project_slug=${projectSlug}&tenant_slug=${tenantSlug}`;
+
+      const settingsPromise = !isAllProjects
+        ? apiFetch(`/api/v1/projects/${projectSlug}/settings`)
+        : Promise.resolve(null);
+
+      // Single Promise.all batch for tenant membership, projects list, project settings, initial items, and relational sprints
+      const [tenantRes, projectsRes, detailRes, itemsRes, sprintsRes] = await Promise.all([
+        apiFetch('/api/v1/tenants/me'),
+        apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`),
+        settingsPromise,
+        apiFetch(itemsUrl),
+        apiFetch(sprintsUrl),
+      ]);
+
+      // 1. Process Tenant Info
+      if (tenantRes.ok) {
+        const tData = await tenantRes.json();
+        if (tData.user) {
+          setCurrentUser(tData.user);
+        }
+        setAllWorkspaces(tData.workspaces || []);
+        const currentWs = (tData.workspaces || []).find((w: any) => w.slug === tenantSlug);
+        const ws = currentWs || tData.primary_workspace;
+        if (ws) {
+          setTenantInfo({
+            id: ws.id,
+            slug: ws.slug,
+            name: ws.name,
+            tier: ws.tier,
+            api_key_preview: ws.api_key_preview,
+            role: ws.role,
+            settings: ws.settings || {},
+            metadata: ws.metadata || {},
+          });
+          if (Array.isArray(ws.projects) && ws.projects.length > 0) {
+            setAllProjects(ws.projects);
+          }
+          if (ws.members) {
+            setWorkspaceMembers(ws.members);
+          }
+        }
+      }
+
+      // 2. Process Projects List & Schema Settings
+      let sProjects: ProjectInfo[] = [];
+      if (projectsRes.ok) {
+        const sData = await projectsRes.json();
+        if (Array.isArray(sData.projects)) {
+          sProjects = sData.projects;
+          setAllProjects(sData.projects);
+        }
+      }
+
+      const matchedProj = sProjects.find((p: ProjectInfo) => p.slug === projectSlug);
+      if (matchedProj) {
+        targetProjectId = matchedProj.id;
+      } else if (!isAllProjects && !targetProjectId) {
+        targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
+      }
+
+      if (isAllProjects && sProjects.length > 0) {
+        setSelectedSchemaProjectSlug((prev) => prev || sProjects[0].slug);
+        const portfolioSettings = mergeProjectSettings(sProjects);
+        setProjectSettings(normalizeProjectSettings(portfolioSettings));
+        setLoadedProjectSlug(projectSlug);
+      } else if (!isAllProjects) {
+        let loadedSettings: ProjectSettings | null = null;
+        if (detailRes && detailRes.ok) {
+          const detail = await detailRes.json();
+          if (detail.settings) {
+            loadedSettings = detail.settings;
+          }
+        }
+        if (!loadedSettings && matchedProj?.settings) {
+          loadedSettings = matchedProj.settings;
+        }
+        if (loadedSettings) {
+          const normalized = normalizeProjectSettings(loadedSettings);
+          const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
+            ...h,
+            color: h.color || getDefaultLevelHex(h.level),
+          }));
+          const enrichedSettings: ProjectSettings = {
+            ...normalized,
+            hierarchy: enrichedHierarchy,
+          };
+          setProjectSettings(enrichedSettings);
+          if (enrichedSettings.statuses?.length) {
+            setSelectedStatuses((prev) => {
+              if (prev === null) return null;
+              const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
+              return prev.filter((id) => validIds.has(id));
+            });
+          }
+          if (enrichedSettings.hierarchy?.length) {
+            setSelectedLevels((prev) => {
+              if (prev === null) return null;
+              const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
+              return prev.filter((t) => validTypes.has(t));
+            });
+          }
+        }
+        setLoadedProjectSlug(projectSlug);
+      }
+
+      // 3. Process Work Items
       if (itemsRes.ok) {
         const iData = await itemsRes.json();
         setItems(iData.items || []);
@@ -1236,31 +1291,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setFetchError(err.error || `Failed to load items (${itemsRes.status})`);
       }
 
-      // Query configured relational sprints from tracker.sprints table
-      // In single project view (!isAllProjects), only query when targetProjectId is known to prevent exposing unrelated sprints
-      if (isAllProjects || targetProjectId) {
+      // 4. Process Relational Sprints
+      if (sprintsRes && sprintsRes.ok) {
         try {
-          const sprintsUrl = !isAllProjects && targetProjectId
-            ? `/api/v1/sprints?project_id=${targetProjectId}&tenant_slug=${tenantSlug}`
-            : `/api/v1/sprints?tenant_slug=${tenantSlug}`;
-          const sprintsRes = await apiFetch(sprintsUrl);
-          if (sprintsRes.ok) {
-            const sData = await sprintsRes.json();
-            if (Array.isArray(sData.sprints)) {
-              const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
-                id: s.id,
-                project_id: s.project_id,
-                name: s.name,
-                status: s.status || (s.is_active ? 'active' : 'planned'),
-                goal: s.goal || null,
-                start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
-                end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
-                is_current: Boolean(s.is_active || s.status === 'active'),
-                committed_points: s.committed_points || 0,
-                metadata: s.metadata || undefined,
-              }));
-              setDbSprints(mappedDbSprints);
-            }
+          const sData = await sprintsRes.json();
+          if (Array.isArray(sData.sprints)) {
+            const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
+              id: s.id,
+              project_id: s.project_id,
+              name: s.name,
+              status: s.status || (s.is_active ? 'active' : 'planned'),
+              goal: s.goal || null,
+              start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
+              end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
+              is_current: Boolean(s.is_active || s.status === 'active'),
+              committed_points: s.committed_points || 0,
+              metadata: s.metadata || undefined,
+            }));
+            setDbSprints(mappedDbSprints);
           }
         } catch {
           // Silently tolerate in environments where relational endpoint is unmocked
@@ -1438,9 +1486,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [handleSaveSchema]);
 
   useEffect(() => {
-    fetchTenantInfo();
     fetchData();
-  }, [fetchTenantInfo, fetchData]);
+  }, [fetchData]);
 
   useEffect(() => {
     preloadPortfolioItems(tenantSlug);

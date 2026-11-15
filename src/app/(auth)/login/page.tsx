@@ -9,6 +9,7 @@ import {
   sanitizeNextUrl,
 } from '@/lib/env';
 import { resolvePostAuthDestination } from '@/lib/auth';
+import { getSessionUser } from '@/lib/auth-guard';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { LoginForm } from './LoginForm';
 
@@ -23,7 +24,7 @@ export default async function LoginPage({
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { user } = await getSessionUser(supabase);
 
   const params = searchParams ? await searchParams : {};
   const rawNext = typeof params.next === 'string' ? params.next : null;

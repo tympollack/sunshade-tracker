@@ -49,8 +49,23 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // IMPORTANT: getUser() refreshes the token and must be called before any redirects
-  const { data: { user } } = await supabase.auth.getUser();
+  // ─── Verify session ────────────────────────────────────────────────────────
+  // Verify session claims locally via getClaims() to eliminate outbound /auth/v1/user network round-trips
+  let user: any = null;
+  if (typeof supabase.auth.getClaims === 'function') {
+    const { data: claimsData } = await supabase.auth.getClaims();
+    if (claimsData?.claims?.sub) {
+      user = {
+        id: claimsData.claims.sub,
+        email: claimsData.claims.email,
+        user_metadata: (claimsData.claims.user_metadata || {}) as Record<string, any>,
+        ...claimsData.claims,
+      };
+    }
+  } else if (typeof supabase.auth.getUser === 'function') {
+    const { data } = await supabase.auth.getUser();
+    user = data?.user || null;
+  }
 
   // ─── Public routes — always allow through ───────────────────────────────
   // Handle /@tenantSlug alias by redirecting to /tenantSlug

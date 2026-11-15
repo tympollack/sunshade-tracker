@@ -18,6 +18,55 @@ export type AuthResult =
   | { context: AuthContext; errorResponse: null }
   | { context: null; errorResponse: NextResponse };
 
+/**
+ * Resolves the authenticated user from local JWT claims using `supabase.auth.getClaims()`
+ * to avoid an outbound network round-trip to `/auth/v1/user`.
+ *
+ * If `getClaims()` is not available (e.g. in test mocks where only `getUser` is provided),
+ * falls back to `supabase.auth.getUser()`.
+ */
+export async function getSessionUser(
+  supabase: any,
+  options: { allowFallbackToGetUser?: boolean } = {}
+): Promise<{ user: any | null; error: any | null }> {
+  if (typeof supabase?.auth?.getClaims === 'function') {
+    try {
+      const { data: claimsData, error: claimsErr } = await supabase.auth.getClaims();
+      if (claimsData?.claims?.sub) {
+        const claims = claimsData.claims;
+        const user = {
+          id: claims.sub,
+          email: claims.email as string | undefined,
+          user_metadata: (claims.user_metadata || {}) as Record<string, any>,
+          app_metadata: (claims.app_metadata || {}) as Record<string, any>,
+          role: claims.role as string | undefined,
+          ...claims,
+        };
+        return { user, error: null };
+      }
+      if (claimsErr && options.allowFallbackToGetUser && typeof supabase?.auth?.getUser === 'function') {
+        const { data, error } = await supabase.auth.getUser();
+        return { user: data?.user || null, error };
+      }
+      return { user: null, error: claimsErr || null };
+    } catch (err) {
+      if (options.allowFallbackToGetUser && typeof supabase?.auth?.getUser === 'function') {
+        const { data, error } = await supabase.auth.getUser();
+        return { user: data?.user || null, error };
+      }
+      return { user: null, error: err };
+    }
+  }
+
+  // Fallback for environments / mocks where getClaims is not provided
+  if (typeof supabase?.auth?.getUser === 'function') {
+    const { data, error } = await supabase.auth.getUser();
+    return { user: data?.user || null, error };
+  }
+
+  return { user: null, error: null };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Session-based auth (for frontend dashboard API calls)
 //
@@ -30,7 +79,20 @@ export type AuthResult =
 export async function authenticateSession(req: NextRequest): Promise<AuthResult> {
   try {
     const supabase = await createServerClient();
-    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    let user: any = null;
+    let userErr: any = null;
+
+    if (req.method === 'GET') {
+      // Local JWT verification via getClaims() on reads — eliminates outbound /auth/v1/user
+      const res = await getSessionUser(supabase);
+      user = res.user;
+      userErr = res.error;
+    } else {
+      // Write mutations (POST, PATCH, DELETE) strictly use getUser()
+      const { data, error } = await supabase.auth.getUser();
+      user = data?.user || null;
+      userErr = error;
+    }
     const service = supabaseAdmin;
 
     const userName = user

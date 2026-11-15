@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
+import { getSessionUser } from '@/lib/auth-guard';
 
 /**
  * GET /api/v1/tenants/me
@@ -12,7 +13,7 @@ import { createServerClient, createServiceClient } from '@/lib/supabase-server';
 export async function GET(req: NextRequest) {
   try {
     const supabase = await createServerClient();
-    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    const { user, error: userErr } = await getSessionUser(supabase);
     const service = createServiceClient();
 
     const rawSlugHint =

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createServerClient } from '@/lib/supabase-server';
 import { resolvePostAuthDestination } from '@/lib/auth';
+import { getSessionUser } from '@/lib/auth-guard';
 
 /**
  * Intelligent workspace destination handler:
@@ -10,9 +11,7 @@ import { resolvePostAuthDestination } from '@/lib/auth';
 export default async function WorkspacesPage() {
   try {
     const supabase = await createServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { user } = await getSessionUser(supabase);
 
     if (user) {
       const destination = await resolvePostAuthDestination(user.id);

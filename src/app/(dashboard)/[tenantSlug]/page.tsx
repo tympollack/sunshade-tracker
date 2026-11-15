@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
+import { getSessionUser } from '@/lib/auth-guard';
 
 interface PageProps {
   params: Promise<{ tenantSlug: string }>;
@@ -27,7 +28,7 @@ export default async function TenantRootPage({ params }: PageProps) {
       Boolean(tenant.metadata?.is_public));
 
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { user } = await getSessionUser(supabase);
 
   if (!user && !isPublic) {
     redirect(`/login?next=/${tenantSlug}`);
