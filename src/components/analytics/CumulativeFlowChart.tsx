@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { AreaChart, HelpCircle } from 'lucide-react';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
 
-export type CfdTimeWindow = '14D' | '30D' | 'Full Sprint';
+export type CfdTimeWindow = '14D' | '30D' | 'Sprint to Date' | 'Full Sprint';
 export type CfdScopeMode = 'all' | 'wip_only';
 
 export interface CumulativeFlowChartProps {
@@ -15,6 +15,44 @@ export interface CumulativeFlowChartProps {
   initialTimeWindow?: CfdTimeWindow;
   initialHideUnstarted?: boolean;
   dateFormat?: 'MMM DD' | 'MM/DD';
+  sprintStartDate?: string | null;
+  sprintEndDate?: string | null;
+  today?: string;
+}
+
+/**
+ * Slices a date-indexed telemetry series according to the selected range preset:
+ * - 'Sprint to Date': clamps the series at min(sprintEndDate, todayISO) so unelapsed future dates do not compress active curves.
+ * - 'Full Sprint': preserves the full sprint timeline up to sprintEndDate (including remaining runway).
+ * - '14D' / '30D': takes the most recent 14 or 30 elapsed days up to the horizon ceiling.
+ */
+export function clampSeriesToHorizon<T extends { date: string }>(
+  data: T[],
+  timeWindow: CfdTimeWindow,
+  options?: {
+    sprintEndDate?: string | null;
+    today?: string;
+  }
+): T[] {
+  if (!data || data.length === 0) return [];
+  const todayISO = (options?.today || new Date().toISOString()).split('T')[0];
+  const sprintEndISO = options?.sprintEndDate ? options.sprintEndDate.split('T')[0] : null;
+  const horizonEndISO = sprintEndISO && sprintEndISO < todayISO ? sprintEndISO : todayISO;
+
+  if (timeWindow === 'Full Sprint') {
+    if (sprintEndISO) {
+      const withinSprint = data.filter((d) => !d.date || d.date <= sprintEndISO);
+      return withinSprint.length > 0 ? withinSprint : data;
+    }
+    return data;
+  }
+
+  const clampedToDate = data.filter((d) => !d.date || d.date <= horizonEndISO);
+  const effectiveSeries = clampedToDate.length > 0 ? clampedToDate : data;
+
+  if (timeWindow === '14D') return effectiveSeries.slice(-14);
+  if (timeWindow === '30D') return effectiveSeries.slice(-30);
+  return effectiveSeries;
 }
 
 interface StatusLayer {
@@ -129,9 +167,11 @@ export function CumulativeFlowChart({
   isLoading = false,
   isValidating = false,
   error = null,
-  initialTimeWindow = 'Full Sprint',
+  initialTimeWindow = 'Sprint to Date',
   initialHideUnstarted = false,
   dateFormat = 'MMM DD',
+  sprintEndDate = null,
+  today,
 }: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<CfdTimeWindow>(initialTimeWindow);
@@ -192,14 +232,12 @@ export function CumulativeFlowChart({
   };
 
   // Slices the telemetry series based on selected quick-filter preset:
-  // - '14D' and '30D' filter down to the most recent 14 or 30 days of data.
-  // - 'Full Sprint' preserves the entire timeline series provided by the parent analytics container.
+  // - 'Sprint to Date' (default): clamps at min(sprint.end_date, today) so future unelapsed dates do not compress active curves.
+  // - '14D' and '30D': filter down to the most recent 14 or 30 elapsed days.
+  // - 'Full Sprint': preserves the entire timeline series up to sprint.end_date.
   const displayData = React.useMemo(() => {
-    if (!data || data.length === 0) return [];
-    if (timeWindow === '14D') return data.slice(-14);
-    if (timeWindow === '30D') return data.slice(-30);
-    return data;
-  }, [data, timeWindow]);
+    return clampSeriesToHorizon(data, timeWindow, { sprintEndDate, today });
+  }, [data, timeWindow, sprintEndDate, today]);
 
   // Show skeleton on initial load, or when validating without pre-existing data
   const hasData = Boolean(displayData && displayData.length > 0);
@@ -362,7 +400,7 @@ export function CumulativeFlowChart({
             role="group"
             aria-label="CFD time window filter"
           >
-            {(['14D', '30D', 'Full Sprint'] as const).map((preset) => (
+            {(['14D', '30D', 'Sprint to Date', 'Full Sprint'] as const).map((preset) => (
               <button
                 key={preset}
                 type="button"

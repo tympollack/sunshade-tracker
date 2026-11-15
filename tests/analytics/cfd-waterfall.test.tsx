@@ -218,11 +218,16 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       // Verify preset buttons exist
       const btn14 = screen.getByTestId('cfd-window-14d');
       const btn30 = screen.getByTestId('cfd-window-30d');
+      const btnSprintToDate = screen.getByTestId('cfd-window-sprint-to-date');
       const btnFull = screen.getByTestId('cfd-window-full-sprint');
 
       expect(btn14).toBeInTheDocument();
       expect(btn30).toBeInTheDocument();
+      expect(btnSprintToDate).toBeInTheDocument();
       expect(btnFull).toBeInTheDocument();
+
+      // Sprint to Date is active by default
+      expect(btnSprintToDate).toHaveClass('bg-slate-700');
 
       // Click 14D
       fireEvent.click(btn14);
@@ -254,6 +259,72 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(formatCfdDate('2026-01-05')).toBe('Jan 05');
       expect(formatCfdDate('2026-10-02', 'MM/DD')).toBe('10/02');
       expect(formatCfdDate('')).toBe('');
+    });
+
+    it('TASK-TRK-CFD-SPRINT-TO-DATE-DEFAULT: clamps future dates by default under Sprint to Date and reveals remaining runway on Full Sprint', () => {
+      // Sprint from Oct 01 to Oct 30, with today = Oct 15 (15 elapsed days, 15 future days)
+      const activeSprintData: CfdDataPoint[] = Array.from({ length: 30 }, (_, i) => ({
+        date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        complete: Math.min(i, 14) * 2,
+        in_review: 2,
+        in_progress: 4,
+        not_started: 10,
+        unplanned: 0,
+      }));
+
+      const { container } = render(
+        <CumulativeFlowDiagram
+          data={activeSprintData}
+          sprintEndDate="2026-10-30"
+          today="2026-10-15"
+        />
+      );
+
+      // Default active pill is Sprint to Date
+      expect(screen.getByTestId('cfd-window-sprint-to-date')).toHaveClass('bg-slate-700');
+
+      const getDateLabels = () =>
+        Array.from(container.querySelectorAll('svg text')).filter((el) =>
+          el.getAttribute('transform')?.includes('rotate(-45')
+        );
+
+      // Should end at today (Oct 15), not Oct 30
+      const clampedLabels = getDateLabels();
+      expect(clampedLabels[clampedLabels.length - 1].textContent).toBe('Oct 15');
+
+      // Clicking Full Sprint reveals the full sprint runway up to Oct 30
+      fireEvent.click(screen.getByTestId('cfd-window-full-sprint'));
+      const fullLabels = getDateLabels();
+      expect(fullLabels[fullLabels.length - 1].textContent).toBe('Oct 30');
+    });
+
+    it('TASK-TRK-CFD-SPRINT-TO-DATE-DEFAULT: resolves both Sprint to Date and Full Sprint to sprint.end_date for completed historical sprints', () => {
+      const completedSprintData: CfdDataPoint[] = Array.from({ length: 14 }, (_, i) => ({
+        date: `2026-09-${String(i + 1).padStart(2, '0')}`,
+        complete: i * 3,
+        in_review: 1,
+        in_progress: 2,
+        not_started: Math.max(0, 20 - i),
+        unplanned: 0,
+      }));
+
+      const { container } = render(
+        <CumulativeFlowDiagram
+          data={completedSprintData}
+          sprintEndDate="2026-09-14"
+          today="2026-10-15"
+        />
+      );
+
+      const getDateLabels = () =>
+        Array.from(container.querySelectorAll('svg text')).filter((el) =>
+          el.getAttribute('transform')?.includes('rotate(-45')
+        );
+
+      expect(getDateLabels()[getDateLabels().length - 1].textContent).toBe('Sep 14');
+
+      fireEvent.click(screen.getByTestId('cfd-window-full-sprint'));
+      expect(getDateLabels()[getDateLabels().length - 1].textContent).toBe('Sep 14');
     });
   });
 

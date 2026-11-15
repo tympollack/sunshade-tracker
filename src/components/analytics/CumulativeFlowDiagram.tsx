@@ -5,6 +5,7 @@ export {
   calculateAdaptiveTickInterval,
   getAdaptiveTickIndices,
   formatCfdDate,
+  clampSeriesToHorizon,
   type CumulativeFlowChartProps,
   type CfdTimeWindow,
   type CfdScopeMode,

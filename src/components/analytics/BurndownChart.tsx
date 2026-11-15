@@ -2,6 +2,10 @@
 
 import React, { useState } from 'react';
 import { TrendingDown, AlertTriangle } from 'lucide-react';
+import { clampSeriesToHorizon, type CfdTimeWindow } from './CumulativeFlowChart';
+
+export type BurndownTimeWindow = CfdTimeWindow;
+export { clampSeriesToHorizon };
 
 export interface BurndownDataPoint {
   date: string;
@@ -12,9 +16,13 @@ export interface BurndownDataPoint {
   hasScopeCreep?: boolean;
 }
 
-interface BurndownChartProps {
+export interface BurndownChartProps {
   data: BurndownDataPoint[];
   isLoading?: boolean;
+  initialTimeWindow?: BurndownTimeWindow;
+  sprintStartDate?: string | null;
+  sprintEndDate?: string | null;
+  today?: string;
 }
 
 const CONTRIBUTOR_COLORS = [
@@ -64,8 +72,19 @@ export function getBurndownTickIndices(dataLength: number): number[] {
   return indices;
 }
 
-export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
+export function BurndownChart({
+  data,
+  isLoading = false,
+  initialTimeWindow = 'Sprint to Date',
+  sprintEndDate = null,
+  today,
+}: BurndownChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [timeWindow, setTimeWindow] = useState<BurndownTimeWindow>(initialTimeWindow);
+
+  const displayData = React.useMemo(() => {
+    return clampSeriesToHorizon(data, timeWindow, { sprintEndDate, today });
+  }, [data, timeWindow, sprintEndDate, today]);
 
   if (isLoading) {
     return (
@@ -76,7 +95,7 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!displayData || displayData.length === 0) {
     return (
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center">
         <TrendingDown className="w-10 h-10 text-slate-600 mb-3" />
@@ -94,20 +113,20 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   const padding = { top: 35, right: 30, bottom: 60, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
-  const tickIndicesSet = new Set(getBurndownTickIndices(data.length));
-  const shouldTilt = data.length > 14;
+  const tickIndicesSet = new Set(getBurndownTickIndices(displayData.length));
+  const shouldTilt = displayData.length > 14;
 
   // Max value calculation
   const maxPointValue = Math.max(
     10,
-    ...data.map((d) => Math.max(d.idealRemaining, d.actualRemaining)),
-    ...data.map((d) => d.dailyVelocity || 0)
+    ...displayData.map((d) => Math.max(d.idealRemaining, d.actualRemaining)),
+    ...displayData.map((d) => d.dailyVelocity || 0)
   );
   const yCeiling = Math.ceil(maxPointValue / 5) * 5;
 
   const getX = (index: number) => {
-    if (data.length <= 1) return padding.left + plotWidth / 2;
-    return padding.left + (index / (data.length - 1)) * plotWidth;
+    if (displayData.length <= 1) return padding.left + plotWidth / 2;
+    return padding.left + (index / (displayData.length - 1)) * plotWidth;
   };
 
   const getY = (val: number) => {
@@ -115,18 +134,18 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   };
 
   // Lines calculation
-  const idealPath = data
+  const idealPath = displayData
     .map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)},${getY(d.idealRemaining)}`)
     .join(' ');
 
-  const actualPath = data
+  const actualPath = displayData
     .map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)},${getY(d.actualRemaining)}`)
     .join(' ');
 
   // Detect upward scope addition spikes
-  const scopeSpikes = data.map((d, i) => {
+  const scopeSpikes = displayData.map((d, i) => {
     if (d.hasScopeCreep) return true;
-    if (i > 0 && d.actualRemaining > data[i - 1].actualRemaining) {
+    if (i > 0 && d.actualRemaining > displayData[i - 1].actualRemaining) {
       return true;
     }
     return false;
@@ -135,11 +154,11 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   // Unique contributors for legend
   const allContributors = Array.from(
     new Set(
-      data.flatMap((d) => Object.keys(d.contributorBreakdown || {}))
+      displayData.flatMap((d) => Object.keys(d.contributorBreakdown || {}))
     )
   );
 
-  const activePoint = hoveredIndex !== null ? data[hoveredIndex] : null;
+  const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
@@ -155,19 +174,47 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           </p>
         </div>
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 text-xs text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-0.5 bg-slate-400 border-b border-dashed border-slate-400" />
-            <span>Ideal Burn</span>
+        <div className="flex flex-wrap items-center gap-3 ml-auto">
+          {/* Quick-Select Range Filter */}
+          <div
+            className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
+            role="group"
+            aria-label="Burndown time window filter"
+          >
+            {(['14D', '30D', 'Sprint to Date', 'Full Sprint'] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => {
+                  setTimeWindow(preset);
+                  setHoveredIndex(null);
+                }}
+                className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
+                  timeWindow === preset
+                    ? 'bg-slate-700 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                data-testid={`burndown-window-${preset.toLowerCase().replace(/\s+/g, '-')}`}
+              >
+                {preset}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3 h-1 bg-cyan-400 rounded-full" />
-            <span className="text-cyan-400 font-medium">Actual Burn</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 bg-purple-500 rounded" />
-            <span>Completed Stacks</span>
+
+          {/* Legend */}
+          <div className="flex items-center gap-4 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-0.5 bg-slate-400 border-b border-dashed border-slate-400" />
+              <span>Ideal Burn</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-1 bg-cyan-400 rounded-full" />
+              <span className="text-cyan-400 font-medium">Actual Burn</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 bg-purple-500 rounded" />
+              <span>Completed Stacks</span>
+            </div>
           </div>
         </div>
       </div>
@@ -209,7 +256,7 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           })}
 
           {/* Date Axis Labels */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             if (!tickIndicesSet.has(i)) return null;
             const x = getX(i);
             const y = svgHeight - padding.bottom + 14;
@@ -244,9 +291,9 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           })}
 
           {/* Layer 2: Contributor Stacked Bars */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             const x = getX(i);
-            const barWidth = Math.min(28, Math.max(10, (plotWidth / data.length) * 0.45));
+            const barWidth = Math.min(28, Math.max(10, (plotWidth / displayData.length) * 0.45));
             const barX = x - barWidth / 2;
             const baseY = padding.top + plotHeight;
 
@@ -314,7 +361,7 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           />
 
           {/* Data Points on Actual Burn Line */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             const x = getX(i);
             const y = getY(d.actualRemaining);
             const isHovered = hoveredIndex === i;
