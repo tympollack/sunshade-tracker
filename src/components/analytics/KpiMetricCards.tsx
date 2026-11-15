@@ -13,10 +13,23 @@ export interface KpiMetrics {
   remainingPoints: number;
   committedPoints?: number;
   deliveredPoints?: number;
+  isSubWindow?: boolean;
+  windowStartDate?: string;
+  windowEndDate?: string;
+  periodStartingScope?: number;
+  periodAddedPoints?: number;
+  periodDroppedPoints?: number;
+  periodDeliveredPoints?: number;
+  periodVolatilityPct?: number;
+  periodDailyVelocity?: number;
+  baselineScopeVolatility?: number;
+  baselineSayDoRatio?: number;
 }
 
 export { CommitmentCard } from './CommitmentCard';
+export { ScopeVolatilityCard } from './ScopeVolatilityCard';
 import { CommitmentCard } from './CommitmentCard';
+import { ScopeVolatilityCard } from './ScopeVolatilityCard';
 
 interface KpiMetricCardsProps {
   metrics: KpiMetrics;
@@ -93,37 +106,31 @@ export function KpiMetricCards({ metrics, isLoading = false }: KpiMetricCardsPro
         committedPoints={metrics.committedPoints}
         deliveredPoints={metrics.deliveredPoints}
         sayDoRatio={metrics.sayDoRatio}
-        scopeVolatility={metrics.scopeVolatility}
+        scopeVolatility={
+          metrics.isSubWindow && typeof metrics.periodVolatilityPct === 'number'
+            ? metrics.periodVolatilityPct
+            : metrics.scopeVolatility
+        }
+        isSubWindow={metrics.isSubWindow}
+        windowStartDate={metrics.windowStartDate}
+        windowEndDate={metrics.windowEndDate}
+        periodStartingScope={metrics.periodStartingScope}
+        periodDeliveredPoints={metrics.periodDeliveredPoints}
+        baselineSayDoRatio={metrics.baselineSayDoRatio}
       />
 
       {/* 3. Scope Volatility */}
-      <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">
-        <div className="flex items-center justify-between text-slate-400 mb-2">
-          <span className="text-xs font-medium uppercase tracking-wider">Scope Volatility</span>
-          <Tooltip
-            content="Percentage change in total sprint scope after Day 1 activation: (+Added - Dropped) / Baseline * 100"
-            data-testid="tooltip-volatility-icon"
-          >
-            <div className="p-2 rounded-lg bg-amber-950/40 text-amber-400 border border-amber-800/40 cursor-help">
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-          </Tooltip>
-        </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-slate-100 font-mono tracking-tight">
-            {volatility > 0 ? `+${volatility}` : `${volatility}`}%
-          </span>
-        </div>
-        <div className="mt-3 text-xs text-slate-400">
-          <span className={isHighVolatility ? 'text-amber-400 font-medium' : 'text-slate-400'}>
-            {volatility === 0
-              ? 'Zero mid-sprint churn'
-              : volatility > 0
-              ? 'Mid-flight scope injection'
-              : 'Mid-flight scope reduced'}
-          </span>
-        </div>
-      </div>
+      <ScopeVolatilityCard
+        scopeVolatility={metrics.scopeVolatility}
+        isSubWindow={metrics.isSubWindow}
+        windowStartDate={metrics.windowStartDate}
+        windowEndDate={metrics.windowEndDate}
+        periodVolatilityPct={metrics.periodVolatilityPct}
+        periodAddedPoints={metrics.periodAddedPoints}
+        periodDroppedPoints={metrics.periodDroppedPoints}
+        periodStartingScope={metrics.periodStartingScope}
+        baselineScopeVolatility={metrics.baselineScopeVolatility}
+      />
 
       {/* 4. Active Remaining Points */}
       <div className="bg-slate-900/80 border border-slate-800 hover:border-slate-700/80 rounded-xl p-5 transition-all shadow-sm">

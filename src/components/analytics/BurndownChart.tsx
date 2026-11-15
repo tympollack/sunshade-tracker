@@ -1,7 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { TrendingDown, AlertTriangle } from 'lucide-react';
+import { TrendingDown, AlertTriangle, ChevronLeft, ChevronRight, RotateCcw, X, ArrowUpRight } from 'lucide-react';
+import { clampSeriesToHorizon, formatCfdDate, type CfdTimeWindow } from './CumulativeFlowChart';
+import { useChartDateZoom, type ChunkWindowPreset } from '@/hooks/useChartDateZoom';
+
+export type BurndownTimeWindow = CfdTimeWindow;
+export { clampSeriesToHorizon };
 
 export interface BurndownDataPoint {
   date: string;
@@ -12,9 +17,14 @@ export interface BurndownDataPoint {
   hasScopeCreep?: boolean;
 }
 
-interface BurndownChartProps {
+export interface BurndownChartProps {
   data: BurndownDataPoint[];
   isLoading?: boolean;
+  initialTimeWindow?: BurndownTimeWindow;
+  sprintStartDate?: string | null;
+  sprintEndDate?: string | null;
+  today?: string;
+  onApplyWindowToPage?: (startDate: string, endDate: string) => void;
 }
 
 const CONTRIBUTOR_COLORS = [
@@ -64,8 +74,48 @@ export function getBurndownTickIndices(dataLength: number): number[] {
   return indices;
 }
 
-export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
+export function BurndownChart({
+  data,
+  isLoading = false,
+  initialTimeWindow = 'Sprint to Date',
+  sprintStartDate = null,
+  sprintEndDate = null,
+  today,
+  onApplyWindowToPage,
+}: BurndownChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [timeWindow, setTimeWindow] = useState<BurndownTimeWindow>(initialTimeWindow);
+
+  const presetData = React.useMemo(() => {
+    return clampSeriesToHorizon(data, timeWindow, { sprintEndDate, today });
+  }, [data, timeWindow, sprintEndDate, today]);
+
+  const zoom = useChartDateZoom({
+    data: presetData,
+    sprintStartDate,
+    sprintEndDate,
+    today,
+  });
+
+  const displayData = zoom.visibleData;
+
+  const brushIndices = React.useMemo(() => {
+    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
+    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
+    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
+    if (leftIdx === -1 || rightIdx === -1) return null;
+    return {
+      startIdx: Math.min(leftIdx, rightIdx),
+      endIdx: Math.max(leftIdx, rightIdx),
+    };
+  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
+
+  const pinnedDataIndex = React.useMemo(() => {
+    if (!zoom.pinnedPoint) return -1;
+    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
+    if (byDate !== -1) return byDate;
+    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
+  }, [zoom.pinnedPoint, displayData]);
 
   if (isLoading) {
     return (
@@ -76,7 +126,7 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!displayData || displayData.length === 0) {
     return (
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col items-center justify-center text-center">
         <TrendingDown className="w-10 h-10 text-slate-600 mb-3" />
@@ -94,20 +144,20 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   const padding = { top: 35, right: 30, bottom: 60, left: 55 };
   const plotWidth = svgWidth - padding.left - padding.right;
   const plotHeight = svgHeight - padding.top - padding.bottom;
-  const tickIndicesSet = new Set(getBurndownTickIndices(data.length));
-  const shouldTilt = data.length > 14;
+  const tickIndicesSet = new Set(getBurndownTickIndices(displayData.length));
+  const shouldTilt = displayData.length > 14;
 
   // Max value calculation
   const maxPointValue = Math.max(
     10,
-    ...data.map((d) => Math.max(d.idealRemaining, d.actualRemaining)),
-    ...data.map((d) => d.dailyVelocity || 0)
+    ...displayData.map((d) => Math.max(d.idealRemaining, d.actualRemaining)),
+    ...displayData.map((d) => d.dailyVelocity || 0)
   );
   const yCeiling = Math.ceil(maxPointValue / 5) * 5;
 
   const getX = (index: number) => {
-    if (data.length <= 1) return padding.left + plotWidth / 2;
-    return padding.left + (index / (data.length - 1)) * plotWidth;
+    if (displayData.length <= 1) return padding.left + plotWidth / 2;
+    return padding.left + (index / (displayData.length - 1)) * plotWidth;
   };
 
   const getY = (val: number) => {
@@ -115,18 +165,18 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   };
 
   // Lines calculation
-  const idealPath = data
+  const idealPath = displayData
     .map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)},${getY(d.idealRemaining)}`)
     .join(' ');
 
-  const actualPath = data
+  const actualPath = displayData
     .map((d, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)},${getY(d.actualRemaining)}`)
     .join(' ');
 
   // Detect upward scope addition spikes
-  const scopeSpikes = data.map((d, i) => {
+  const scopeSpikes = displayData.map((d, i) => {
     if (d.hasScopeCreep) return true;
-    if (i > 0 && d.actualRemaining > data[i - 1].actualRemaining) {
+    if (i > 0 && d.actualRemaining > displayData[i - 1].actualRemaining) {
       return true;
     }
     return false;
@@ -135,11 +185,11 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
   // Unique contributors for legend
   const allContributors = Array.from(
     new Set(
-      data.flatMap((d) => Object.keys(d.contributorBreakdown || {}))
+      displayData.flatMap((d) => Object.keys(d.contributorBreakdown || {}))
     )
   );
 
-  const activePoint = hoveredIndex !== null ? data[hoveredIndex] : null;
+  const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
@@ -155,19 +205,123 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           </p>
         </div>
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 text-xs text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-0.5 bg-slate-400 border-b border-dashed border-slate-400" />
-            <span>Ideal Burn</span>
+        <div className="flex flex-wrap items-center gap-3 ml-auto">
+          {/* Active Zoom Stepper & Promotion Controls */}
+          {zoom.isZoomed && zoom.zoomedRange && (
+            <div
+              className="flex items-center gap-1.5 bg-sky-950/50 border border-sky-700/60 px-2 py-0.5 rounded-lg text-xs"
+              data-testid="burndown-zoom-controls"
+            >
+              <button
+                type="button"
+                onClick={zoom.stepPrev}
+                disabled={!zoom.canStepPrev}
+                className="px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-900/60 disabled:opacity-40 disabled:cursor-not-allowed font-mono flex items-center gap-0.5"
+                data-testid="burndown-zoom-prev"
+                title="Previous window"
+              >
+                <ChevronLeft className="w-3 h-3" />
+                <span>Prev</span>
+              </button>
+              <span
+                className="font-mono text-sky-200 font-semibold px-1 whitespace-nowrap"
+                data-testid="burndown-zoom-range-label"
+              >
+                {formatCfdDate(zoom.zoomedRange.startDate)} –{' '}
+                {formatCfdDate(zoom.zoomedRange.endDate)}
+              </span>
+              <button
+                type="button"
+                onClick={zoom.stepNext}
+                disabled={!zoom.canStepNext}
+                className="px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-900/60 disabled:opacity-40 disabled:cursor-not-allowed font-mono flex items-center gap-0.5"
+                data-testid="burndown-zoom-next"
+                title="Next window"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  zoom.resetZoom();
+                  setHoveredIndex(null);
+                }}
+                className="ml-1 px-1.5 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium flex items-center gap-1"
+                data-testid="burndown-zoom-reset"
+                title="Reset Zoom (Esc)"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Zoom</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onApplyWindowToPage?.(
+                    zoom.zoomedRange!.startDate,
+                    zoom.zoomedRange!.endDate
+                  )
+                }
+                className="ml-0.5 px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-medium flex items-center gap-1 whitespace-nowrap"
+                data-testid="burndown-apply-window-to-page"
+                title="Promote zoomed window to page-wide date filters"
+              >
+                <span>Apply Window to Page</span>
+                <ArrowUpRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Quick-Select Range Filter */}
+          <div
+            className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
+            role="group"
+            aria-label="Burndown time window filter"
+          >
+            {(['14D', '30D', 'Sprint to Date', 'Full Sprint'] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => {
+                  setTimeWindow(preset);
+                  zoom.resetZoom();
+                  setHoveredIndex(null);
+                  if (preset === 'Full Sprint' && sprintStartDate && sprintEndDate) {
+                    const spStart = sprintStartDate.slice(0, 10);
+                    const spEnd = sprintEndDate.slice(0, 10);
+                    const firstDate = data[0]?.date?.slice(0, 10);
+                    const lastDate = data[data.length - 1]?.date?.slice(0, 10);
+                    if ((firstDate && firstDate > spStart) || (lastDate && lastDate < spEnd)) {
+                      onApplyWindowToPage?.(spStart, spEnd);
+                    }
+                  }
+                }}
+                className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
+                  timeWindow === preset && !zoom.isZoomed
+                    ? 'bg-slate-700 text-white shadow-sm font-semibold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+                data-testid={`burndown-window-${preset.toLowerCase().replace(/\s+/g, '-')}`}
+              >
+                {preset}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-3 h-1 bg-cyan-400 rounded-full" />
-            <span className="text-cyan-400 font-medium">Actual Burn</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 bg-purple-500 rounded" />
-            <span>Completed Stacks</span>
+
+          {/* Legend */}
+          <div className="flex items-center gap-4 text-xs text-slate-400">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3.5 h-0.5 bg-slate-400 border-b border-dashed border-slate-400" />
+              <span>Ideal Burn</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-1 bg-cyan-400 rounded-full" />
+              <span className="text-cyan-400 font-medium">Actual Burn</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 bg-purple-500 rounded" />
+              <span>Completed Stacks</span>
+            </div>
           </div>
         </div>
       </div>
@@ -178,6 +332,17 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className="w-full h-full select-none"
           preserveAspectRatio="xMidYMid meet"
+          onMouseUp={() => zoom.onMouseUp()}
+          onMouseLeave={() => {
+            setHoveredIndex(null);
+            if (zoom.isDragging) zoom.onMouseUp();
+          }}
+          onDoubleClick={() => {
+            if (zoom.isZoomed) {
+              zoom.resetZoom();
+              setHoveredIndex(null);
+            }
+          }}
         >
           {/* Background Grid Lines */}
           {[0, 0.25, 0.5, 0.75, 1].map((pct, idx) => {
@@ -209,7 +374,7 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           })}
 
           {/* Date Axis Labels */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             if (!tickIndicesSet.has(i)) return null;
             const x = getX(i);
             const y = svgHeight - padding.bottom + 14;
@@ -244,9 +409,9 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
           })}
 
           {/* Layer 2: Contributor Stacked Bars */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             const x = getX(i);
-            const barWidth = Math.min(28, Math.max(10, (plotWidth / data.length) * 0.45));
+            const barWidth = Math.min(28, Math.max(10, (plotWidth / displayData.length) * 0.45));
             const barX = x - barWidth / 2;
             const baseY = padding.top + plotHeight;
 
@@ -313,8 +478,29 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
             strokeLinejoin="round"
           />
 
+          {/* Brush Selection ReferenceArea while dragging */}
+          {brushIndices && (
+            <g
+              className="recharts-layer recharts-reference-area"
+              data-testid="burndown-brush-reference-area"
+            >
+              <rect
+                data-testid="burndown-brush-selection"
+                className="recharts-reference-area-rect"
+                x={getX(brushIndices.startIdx)}
+                y={padding.top}
+                width={Math.max(4, getX(brushIndices.endIdx) - getX(brushIndices.startIdx))}
+                height={plotHeight}
+                fill="#38bdf8"
+                fillOpacity={0.14}
+                stroke="#38bdf8"
+                strokeOpacity={0.3}
+              />
+            </g>
+          )}
+
           {/* Data Points on Actual Burn Line */}
-          {data.map((d, i) => {
+          {displayData.map((d, i) => {
             const x = getX(i);
             const y = getY(d.actualRemaining);
             const isHovered = hoveredIndex === i;
@@ -359,20 +545,75 @@ export function BurndownChart({ data, isLoading = false }: BurndownChartProps) {
                   strokeWidth="2"
                 />
 
-                {/* Invisible hover trigger zone */}
+                {/* Invisible hover & brush trigger zone */}
                 <rect
                   x={x - 20}
                   y={padding.top}
                   width="40"
                   height={plotHeight}
                   fill="transparent"
-                  onMouseEnter={() => setHoveredIndex(i)}
+                  data-testid={`burndown-hover-column-${i}`}
+                  onMouseEnter={() => {
+                    setHoveredIndex(i);
+                    zoom.onMouseMove(d.date);
+                  }}
+                  onMouseMove={() => zoom.onMouseMove(d.date)}
                   onMouseLeave={() => setHoveredIndex(null)}
+                  onMouseDown={() => zoom.onMouseDown(d.date)}
+                  onMouseUp={() => zoom.onMouseUp()}
+                  onClick={() => zoom.onPointClick(d.date, i)}
                 />
               </g>
             );
           })}
         </svg>
+
+        {/* Click-to-Pin Chunk Drill-Down Popover (1W / 2W / 4W) */}
+        {zoom.pinnedPoint && (
+          <div
+            data-testid="burndown-chunk-popover"
+            className="absolute top-3 z-30 bg-slate-900/95 border border-sky-700/70 rounded-lg px-3 py-2 shadow-2xl text-xs backdrop-blur-md flex items-center gap-2"
+            style={{
+              left: `${Math.min(
+                Math.max(8, ((pinnedDataIndex >= 0 ? getX(pinnedDataIndex) : svgWidth / 2) / svgWidth) * 100),
+                62
+              )}%`,
+            }}
+          >
+            <span className="text-slate-300 font-medium whitespace-nowrap">
+              Zoom around{' '}
+              <span className="font-mono text-sky-300 font-semibold">
+                {formatCfdDate(zoom.pinnedPoint.date)}
+              </span>
+              :
+            </span>
+            <div className="flex items-center gap-1">
+              {(['1W', '2W', '4W'] as ChunkWindowPreset[]).map((chunk) => (
+                <button
+                  key={chunk}
+                  type="button"
+                  onClick={() => {
+                    zoom.zoomAroundDate(zoom.pinnedPoint!.date, chunk);
+                    setHoveredIndex(null);
+                  }}
+                  className="px-2 py-0.5 rounded bg-sky-500/15 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 font-mono font-semibold transition-colors cursor-pointer"
+                  data-testid={`burndown-chunk-${chunk.toLowerCase()}`}
+                >
+                  {chunk}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={zoom.dismissPinnedPoint}
+              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              data-testid="burndown-chunk-close"
+              aria-label="Close zoom options"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Floating Tooltip */}
         {activePoint && hoveredIndex !== null && (

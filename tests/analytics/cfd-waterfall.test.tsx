@@ -218,11 +218,16 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       // Verify preset buttons exist
       const btn14 = screen.getByTestId('cfd-window-14d');
       const btn30 = screen.getByTestId('cfd-window-30d');
+      const btnSprintToDate = screen.getByTestId('cfd-window-sprint-to-date');
       const btnFull = screen.getByTestId('cfd-window-full-sprint');
 
       expect(btn14).toBeInTheDocument();
       expect(btn30).toBeInTheDocument();
+      expect(btnSprintToDate).toBeInTheDocument();
       expect(btnFull).toBeInTheDocument();
+
+      // Sprint to Date is active by default
+      expect(btnSprintToDate).toHaveClass('bg-slate-700');
 
       // Click 14D
       fireEvent.click(btn14);
@@ -254,6 +259,183 @@ describe('TASK-TRK-UI-CFD-WATERFALL & FEAT-TRK-CFD-TIME-WINDOW-STRIDE: CFD and W
       expect(formatCfdDate('2026-01-05')).toBe('Jan 05');
       expect(formatCfdDate('2026-10-02', 'MM/DD')).toBe('10/02');
       expect(formatCfdDate('')).toBe('');
+    });
+
+    it('TASK-TRK-CFD-SPRINT-TO-DATE-DEFAULT: clamps future dates by default under Sprint to Date and reveals remaining runway on Full Sprint', () => {
+      // Sprint from Oct 01 to Oct 30, with today = Oct 15 (15 elapsed days, 15 future days)
+      const activeSprintData: CfdDataPoint[] = Array.from({ length: 30 }, (_, i) => ({
+        date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        complete: Math.min(i, 14) * 2,
+        in_review: 2,
+        in_progress: 4,
+        not_started: 10,
+        unplanned: 0,
+      }));
+
+      const { container } = render(
+        <CumulativeFlowDiagram
+          data={activeSprintData}
+          sprintEndDate="2026-10-30"
+          today="2026-10-15"
+        />
+      );
+
+      // Default active pill is Sprint to Date
+      expect(screen.getByTestId('cfd-window-sprint-to-date')).toHaveClass('bg-slate-700');
+
+      const getDateLabels = () =>
+        Array.from(container.querySelectorAll('svg text')).filter((el) =>
+          el.getAttribute('transform')?.includes('rotate(-45')
+        );
+
+      // Should end at today (Oct 15), not Oct 30
+      const clampedLabels = getDateLabels();
+      expect(clampedLabels[clampedLabels.length - 1].textContent).toBe('Oct 15');
+
+      // Clicking Full Sprint reveals the full sprint runway up to Oct 30
+      fireEvent.click(screen.getByTestId('cfd-window-full-sprint'));
+      const fullLabels = getDateLabels();
+      expect(fullLabels[fullLabels.length - 1].textContent).toBe('Oct 30');
+    });
+
+    it('TASK-TRK-CFD-SPRINT-TO-DATE-DEFAULT: resolves both Sprint to Date and Full Sprint to sprint.end_date for completed historical sprints', () => {
+      const completedSprintData: CfdDataPoint[] = Array.from({ length: 14 }, (_, i) => ({
+        date: `2026-09-${String(i + 1).padStart(2, '0')}`,
+        complete: i * 3,
+        in_review: 1,
+        in_progress: 2,
+        not_started: Math.max(0, 20 - i),
+        unplanned: 0,
+      }));
+
+      const { container } = render(
+        <CumulativeFlowDiagram
+          data={completedSprintData}
+          sprintEndDate="2026-09-14"
+          today="2026-10-15"
+        />
+      );
+
+      const getDateLabels = () =>
+        Array.from(container.querySelectorAll('svg text')).filter((el) =>
+          el.getAttribute('transform')?.includes('rotate(-45')
+        );
+
+      expect(getDateLabels()[getDateLabels().length - 1].textContent).toBe('Sep 14');
+
+      fireEvent.click(screen.getByTestId('cfd-window-full-sprint'));
+      expect(getDateLabels()[getDateLabels().length - 1].textContent).toBe('Sep 14');
+    });
+
+    it('TASK-TRK-CFD-BRUSH-AND-CHUNK-DRILLDOWN: supports click-and-drag brush selection with translucent ReferenceArea and ignores 1-point micro-clicks', () => {
+      const monthData: CfdDataPoint[] = Array.from({ length: 30 }, (_, i) => ({
+        date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        complete: i * 2,
+        in_review: 2,
+        in_progress: 5,
+        not_started: 10,
+        unplanned: 0,
+      }));
+
+      const { container } = render(
+        <CumulativeFlowDiagram
+          data={monthData}
+          sprintStartDate="2026-10-01"
+          sprintEndDate="2026-10-30"
+          today="2026-10-30"
+        />
+      );
+
+      // 1. Single-point mousedown + mouseup on the same column does NOT zoom
+      const col5 = screen.getByTestId('cfd-hover-column-5');
+      fireEvent.mouseDown(col5);
+      fireEvent.mouseUp(col5);
+      expect(screen.queryByTestId('cfd-zoom-controls')).toBeNull();
+
+      // 2. Dragging from index 4 (Oct 05) to index 11 (Oct 12) renders brush ReferenceArea
+      const col4 = screen.getByTestId('cfd-hover-column-4');
+      const col11 = screen.getByTestId('cfd-hover-column-11');
+
+      fireEvent.mouseDown(col4);
+      fireEvent.mouseMove(col11);
+
+      const brushRect = screen.getByTestId('cfd-brush-selection');
+      expect(brushRect).toBeInTheDocument();
+      expect(brushRect).toHaveAttribute('fill', '#38bdf8');
+      expect(brushRect).toHaveAttribute('fill-opacity', '0.14');
+      expect(brushRect).toHaveAttribute('stroke-opacity', '0.3');
+
+      // Release mouse to commit brush zoom
+      fireEvent.mouseUp(col11);
+
+      expect(screen.queryByTestId('cfd-brush-selection')).toBeNull();
+      expect(screen.getByTestId('cfd-zoom-controls')).toBeInTheDocument();
+      expect(screen.getByTestId('cfd-zoom-range-label')).toHaveTextContent('Oct 05 – Oct 12');
+
+      const getDateLabels = () =>
+        Array.from(container.querySelectorAll('svg text')).filter((el) =>
+          el.getAttribute('transform')?.includes('rotate(-45')
+        );
+
+      const zoomedLabels = getDateLabels();
+      expect(zoomedLabels[0].textContent).toBe('Oct 05');
+      expect(zoomedLabels[zoomedLabels.length - 1].textContent).toBe('Oct 12');
+
+      // 3. Escape key resets zoom back to Sprint to Date
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByTestId('cfd-zoom-controls')).toBeNull();
+      const restoredLabels = getDateLabels();
+      expect(restoredLabels[0].textContent).toBe('Oct 01');
+      expect(restoredLabels[restoredLabels.length - 1].textContent).toBe('Oct 30');
+    });
+
+    it('TASK-TRK-CFD-BRUSH-AND-CHUNK-DRILLDOWN: pins 1W/2W/4W chunk drill-down popover on click and supports Prev/Next stepping and Reset Zoom', () => {
+      const monthData: CfdDataPoint[] = Array.from({ length: 30 }, (_, i) => ({
+        date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        complete: i * 2,
+        in_review: 2,
+        in_progress: 5,
+        not_started: 10,
+        unplanned: 0,
+      }));
+
+      render(
+        <CumulativeFlowDiagram
+          data={monthData}
+          sprintStartDate="2026-10-01"
+          sprintEndDate="2026-10-30"
+          today="2026-10-30"
+        />
+      );
+
+      // Click index 14 (2026-10-15) to pin the chunk popover
+      const col14 = screen.getByTestId('cfd-hover-column-14');
+      fireEvent.click(col14);
+
+      const popover = screen.getByTestId('cfd-chunk-popover');
+      expect(popover).toBeInTheDocument();
+      expect(popover).toHaveTextContent('Zoom around Oct 15:');
+      expect(screen.getByTestId('cfd-chunk-1w')).toBeInTheDocument();
+      expect(screen.getByTestId('cfd-chunk-2w')).toBeInTheDocument();
+      expect(screen.getByTestId('cfd-chunk-4w')).toBeInTheDocument();
+
+      // Click 1W (7 days centered on Oct 15 -> Oct 12 – Oct 18)
+      fireEvent.click(screen.getByTestId('cfd-chunk-1w'));
+
+      expect(screen.queryByTestId('cfd-chunk-popover')).toBeNull();
+      expect(screen.getByTestId('cfd-zoom-range-label')).toHaveTextContent('Oct 12 – Oct 18');
+
+      // Step Prev (shifts back 7 days -> Oct 05 – Oct 11)
+      fireEvent.click(screen.getByTestId('cfd-zoom-prev'));
+      expect(screen.getByTestId('cfd-zoom-range-label')).toHaveTextContent('Oct 05 – Oct 11');
+
+      // Step Next (shifts forward 7 days -> Oct 12 – Oct 18)
+      fireEvent.click(screen.getByTestId('cfd-zoom-next'));
+      expect(screen.getByTestId('cfd-zoom-range-label')).toHaveTextContent('Oct 12 – Oct 18');
+
+      // Click Reset Zoom button
+      fireEvent.click(screen.getByTestId('cfd-zoom-reset'));
+      expect(screen.queryByTestId('cfd-zoom-controls')).toBeNull();
     });
   });
 

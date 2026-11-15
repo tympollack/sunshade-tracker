@@ -1284,6 +1284,9 @@ export async function PATCH(req: NextRequest) {
       if (isGovernanceBypassed) {
         resolvedMetadata.governance_bypass = true;
         resolvedMetadata.added_mid_sprint = true;
+        if (!resolvedMetadata.added_at) {
+          resolvedMetadata.added_at = new Date().toISOString();
+        }
       }
 
       // Guardrail 3: Immutable Estimates on active sprint items

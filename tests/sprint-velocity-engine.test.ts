@@ -592,5 +592,78 @@ describe('TASK-TRK-VELOCITY-ENGINE: Rolling Velocity & Enterprise KPI Engine', (
       expect(invalidThreshold.valid).toBe(false);
       expect(invalidThreshold.errors[0].path).toBe('sprint_metrics.late_runway_threshold');
     });
+
+    it('TASK-TRK-PERIOD-SCOPED-VOLATILITY-STATS: computes +0.0% volatility for a Week 3 window when +15 pts were added in Week 1, preserving full-sprint baseline', () => {
+      const sprint = {
+        id: 'sprint-4w',
+        name: 'Sprint 4-Week',
+        status: 'active',
+        is_active: true,
+        start_date: '2026-10-01',
+        end_date: '2026-10-28',
+        committed_points: 30,
+      };
+
+      // +15 pts added in Week 1 (2026-10-03), 0 pts added in Week 3 (2026-10-15..2026-10-21)
+      const items = [
+        {
+          id: 'base-1',
+          status: 'complete',
+          created_at: '2026-10-01T00:00:00Z',
+          completed_at: '2026-10-05T00:00:00Z',
+          metadata: { story_points: 10 },
+        },
+        {
+          id: 'base-2',
+          status: 'in_progress',
+          created_at: '2026-10-01T00:00:00Z',
+          metadata: { story_points: 20 },
+        },
+        {
+          id: 'week1-added',
+          status: 'complete',
+          created_at: '2026-10-03T12:00:00Z',
+          completed_at: '2026-10-18T12:00:00Z',
+          metadata: { story_points: 15, added_mid_sprint: true, added_at: '2026-10-03T12:00:00Z' },
+        },
+      ];
+
+      const events = [
+        {
+          id: 'ev-1',
+          event_type: 'scope_added',
+          points_delta: 15,
+          created_at: '2026-10-03T12:00:00Z',
+          work_item_id: 'week1-added',
+        },
+      ];
+
+      // Query with Week 3 sub-window [2026-10-15, 2026-10-21]
+      const report = computeSprintAnalytics({
+        sprint,
+        items,
+        events,
+        startDate: '2026-10-15',
+        endDate: '2026-10-21',
+        now: '2026-10-21T00:00:00Z',
+      });
+
+      expect(report.isSubWindow).toBe(true);
+      expect(report.windowStartDate).toBe('2026-10-15');
+      expect(report.windowEndDate).toBe('2026-10-21');
+
+      // Starting scope at 2026-10-15: 30 committed + 15 added in Week 1 - 10 completed in Week 1 = 35
+      expect(report.period_starting_scope).toBe(35);
+      expect(report.period_added_points).toBe(0);
+      expect(report.period_dropped_points).toBe(0);
+      expect(report.period_delivered_points).toBe(15);
+      expect(report.period_volatility_pct).toBe(0);
+      expect(report.periodVolatilityPct).toBe(0);
+
+      // Full-sprint baseline volatility (15 / 30 * 100 = 50%) remains preserved for comparison
+      expect(report.scopeCreepPercent).toBe(50.0);
+      expect(report.baselineScopeCreepPercent).toBe(50.0);
+      expect(report.baselineCommittedPoints).toBe(30);
+    });
   });
 });

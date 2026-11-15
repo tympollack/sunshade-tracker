@@ -36,6 +36,44 @@ export interface WorkItemLifecycleData {
   [key: string]: any;
 }
 
+export interface SprintEventData {
+  id?: string;
+  event_type: string;
+  points_delta?: number | null;
+  delta_points?: number | null;
+  points?: number | null;
+  created_at?: string | null;
+  occurred_at?: string | null;
+  timestamp?: string | null;
+  work_item_id?: string | null;
+  new_state?: any;
+  old_state?: any;
+  to_status?: string | null;
+  from_status?: string | null;
+  new_status?: string | null;
+  old_status?: string | null;
+  details?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+export interface PeriodScopedTelemetry {
+  isSubWindow: boolean;
+  windowStartDate: string;
+  windowEndDate: string;
+  period_starting_scope: number;
+  period_added_points: number;
+  period_dropped_points: number;
+  period_delivered_points: number;
+  period_volatility_pct: number;
+  period_daily_velocity: number;
+  periodStartingScope: number;
+  periodAddedPoints: number;
+  periodDroppedPoints: number;
+  periodDeliveredPoints: number;
+  periodVolatilityPct: number;
+  periodDailyVelocity: number;
+}
+
 /**
  * Canonical task specification defaults for sprint governance & metric rules.
  */
@@ -191,6 +229,9 @@ export interface SprintAnalyticsInput {
   };
   historicalSprints?: HistoricalSprint[];
   items?: WorkItemLifecycleData[];
+  events?: SprintEventData[];
+  startDate?: string | null;
+  endDate?: string | null;
   rules?: MetricRules;
   now?: Date | string | number;
   metricKey?: string;
@@ -225,6 +266,27 @@ export interface SprintHealthReport {
   capacityRemaining: number;
   velocityTrend: 'increasing' | 'stable' | 'decreasing';
   rules: Required<MetricRules>;
+  isSubWindow?: boolean;
+  windowStartDate?: string;
+  windowEndDate?: string;
+  period_starting_scope?: number;
+  period_added_points?: number;
+  period_dropped_points?: number;
+  period_delivered_points?: number;
+  period_volatility_pct?: number;
+  period_daily_velocity?: number;
+  periodStartingScope?: number;
+  periodAddedPoints?: number;
+  periodDroppedPoints?: number;
+  periodDeliveredPoints?: number;
+  periodVolatilityPct?: number;
+  periodDailyVelocity?: number;
+  baselineCommittedPoints?: number;
+  baselineCompletedPoints?: number;
+  baselinePointsAddedMidSprint?: number;
+  baselinePointsDroppedMidSprint?: number;
+  baselineScopeCreepPercent?: number;
+  baselineCommitmentReliabilityPercent?: number;
 }
 
 /**
@@ -454,6 +516,272 @@ function getItemPoints(item: WorkItemLifecycleData, metricKey?: string): number 
   return isNaN(num) || num < 0 ? 0 : num;
 }
 
+const ADDED_EVENT_TYPES = new Set([
+  'scope_added',
+  'item_churn_created',
+  'item_added',
+  'churn_added',
+]);
+
+const DROPPED_EVENT_TYPES = new Set([
+  'scope_removed',
+  'scope_dropped',
+  'item_removed',
+  'item_dropped',
+  'churn_dropped',
+]);
+
+const COMPLETED_EVENT_TYPES = new Set([
+  'item_completed',
+  'scope_completed',
+]);
+
+/**
+ * Pure calculation: Period-Scoped Volatility, Churn, and Velocity Telemetry
+ * for sub-sprint windows bounded strictly to [startDate, endDate].
+ */
+export function computePeriodScopedTelemetry(params: {
+  committedPoints: number;
+  sprintStartDate?: string | null;
+  sprintEndDate?: string | null;
+  startDate: string;
+  endDate: string;
+  items?: WorkItemLifecycleData[];
+  events?: SprintEventData[];
+  completedStatuses?: Set<string>;
+  metricKey?: string;
+}): PeriodScopedTelemetry {
+  const {
+    committedPoints,
+    sprintStartDate,
+    sprintEndDate,
+    startDate,
+    endDate,
+    items = [],
+    events = [],
+    completedStatuses = COMPLETED_STATUSES,
+    metricKey,
+  } = params;
+
+  const winStart = String(startDate || '').slice(0, 10);
+  const winEnd = String(endDate || '').slice(0, 10);
+  const spStart = sprintStartDate ? String(sprintStartDate).slice(0, 10) : '';
+  const spEnd = sprintEndDate ? String(sprintEndDate).slice(0, 10) : '';
+
+  const isSubWindow = Boolean(
+    winStart &&
+      winEnd &&
+      ((spStart && winStart > spStart) ||
+        (spEnd && winEnd < spEnd) ||
+        (!spStart && !spEnd))
+  );
+
+  const windowStartMs = new Date(`${winStart}T00:00:00.000Z`).getTime();
+  const windowEndMs = new Date(`${winEnd}T23:59:59.999Z`).getTime();
+  const sprintStartMs = spStart ? new Date(`${spStart}T00:00:00.000Z`).getTime() : 0;
+
+  let preWindowAdded = 0;
+  let preWindowDropped = 0;
+  let preWindowCompleted = 0;
+
+  let periodAddedPoints = 0;
+  let periodDroppedPoints = 0;
+  let periodDeliveredPoints = 0;
+
+  const eventItemIdsAdded = new Set<string>();
+  const eventItemIdsDropped = new Set<string>();
+  const eventItemIdsCompleted = new Set<string>();
+
+  const leafItems = getSprintLeafItems(items);
+  const itemPointsById = new Map<string, number>();
+  for (const it of leafItems) {
+    itemPointsById.set(it.id, getItemPoints(it, metricKey));
+  }
+
+  for (const ev of events) {
+    const rawTs = ev.occurred_at || ev.created_at || ev.timestamp || '';
+    const evMs = new Date(rawTs).getTime();
+    if (isNaN(evMs)) continue;
+
+    const rawDelta =
+      ev.points_delta ??
+      ev.delta_points ??
+      ev.points ??
+      ev.metadata?.points_delta ??
+      ev.metadata?.story_points ??
+      (ev.work_item_id ? itemPointsById.get(ev.work_item_id) : undefined) ??
+      0;
+    const pts = Math.abs(Number(rawDelta) || 0);
+    const evType = String(ev.event_type || '').toLowerCase().trim();
+
+    if (ADDED_EVENT_TYPES.has(evType)) {
+      if (ev.work_item_id) eventItemIdsAdded.add(ev.work_item_id);
+      if (evMs < windowStartMs) {
+        preWindowAdded += pts;
+      } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
+        periodAddedPoints += pts;
+      }
+    } else if (DROPPED_EVENT_TYPES.has(evType)) {
+      if (ev.work_item_id) eventItemIdsDropped.add(ev.work_item_id);
+      if (evMs < windowStartMs) {
+        preWindowDropped += pts;
+      } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
+        periodDroppedPoints += pts;
+      }
+    } else if (COMPLETED_EVENT_TYPES.has(evType)) {
+      if (ev.work_item_id) eventItemIdsCompleted.add(ev.work_item_id);
+      if (evMs < windowStartMs) {
+        preWindowCompleted += pts;
+      } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
+        periodDeliveredPoints += pts;
+      }
+    } else if (evType === 'status_transition' || evType === 'status_changed') {
+      const nextSt = String(
+        (typeof ev.new_state === 'string' ? ev.new_state : null) ||
+          ev.new_state?.status ||
+          ev.to_status ||
+          ev.new_status ||
+          ev.details?.status ||
+          ev.metadata?.new_status ||
+          ev.metadata?.status ||
+          ''
+      )
+        .toLowerCase()
+        .trim();
+      const prevSt = String(
+        (typeof ev.old_state === 'string' ? ev.old_state : null) ||
+          ev.old_state?.status ||
+          ev.from_status ||
+          ev.old_status ||
+          ev.details?.old_status ||
+          ev.metadata?.old_status ||
+          ''
+      )
+        .toLowerCase()
+        .trim();
+
+      const movedToComplete =
+        completedStatuses.has(nextSt) && (!prevSt || !completedStatuses.has(prevSt));
+
+      if (movedToComplete && (!ev.work_item_id || !eventItemIdsCompleted.has(ev.work_item_id))) {
+        if (ev.work_item_id) eventItemIdsCompleted.add(ev.work_item_id);
+        if (evMs < windowStartMs) {
+          preWindowCompleted += pts;
+        } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
+          periodDeliveredPoints += pts;
+        }
+      }
+    }
+  }
+
+  for (const it of leafItems) {
+    const pts = getItemPoints(it, metricKey);
+    if (pts <= 0) continue;
+
+    // 1. Mid-sprint scope additions from item timestamps (when not already covered by sprint_events)
+    if (!eventItemIdsAdded.has(it.id)) {
+      const explicitAddedStr =
+        it.metadata?.added_at ||
+        it.metadata?.sprint_assigned_at ||
+        it.metadata?.sprint_added_at;
+      const createdMs = new Date(it.created_at).getTime();
+      const isCreatedMidSprint =
+        sprintStartMs > 0 && !isNaN(createdMs) && createdMs > sprintStartMs + 86400000;
+      const isMidSprintItem =
+        it.metadata?.added_mid_sprint === true ||
+        it.metadata?.is_scope_creep === true ||
+        isCreatedMidSprint;
+
+      if (isMidSprintItem) {
+        // Use explicit assignment timestamp first; only fall back to created_at if the item was created during the sprint
+        // (avoids crediting older transferred backlog items to a pre-sprint creation date).
+        const addedStr =
+          explicitAddedStr ||
+          (sprintStartMs === 0 || (!isNaN(createdMs) && createdMs >= sprintStartMs)
+            ? it.created_at
+            : null);
+        const addedMs = addedStr ? new Date(addedStr).getTime() : NaN;
+        if (!isNaN(addedMs)) {
+          if (addedMs < windowStartMs) {
+            preWindowAdded += pts;
+          } else if (addedMs >= windowStartMs && addedMs <= windowEndMs) {
+            periodAddedPoints += pts;
+          }
+        }
+      }
+    }
+
+    // 2. Mid-sprint scope drops from item metadata (when not covered by sprint_events)
+    if (!eventItemIdsDropped.has(it.id)) {
+      const droppedStr = it.metadata?.dropped_at || it.metadata?.removed_at;
+      if (droppedStr) {
+        const droppedMs = new Date(droppedStr).getTime();
+        if (!isNaN(droppedMs)) {
+          if (droppedMs < windowStartMs) {
+            preWindowDropped += pts;
+          } else if (droppedMs >= windowStartMs && droppedMs <= windowEndMs) {
+            periodDroppedPoints += pts;
+          }
+        }
+      }
+    }
+
+    // 3. Completed points inside or prior to window
+    if (!eventItemIdsCompleted.has(it.id)) {
+      const st = String(it.status || '').toLowerCase().trim();
+      const isCompleted = completedStatuses.has(st);
+      const compStr =
+        it.completed_at ||
+        it.metadata?.completed_at ||
+        (isCompleted ? it.updated_at || it.created_at : null);
+
+      if (compStr && (isCompleted || it.completed_at || it.metadata?.completed_at)) {
+        const compMs = new Date(compStr).getTime();
+        if (!isNaN(compMs)) {
+          if (compMs < windowStartMs) {
+            preWindowCompleted += pts;
+          } else if (compMs >= windowStartMs && compMs <= windowEndMs) {
+            periodDeliveredPoints += pts;
+          }
+        }
+      }
+    }
+  }
+
+  const periodStartingScope = Math.max(
+    0,
+    committedPoints + preWindowAdded - preWindowDropped - preWindowCompleted
+  );
+
+  const rawVolatility =
+    ((periodAddedPoints - periodDroppedPoints) / Math.max(periodStartingScope, 1)) * 100;
+  const periodVolatilityPct = Math.round(rawVolatility * 10) / 10;
+
+  const windowDays =
+    !isNaN(windowStartMs) && !isNaN(windowEndMs) && windowEndMs >= windowStartMs
+      ? Math.max(1, Math.round((windowEndMs - windowStartMs) / 86400000))
+      : 1;
+  const periodDailyVelocity = Math.round((periodDeliveredPoints / windowDays) * 10) / 10;
+
+  return {
+    isSubWindow,
+    windowStartDate: winStart,
+    windowEndDate: winEnd,
+    period_starting_scope: periodStartingScope,
+    period_added_points: periodAddedPoints,
+    period_dropped_points: periodDroppedPoints,
+    period_delivered_points: periodDeliveredPoints,
+    period_volatility_pct: periodVolatilityPct,
+    period_daily_velocity: periodDailyVelocity,
+    periodStartingScope,
+    periodAddedPoints,
+    periodDroppedPoints,
+    periodDeliveredPoints,
+    periodVolatilityPct,
+    periodDailyVelocity,
+  };
+}
+
 /**
  * Aggregates all pure sprint metrics and produces the comprehensive SprintHealthReport.
  */
@@ -584,6 +912,31 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
   const runwayLocked = isActive && isRunwayEnforced && runwayElapsedRatio > (rules.late_runway_threshold ?? 1.0);
   const capacityRemaining = Math.max(0, committed - totalCurrentPoints);
 
+  const periodFields: Partial<SprintHealthReport> = {};
+  if (input.startDate && input.endDate) {
+    const period = computePeriodScopedTelemetry({
+      committedPoints: committed,
+      sprintStartDate: startedAt,
+      sprintEndDate: endsAt,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      items: pointItems,
+      events: input.events,
+      completedStatuses: effectiveCompletedStatuses,
+      metricKey,
+    });
+
+    Object.assign(periodFields, {
+      ...period,
+      baselineCommittedPoints: committed,
+      baselineCompletedPoints: completedPoints,
+      baselinePointsAddedMidSprint: pointsAddedMidSprint,
+      baselinePointsDroppedMidSprint: pointsDroppedMidSprint,
+      baselineScopeCreepPercent: scopeCreepPercent,
+      baselineCommitmentReliabilityPercent: commitmentReliabilityPercent,
+    });
+  }
+
   return {
     sprintId: sprint.id,
     sprintName: sprint.name,
@@ -620,5 +973,6 @@ export function computeSprintAnalytics(input: SprintAnalyticsInput): SprintHealt
     capacityRemaining,
     velocityTrend,
     rules,
+    ...periodFields,
   };
 }
