@@ -18,6 +18,7 @@ export interface UseTabUrlSyncOptions {
   defaultTab?: DashboardTab;
   initialTab?: string | null;
   onTabChange?: (tab: DashboardTab) => void;
+  defaultHistoryMode?: 'push' | 'replace';
 }
 
 /**
@@ -86,9 +87,12 @@ export function useTabUrlSync(options?: UseTabUrlSyncOptions) {
     };
   }, [parseTab, options]);
 
+  const defaultHistoryMode = options?.defaultHistoryMode ?? 'push';
+
   // Programmatic tab switch
   const handleTabChange = useCallback(
-    (newTab: DashboardTab, historyMode: 'push' | 'replace' = 'replace') => {
+    (newTab: DashboardTab, historyMode?: 'push' | 'replace') => {
+      const mode = historyMode ?? defaultHistoryMode;
       setActiveTabState(newTab);
       options?.onTabChange?.(newTab);
 
@@ -101,14 +105,14 @@ export function useTabUrlSync(options?: UseTabUrlSyncOptions) {
         }
 
         const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
-        if (historyMode === 'push') {
-          window.history.pushState({ tab: newTab }, '', nextUrl);
-        } else {
+        if (mode === 'replace') {
           window.history.replaceState({ tab: newTab }, '', nextUrl);
+        } else {
+          window.history.pushState({ tab: newTab }, '', nextUrl);
         }
       }
     },
-    [defaultTab, options]
+    [defaultTab, defaultHistoryMode, options]
   );
 
   return {

@@ -19,11 +19,17 @@ export async function GET(
   }
 
   // Look up full work item by UUID or external_ref_id
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(itemId);
   let itemQuery: any = supabaseAdmin
     .from('work_items')
     .select('*')
-    .eq('tenant_id', authCtx.tenant.id)
-    .or(`id.eq.${itemId},external_ref_id.eq.${itemId}`);
+    .eq('tenant_id', authCtx.tenant.id);
+
+  if (isUuid) {
+    itemQuery = itemQuery.or(`id.eq.${itemId},external_ref_id.eq.${itemId}`);
+  } else {
+    itemQuery = itemQuery.eq('external_ref_id', itemId);
+  }
 
   if (typeof itemQuery.is === 'function') {
     itemQuery = itemQuery.is('deleted_at', null);
@@ -56,7 +62,7 @@ export async function PATCH(
     body = await req.json();
   } catch {}
 
-  if (!body.id && itemId) {
+  if (itemId) {
     body.id = itemId;
   }
 

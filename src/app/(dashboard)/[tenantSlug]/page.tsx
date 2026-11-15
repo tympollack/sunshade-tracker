@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
-import { getSessionUser } from '@/lib/auth-guard';
+import { getSessionUser } from '@/lib/auth-claims';
 
 interface PageProps {
   params: Promise<{ tenantSlug: string }>;

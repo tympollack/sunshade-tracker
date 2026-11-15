@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { WorkItem, ProjectSettings, HierarchyLevel, SprintDefinition, CustomFieldDefinition, normalizeCustomFields } from '@/types/tracker';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
@@ -136,20 +136,37 @@ export function useWorkItemForm({
     }
   }, [item, projectSettings]);
 
+  const hydratingPromiseRef = useRef<Promise<WorkItem | null> | null>(null);
+  const hydratedItemRef = useRef<WorkItem | null>(null);
+  const [isHydratingDetail, setIsHydratingDetail] = useState(false);
+  const [hydrationError, setHydrationError] = useState<string | null>(null);
+
   // On-demand full detail hydration from GET /api/v1/items/[id] (TASK-TRK-THIN-ITEM-PROJECTION)
   useEffect(() => {
-    if (!item?.id || !isOpen) return;
+    if (!item?.id || !isOpen) {
+      hydratingPromiseRef.current = null;
+      hydratedItemRef.current = null;
+      setIsHydratingDetail(false);
+      setHydrationError(null);
+      return;
+    }
 
     let isCancelled = false;
+    setIsHydratingDetail(true);
+    setHydrationError(null);
     const endpoint = `/api/v1/items/${encodeURIComponent(item.id)}`;
 
-    fetch(endpoint, {
+    const promise = fetch(endpoint, {
       headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load item details');
+        return res.json();
+      })
       .then((data) => {
-        if (isCancelled || !data?.item) return;
+        if (isCancelled || !data?.item) return null;
         const fullItem: WorkItem = data.item;
+        hydratedItemRef.current = fullItem;
 
         if (fullItem.description !== undefined && fullItem.description !== null) {
           setDescription((prev) => (prev ? prev : fullItem.description || ''));
@@ -171,8 +188,21 @@ export function useWorkItemForm({
             return drafts;
           });
         }
+        return fullItem;
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (!isCancelled) {
+          setHydrationError(err?.message || 'Failed to load full item details');
+        }
+        return null;
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsHydratingDetail(false);
+        }
+      });
+
+    hydratingPromiseRef.current = promise;
 
     return () => {
       isCancelled = true;
@@ -291,15 +321,30 @@ export function useWorkItemForm({
     setIsSaving(true);
     setSaveError(null);
     try {
+      // If hydration is still in flight, wait for it so hidden metadata (agent_prompt, custom fields) is not erased
+      let fullItem = hydratedItemRef.current;
+      if (!fullItem && hydratingPromiseRef.current) {
+        try {
+          fullItem = await hydratingPromiseRef.current;
+        } catch {
+          // If hydration failed, proceed with caution
+        }
+      }
+
+      const mergedMetadata = {
+        ...(fullItem?.metadata || {}),
+        ...metadata,
+      };
+
       const updates: Partial<WorkItem> = {
         title: title.trim(),
-        description: description.trim() || null,
+        description: description.trim() || fullItem?.description || null,
         status,
         item_type: itemType,
         parent_id: parentId || null,
         assignee: normalizeAssignee(assignee),
         external_ref_id: externalRef.trim() || null,
-        metadata,
+        metadata: mergedMetadata,
       };
       if (selectedProjectId) {
         const matchedProj = projects.find((p) => p.id === selectedProjectId || p.slug === selectedProjectId);
@@ -518,6 +563,8 @@ export function useWorkItemForm({
     levelColor,
     isLocked,
     isSprintLocked,
+    isHydratingDetail,
+    hydrationError,
     handleSave,
     handleAddMetaField,
     handleUpdateMetaField,

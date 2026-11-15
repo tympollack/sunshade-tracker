@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
-import { getSessionUser } from '@/lib/auth-guard';
+import { getSessionUser } from '@/lib/auth-claims';
 
 /**
  * GET /api/v1/tenants/me

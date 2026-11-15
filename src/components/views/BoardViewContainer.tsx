@@ -390,7 +390,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                       >
                         {isLoadingColdArchive
                           ? 'Loading older completed...'
-                          : `Load older completed (${coldCount} items)`}
+                          : `Load older completed tasks (${coldCount} items)`}
                       </button>
                     </div>
                   )}

@@ -9,7 +9,7 @@ import {
   sanitizeNextUrl,
 } from '@/lib/env';
 import { resolvePostAuthDestination } from '@/lib/auth';
-import { getSessionUser } from '@/lib/auth-guard';
+import { getSessionUser } from '@/lib/auth-claims';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { LoginForm } from './LoginForm';
 

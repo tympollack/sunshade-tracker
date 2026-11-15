@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, renderHook } from '@testing-library/react';
 import { useProjectItems, reconcileDelta, mergeColdArchive } from '@/hooks/useProjectItems';
+import { clearProjectCache, getProjectCache, setProjectCache } from '@/context/ProjectDataContext';
 import { BoardViewContainer } from '@/components/views/BoardViewContainer';
 import { WorkItem, ProjectSettings } from '@/types/tracker';
 
@@ -140,10 +141,12 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
 
   describe('useProjectItems Hook', () => {
     beforeEach(() => {
+      clearProjectCache();
       vi.useFakeTimers({ shouldAdvanceTime: true });
     });
 
     afterEach(() => {
+      clearProjectCache();
       vi.useRealTimers();
     });
 
@@ -490,6 +493,85 @@ describe('Delta Synchronization & Cold Archive Partitioning Suite', () => {
       );
 
       expect(screen.queryByTestId('cold-archive-banner')).toBeNull();
+    });
+  });
+
+  describe('Client Cache Tenant Isolation & Partial Preload Safety', () => {
+    beforeEach(() => {
+      clearProjectCache();
+    });
+
+    afterEach(() => {
+      clearProjectCache();
+    });
+
+    it('isolates cache entries across different tenant boundaries', () => {
+      setProjectCache(
+        'proj-shared-slug',
+        {
+          items: [activeItem],
+          settings: sampleSettings,
+          latestAt: '2026-10-01T00:00:00.000Z',
+          tenantSlug: 'tenant-alpha',
+          isPartial: false,
+        },
+        undefined,
+        'tenant-alpha'
+      );
+
+      // Accessing with matching tenant succeeds
+      const alphaEntry = getProjectCache('proj-shared-slug', 'tenant-alpha');
+      expect(alphaEntry).toBeDefined();
+      expect(alphaEntry?.items).toHaveLength(1);
+
+      // Accessing across account/tenant boundary returns undefined (no leak)
+      const betaEntry = getProjectCache('proj-shared-slug', 'tenant-beta');
+      expect(betaEntry).toBeUndefined();
+    });
+
+    it('hydrates immediately from partial preloaded cache and triggers background full fetch', async () => {
+      setProjectCache(
+        'proj-partial',
+        {
+          items: [activeItem],
+          settings: sampleSettings,
+          latestAt: '2026-10-01T00:00:00.000Z',
+          tenantSlug: 'tenant-1',
+          isPartial: true,
+        },
+        undefined,
+        'tenant-1'
+      );
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          items: [activeItem, completedRecentItem, coldArchivedItem],
+          latest_at: '2026-10-10T00:00:00.000Z',
+          cold_count: 1,
+        }),
+      });
+      global.fetch = mockFetch;
+
+      const { result } = renderHook(() =>
+        useProjectItems({
+          projectId: 'proj-partial',
+          tenantSlug: 'tenant-1',
+          autoPoll: false,
+        })
+      );
+
+      // 0ms instant hydration of active cards
+      expect(result.current.items).toHaveLength(1);
+      expect(result.current.items[0].id).toBe('task-active');
+      expect(result.current.loading).toBe(false);
+
+      // Background fetchInitial was triggered to load completed work
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockFetch).toHaveBeenCalled();
     });
   });
 });

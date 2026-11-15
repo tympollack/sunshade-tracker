@@ -100,15 +100,18 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
       _setItems((prev) => {
         const next = typeof action === 'function' ? action(prev) : action;
         if (cacheKey) {
-          const cur = getProjectCache(cacheKey);
+          const cur = getProjectCache(cacheKey, tenantSlug);
           setProjectCache(
             cacheKey,
             {
               items: next,
               settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
               latestAt: lastSyncedAtRef.current || new Date().toISOString(),
+              tenantSlug,
+              isPartial: cur?.isPartial ?? false,
             },
-            projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+            projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined,
+            tenantSlug
           );
         }
         return next;
@@ -131,7 +134,6 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
 
       if (includeCold) {
         params.set('include_cold_archive', 'true');
-        params.set('include_archived', 'true');
       }
       if (updatedSince) {
         params.set('updated_since', updatedSince);
@@ -162,15 +164,18 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
           setLastSyncedAt(latest);
 
           if (cacheKey) {
-            const cur = getProjectCache(cacheKey);
+            const cur = getProjectCache(cacheKey, tenantSlug);
             setProjectCache(
               cacheKey,
               {
                 items: fetchedItems,
                 settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
                 latestAt: latest,
+                tenantSlug,
+                isPartial: false,
               },
-              projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+              projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined,
+              tenantSlug
             );
           }
 
@@ -243,15 +248,18 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
             const next = reconcileDelta(prev, data.items || [], data.deleted_ids || []);
             const newLatest = data.latest_at || lastSyncedAtRef.current || new Date().toISOString();
             if (cacheKey) {
-              const cur = getProjectCache(cacheKey);
+              const cur = getProjectCache(cacheKey, tenantSlug);
               setProjectCache(
                 cacheKey,
                 {
                   items: next,
                   settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
                   latestAt: newLatest,
+                  tenantSlug,
+                  isPartial: false,
                 },
-                projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+                projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined,
+                tenantSlug
               );
             }
             return next;
@@ -274,20 +282,25 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
   useEffect(() => {
     if (!cacheKey) return;
 
-    const entry = getProjectCache(cacheKey);
+    const entry = getProjectCache(cacheKey, tenantSlug);
     if (entry) {
       // Hydrate state immediately from cache with zero skeleton flash
       _setItems(entry.items);
-      lastSyncedAtRef.current = entry.latestAt;
-      setLastSyncedAt(entry.latestAt);
       setLoading(false);
 
-      // Non-blocking background delta fetch
-      pollDelta();
+      if (entry.isPartial) {
+        // Preloaded entries only carry active items: fetch complete items in background
+        fetchInitial(true);
+      } else {
+        lastSyncedAtRef.current = entry.latestAt;
+        setLastSyncedAt(entry.latestAt);
+        // Non-blocking background delta fetch
+        pollDelta();
+      }
     } else {
       fetchInitial();
     }
-  }, [cacheKey, fetchInitial, pollDelta]);
+  }, [cacheKey, fetchInitial, pollDelta, tenantSlug]);
 
   // 2-minute delta polling loop and window focus re-activation
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createServerClient } from '@/lib/supabase-server';
 import { resolvePostAuthDestination } from '@/lib/auth';
-import { getSessionUser } from '@/lib/auth-guard';
+import { getSessionUser } from '@/lib/auth-claims';
 
 /**
  * Intelligent workspace destination handler:

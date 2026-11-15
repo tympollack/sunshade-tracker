@@ -101,7 +101,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
   });
 
-  const initialCache = getProjectCache(projectSlug);
+  const initialCache = getProjectCache(projectSlug, tenantSlug);
 
   const syncFilterToUrl = useCallback((key: string, value: string | string[] | null) => {
     if (typeof window === 'undefined') return;
@@ -143,12 +143,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       _setItems((prev) => {
         const next = typeof action === 'function' ? action(prev) : action;
         if (projectSlug && projectSlug !== 'all') {
-          const cur = getProjectCache(projectSlug);
-          setProjectCache(projectSlug, {
-            items: next,
-            settings: projectSettingsRef.current || cur?.settings || DEFAULT_PROJECT_SETTINGS,
-            latestAt: lastSyncedAtRef.current || new Date().toISOString(),
-          });
+          const cur = getProjectCache(projectSlug, tenantSlug);
+          setProjectCache(
+            projectSlug,
+            {
+              items: next,
+              settings: projectSettingsRef.current || cur?.settings || DEFAULT_PROJECT_SETTINGS,
+              latestAt: lastSyncedAtRef.current || new Date().toISOString(),
+              tenantSlug,
+              isPartial: cur?.isPartial ?? false,
+            },
+            undefined,
+            tenantSlug
+          );
         }
         return next;
       });
@@ -1032,7 +1039,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   }, [projectSlug, loadedProjectSlug, projectSettings.sprint_settings, availableSprints, requestedSprint]);
 
+  const isFirstMountRef = useRef(true);
+
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
     setSelectedStatuses(null);
     setSelectedLevels(null);
     setTreeSelectedStatuses(null);

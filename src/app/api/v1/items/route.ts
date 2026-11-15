@@ -148,23 +148,12 @@ export async function GET(req: NextRequest) {
   const includeHeavy = searchParams.get('include_heavy') === 'true';
   const cardProjection = includeHeavy
     ? '*'
-    : 'id, project_id, parent_id, external_ref_id, item_type, status, title, assignee, order_index, created_at, updated_at, priority:metadata->>priority, story_points:metadata->>story_points, sprint:metadata->>sprint, complexity:metadata->>complexity';
+    : 'id, tenant_id, project_id, parent_id, sprint_id, external_ref_id, item_type, status, title, assignee, order_index, created_at, updated_at, deleted_at, metadata';
 
   const mapThinCard = (row: any): WorkItem => {
     if (includeHeavy) return row;
     const meta: Record<string, any> = { ...(row.metadata || {}) };
     delete meta.agent_prompt;
-
-    if (row.priority !== undefined && row.priority !== null) meta.priority = row.priority;
-    if (row.story_points !== undefined && row.story_points !== null) {
-      const num = Number(row.story_points);
-      meta.story_points = isNaN(num) ? row.story_points : num;
-    }
-    if (row.sprint !== undefined && row.sprint !== null) meta.sprint = row.sprint;
-    if (row.complexity !== undefined && row.complexity !== null) {
-      const num = Number(row.complexity);
-      meta.complexity = isNaN(num) ? row.complexity : num;
-    }
 
     const { description, ...rest } = row;
     return {

@@ -106,6 +106,7 @@ describe('TASK-TRK-SWITCHER-PREFETCH-SHALLOW-TABS: Hover Prefetching & Shallow U
         useTabUrlSync({
           defaultTab: 'board',
           initialTab: 'board',
+          defaultHistoryMode: 'replace',
         })
       );
 
@@ -128,6 +129,7 @@ describe('TASK-TRK-SWITCHER-PREFETCH-SHALLOW-TABS: Hover Prefetching & Shallow U
         useTabUrlSync({
           defaultTab: 'board',
           initialTab: 'sprint',
+          defaultHistoryMode: 'replace',
         })
       );
 
@@ -148,6 +150,7 @@ describe('TASK-TRK-SWITCHER-PREFETCH-SHALLOW-TABS: Hover Prefetching & Shallow U
         useTabUrlSync({
           defaultTab: 'board',
           initialTab: 'sprint',
+          defaultHistoryMode: 'replace',
         })
       );
 
