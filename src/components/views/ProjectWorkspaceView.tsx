@@ -1204,7 +1204,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
       }
 
-      const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true' : '';
+      const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true&include_archived=true' : '';
       const itemsUrl = isAllProjects
         ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}${coldQuery}`
         : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}${coldQuery}`;
@@ -1279,8 +1279,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setIsLoadingColdArchive(true);
     try {
       const url = isAllProjects
-        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&include_cold_archive=true`
-        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&include_cold_archive=true`;
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&include_cold_archive=true&include_archived=true`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&include_cold_archive=true&include_archived=true`;
       const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();

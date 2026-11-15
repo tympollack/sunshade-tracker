@@ -131,6 +131,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
 
       if (includeCold) {
         params.set('include_cold_archive', 'true');
+        params.set('include_archived', 'true');
       }
       if (updatedSince) {
         params.set('updated_since', updatedSince);

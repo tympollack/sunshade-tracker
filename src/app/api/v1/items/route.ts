@@ -142,7 +142,9 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
   const updatedSince = searchParams.get('updated_since');
-  const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const includeColdArchive =
+    searchParams.get('include_cold_archive') === 'true' ||
+    searchParams.get('include_archived') === 'true';
   const includeHeavy = searchParams.get('include_heavy') === 'true';
   const cardProjection = includeHeavy
     ? '*'
