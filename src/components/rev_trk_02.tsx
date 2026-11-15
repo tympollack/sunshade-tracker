@@ -88,7 +88,7 @@ export function useTabUrlSync(options?: UseTabUrlSyncOptions) {
 
   // Programmatic tab switch
   const handleTabChange = useCallback(
-    (newTab: DashboardTab, historyMode: 'push' | 'replace' = 'push') => {
+    (newTab: DashboardTab, historyMode: 'push' | 'replace' = 'replace') => {
       setActiveTabState(newTab);
       options?.onTabChange?.(newTab);
 
@@ -101,10 +101,10 @@ export function useTabUrlSync(options?: UseTabUrlSyncOptions) {
         }
 
         const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
-        if (historyMode === 'replace' || newTab === activeTabRef.current) {
-          window.history.replaceState({ tab: newTab }, '', nextUrl);
-        } else {
+        if (historyMode === 'push') {
           window.history.pushState({ tab: newTab }, '', nextUrl);
+        } else {
+          window.history.replaceState({ tab: newTab }, '', nextUrl);
         }
       }
     },

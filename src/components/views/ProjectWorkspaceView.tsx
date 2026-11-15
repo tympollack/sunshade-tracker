@@ -103,7 +103,32 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
 
   const initialCache = getProjectCache(projectSlug);
 
-  const [selectedSprint, setSelectedSprint] = useState<string>('all');
+  const syncFilterToUrl = useCallback((key: string, value: string | string[] | null) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      if (!value || (Array.isArray(value) && value.length === 0) || value === 'all') {
+        url.searchParams.delete(key);
+      } else if (Array.isArray(value)) {
+        url.searchParams.set(key, value.join(','));
+      } else {
+        url.searchParams.set(key, value);
+      }
+      const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.replaceState(window.history.state, '', nextUrl);
+    } catch {
+      // Non-fatal shallow sync
+    }
+  }, []);
+
+  const [selectedSprint, _setSelectedSprint] = useState<string>(() => requestedSprint || 'all');
+  const setSelectedSprint = useCallback((action: string | ((prev: string) => string)) => {
+    _setSelectedSprint((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      syncFilterToUrl('sprint', next);
+      return next;
+    });
+  }, [syncFilterToUrl]);
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
   const [items, _setItems] = useState<WorkItem[]>(() => initialCache?.items || []);
   const [coldCount, setColdCount] = useState<number>(0);
@@ -621,8 +646,39 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   } | null>(null);
 
   // Filter States
-  const [selectedStatuses, setSelectedStatuses] = useState<string[] | null>(null);
-  const [selectedLevels, setSelectedLevels] = useState<string[] | null>(null);
+  const [selectedStatuses, _setSelectedStatuses] = useState<string[] | null>(() => {
+    if (typeof searchParams?.status === 'string' && searchParams.status) {
+      return searchParams.status.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return null;
+  });
+  const setSelectedStatuses = useCallback(
+    (action: string[] | null | ((prev: string[] | null) => string[] | null)) => {
+      _setSelectedStatuses((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        syncFilterToUrl('status', next);
+        return next;
+      });
+    },
+    [syncFilterToUrl]
+  );
+
+  const [selectedLevels, _setSelectedLevels] = useState<string[] | null>(() => {
+    if (typeof searchParams?.level === 'string' && searchParams.level) {
+      return searchParams.level.split(',').map((l) => l.trim()).filter(Boolean);
+    }
+    return null;
+  });
+  const setSelectedLevels = useCallback(
+    (action: string[] | null | ((prev: string[] | null) => string[] | null)) => {
+      _setSelectedLevels((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        syncFilterToUrl('level', next);
+        return next;
+      });
+    },
+    [syncFilterToUrl]
+  );
 
   const effectiveSelectedStatuses = useMemo(() => {
     if (selectedStatuses !== null) return selectedStatuses;
