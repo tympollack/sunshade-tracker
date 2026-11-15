@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { AreaChart, HelpCircle } from 'lucide-react';
+import { AreaChart, HelpCircle, ChevronLeft, ChevronRight, RotateCcw, X, ArrowUpRight } from 'lucide-react';
 import { CfdDataPoint } from '@/lib/analytics/flow-diagnostics';
+import { useChartDateZoom, type ChunkWindowPreset } from '@/hooks/useChartDateZoom';
 
 export type CfdTimeWindow = '14D' | '30D' | 'Sprint to Date' | 'Full Sprint';
 export type CfdScopeMode = 'all' | 'wip_only';
@@ -18,6 +19,7 @@ export interface CumulativeFlowChartProps {
   sprintStartDate?: string | null;
   sprintEndDate?: string | null;
   today?: string;
+  onApplyWindowToPage?: (startDate: string, endDate: string) => void;
 }
 
 /**
@@ -170,8 +172,10 @@ export function CumulativeFlowChart({
   initialTimeWindow = 'Sprint to Date',
   initialHideUnstarted = false,
   dateFormat = 'MMM DD',
+  sprintStartDate = null,
   sprintEndDate = null,
   today,
+  onApplyWindowToPage,
 }: CumulativeFlowChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<CfdTimeWindow>(initialTimeWindow);
@@ -235,9 +239,18 @@ export function CumulativeFlowChart({
   // - 'Sprint to Date' (default): clamps at min(sprint.end_date, today) so future unelapsed dates do not compress active curves.
   // - '14D' and '30D': filter down to the most recent 14 or 30 elapsed days.
   // - 'Full Sprint': preserves the entire timeline series up to sprint.end_date.
-  const displayData = React.useMemo(() => {
+  const presetData = React.useMemo(() => {
     return clampSeriesToHorizon(data, timeWindow, { sprintEndDate, today });
   }, [data, timeWindow, sprintEndDate, today]);
+
+  const zoom = useChartDateZoom({
+    data: presetData,
+    sprintStartDate,
+    sprintEndDate,
+    today,
+  });
+
+  const displayData = zoom.visibleData;
 
   // Show skeleton on initial load, or when validating without pre-existing data
   const hasData = Boolean(displayData && displayData.length > 0);
@@ -337,6 +350,25 @@ export function CumulativeFlowChart({
 
   const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
 
+  // Calculate brush overlay bounds when dragging
+  const brushIndices = React.useMemo(() => {
+    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
+    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
+    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
+    if (leftIdx === -1 || rightIdx === -1) return null;
+    return {
+      startIdx: Math.min(leftIdx, rightIdx),
+      endIdx: Math.max(leftIdx, rightIdx),
+    };
+  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
+
+  const pinnedDataIndex = React.useMemo(() => {
+    if (!zoom.pinnedPoint) return -1;
+    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
+    if (byDate !== -1) return byDate;
+    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
+  }, [zoom.pinnedPoint, displayData]);
+
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
       {/* Header and Controls */}
@@ -360,8 +392,74 @@ export function CumulativeFlowChart({
           </p>
         </div>
 
-        {/* Right Controls: Scope Toggle, Range Filter & Pinned Legend */}
+        {/* Right Controls: Zoom Nav, Scope Toggle, Range Filter & Pinned Legend */}
         <div className="flex flex-wrap items-center gap-3 ml-auto">
+          {/* Active Zoom Stepper & Promotion Controls */}
+          {zoom.isZoomed && zoom.zoomedRange && (
+            <div
+              className="flex items-center gap-1.5 bg-sky-950/50 border border-sky-700/60 px-2 py-0.5 rounded-lg text-xs"
+              data-testid="cfd-zoom-controls"
+            >
+              <button
+                type="button"
+                onClick={zoom.stepPrev}
+                disabled={!zoom.canStepPrev}
+                className="px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-900/60 disabled:opacity-40 disabled:cursor-not-allowed font-mono flex items-center gap-0.5"
+                data-testid="cfd-zoom-prev"
+                title="Previous window"
+              >
+                <ChevronLeft className="w-3 h-3" />
+                <span>Prev</span>
+              </button>
+              <span
+                className="font-mono text-sky-200 font-semibold px-1 whitespace-nowrap"
+                data-testid="cfd-zoom-range-label"
+              >
+                {formatCfdDate(zoom.zoomedRange.startDate, dateFormat)} –{' '}
+                {formatCfdDate(zoom.zoomedRange.endDate, dateFormat)}
+              </span>
+              <button
+                type="button"
+                onClick={zoom.stepNext}
+                disabled={!zoom.canStepNext}
+                className="px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-900/60 disabled:opacity-40 disabled:cursor-not-allowed font-mono flex items-center gap-0.5"
+                data-testid="cfd-zoom-next"
+                title="Next window"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  zoom.resetZoom();
+                  setHoveredIndex(null);
+                }}
+                className="ml-1 px-1.5 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium flex items-center gap-1"
+                data-testid="cfd-zoom-reset"
+                title="Reset Zoom (Esc)"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Zoom</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onApplyWindowToPage?.(
+                    zoom.zoomedRange!.startDate,
+                    zoom.zoomedRange!.endDate
+                  )
+                }
+                className="ml-0.5 px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-medium flex items-center gap-1 whitespace-nowrap"
+                data-testid="cfd-apply-window-to-page"
+                title="Promote zoomed window to page-wide date filters"
+              >
+                <span>Apply Window to Page</span>
+                <ArrowUpRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           {/* Segmented Scope Toggle: All Scope vs WIP & Delivery Only */}
           <div
             className="flex items-center bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60"
@@ -406,10 +504,11 @@ export function CumulativeFlowChart({
                 type="button"
                 onClick={() => {
                   setTimeWindow(preset);
+                  zoom.resetZoom();
                   setHoveredIndex(null);
                 }}
                 className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
-                  timeWindow === preset
+                  timeWindow === preset && !zoom.isZoomed
                     ? 'bg-slate-700 text-white shadow-sm font-semibold'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
@@ -457,6 +556,17 @@ export function CumulativeFlowChart({
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className="w-full h-full select-none"
           preserveAspectRatio="xMidYMid meet"
+          onMouseUp={() => zoom.onMouseUp()}
+          onMouseLeave={() => {
+            setHoveredIndex(null);
+            if (zoom.isDragging) zoom.onMouseUp();
+          }}
+          onDoubleClick={() => {
+            if (zoom.isZoomed) {
+              zoom.resetZoom();
+              setHoveredIndex(null);
+            }
+          }}
         >
           {/* Background Grid Lines */}
           {[0, 0.25, 0.5, 0.75, 1].map((pct, idx) => {
@@ -530,40 +640,117 @@ export function CumulativeFlowChart({
             />
           ))}
 
+          {/* Brush Selection ReferenceArea while dragging */}
+          {brushIndices && (
+            <g
+              className="recharts-layer recharts-reference-area"
+              data-testid="cfd-brush-reference-area"
+            >
+              <rect
+                data-testid="cfd-brush-selection"
+                className="recharts-reference-area-rect"
+                x={getX(brushIndices.startIdx)}
+                y={padding.top}
+                width={Math.max(4, getX(brushIndices.endIdx) - getX(brushIndices.startIdx))}
+                height={plotHeight}
+                fill="#38bdf8"
+                fillOpacity={0.14}
+                stroke="#38bdf8"
+                strokeOpacity={0.3}
+              />
+            </g>
+          )}
+
           {/* Hover Column Triggers & Cursor Line */}
           {displayData.map((d, i) => {
             const x = getX(i);
             const isHovered = hoveredIndex === i;
+            const isPinned = pinnedDataIndex === i;
 
             return (
               <g key={`col-${i}`}>
-                {isHovered && (
+                {(isHovered || isPinned) && (
                   <line
                     x1={x}
                     y1={padding.top}
                     x2={x}
                     y2={padding.top + plotHeight}
-                    stroke="#f8fafc"
+                    stroke={isPinned ? '#38bdf8' : '#f8fafc'}
                     strokeWidth="1.5"
                     strokeDasharray="4 4"
                     opacity="0.8"
                   />
                 )}
-                {/* Transparent hover trigger column */}
+                {/* Transparent hover & brush trigger column */}
                 <rect
                   x={x - 20}
                   y={padding.top}
                   width="40"
                   height={plotHeight}
                   fill="transparent"
+                  className="cursor-crosshair"
                   data-testid={`cfd-hover-column-${i}`}
-                  onMouseEnter={() => setHoveredIndex(i)}
+                  onMouseEnter={() => {
+                    setHoveredIndex(i);
+                    zoom.onMouseMove(d.date);
+                  }}
+                  onMouseMove={() => zoom.onMouseMove(d.date)}
                   onMouseLeave={() => setHoveredIndex(null)}
+                  onMouseDown={() => zoom.onMouseDown(d.date)}
+                  onMouseUp={() => zoom.onMouseUp()}
+                  onClick={() => zoom.onPointClick(d.date, i)}
                 />
               </g>
             );
           })}
         </svg>
+
+        {/* Click-to-Pin Chunk Drill-Down Popover (1W / 2W / 4W) */}
+        {zoom.pinnedPoint && (
+          <div
+            data-testid="cfd-chunk-popover"
+            className="absolute top-3 z-30 bg-slate-900/95 border border-sky-700/70 rounded-lg px-3 py-2 shadow-2xl text-xs backdrop-blur-md flex items-center gap-2"
+            style={{
+              left: `${Math.min(
+                Math.max(8, ((pinnedDataIndex >= 0 ? getX(pinnedDataIndex) : svgWidth / 2) / svgWidth) * 100),
+                62
+              )}%`,
+            }}
+          >
+            <span className="text-slate-300 font-medium whitespace-nowrap">
+              Zoom around{' '}
+              <span className="font-mono text-sky-300 font-semibold">
+                {formatCfdDate(zoom.pinnedPoint.date, dateFormat)}
+              </span>
+              :
+            </span>
+            <div className="flex items-center gap-1">
+              {(['1W', '2W', '4W'] as ChunkWindowPreset[]).map((chunk) => (
+                <button
+                  key={chunk}
+                  type="button"
+                  onClick={() => {
+                    zoom.zoomAroundDate(zoom.pinnedPoint!.date, chunk);
+                    setHoveredIndex(null);
+                  }}
+                  className="px-2 py-0.5 rounded bg-sky-500/15 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 font-mono font-semibold transition-colors cursor-pointer"
+                  data-testid={`cfd-chunk-${chunk.toLowerCase()}`}
+                >
+                  {chunk}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={zoom.dismissPinnedPoint}
+              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              data-testid="cfd-chunk-close"
+              aria-label="Close zoom options"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Floating Tooltip */}
         {activePoint && hoveredIndex !== null && (
