@@ -53,7 +53,7 @@ export function ProjectSwitcher({
   const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeItemRef = useRef<HTMLAnchorElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; maxHeight?: number } | null>(null);
 
   const isPortfolio = currentProjectSlug === 'portfolio';
   const isAll =
@@ -91,9 +91,15 @@ export function ProjectSwitcher({
       if (typeof window !== 'undefined' && left + menuWidth > window.innerWidth - 12) {
         left = Math.max(12, window.innerWidth - menuWidth - 12);
       }
+      const top = rect.bottom + 8;
+      const maxHeight = typeof window !== 'undefined'
+        ? Math.max(120, window.innerHeight - top - 16)
+        : undefined;
+
       setCoords({
-        top: rect.bottom + 8,
+        top,
         left: Math.max(12, left),
+        maxHeight,
       });
     }
   };
@@ -149,6 +155,9 @@ export function ProjectSwitcher({
   }, [open]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.key === 'Process' || e.keyCode === 229) {
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       setOpen(false);
@@ -239,6 +248,7 @@ export function ProjectSwitcher({
             position: 'fixed',
             top: coords ? `${coords.top}px` : undefined,
             left: coords ? `${coords.left}px` : undefined,
+            maxHeight: coords?.maxHeight ? `${coords.maxHeight}px` : undefined,
           }}
           className="w-64 max-w-[calc(100vw-24px)] max-h-[calc(100dvh-6rem)] flex flex-col rounded-xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/50 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
           data-testid="project-switcher-dropdown"

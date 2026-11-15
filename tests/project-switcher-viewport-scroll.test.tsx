@@ -201,4 +201,78 @@ describe('BUG-TRK-PROJECT-DROPDOWN-VIEWPORT-SCROLL: Constrain Project Switcher D
       expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest' });
     });
   });
+
+  it('8. Viewport Boundary: dynamically calculates maxHeight when coords.top > 96px in sidebar layouts', () => {
+    // Simulate window.innerHeight = 768px
+    Object.defineProperty(window, 'innerHeight', { value: 768, writable: true, configurable: true });
+
+    const projects = createProjects(18);
+
+    render(
+      <ProjectSwitcher
+        tenantSlug="pym-energy"
+        currentProjectSlug="project-1"
+        projects={projects}
+      />
+    );
+
+    const trigger = screen.getByTestId('project-switcher-trigger');
+    // Simulate trigger located 130px down (bottom: 130px)
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 130,
+      left: 16,
+      right: 150,
+      width: 134,
+      height: 30,
+      x: 16,
+      y: 100,
+      toJSON: () => {},
+    });
+
+    fireEvent.click(trigger);
+
+    const dropdown = screen.getByTestId('project-switcher-dropdown');
+    // top = 130 + 8 = 138px
+    // maxHeight = 768 - 138 - 16 = 614px
+    expect(dropdown.style.top).toBe('138px');
+    expect(dropdown.style.maxHeight).toBe('614px');
+    // Verify top + maxHeight <= window.innerHeight - 16
+    const topNum = parseFloat(dropdown.style.top);
+    const maxHNum = parseFloat(dropdown.style.maxHeight);
+    expect(topNum + maxHNum).toBeLessThanOrEqual(window.innerHeight - 16);
+  });
+
+  it('9. IME Composition: does not trigger project navigation on Enter while composing', () => {
+    const projects = createProjects(18);
+
+    render(
+      <ProjectSwitcher
+        tenantSlug="pym-energy"
+        currentProjectSlug="project-1"
+        projects={projects}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('project-switcher-trigger'));
+    const searchInput = screen.getByTestId('project-switcher-search');
+
+    fireEvent.change(searchInput, { target: { value: 'Makerverse' } });
+
+    // Simulate IME composition Enter (e.nativeEvent.isComposing = true)
+    const composingEnterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(composingEnterEvent, 'isComposing', { value: true });
+
+    fireEvent(searchInput, composingEnterEvent);
+
+    // Should NOT navigate
+    expect(mockPush).not.toHaveBeenCalled();
+    // Dropdown remains open
+    expect(screen.getByTestId('project-switcher-dropdown')).toBeInTheDocument();
+  });
 });
