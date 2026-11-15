@@ -200,13 +200,19 @@ function SprintAnalyticsViewContent({
 
       {/* KPI Metric Cards */}
       <section aria-label="Sprint Key Performance Indicators">
-        <KpiMetricCards metrics={effectiveMetrics} isLoading={false} />
-        {isCustomDateRange && (
-          <div className="mt-2 text-[11px] text-amber-400/80 flex items-center gap-1.5 px-1 font-mono">
-            <span className="font-semibold uppercase tracking-wider">Note:</span>
-            Sprint KPI metrics reflect the entire selected sprint; charts reflect the custom date window.
-          </div>
-        )}
+        <KpiMetricCards
+          metrics={
+            promotedWindow
+              ? {
+                  ...effectiveMetrics,
+                  isSubWindow: true,
+                  windowStartDate: promotedWindow.startDate,
+                  windowEndDate: promotedWindow.endDate,
+                }
+              : effectiveMetrics
+          }
+          isLoading={false}
+        />
       </section>
 
       {isPortfolio && failedProjects.length > 0 && (

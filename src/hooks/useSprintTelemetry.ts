@@ -101,6 +101,17 @@ export function useSprintTelemetry({
       let reportedRollingVelocity: number | undefined;
       let reportedSayDo: number | undefined;
       let reportedVolatility: number | undefined;
+      let isSubWindow = false;
+      let windowStartDate: string | undefined;
+      let windowEndDate: string | undefined;
+      let periodStartingScope: number | undefined;
+      let periodAddedPoints: number | undefined;
+      let periodDroppedPoints: number | undefined;
+      let periodDeliveredPoints: number | undefined;
+      let periodVolatilityPct: number | undefined;
+      let periodDailyVelocity: number | undefined;
+      let baselineScopeVolatility: number | undefined;
+      let baselineSayDoRatio: number | undefined;
 
       if (sprintRes.ok) {
         const sprintData = await sprintRes.json();
@@ -122,6 +133,36 @@ export function useSprintTelemetry({
 
         if (typeof sprintData.scopeCreepPercent === 'number') {
           reportedVolatility = sprintData.scopeCreepPercent;
+        }
+
+        if (typeof sprintData.isSubWindow === 'boolean') {
+          isSubWindow = sprintData.isSubWindow;
+        }
+        windowStartDate = sprintData.windowStartDate || startDate;
+        windowEndDate = sprintData.windowEndDate || endDate;
+        if (typeof (sprintData.periodStartingScope ?? sprintData.period_starting_scope) === 'number') {
+          periodStartingScope = sprintData.periodStartingScope ?? sprintData.period_starting_scope;
+        }
+        if (typeof (sprintData.periodAddedPoints ?? sprintData.period_added_points) === 'number') {
+          periodAddedPoints = sprintData.periodAddedPoints ?? sprintData.period_added_points;
+        }
+        if (typeof (sprintData.periodDroppedPoints ?? sprintData.period_dropped_points) === 'number') {
+          periodDroppedPoints = sprintData.periodDroppedPoints ?? sprintData.period_dropped_points;
+        }
+        if (typeof (sprintData.periodDeliveredPoints ?? sprintData.period_delivered_points) === 'number') {
+          periodDeliveredPoints = sprintData.periodDeliveredPoints ?? sprintData.period_delivered_points;
+        }
+        if (typeof (sprintData.periodVolatilityPct ?? sprintData.period_volatility_pct) === 'number') {
+          periodVolatilityPct = sprintData.periodVolatilityPct ?? sprintData.period_volatility_pct;
+        }
+        if (typeof (sprintData.periodDailyVelocity ?? sprintData.period_daily_velocity) === 'number') {
+          periodDailyVelocity = sprintData.periodDailyVelocity ?? sprintData.period_daily_velocity;
+        }
+        if (typeof sprintData.baselineScopeCreepPercent === 'number') {
+          baselineScopeVolatility = sprintData.baselineScopeCreepPercent;
+        }
+        if (typeof sprintData.baselineCommitmentReliabilityPercent === 'number') {
+          baselineSayDoRatio = sprintData.baselineCommitmentReliabilityPercent;
         }
 
         setProjectsTelemetry(Array.isArray(sprintData.projects_telemetry) ? sprintData.projects_telemetry : []);
@@ -154,17 +195,28 @@ export function useSprintTelemetry({
       setKpiMetrics({
         rollingVelocity,
         sayDoRatio: sayDo,
-        scopeVolatility: volatility,
+        scopeVolatility: isSubWindow && typeof periodVolatilityPct === 'number' ? periodVolatilityPct : volatility,
         remainingPoints: remainingPts,
         committedPoints: committedPts,
         deliveredPoints: deliveredPts,
+        isSubWindow,
+        windowStartDate,
+        windowEndDate,
+        periodStartingScope,
+        periodAddedPoints,
+        periodDroppedPoints,
+        periodDeliveredPoints,
+        periodVolatilityPct,
+        periodDailyVelocity,
+        baselineScopeVolatility: baselineScopeVolatility ?? volatility,
+        baselineSayDoRatio: baselineSayDoRatio ?? sayDo,
       });
 
       setChurnData({
-        baselineCommitted: committedPts,
-        addedPoints: addedPts,
-        droppedPoints: droppedPts,
-        finalDelivered: deliveredPts,
+        baselineCommitted: isSubWindow && typeof periodStartingScope === 'number' ? periodStartingScope : committedPts,
+        addedPoints: isSubWindow && typeof periodAddedPoints === 'number' ? periodAddedPoints : addedPts,
+        droppedPoints: isSubWindow && typeof periodDroppedPoints === 'number' ? periodDroppedPoints : droppedPts,
+        finalDelivered: isSubWindow && typeof periodDeliveredPoints === 'number' ? periodDeliveredPoints : deliveredPts,
       });
 
       // Snapshot and CFD endpoints are project-scoped; the virtual all/portfolio slug has no such data

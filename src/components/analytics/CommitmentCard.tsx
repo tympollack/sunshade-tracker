@@ -8,6 +8,7 @@ import {
   formatSayDoPercentage,
   getSayDoBadge,
 } from '@/lib/analytics/metric-calculators';
+import { formatShortWindowDate } from './ScopeVolatilityCard';
 
 export interface CommitmentCardProps {
   committedPoints?: number;
@@ -15,6 +16,12 @@ export interface CommitmentCardProps {
   sayDoRatio?: number;
   scopeVolatility?: number;
   volatilityThreshold?: number;
+  isSubWindow?: boolean;
+  windowStartDate?: string;
+  windowEndDate?: string;
+  periodStartingScope?: number;
+  periodDeliveredPoints?: number;
+  baselineSayDoRatio?: number;
 }
 
 export function CommitmentCard({
@@ -23,11 +30,26 @@ export function CommitmentCard({
   sayDoRatio,
   scopeVolatility = 0,
   volatilityThreshold = 20,
+  isSubWindow = false,
+  windowStartDate,
+  windowEndDate,
+  periodStartingScope,
+  periodDeliveredPoints,
+  baselineSayDoRatio,
 }: CommitmentCardProps) {
+  const hasActiveWindow = Boolean(
+    isSubWindow &&
+      typeof periodStartingScope === 'number' &&
+      typeof periodDeliveredPoints === 'number'
+  );
+
+  const effectiveCommitted = hasActiveWindow ? periodStartingScope : committedPoints;
+  const effectiveDelivered = hasActiveWindow ? periodDeliveredPoints : deliveredPoints;
+
   // Determine raw percentage value
   let sayDoPct: number;
-  if (typeof committedPoints === 'number' && typeof deliveredPoints === 'number' && committedPoints > 0) {
-    sayDoPct = calculateSayDoPercentage(committedPoints, deliveredPoints);
+  if (typeof effectiveCommitted === 'number' && typeof effectiveDelivered === 'number' && effectiveCommitted > 0) {
+    sayDoPct = calculateSayDoPercentage(effectiveCommitted, effectiveDelivered);
   } else if (typeof sayDoRatio === 'number') {
     // If sayDoRatio was passed as a 0-2 decimal leak (e.g. 0.8859999999999999 or 1.8780000000000001),
     // normalize by multiplying by 100 when committedPoints suggests it was an unscaled ratio
@@ -39,6 +61,13 @@ export function CommitmentCard({
   } else {
     sayDoPct = 0;
   }
+
+  const baselinePct =
+    typeof baselineSayDoRatio === 'number'
+      ? baselineSayDoRatio
+      : typeof committedPoints === 'number' && typeof deliveredPoints === 'number' && committedPoints > 0
+      ? calculateSayDoPercentage(committedPoints, deliveredPoints)
+      : sayDoPct;
 
   const formattedPct = formatSayDoPercentage(sayDoPct);
   const badge = getSayDoBadge(sayDoPct, scopeVolatility, volatilityThreshold);
@@ -86,6 +115,14 @@ export function CommitmentCard({
             <span>{badge.label}</span>
           </span>
         </Tooltip>
+        {hasActiveWindow && windowStartDate && windowEndDate && (
+          <div
+            className="mt-1.5 text-[11px] text-slate-500 font-mono"
+            data-testid="commitment-window-caption"
+          >
+            Window: {formatShortWindowDate(windowStartDate)} – {formatShortWindowDate(windowEndDate)} · Full sprint baseline: {formatSayDoPercentage(baselinePct)}
+          </div>
+        )}
       </div>
     </div>
   );

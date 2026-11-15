@@ -179,7 +179,18 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const report = await getSprintHealthReport(targetSlug, sprintId, projectIdOrSlug);
+    const startDateParam = searchParams.get('startDate') || searchParams.get('start_date');
+    const endDateParam = searchParams.get('endDate') || searchParams.get('end_date');
+
+    const report = await getSprintHealthReport(
+      targetSlug,
+      sprintId,
+      projectIdOrSlug,
+      undefined,
+      startDateParam && endDateParam
+        ? { startDate: startDateParam, endDate: endDateParam }
+        : undefined
+    );
 
     return NextResponse.json(report, { status: 200 });
   } catch (err: any) {
