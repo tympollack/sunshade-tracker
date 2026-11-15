@@ -1,37 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PATCH as patchItemsRoute } from '../route';
+import { supabaseAdmin } from '@/lib/db';
+import { authenticate } from '@/lib/auth-guard';
+import { PATCH as patchItemsRoute } from '@/app/api/v1/items/route';
 
-interface RouteContext {
-  params: Promise<{ id: string }>;
-}
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const auth = await authenticate(req);
+  if (auth.errorResponse) return auth.errorResponse;
+  const authCtx = auth.context;
 
-/**
- * PATCH /api/v1/items/[id]
- *
- * Updates a single work item by ID, enforcing project schema & transition guardrails.
- */
-export async function PATCH(req: NextRequest, context: RouteContext) {
   const resolvedParams = await context.params;
   const itemId = resolvedParams?.id;
+
   if (!itemId) {
-    return NextResponse.json({ error: 'Missing item ID in path' }, { status: 400 });
+    return NextResponse.json({ error: 'Item ID is required' }, { status: 400 });
   }
 
-  let body: Record<string, any> = {};
+  // Look up full work item by UUID or external_ref_id
+  let itemQuery: any = supabaseAdmin
+    .from('work_items')
+    .select('*')
+    .eq('tenant_id', authCtx.tenant.id)
+    .or(`id.eq.${itemId},external_ref_id.eq.${itemId}`);
+
+  if (typeof itemQuery.is === 'function') {
+    itemQuery = itemQuery.is('deleted_at', null);
+  }
+
+  const { data: item, error: itemErr } = typeof itemQuery.maybeSingle === 'function'
+    ? await itemQuery.maybeSingle()
+    : typeof itemQuery.single === 'function'
+    ? await itemQuery.single().catch(() => ({ data: null }))
+    : { data: null };
+
+  if (itemErr || !item) {
+    return NextResponse.json({ error: 'Work item not found' }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    item,
+  });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const resolvedParams = await context.params;
+  const itemId = resolvedParams?.id;
+
+  let body: any = {};
   try {
     body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 });
+  } catch {}
+
+  if (!body.id && itemId) {
+    body.id = itemId;
   }
 
-  const forwardedReq = new NextRequest(req.url, {
+  const forwardReq = new NextRequest(req.url, {
     method: 'PATCH',
     headers: req.headers,
-    body: JSON.stringify({
-      ...body,
-      id: itemId,
-    }),
+    body: JSON.stringify(body),
   });
 
-  return patchItemsRoute(forwardedReq);
+  return patchItemsRoute(forwardReq);
 }

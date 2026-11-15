@@ -136,6 +136,49 @@ export function useWorkItemForm({
     }
   }, [item, projectSettings]);
 
+  // On-demand full detail hydration from GET /api/v1/items/[id] (TASK-TRK-THIN-ITEM-PROJECTION)
+  useEffect(() => {
+    if (!item?.id || !isOpen) return;
+
+    let isCancelled = false;
+    const endpoint = `/api/v1/items/${encodeURIComponent(item.id)}`;
+
+    fetch(endpoint, {
+      headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isCancelled || !data?.item) return;
+        const fullItem: WorkItem = data.item;
+
+        if (fullItem.description !== undefined && fullItem.description !== null) {
+          setDescription((prev) => (prev ? prev : fullItem.description || ''));
+        }
+
+        if (fullItem.metadata) {
+          setMetadata((prev) => ({
+            ...fullItem.metadata,
+            ...prev,
+          }));
+
+          setMetaDrafts((prev) => {
+            const drafts = { ...prev };
+            Object.entries(fullItem.metadata).forEach(([k, v]) => {
+              if (!(k in drafts) || !drafts[k]) {
+                drafts[k] = typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '');
+              }
+            });
+            return drafts;
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [item?.id, isOpen, tenantSlug]);
+
   const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
   const [isLoadingParents, setIsLoadingParents] = useState(false);
 

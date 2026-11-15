@@ -143,6 +143,33 @@ export async function GET(req: NextRequest) {
   const typeFilter = searchParams.get('item_type');
   const updatedSince = searchParams.get('updated_since');
   const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const includeHeavy = searchParams.get('include_heavy') === 'true';
+  const cardProjection = includeHeavy
+    ? '*'
+    : 'id, project_id, parent_id, external_ref_id, item_type, status, title, assignee, order_index, created_at, updated_at, priority:metadata->>priority, story_points:metadata->>story_points, sprint:metadata->>sprint, complexity:metadata->>complexity';
+
+  const mapThinCard = (row: any): WorkItem => {
+    if (includeHeavy) return row;
+    const meta: Record<string, any> = { ...(row.metadata || {}) };
+    delete meta.agent_prompt;
+
+    if (row.priority !== undefined && row.priority !== null) meta.priority = row.priority;
+    if (row.story_points !== undefined && row.story_points !== null) {
+      const num = Number(row.story_points);
+      meta.story_points = isNaN(num) ? row.story_points : num;
+    }
+    if (row.sprint !== undefined && row.sprint !== null) meta.sprint = row.sprint;
+    if (row.complexity !== undefined && row.complexity !== null) {
+      const num = Number(row.complexity);
+      meta.complexity = isNaN(num) ? row.complexity : num;
+    }
+
+    const { description, ...rest } = row;
+    return {
+      ...rest,
+      metadata: meta,
+    } as WorkItem;
+  };
   const sprintIdParam = searchParams.get('sprint_id');
   const sprintParam = searchParams.get('sprint');
   const targetSprint = sprintIdParam || sprintParam;
@@ -372,7 +399,7 @@ export async function GET(req: NextRequest) {
     if (updatedSince) {
       let deltaQuery: any = supabaseAdmin
         .from('work_items')
-        .select('*')
+        .select(cardProjection)
         .eq('tenant_id', authCtx.tenant.id);
 
       if (typeof deltaQuery.gt === 'function') {
@@ -393,7 +420,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: deltaErr.message }, { status: 500 });
       }
 
-      const allRows = (rawDeltaRows || []) as WorkItem[];
+      const allRows = ((rawDeltaRows || []) as any[]).map(mapThinCard);
       const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
       let items: WorkItem[] = [];
 
@@ -434,7 +461,7 @@ export async function GET(req: NextRequest) {
 
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
-      .select('*')
+      .select(cardProjection)
       .eq('tenant_id', authCtx.tenant.id);
 
     if (typeof itemsQuery.is === 'function') {
@@ -449,7 +476,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    let allPortfolioItems = (rawItems || []) as WorkItem[];
+    let allPortfolioItems = ((rawItems || []) as any[]).map(mapThinCard);
 
     // If a specific sprint is requested (e.g. for on-demand lazy loading in portfolio view), resolve and filter directly
     const isTargetingSprint = Boolean(targetSprint);
@@ -714,7 +741,7 @@ export async function GET(req: NextRequest) {
   if (updatedSince) {
     let deltaQuery: any = supabaseAdmin
       .from('work_items')
-      .select('*')
+      .select(cardProjection)
       .eq('tenant_id', authCtx.tenant.id)
       .eq('project_id', project.id);
 
@@ -736,7 +763,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: deltaErr.message }, { status: 500 });
     }
 
-    const allRows = (rawDeltaRows || []) as WorkItem[];
+    const allRows = ((rawDeltaRows || []) as any[]).map(mapThinCard);
     const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
     let items: WorkItem[] = [];
 
@@ -777,7 +804,7 @@ export async function GET(req: NextRequest) {
   // Query active work items (exclude soft-deleted)
   let itemsQuery: any = supabaseAdmin
     .from('work_items')
-    .select('*')
+    .select(cardProjection)
     .eq('tenant_id', authCtx.tenant.id)
     .eq('project_id', project.id);
 
@@ -796,7 +823,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: itemsErr.message }, { status: 500 });
   }
 
-  let allItems = (rawItems || []) as WorkItem[];
+  let allItems = ((rawItems || []) as any[]).map(mapThinCard);
 
   // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
   const isTargetingSprint = Boolean(targetSprint);
