@@ -305,6 +305,16 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     setIsCustomDateRange(false);
   }, [sprints, selectedSprintId]);
 
+  const handleApplyWindowToPage = useCallback((nextStart: string, nextEnd: string) => {
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    setIsCustomDateRange(true);
+  }, []);
+
+  const activeSprintOption = sprints.find(
+    (s) => s.id === selectedSprintId || s.name === selectedSprintId
+  );
+
   useEffect(() => {
     loadSprintList();
   }, [loadSprintList]);
@@ -349,6 +359,13 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
           simulationVelocities={simulationVelocities}
           forecastStartDate={forecastStartDate}
           isCustomDateRange={isCustomDateRange}
+          startDate={startDate}
+          endDate={endDate}
+          sprintStartDate={activeSprintOption?.start_date || null}
+          sprintEndDate={activeSprintOption?.end_date || null}
+          onApplyWindowToPage={handleApplyWindowToPage}
+          onChangeStartDate={handleChangeStartDate}
+          onChangeEndDate={handleChangeEndDate}
         />
       </main>
     </div>

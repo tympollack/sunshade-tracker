@@ -166,5 +166,54 @@ describe('TASK-TRK-UI-BURNDOWN & BUG-TRK-BURNDOWN-XAXIS-COLLISION: BurndownChart
       const fullDates = getAxisDates();
       expect(fullDates[fullDates.length - 1]).toBe('10/28');
     });
+
+    it('TASK-TRK-BURNDOWN-INTERACTIVE-ZOOM-SYNC: supports drag brush zoom and Apply Window to Page callback', () => {
+      const sprintData: BurndownDataPoint[] = Array.from({ length: 20 }, (_, i) => ({
+        date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        idealRemaining: 100 - i * 4,
+        actualRemaining: 95 - i * 3.5,
+      }));
+
+      let syncedRange: [string, string] | null = null;
+      const { container } = render(
+        <BurndownChart
+          data={sprintData}
+          sprintStartDate="2026-10-01"
+          sprintEndDate="2026-10-20"
+          today="2026-10-20"
+          onApplyWindowToPage={(s, e) => {
+            syncedRange = [s, e];
+          }}
+        />
+      );
+
+      // Drag across columns 2..8
+      const col2 = screen.getByTestId('burndown-hover-column-2');
+      const col8 = screen.getByTestId('burndown-hover-column-8');
+
+      fireEvent.mouseDown(col2);
+      fireEvent.mouseMove(col8);
+      expect(screen.getByTestId('burndown-brush-selection')).toBeInTheDocument();
+
+      fireEvent.mouseUp(col8);
+
+      const getAxisDates = () =>
+        Array.from(container.querySelectorAll('svg text.font-mono')).map((el) => el.textContent);
+
+      const zoomedDates = getAxisDates();
+      expect(zoomedDates[0]).toBe('10/03');
+      expect(zoomedDates[zoomedDates.length - 1]).toBe('10/09');
+
+      // Apply Window to Page button should be visible and invoke callback
+      const applyBtn = screen.getByTestId('burndown-apply-window-to-page');
+      fireEvent.click(applyBtn);
+      expect(syncedRange).toEqual(['2026-10-03', '2026-10-09']);
+
+      // Reset Zoom restores full sprint-to-date range
+      fireEvent.click(screen.getByTestId('burndown-zoom-reset'));
+      const restoredDates = getAxisDates();
+      expect(restoredDates[0]).toBe('10/01');
+      expect(restoredDates[restoredDates.length - 1]).toBe('10/20');
+    });
   });
 });

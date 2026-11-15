@@ -42,6 +42,13 @@ export interface SprintAnalyticsViewProps {
   simulationVelocities?: number[];
   forecastStartDate: string;
   isCustomDateRange?: boolean;
+  startDate?: string;
+  endDate?: string;
+  sprintStartDate?: string | null;
+  sprintEndDate?: string | null;
+  onApplyWindowToPage?: (startDate: string, endDate: string) => void;
+  onChangeStartDate?: (date: string) => void;
+  onChangeEndDate?: (date: string) => void;
 }
 
 function SprintAnalyticsViewContent({
@@ -62,10 +69,41 @@ function SprintAnalyticsViewContent({
   simulationVelocities = [],
   forecastStartDate,
   isCustomDateRange = false,
+  sprintStartDate = null,
+  sprintEndDate = null,
+  onApplyWindowToPage,
+  onChangeStartDate,
+  onChangeEndDate,
 }: Omit<SprintAnalyticsViewProps, 'isLoading'>) {
   const isPortfolio = projectSlug === 'all' || projectSlug === 'portfolio';
 
   const [stabilityFilter, setStabilityFilterState] = React.useState<StabilityFilter>('all');
+  const [promotedWindow, setPromotedWindow] = React.useState<{
+    startDate: string;
+    endDate: string;
+  } | null>(null);
+
+  const handleApplyWindowToPage = React.useCallback(
+    (nextStart: string, nextEnd: string) => {
+      setPromotedWindow({ startDate: nextStart, endDate: nextEnd });
+      onChangeStartDate?.(nextStart);
+      onChangeEndDate?.(nextEnd);
+      onApplyWindowToPage?.(nextStart, nextEnd);
+
+      if (typeof window !== 'undefined') {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set('custom', 'true');
+          url.searchParams.set('startDate', nextStart);
+          url.searchParams.set('endDate', nextEnd);
+          window.history.replaceState(null, '', url.toString());
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [onApplyWindowToPage, onChangeStartDate, onChangeEndDate]
+  );
 
   // Restore filter from the URL on mount
   React.useEffect(() => {
@@ -195,7 +233,13 @@ function SprintAnalyticsViewContent({
         {/* Burndown Slot (project-scoped snapshots; not available for portfolio rollups) */}
         {!isPortfolio && (
           <div className="w-full">
-            <BurndownChart data={burndownData} isLoading={false} />
+            <BurndownChart
+              data={burndownData}
+              isLoading={false}
+              sprintStartDate={sprintStartDate}
+              sprintEndDate={sprintEndDate}
+              onApplyWindowToPage={handleApplyWindowToPage}
+            />
           </div>
         )}
 
@@ -213,6 +257,9 @@ function SprintAnalyticsViewContent({
             isLoading={isCfdLoading && (!cfdData || cfdData.length === 0)}
             isValidating={isValidating || isRefreshing || isCfdLoading}
             error={cfdError}
+            sprintStartDate={sprintStartDate}
+            sprintEndDate={sprintEndDate}
+            onApplyWindowToPage={handleApplyWindowToPage}
           />
         </section>
       )}
@@ -251,6 +298,13 @@ export function SprintAnalyticsView({
   simulationVelocities = [],
   forecastStartDate,
   isCustomDateRange = false,
+  startDate,
+  endDate,
+  sprintStartDate = null,
+  sprintEndDate = null,
+  onApplyWindowToPage,
+  onChangeStartDate,
+  onChangeEndDate,
 }: SprintAnalyticsViewProps) {
   if (isLoading) {
     return <AnalyticsDashboardSkeleton />;
@@ -276,6 +330,13 @@ export function SprintAnalyticsView({
         simulationVelocities={simulationVelocities}
         forecastStartDate={forecastStartDate}
         isCustomDateRange={isCustomDateRange}
+        startDate={startDate}
+        endDate={endDate}
+        sprintStartDate={sprintStartDate}
+        sprintEndDate={sprintEndDate}
+        onApplyWindowToPage={onApplyWindowToPage}
+        onChangeStartDate={onChangeStartDate}
+        onChangeEndDate={onChangeEndDate}
       />
     </Suspense>
   );
