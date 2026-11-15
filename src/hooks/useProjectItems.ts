@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { WorkItem } from '@/types/tracker';
+import {
+  getProjectCache,
+  setProjectCache,
+  DEFAULT_PROJECT_SETTINGS,
+} from '@/context/ProjectDataContext';
 
 export interface UseProjectItemsOptions {
   projectId?: string;
@@ -76,15 +81,41 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
     pollIntervalMs = 120000,
   } = options;
 
-  const [items, setItems] = useState<WorkItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = projectId || projectSlug || (isAllProjects ? 'all' : undefined);
+  const cachedEntry = cacheKey ? getProjectCache(cacheKey) : undefined;
+
+  const [items, _setItems] = useState<WorkItem[]>(() => cachedEntry?.items || []);
+  const [loading, setLoading] = useState<boolean>(() => !cachedEntry && Boolean(projectId || projectSlug || isAllProjects));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coldCount, setColdCount] = useState<number>(0);
-  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => cachedEntry?.latestAt || null);
 
-  const lastSyncedAtRef = useRef<string | null>(null);
+  const lastSyncedAtRef = useRef<string | null>(cachedEntry?.latestAt || null);
   const isFetchingRef = useRef(false);
+
+  // Synchronize state updates to the client project cache immediately
+  const setItems: React.Dispatch<React.SetStateAction<WorkItem[]>> = useCallback(
+    (action) => {
+      _setItems((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        if (cacheKey) {
+          const cur = getProjectCache(cacheKey);
+          setProjectCache(
+            cacheKey,
+            {
+              items: next,
+              settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
+              latestAt: lastSyncedAtRef.current || new Date().toISOString(),
+            },
+            projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+          );
+        }
+        return next;
+      });
+    },
+    [cacheKey, projectId, projectSlug]
+  );
 
   const buildBaseUrl = useCallback(
     (includeCold = false, updatedSince?: string) => {
@@ -123,11 +154,25 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
         const res = await fetch(url, { credentials: 'include', headers });
         if (res.ok) {
           const data = await res.json();
-          setItems(data.items || []);
-          if (data.latest_at) {
-            lastSyncedAtRef.current = data.latest_at;
-            setLastSyncedAt(data.latest_at);
+          const fetchedItems = data.items || [];
+          _setItems(fetchedItems);
+          const latest = data.latest_at || new Date().toISOString();
+          lastSyncedAtRef.current = latest;
+          setLastSyncedAt(latest);
+
+          if (cacheKey) {
+            const cur = getProjectCache(cacheKey);
+            setProjectCache(
+              cacheKey,
+              {
+                items: fetchedItems,
+                settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
+                latestAt: latest,
+              },
+              projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+            );
           }
+
           if (typeof data.cold_count === 'number') {
             setColdCount(data.cold_count);
           }
@@ -142,7 +187,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
         setIsRefreshing(false);
       }
     },
-    [buildBaseUrl, tenantSlug]
+    [buildBaseUrl, cacheKey, projectId, projectSlug, tenantSlug]
   );
 
   const loadColdArchive = useCallback(async () => {
@@ -165,7 +210,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
     } catch {
       // Gracefully ignore load errors
     }
-  }, [buildBaseUrl, tenantSlug]);
+  }, [buildBaseUrl, setItems, tenantSlug]);
 
   const pollDelta = useCallback(async () => {
     if (!lastSyncedAtRef.current || isFetchingRef.current) return;
@@ -193,7 +238,24 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
       if (res.ok) {
         const data = await res.json();
         if (data.is_delta) {
-          setItems((prev) => reconcileDelta(prev, data.items || [], data.deleted_ids || []));
+          _setItems((prev) => {
+            const next = reconcileDelta(prev, data.items || [], data.deleted_ids || []);
+            const newLatest = data.latest_at || lastSyncedAtRef.current || new Date().toISOString();
+            if (cacheKey) {
+              const cur = getProjectCache(cacheKey);
+              setProjectCache(
+                cacheKey,
+                {
+                  items: next,
+                  settings: cur?.settings || DEFAULT_PROJECT_SETTINGS,
+                  latestAt: newLatest,
+                },
+                projectId && projectSlug ? (cacheKey === projectId ? projectSlug : projectId) : undefined
+              );
+            }
+            return next;
+          });
+
           if (data.latest_at) {
             lastSyncedAtRef.current = data.latest_at;
             setLastSyncedAt(data.latest_at);
@@ -205,14 +267,26 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
     } finally {
       isFetchingRef.current = false;
     }
-  }, [buildBaseUrl, tenantSlug]);
+  }, [buildBaseUrl, cacheKey, projectId, projectSlug, tenantSlug]);
 
-  // Initial load
+  // Initial load / project switch
   useEffect(() => {
-    if (projectId || projectSlug || isAllProjects) {
+    if (!cacheKey) return;
+
+    const entry = getProjectCache(cacheKey);
+    if (entry) {
+      // Hydrate state immediately from cache with zero skeleton flash
+      _setItems(entry.items);
+      lastSyncedAtRef.current = entry.latestAt;
+      setLastSyncedAt(entry.latestAt);
+      setLoading(false);
+
+      // Non-blocking background delta fetch
+      pollDelta();
+    } else {
       fetchInitial();
     }
-  }, [projectId, projectSlug, isAllProjects, fetchInitial]);
+  }, [cacheKey, fetchInitial, pollDelta]);
 
   // 2-minute delta polling loop and window focus re-activation
   useEffect(() => {

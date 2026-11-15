@@ -496,6 +496,8 @@ export interface WorkItem {
   deleted_at?: string | null;
 }
 
+export type WorkItemCard = WorkItem;
+
 export interface WorkItemWithChildren extends WorkItem {
   children?: WorkItemWithChildren[];
 }

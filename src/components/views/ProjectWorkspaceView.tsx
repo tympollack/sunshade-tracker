@@ -59,6 +59,12 @@ import {
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
+import {
+  getProjectCache,
+  setProjectCache,
+  preloadPortfolioItems,
+  syncOptimisticMutationToCache,
+} from '@/context/ProjectDataContext';
 import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 import { validateTransitionGuards, formatGuardRejectionMessage } from '@/lib/automation/guardEvaluator';
 import { GuardRejectionToast } from '@/components/board/TransitionGuardFeedback';
@@ -95,14 +101,35 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
   });
 
+  const initialCache = getProjectCache(projectSlug);
+
   const [selectedSprint, setSelectedSprint] = useState<string>('all');
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
-  const [items, setItems] = useState<WorkItem[]>([]);
+  const [items, _setItems] = useState<WorkItem[]>(() => initialCache?.items || []);
   const [coldCount, setColdCount] = useState<number>(0);
   const [isLoadingColdArchive, setIsLoadingColdArchive] = useState(false);
-  const lastSyncedAtRef = useRef<string | null>(null);
+  const lastSyncedAtRef = useRef<string | null>(initialCache?.latestAt || null);
   const isPollingDeltaRef = useRef(false);
   const hasLoadedColdArchiveRef = useRef(false);
+  const projectSettingsRef = useRef<ProjectSettings>(initialCache?.settings || DEFAULT_PROJECT_SETTINGS);
+
+  const setItems: React.Dispatch<React.SetStateAction<WorkItem[]>> = useCallback(
+    (action) => {
+      _setItems((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        if (projectSlug && projectSlug !== 'all') {
+          const cur = getProjectCache(projectSlug);
+          setProjectCache(projectSlug, {
+            items: next,
+            settings: projectSettingsRef.current || cur?.settings || DEFAULT_PROJECT_SETTINGS,
+            latestAt: lastSyncedAtRef.current || new Date().toISOString(),
+          });
+        }
+        return next;
+      });
+    },
+    [projectSlug]
+  );
 
   const requestedItem = typeof searchParams?.item === 'string' ? searchParams.item : null;
   const {
@@ -379,7 +406,26 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [guardRejectedItemIds, setGuardRejectedItemIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
-  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
+  const [projectSettings, _setProjectSettings] = useState<ProjectSettings>(() => initialCache?.settings || DEFAULT_PROJECT_SETTINGS);
+  const setProjectSettings: React.Dispatch<React.SetStateAction<ProjectSettings>> = useCallback(
+    (action) => {
+      _setProjectSettings((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        projectSettingsRef.current = next;
+        if (projectSlug && projectSlug !== 'all') {
+          const cur = getProjectCache(projectSlug);
+          if (cur) {
+            setProjectCache(projectSlug, {
+              ...cur,
+              settings: next,
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [projectSlug]
+  );
   const [isSavingSchema, setIsSavingSchema] = useState(false);
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
@@ -430,7 +476,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const sprintComparator = useMemo(() => createItemComparator(sprintSortBy, allProjects), [sprintSortBy, allProjects]);
 
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => !initialCache && !isAllProjects);
+
+  // Synchronize state immediately if projectSlug changes to a cached project
+  useEffect(() => {
+    const cached = getProjectCache(projectSlug);
+    if (cached) {
+      _setItems(cached.items);
+      _setProjectSettings(cached.settings);
+      projectSettingsRef.current = cached.settings;
+      lastSyncedAtRef.current = cached.latestAt;
+      setLoading(false);
+    }
+  }, [projectSlug]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -1027,6 +1085,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [apiFetch, tenantSlug]);
 
   const fetchData = useCallback(async () => {
+    const cached = getProjectCache(projectSlug);
+    if (!cached && !isAllProjects) {
+      setLoading(true);
+    }
     setIsRefreshing(true);
     setFetchError(null);
     try {
@@ -1096,6 +1158,17 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setItems(iData.items || []);
         if (iData.latest_at) {
           lastSyncedAtRef.current = iData.latest_at;
+        }
+        if (projectSlug && projectSlug !== 'all') {
+          setProjectCache(
+            projectSlug,
+            {
+              items: iData.items || [],
+              settings: projectSettingsRef.current || DEFAULT_PROJECT_SETTINGS,
+              latestAt: iData.latest_at || new Date().toISOString(),
+            },
+            targetProjectId
+          );
         }
         if (typeof iData.cold_count === 'number') {
           setColdCount(iData.cold_count);
@@ -1312,6 +1385,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     fetchTenantInfo();
     fetchData();
   }, [fetchTenantInfo, fetchData]);
+
+  useEffect(() => {
+    preloadPortfolioItems(tenantSlug);
+  }, [tenantSlug]);
 
   const isCompleteStatus = useCallback((statusId: string) => {
     const norm = (statusId || '').toLowerCase().trim();
