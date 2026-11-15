@@ -99,6 +99,24 @@ export function BurndownChart({
 
   const displayData = zoom.visibleData;
 
+  const brushIndices = React.useMemo(() => {
+    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
+    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
+    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
+    if (leftIdx === -1 || rightIdx === -1) return null;
+    return {
+      startIdx: Math.min(leftIdx, rightIdx),
+      endIdx: Math.max(leftIdx, rightIdx),
+    };
+  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
+
+  const pinnedDataIndex = React.useMemo(() => {
+    if (!zoom.pinnedPoint) return -1;
+    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
+    if (byDate !== -1) return byDate;
+    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
+  }, [zoom.pinnedPoint, displayData]);
+
   if (isLoading) {
     return (
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 h-[420px] flex flex-col animate-pulse">
@@ -172,24 +190,6 @@ export function BurndownChart({
   );
 
   const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
-
-  const brushIndices = React.useMemo(() => {
-    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
-    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
-    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
-    if (leftIdx === -1 || rightIdx === -1) return null;
-    return {
-      startIdx: Math.min(leftIdx, rightIdx),
-      endIdx: Math.max(leftIdx, rightIdx),
-    };
-  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
-
-  const pinnedDataIndex = React.useMemo(() => {
-    if (!zoom.pinnedPoint) return -1;
-    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
-    if (byDate !== -1) return byDate;
-    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
-  }, [zoom.pinnedPoint, displayData]);
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
@@ -286,6 +286,15 @@ export function BurndownChart({
                   setTimeWindow(preset);
                   zoom.resetZoom();
                   setHoveredIndex(null);
+                  if (preset === 'Full Sprint' && sprintStartDate && sprintEndDate) {
+                    const spStart = sprintStartDate.slice(0, 10);
+                    const spEnd = sprintEndDate.slice(0, 10);
+                    const firstDate = data[0]?.date?.slice(0, 10);
+                    const lastDate = data[data.length - 1]?.date?.slice(0, 10);
+                    if ((firstDate && firstDate > spStart) || (lastDate && lastDate < spEnd)) {
+                      onApplyWindowToPage?.(spStart, spEnd);
+                    }
+                  }
                 }}
                 className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
                   timeWindow === preset && !zoom.isZoomed

@@ -182,13 +182,36 @@ export async function GET(req: NextRequest) {
     const startDateParam = searchParams.get('startDate') || searchParams.get('start_date');
     const endDateParam = searchParams.get('endDate') || searchParams.get('end_date');
 
+    if (startDateParam || endDateParam) {
+      const isoDateRe = /^\d{4}-\d{2}-\d{2}/;
+      const startClean = startDateParam ? startDateParam.slice(0, 10) : '';
+      const endClean = endDateParam ? endDateParam.slice(0, 10) : '';
+      const startMs = startClean ? Date.parse(`${startClean}T00:00:00.000Z`) : NaN;
+      const endMs = endClean ? Date.parse(`${endClean}T00:00:00.000Z`) : NaN;
+
+      if (
+        !startDateParam ||
+        !endDateParam ||
+        !isoDateRe.test(startClean) ||
+        !isoDateRe.test(endClean) ||
+        isNaN(startMs) ||
+        isNaN(endMs) ||
+        startClean > endClean
+      ) {
+        return NextResponse.json(
+          { error: 'Invalid date range: startDate and endDate must be valid YYYY-MM-DD dates with startDate <= endDate.' },
+          { status: 400 }
+        );
+      }
+    }
+
     const report = await getSprintHealthReport(
       targetSlug,
       sprintId,
       projectIdOrSlug,
       undefined,
       startDateParam && endDateParam
-        ? { startDate: startDateParam, endDate: endDateParam }
+        ? { startDate: startDateParam.slice(0, 10), endDate: endDateParam.slice(0, 10) }
         : undefined
     );
 

@@ -305,11 +305,17 @@ export default function ProjectSprintAnalyticsPage(props: PageProps) {
     setIsCustomDateRange(false);
   }, [sprints, selectedSprintId]);
 
-  const handleApplyWindowToPage = useCallback((nextStart: string, nextEnd: string) => {
-    setStartDate(nextStart);
-    setEndDate(nextEnd);
-    setIsCustomDateRange(true);
-  }, []);
+  const handleApplyWindowToPage = useCallback(
+    (nextStart: string, nextEnd: string) => {
+      const targetSprint = sprints.find((s) => s.id === selectedSprintId || s.name === selectedSprintId);
+      const spStart = targetSprint?.start_date ? targetSprint.start_date.split('T')[0] : '';
+      const spEnd = targetSprint?.end_date ? targetSprint.end_date.split('T')[0] : '';
+      setStartDate(nextStart);
+      setEndDate(nextEnd);
+      setIsCustomDateRange(!(spStart && spEnd && nextStart === spStart && nextEnd === spEnd));
+    },
+    [sprints, selectedSprintId]
+  );
 
   const activeSprintOption = sprints.find(
     (s) => s.id === selectedSprintId || s.name === selectedSprintId

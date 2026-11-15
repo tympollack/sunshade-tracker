@@ -52,8 +52,25 @@ export function clampSeriesToHorizon<T extends { date: string }>(
   const clampedToDate = data.filter((d) => !d.date || d.date <= horizonEndISO);
   const effectiveSeries = clampedToDate.length > 0 ? clampedToDate : data;
 
-  if (timeWindow === '14D') return effectiveSeries.slice(-14);
-  if (timeWindow === '30D') return effectiveSeries.slice(-30);
+  if (timeWindow === '14D' || timeWindow === '30D') {
+    const windowDays = timeWindow === '14D' ? 14 : 30;
+    const lastDateStr = effectiveSeries[effectiveSeries.length - 1]?.date;
+    if (lastDateStr && /^\d{4}-\d{2}-\d{2}/.test(lastDateStr)) {
+      const lastMs = new Date(`${lastDateStr.slice(0, 10)}T00:00:00.000Z`).getTime();
+      if (!isNaN(lastMs)) {
+        const cutoffISO = new Date(lastMs - (windowDays - 1) * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        const byCalendarWindow = effectiveSeries.filter(
+          (d) => !d.date || d.date.slice(0, 10) >= cutoffISO
+        );
+        if (byCalendarWindow.length > 0) {
+          return byCalendarWindow.slice(-windowDays);
+        }
+      }
+    }
+    return effectiveSeries.slice(-windowDays);
+  }
   return effectiveSeries;
 }
 
@@ -252,6 +269,25 @@ export function CumulativeFlowChart({
 
   const displayData = zoom.visibleData;
 
+  // Calculate brush overlay bounds when dragging (placed before early returns to preserve React hook order)
+  const brushIndices = React.useMemo(() => {
+    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
+    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
+    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
+    if (leftIdx === -1 || rightIdx === -1) return null;
+    return {
+      startIdx: Math.min(leftIdx, rightIdx),
+      endIdx: Math.max(leftIdx, rightIdx),
+    };
+  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
+
+  const pinnedDataIndex = React.useMemo(() => {
+    if (!zoom.pinnedPoint) return -1;
+    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
+    if (byDate !== -1) return byDate;
+    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
+  }, [zoom.pinnedPoint, displayData]);
+
   // Show skeleton on initial load, or when validating without pre-existing data
   const hasData = Boolean(displayData && displayData.length > 0);
   if ((isLoading && !hasData) || (isValidating && !hasData)) {
@@ -349,25 +385,6 @@ export function CumulativeFlowChart({
   });
 
   const activePoint = hoveredIndex !== null && hoveredIndex < displayData.length ? displayData[hoveredIndex] : null;
-
-  // Calculate brush overlay bounds when dragging
-  const brushIndices = React.useMemo(() => {
-    if (!zoom.isDragging || !zoom.refAreaLeft || !zoom.refAreaRight) return null;
-    const leftIdx = displayData.findIndex((d) => d.date === zoom.refAreaLeft);
-    const rightIdx = displayData.findIndex((d) => d.date === zoom.refAreaRight);
-    if (leftIdx === -1 || rightIdx === -1) return null;
-    return {
-      startIdx: Math.min(leftIdx, rightIdx),
-      endIdx: Math.max(leftIdx, rightIdx),
-    };
-  }, [zoom.isDragging, zoom.refAreaLeft, zoom.refAreaRight, displayData]);
-
-  const pinnedDataIndex = React.useMemo(() => {
-    if (!zoom.pinnedPoint) return -1;
-    const byDate = displayData.findIndex((d) => d.date === zoom.pinnedPoint!.date);
-    if (byDate !== -1) return byDate;
-    return zoom.pinnedPoint.index < displayData.length ? zoom.pinnedPoint.index : -1;
-  }, [zoom.pinnedPoint, displayData]);
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between h-[420px] shadow-sm relative">
@@ -506,6 +523,15 @@ export function CumulativeFlowChart({
                   setTimeWindow(preset);
                   zoom.resetZoom();
                   setHoveredIndex(null);
+                  if (preset === 'Full Sprint' && sprintStartDate && sprintEndDate) {
+                    const spStart = sprintStartDate.slice(0, 10);
+                    const spEnd = sprintEndDate.slice(0, 10);
+                    const firstDate = data[0]?.date?.slice(0, 10);
+                    const lastDate = data[data.length - 1]?.date?.slice(0, 10);
+                    if ((firstDate && firstDate > spStart) || (lastDate && lastDate < spEnd)) {
+                      onApplyWindowToPage?.(spStart, spEnd);
+                    }
+                  }
                 }}
                 className={`px-2 py-0.5 text-xs font-mono font-medium rounded-md transition-colors ${
                   timeWindow === preset && !zoom.isZoomed

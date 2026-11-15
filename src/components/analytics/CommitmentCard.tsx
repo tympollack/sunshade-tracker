@@ -48,7 +48,15 @@ export function CommitmentCard({
 
   // Determine raw percentage value
   let sayDoPct: number;
-  if (typeof effectiveCommitted === 'number' && typeof effectiveDelivered === 'number' && effectiveCommitted > 0) {
+  if (hasActiveWindow) {
+    if (typeof effectiveCommitted === 'number' && effectiveCommitted > 0 && typeof effectiveDelivered === 'number') {
+      sayDoPct = calculateSayDoPercentage(effectiveCommitted, effectiveDelivered);
+    } else if (typeof effectiveDelivered === 'number' && effectiveDelivered > 0) {
+      sayDoPct = 100;
+    } else {
+      sayDoPct = 0;
+    }
+  } else if (typeof effectiveCommitted === 'number' && typeof effectiveDelivered === 'number' && effectiveCommitted > 0) {
     sayDoPct = calculateSayDoPercentage(effectiveCommitted, effectiveDelivered);
   } else if (typeof sayDoRatio === 'number') {
     // If sayDoRatio was passed as a 0-2 decimal leak (e.g. 0.8859999999999999 or 1.8780000000000001),

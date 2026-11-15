@@ -46,6 +46,13 @@ export interface SprintEventData {
   occurred_at?: string | null;
   timestamp?: string | null;
   work_item_id?: string | null;
+  new_state?: any;
+  old_state?: any;
+  to_status?: string | null;
+  from_status?: string | null;
+  new_status?: string | null;
+  old_status?: string | null;
+  details?: Record<string, any>;
   metadata?: Record<string, any>;
 }
 
@@ -585,8 +592,14 @@ export function computePeriodScopedTelemetry(params: {
   const eventItemIdsDropped = new Set<string>();
   const eventItemIdsCompleted = new Set<string>();
 
+  const leafItems = getSprintLeafItems(items);
+  const itemPointsById = new Map<string, number>();
+  for (const it of leafItems) {
+    itemPointsById.set(it.id, getItemPoints(it, metricKey));
+  }
+
   for (const ev of events) {
-    const rawTs = ev.created_at || ev.occurred_at || ev.timestamp || '';
+    const rawTs = ev.occurred_at || ev.created_at || ev.timestamp || '';
     const evMs = new Date(rawTs).getTime();
     if (isNaN(evMs)) continue;
 
@@ -596,6 +609,7 @@ export function computePeriodScopedTelemetry(params: {
       ev.points ??
       ev.metadata?.points_delta ??
       ev.metadata?.story_points ??
+      (ev.work_item_id ? itemPointsById.get(ev.work_item_id) : undefined) ??
       0;
     const pts = Math.abs(Number(rawDelta) || 0);
     const evType = String(ev.event_type || '').toLowerCase().trim();
@@ -621,25 +635,72 @@ export function computePeriodScopedTelemetry(params: {
       } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
         periodDeliveredPoints += pts;
       }
+    } else if (evType === 'status_transition' || evType === 'status_changed') {
+      const nextSt = String(
+        (typeof ev.new_state === 'string' ? ev.new_state : null) ||
+          ev.new_state?.status ||
+          ev.to_status ||
+          ev.new_status ||
+          ev.details?.status ||
+          ev.metadata?.new_status ||
+          ev.metadata?.status ||
+          ''
+      )
+        .toLowerCase()
+        .trim();
+      const prevSt = String(
+        (typeof ev.old_state === 'string' ? ev.old_state : null) ||
+          ev.old_state?.status ||
+          ev.from_status ||
+          ev.old_status ||
+          ev.details?.old_status ||
+          ev.metadata?.old_status ||
+          ''
+      )
+        .toLowerCase()
+        .trim();
+
+      const movedToComplete =
+        completedStatuses.has(nextSt) && (!prevSt || !completedStatuses.has(prevSt));
+
+      if (movedToComplete && (!ev.work_item_id || !eventItemIdsCompleted.has(ev.work_item_id))) {
+        if (ev.work_item_id) eventItemIdsCompleted.add(ev.work_item_id);
+        if (evMs < windowStartMs) {
+          preWindowCompleted += pts;
+        } else if (evMs >= windowStartMs && evMs <= windowEndMs) {
+          periodDeliveredPoints += pts;
+        }
+      }
     }
   }
 
-  const leafItems = getSprintLeafItems(items);
   for (const it of leafItems) {
     const pts = getItemPoints(it, metricKey);
     if (pts <= 0) continue;
 
     // 1. Mid-sprint scope additions from item timestamps (when not already covered by sprint_events)
     if (!eventItemIdsAdded.has(it.id)) {
+      const explicitAddedStr =
+        it.metadata?.added_at ||
+        it.metadata?.sprint_assigned_at ||
+        it.metadata?.sprint_added_at;
+      const createdMs = new Date(it.created_at).getTime();
+      const isCreatedMidSprint =
+        sprintStartMs > 0 && !isNaN(createdMs) && createdMs > sprintStartMs + 86400000;
       const isMidSprintItem =
         it.metadata?.added_mid_sprint === true ||
         it.metadata?.is_scope_creep === true ||
-        (sprintStartMs > 0 &&
-          new Date(it.metadata?.added_at || it.created_at).getTime() > sprintStartMs + 86400000);
+        isCreatedMidSprint;
 
       if (isMidSprintItem) {
-        const addedStr = it.metadata?.added_at || it.created_at;
-        const addedMs = new Date(addedStr).getTime();
+        // Use explicit assignment timestamp first; only fall back to created_at if the item was created during the sprint
+        // (avoids crediting older transferred backlog items to a pre-sprint creation date).
+        const addedStr =
+          explicitAddedStr ||
+          (sprintStartMs === 0 || (!isNaN(createdMs) && createdMs >= sprintStartMs)
+            ? it.created_at
+            : null);
+        const addedMs = addedStr ? new Date(addedStr).getTime() : NaN;
         if (!isNaN(addedMs)) {
           if (addedMs < windowStartMs) {
             preWindowAdded += pts;

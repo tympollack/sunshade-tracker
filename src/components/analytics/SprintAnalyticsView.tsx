@@ -69,6 +69,8 @@ function SprintAnalyticsViewContent({
   simulationVelocities = [],
   forecastStartDate,
   isCustomDateRange = false,
+  startDate,
+  endDate,
   sprintStartDate = null,
   sprintEndDate = null,
   onApplyWindowToPage,
@@ -83,9 +85,28 @@ function SprintAnalyticsViewContent({
     endDate: string;
   } | null>(null);
 
+  // Clear local promoted window whenever the sprint or page dates change externally
+  React.useEffect(() => {
+    setPromotedWindow((prev) => {
+      if (!prev) return null;
+      if (startDate && endDate && (prev.startDate !== startDate || prev.endDate !== endDate)) {
+        return null;
+      }
+      return prev;
+    });
+  }, [startDate, endDate]);
+
+  React.useEffect(() => {
+    setPromotedWindow(null);
+  }, [selectedSprintId]);
+
   const handleApplyWindowToPage = React.useCallback(
     (nextStart: string, nextEnd: string) => {
-      setPromotedWindow({ startDate: nextStart, endDate: nextEnd });
+      const spStart = sprintStartDate ? sprintStartDate.slice(0, 10) : '';
+      const spEnd = sprintEndDate ? sprintEndDate.slice(0, 10) : '';
+      const isFullSprintRestore = Boolean(spStart && spEnd && nextStart === spStart && nextEnd === spEnd);
+
+      setPromotedWindow(isFullSprintRestore ? null : { startDate: nextStart, endDate: nextEnd });
       onChangeStartDate?.(nextStart);
       onChangeEndDate?.(nextEnd);
       onApplyWindowToPage?.(nextStart, nextEnd);
@@ -93,16 +114,22 @@ function SprintAnalyticsViewContent({
       if (typeof window !== 'undefined') {
         try {
           const url = new URL(window.location.href);
-          url.searchParams.set('custom', 'true');
-          url.searchParams.set('startDate', nextStart);
-          url.searchParams.set('endDate', nextEnd);
+          if (isFullSprintRestore) {
+            url.searchParams.delete('custom');
+            url.searchParams.delete('startDate');
+            url.searchParams.delete('endDate');
+          } else {
+            url.searchParams.set('custom', 'true');
+            url.searchParams.set('startDate', nextStart);
+            url.searchParams.set('endDate', nextEnd);
+          }
           window.history.replaceState(null, '', url.toString());
         } catch {
           // ignore
         }
       }
     },
-    [onApplyWindowToPage, onChangeStartDate, onChangeEndDate]
+    [onApplyWindowToPage, onChangeStartDate, onChangeEndDate, sprintStartDate, sprintEndDate]
   );
 
   // Restore filter from the URL on mount

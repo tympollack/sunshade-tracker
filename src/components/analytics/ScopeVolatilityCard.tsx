@@ -42,9 +42,7 @@ export function ScopeVolatilityCard({
   periodDroppedPoints,
   baselineScopeVolatility,
 }: ScopeVolatilityCardProps) {
-  const hasActiveWindow = Boolean(
-    isSubWindow || (windowStartDate && windowEndDate && periodVolatilityPct !== undefined)
-  );
+  const hasActiveWindow = Boolean(isSubWindow);
 
   const effectiveVolatility =
     hasActiveWindow && typeof periodVolatilityPct === 'number'
