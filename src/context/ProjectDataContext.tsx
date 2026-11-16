@@ -94,36 +94,81 @@ export function getProjectCache(key: string, tenantSlug?: string): ProjectCacheE
 
   const validateTenant = (entry?: ProjectCacheEntry): ProjectCacheEntry | undefined => {
     if (!entry) return undefined;
-    if (tenantSlug && entry.tenantSlug && entry.tenantSlug !== tenantSlug) {
-      return undefined;
+    if (tenantSlug) {
+      if (entry.tenantSlug !== tenantSlug) {
+        return undefined;
+      }
+    } else {
+      // If caller did not provide tenantSlug, refuse to return tenant-scoped entry
+      // to prevent unscoped reads from exposing private tenant data across account boundaries
+      if (entry.tenantSlug) {
+        return undefined;
+      }
     }
     return entry;
   };
 
-  // 1. Direct hit in in-memory Map (scoped key first, then raw key)
-  if (scopedKey && projectCacheMap.has(scopedKey)) {
-    return validateTenant(projectCacheMap.get(scopedKey));
+  // If tenantSlug is provided, strictly search scopedKey (never fall back to bare unscoped key)
+  if (scopedKey) {
+    if (projectCacheMap.has(scopedKey)) {
+      return validateTenant(projectCacheMap.get(scopedKey));
+    }
+    const resolvedScopedAlias = projectAliasMap.get(scopedKey);
+    if (resolvedScopedAlias && projectCacheMap.has(resolvedScopedAlias)) {
+      return validateTenant(projectCacheMap.get(resolvedScopedAlias));
+    }
+    const fromStorage =
+      safeLoadFromStorage(scopedKey) ||
+      (resolvedScopedAlias ? safeLoadFromStorage(resolvedScopedAlias) : undefined);
+    if (fromStorage) {
+      const valid = validateTenant(fromStorage);
+      if (valid) {
+        projectCacheMap.set(scopedKey, valid);
+        if (resolvedScopedAlias) projectCacheMap.set(resolvedScopedAlias, valid);
+        return valid;
+      }
+    }
+
+    const storage = safeGetStorage();
+    if (storage) {
+      try {
+        const storedAlias = storage.getItem(`${ALIAS_PREFIX}${scopedKey}`);
+        if (storedAlias) {
+          projectAliasMap.set(scopedKey, storedAlias);
+          projectAliasMap.set(storedAlias, scopedKey);
+          const aliasedEntry = safeLoadFromStorage(storedAlias);
+          if (aliasedEntry) {
+            const valid = validateTenant(aliasedEntry);
+            if (valid) {
+              projectCacheMap.set(scopedKey, valid);
+              projectCacheMap.set(storedAlias, valid);
+              return valid;
+            }
+          }
+        }
+      } catch {
+        // Ignore storage errors
+      }
+    }
+
+    return undefined;
   }
+
+  // Unscoped lookup (only returns entries that have no tenantSlug)
   if (projectCacheMap.has(key)) {
     return validateTenant(projectCacheMap.get(key));
   }
-
-  // 2. Check alias in in-memory Map
-  const resolvedAlias = (scopedKey ? projectAliasMap.get(scopedKey) : null) || projectAliasMap.get(key);
+  const resolvedAlias = projectAliasMap.get(key);
   if (resolvedAlias && projectCacheMap.has(resolvedAlias)) {
     return validateTenant(projectCacheMap.get(resolvedAlias));
   }
-
-  // 3. Fallback to sessionStorage
   const fromStorage =
-    (scopedKey ? safeLoadFromStorage(scopedKey) : undefined) ||
     safeLoadFromStorage(key) ||
     (resolvedAlias ? safeLoadFromStorage(resolvedAlias) : undefined);
 
   if (fromStorage) {
     const valid = validateTenant(fromStorage);
     if (valid) {
-      if (scopedKey) projectCacheMap.set(scopedKey, valid);
       projectCacheMap.set(key, valid);
       if (resolvedAlias) {
         projectCacheMap.set(resolvedAlias, valid);
@@ -132,13 +177,10 @@ export function getProjectCache(key: string, tenantSlug?: string): ProjectCacheE
     }
   }
 
-  // 4. Try storage alias lookup
   const storage = safeGetStorage();
   if (storage) {
     try {
-      const storedAlias =
-        (scopedKey ? storage.getItem(`${ALIAS_PREFIX}${scopedKey}`) : null) ||
-        storage.getItem(`${ALIAS_PREFIX}${key}`);
+      const storedAlias = storage.getItem(`${ALIAS_PREFIX}${key}`);
       if (storedAlias) {
         projectAliasMap.set(key, storedAlias);
         projectAliasMap.set(storedAlias, key);
@@ -184,35 +226,19 @@ export function setProjectCache(
   projectCacheMap.set(scopedKey, enrichedEntry);
   safeSaveToStorage(scopedKey, enrichedEntry);
 
-  if (scopedKey !== key) {
-    projectCacheMap.set(key, enrichedEntry);
-    safeSaveToStorage(key, enrichedEntry);
-  }
-
   if (alternateKey && alternateKey !== key) {
     const scopedAltKey = effectiveTenantSlug ? `${effectiveTenantSlug}:${alternateKey}` : alternateKey;
     projectCacheMap.set(scopedAltKey, enrichedEntry);
     safeSaveToStorage(scopedAltKey, enrichedEntry);
-    if (scopedAltKey !== alternateKey) {
-      projectCacheMap.set(alternateKey, enrichedEntry);
-      safeSaveToStorage(alternateKey, enrichedEntry);
-    }
-    projectAliasMap.set(key, alternateKey);
-    projectAliasMap.set(alternateKey, key);
-    if (scopedKey && scopedAltKey) {
-      projectAliasMap.set(scopedKey, scopedAltKey);
-      projectAliasMap.set(scopedAltKey, scopedKey);
-    }
+
+    projectAliasMap.set(scopedKey, scopedAltKey);
+    projectAliasMap.set(scopedAltKey, scopedKey);
 
     const storage = safeGetStorage();
     if (storage) {
       try {
-        storage.setItem(`${ALIAS_PREFIX}${key}`, alternateKey);
-        storage.setItem(`${ALIAS_PREFIX}${alternateKey}`, key);
-        if (scopedKey && scopedAltKey) {
-          storage.setItem(`${ALIAS_PREFIX}${scopedKey}`, scopedAltKey);
-          storage.setItem(`${ALIAS_PREFIX}${scopedAltKey}`, scopedKey);
-        }
+        storage.setItem(`${ALIAS_PREFIX}${scopedKey}`, scopedAltKey);
+        storage.setItem(`${ALIAS_PREFIX}${scopedAltKey}`, scopedKey);
       } catch {
         // Quota or access error, non-fatal
       }
@@ -249,17 +275,23 @@ export function clearProjectCache(): void {
  */
 export function updateProjectCacheItems(
   key: string,
-  updater: (items: WorkItemCard[]) => WorkItemCard[]
+  updater: (items: WorkItemCard[]) => WorkItemCard[],
+  tenantSlug?: string
 ): void {
-  const entry = getProjectCache(key);
+  const entry = getProjectCache(key, tenantSlug);
   if (!entry) return;
 
   const nextItems = updater(entry.items);
-  setProjectCache(key, {
-    ...entry,
-    items: nextItems,
-    latestAt: new Date().toISOString(),
-  });
+  setProjectCache(
+    key,
+    {
+      ...entry,
+      items: nextItems,
+      latestAt: new Date().toISOString(),
+    },
+    undefined,
+    tenantSlug || entry.tenantSlug
+  );
 }
 
 /**
@@ -267,22 +299,13 @@ export function updateProjectCacheItems(
  */
 export function syncOptimisticMutationToCache(
   item: Partial<WorkItemCard> & { id: string },
-  projectId?: string
+  projectId?: string,
+  tenantSlug?: string
 ): void {
-  const keysToUpdate = new Set<string>();
-  if (projectId) keysToUpdate.add(projectId);
-
-  // Search through all cached entries for the card
-  for (const [key, entry] of projectCacheMap.entries()) {
-    const idx = entry.items.findIndex((i) => i.id === item.id);
-    if (idx !== -1) {
-      keysToUpdate.add(key);
+  for (const [scopedKey, entry] of projectCacheMap.entries()) {
+    if (tenantSlug && entry.tenantSlug && entry.tenantSlug !== tenantSlug) {
+      continue;
     }
-  }
-
-  for (const key of keysToUpdate) {
-    const entry = getProjectCache(key);
-    if (!entry) continue;
     const idx = entry.items.findIndex((i) => i.id === item.id);
     if (idx !== -1) {
       const updatedList = [...entry.items];
@@ -291,11 +314,13 @@ export function syncOptimisticMutationToCache(
         ...item,
         updated_at: new Date().toISOString(),
       };
-      setProjectCache(key, {
+      const nextEntry: ProjectCacheEntry = {
         ...entry,
         items: updatedList,
         latestAt: new Date().toISOString(),
-      });
+      };
+      projectCacheMap.set(scopedKey, nextEntry);
+      safeSaveToStorage(scopedKey, nextEntry);
     }
   }
 }
@@ -303,16 +328,25 @@ export function syncOptimisticMutationToCache(
 /**
  * Optimistically adds a newly created card to the cached project.
  */
-export function syncOptimisticCreationToCache(item: WorkItemCard, projectIdOrSlug: string): void {
+export function syncOptimisticCreationToCache(
+  item: WorkItemCard,
+  projectIdOrSlug: string,
+  tenantSlug?: string
+): void {
   if (!projectIdOrSlug) return;
-  const entry = getProjectCache(projectIdOrSlug);
+  const entry = getProjectCache(projectIdOrSlug, tenantSlug);
   if (entry) {
     if (!entry.items.some((i) => i.id === item.id)) {
-      setProjectCache(projectIdOrSlug, {
-        ...entry,
-        items: [item, ...entry.items],
-        latestAt: new Date().toISOString(),
-      });
+      setProjectCache(
+        projectIdOrSlug,
+        {
+          ...entry,
+          items: [item, ...entry.items],
+          latestAt: new Date().toISOString(),
+        },
+        undefined,
+        tenantSlug || entry.tenantSlug
+      );
     }
   }
 }
@@ -456,6 +490,16 @@ export function ProjectDataProvider(props: ProjectDataProviderProps) {
   const projectData = useProjectItems({ tenantSlug, ...options });
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const activeTenant = window.sessionStorage.getItem('sunshade_active_tenant');
+      if (tenantSlug && activeTenant && activeTenant !== tenantSlug) {
+        clearProjectCache();
+      }
+      if (tenantSlug) {
+        window.sessionStorage.setItem('sunshade_active_tenant', tenantSlug);
+      }
+    } catch {}
     preloadPortfolioItems(tenantSlug);
   }, [tenantSlug]);
 

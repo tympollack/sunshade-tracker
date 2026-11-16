@@ -48,6 +48,7 @@ export interface SprintEventData {
   work_item_id?: string | null;
   new_state?: any;
   old_state?: any;
+  previous_state?: any;
   to_status?: string | null;
   from_status?: string | null;
   new_status?: string | null;
@@ -649,11 +650,15 @@ export function computePeriodScopedTelemetry(params: {
         .toLowerCase()
         .trim();
       const prevSt = String(
-        (typeof ev.old_state === 'string' ? ev.old_state : null) ||
+        (typeof ev.previous_state === 'string' ? ev.previous_state : null) ||
+          ev.previous_state?.status ||
+          (typeof ev.old_state === 'string' ? ev.old_state : null) ||
           ev.old_state?.status ||
           ev.from_status ||
           ev.old_status ||
+          ev.details?.previous_state?.status ||
           ev.details?.old_status ||
+          ev.metadata?.previous_state?.status ||
           ev.metadata?.old_status ||
           ''
       )
