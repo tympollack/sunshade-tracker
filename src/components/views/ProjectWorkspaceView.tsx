@@ -62,6 +62,7 @@ import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
 import {
   getProjectCache,
   setProjectCache,
+  clearProjectCache,
   preloadPortfolioItems,
   syncOptimisticMutationToCache,
 } from '@/context/ProjectDataContext';
@@ -160,7 +161,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         return next;
       });
     },
-    [projectSlug]
+    [projectSlug, tenantSlug]
   );
 
   const requestedItem = typeof searchParams?.item === 'string' ? searchParams.item : null;
@@ -445,18 +446,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         const next = typeof action === 'function' ? action(prev) : action;
         projectSettingsRef.current = next;
         if (projectSlug && projectSlug !== 'all') {
-          const cur = getProjectCache(projectSlug);
+          const cur = getProjectCache(projectSlug, tenantSlug);
           if (cur) {
-            setProjectCache(projectSlug, {
-              ...cur,
-              settings: next,
-            });
+            setProjectCache(
+              projectSlug,
+              {
+                ...cur,
+                settings: next,
+                tenantSlug,
+              },
+              undefined,
+              tenantSlug
+            );
           }
         }
         return next;
       });
     },
-    [projectSlug]
+    [projectSlug, tenantSlug]
   );
   const [isSavingSchema, setIsSavingSchema] = useState(false);
 
@@ -510,9 +517,25 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(() => !initialCache && !isAllProjects);
 
+  // Purge client project cache if active session tenant changes to prevent cross-account leaks
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const activeTenant = window.sessionStorage.getItem('sunshade_active_tenant');
+      if (tenantSlug) {
+        if (activeTenant && activeTenant !== tenantSlug) {
+          clearProjectCache();
+        }
+        window.sessionStorage.setItem('sunshade_active_tenant', tenantSlug);
+      }
+    } catch {
+      // Ignore sessionStorage access errors
+    }
+  }, [tenantSlug]);
+
   // Synchronize state immediately if projectSlug changes to a cached project
   useEffect(() => {
-    const cached = getProjectCache(projectSlug);
+    const cached = getProjectCache(projectSlug, tenantSlug);
     if (cached) {
       _setItems(cached.items);
       _setProjectSettings(cached.settings);
@@ -520,7 +543,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       lastSyncedAtRef.current = cached.latestAt;
       setLoading(false);
     }
-  }, [projectSlug]);
+  }, [projectSlug, tenantSlug]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -1154,7 +1177,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [apiFetch, tenantSlug]);
 
   const fetchData = useCallback(async () => {
-    const cached = getProjectCache(projectSlug);
+    const cached = getProjectCache(projectSlug, tenantSlug);
     if (!cached && !isAllProjects) {
       setLoading(true);
     }
@@ -1290,8 +1313,10 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               items: iData.items || [],
               settings: projectSettingsRef.current || DEFAULT_PROJECT_SETTINGS,
               latestAt: iData.latest_at || new Date().toISOString(),
+              tenantSlug,
             },
-            targetProjectId
+            targetProjectId,
+            tenantSlug
           );
         }
         if (typeof iData.cold_count === 'number') {

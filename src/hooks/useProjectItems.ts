@@ -82,7 +82,7 @@ export function useProjectItems(options: UseProjectItemsOptions = {}): UseProjec
   } = options;
 
   const cacheKey = projectId || projectSlug || (isAllProjects ? 'all' : undefined);
-  const cachedEntry = cacheKey ? getProjectCache(cacheKey) : undefined;
+  const cachedEntry = cacheKey ? getProjectCache(cacheKey, tenantSlug) : undefined;
 
   const [items, _setItems] = useState<WorkItem[]>(() => cachedEntry?.items || []);
   const [loading, setLoading] = useState<boolean>(() => !cachedEntry && Boolean(projectId || projectSlug || isAllProjects));

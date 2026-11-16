@@ -193,9 +193,9 @@ describe('TASK-TRK-CLIENT-PROJECT-CACHE: Client Project Cache & Portfolio Preloa
 
       await preloadPortfolioItems('test-tenant');
 
-      const alphaCache = getProjectCache('proj-alpha');
-      const betaCache = getProjectCache('proj-beta');
-      const gammaCache = getProjectCache('proj-gamma');
+      const alphaCache = getProjectCache('proj-alpha', 'test-tenant');
+      const betaCache = getProjectCache('proj-beta', 'test-tenant');
+      const gammaCache = getProjectCache('proj-gamma', 'test-tenant');
 
       expect(alphaCache).toBeDefined();
       expect(alphaCache?.items).toHaveLength(1);

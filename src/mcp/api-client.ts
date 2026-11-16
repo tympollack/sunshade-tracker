@@ -83,23 +83,20 @@ export class TrackerApiClient {
    */
   public async resolveItem(idOrRef: string, projectSlug?: string): Promise<any> {
     const slug = projectSlug || this.projectSlug;
+    const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
 
-    // 1. If it's a UUID, direct lookup
-    if (UUID_REGEX.test(idOrRef)) {
-      const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
-      try {
-        const res = await this.fetch(`/api/v1/items?id=${encodeURIComponent(idOrRef)}${tenantParam}`);
-        if (res?.item) return res.item;
-      } catch (err: any) {
-        // If 404, fall through to list search
-      }
+    // 1. Direct lookup by ID or external_ref_id via GET /api/v1/items/[id] (includes heavy metadata & agent_prompt)
+    try {
+      const res = await this.fetch(`/api/v1/items/${encodeURIComponent(idOrRef)}${tenantParam ? '?' + tenantParam.slice(1) : ''}`);
+      if (res?.item) return res.item;
+    } catch {
+      // If 404 or fails, fall through to list search
     }
 
-    // 2. Query project items or workspace items
+    // 2. Query project items or workspace items with include_heavy=true
     const querySlug = slug || 'all';
     const slugParam = querySlug !== 'all' ? `project_slug=${encodeURIComponent(querySlug)}` : 'all_projects=true';
-    const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
-    const res = await this.fetch(`/api/v1/items?${slugParam}${tenantParam}&include_cold_archive=true`);
+    const res = await this.fetch(`/api/v1/items?${slugParam}${tenantParam}&include_cold_archive=true&include_heavy=true`);
 
     if (Array.isArray(res?.items)) {
       const found = res.items.find(

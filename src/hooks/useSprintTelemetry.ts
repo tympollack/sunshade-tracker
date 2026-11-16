@@ -232,7 +232,12 @@ export function useSprintTelemetry({
         if (snapRes.ok) {
           const snapJson = await snapRes.json();
           if (Array.isArray(snapJson.burndownData)) {
-            setBurndownData(snapJson.burndownData);
+            setBurndownData(
+              snapJson.burndownData.filter((b: any) => {
+                if (!b.date) return true;
+                return b.date >= startDate && b.date <= endDate;
+              })
+            );
           } else {
             setBurndownData([]);
           }

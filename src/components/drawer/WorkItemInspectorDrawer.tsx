@@ -416,12 +416,16 @@ export function WorkItemInspectorDrawer({
   const saveQueueRef = useRef<Promise<any>>(Promise.resolve());
   const latestMetadataRef = useRef<Record<string, any>>({});
   const lastConfirmedItemRef = useRef<WorkItem | null>(null);
+  const currentDrawerItemIdRef = useRef<string | null>(null);
+  const hydratedDrawerDetailsRef = useRef<{ id: string; description: string; metadata: Record<string, any> } | null>(null);
 
   useEffect(() => {
     if (item) {
+      const isSameItem = currentDrawerItemIdRef.current === item.id;
+      currentDrawerItemIdRef.current = item.id;
       lastConfirmedItemRef.current = item;
+
       setTitle(item.title || '');
-      setDescription(item.description || '');
       setStatus(item.status || '');
       setAssignee(normalizeAssignee(item.assignee) || '');
       const pts = item.metadata?.story_points ?? item.metadata?.points;
@@ -429,9 +433,30 @@ export function WorkItemInspectorDrawer({
       setSprint(item.metadata?.sprint || '');
       setParentId(item.parent_id || '');
       setErrorMessage(null);
-      const meta = item.metadata ? { ...item.metadata } : {};
-      setLocalMeta(meta);
-      latestMetadataRef.current = meta;
+
+      if (!isSameItem) {
+        // Switching to a different item: clear cached hydration details and reset fields from new item
+        hydratedDrawerDetailsRef.current = null;
+        setDescription(item.description || '');
+        const meta = item.metadata ? { ...item.metadata } : {};
+        setLocalMeta(meta);
+        latestMetadataRef.current = meta;
+      } else {
+        // Same item updated inline (e.g. status or title changed):
+        // Preserve hydrated description and hidden metadata like agent_prompt
+        if (item.description !== undefined && item.description !== null) {
+          setDescription(item.description);
+        } else if (hydratedDrawerDetailsRef.current?.description) {
+          setDescription(hydratedDrawerDetailsRef.current.description);
+        }
+
+        const mergedMeta = {
+          ...(hydratedDrawerDetailsRef.current?.metadata || {}),
+          ...(item.metadata || {}),
+        };
+        setLocalMeta(mergedMeta);
+        latestMetadataRef.current = mergedMeta;
+      }
     }
   }, [item]);
 
@@ -461,6 +486,12 @@ export function WorkItemInspectorDrawer({
             return nextMeta;
           });
         }
+
+        hydratedDrawerDetailsRef.current = {
+          id: fullItem.id,
+          description: fullItem.description || '',
+          metadata: fullItem.metadata || {},
+        };
       })
       .catch(() => {});
 
