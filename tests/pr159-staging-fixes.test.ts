@@ -560,7 +560,7 @@ describe('PR 159 Staging Review Fixes', () => {
   });
 
   describe('6. WorkItemInspectorDrawer cleared sprint retention guard', () => {
-    it('does not revive cleared sprint after thin delta item refresh and subsequent field commit', () => {
+    it('preserves sprint: null and sprint_id: null in payload while removing from retention caches', () => {
       // Simulate drawer state machine
       const hydratedDrawerDetails = {
         id: 'item-1',
@@ -574,13 +574,38 @@ describe('PR 159 Staging Review Fixes', () => {
       };
 
       let localMeta: Record<string, any> = { ...hydratedDrawerDetails.metadata };
-      let latestMetadata: Record<string, any> = { ...localMeta };
+      const latestMetadataRef = { current: { ...localMeta } };
+
+      // Helper simulating handleFieldChange
+      const buildPayload = (updates: Record<string, any>): Record<string, any> => {
+        if (updates.metadata) {
+          latestMetadataRef.current = {
+            ...latestMetadataRef.current,
+            ...updates.metadata,
+          };
+          if (updates.metadata.sprint === null) {
+            delete latestMetadataRef.current.sprint;
+            delete latestMetadataRef.current.sprint_id;
+          }
+        }
+        return {
+          ...updates,
+          ...(updates.metadata
+            ? {
+                metadata: {
+                  ...latestMetadataRef.current,
+                  ...updates.metadata,
+                },
+              }
+            : {}),
+        };
+      };
 
       // 1. User moves item to backlog (handleSprintChange(''))
       const newSprint = '';
       const updatedMetadata: Record<string, any> = {
         ...localMeta,
-        ...latestMetadata,
+        ...latestMetadataRef.current,
         sprint: newSprint || null,
       };
       if (!newSprint) {
@@ -588,7 +613,6 @@ describe('PR 159 Staging Review Fixes', () => {
         delete updatedMetadata.sprint_id;
       }
       localMeta = updatedMetadata;
-      latestMetadata = { ...updatedMetadata };
 
       // Invalidate retained hydration snapshot
       hydratedDrawerDetails.metadata = {
@@ -600,7 +624,19 @@ describe('PR 159 Staging Review Fixes', () => {
         delete hydratedDrawerDetails.metadata.sprint_id;
       }
 
-      expect(localMeta.sprint).toBeUndefined();
+      // Outgoing payload sent to onUpdateItem:
+      const backlogPayload = buildPayload({
+        sprint_id: newSprint ? undefined : null,
+        metadata: { ...updatedMetadata, sprint: newSprint || null },
+      });
+
+      // Assert that the outgoing payload explicitly sends sprint_id: null and sprint: null to clear DB & relational column
+      expect(backlogPayload.sprint_id).toBeNull();
+      expect(backlogPayload.metadata.sprint).toBeNull();
+
+      // Assert that local caches do NOT retain the sprint keys
+      expect(latestMetadataRef.current.sprint).toBeUndefined();
+      expect(latestMetadataRef.current.sprint_id).toBeUndefined();
       expect(hydratedDrawerDetails.metadata.sprint).toBeUndefined();
 
       // 2. Delta polling arrives with thin card projection (omits agent_prompt and description, sprint cleared)
@@ -622,7 +658,7 @@ describe('PR 159 Staging Review Fixes', () => {
       }
 
       localMeta = incomingMeta;
-      latestMetadata = incomingMeta;
+      latestMetadataRef.current = incomingMeta;
 
       // Assert that sprint is NOT restored by delta refresh!
       expect(localMeta.sprint).toBeUndefined();
@@ -634,18 +670,20 @@ describe('PR 159 Staging Review Fixes', () => {
       const nextMeta: Record<string, any> = {
         ...incomingThinItem.metadata,
         ...localMeta,
-        ...latestMetadata,
+        ...latestMetadataRef.current,
         priority: 'P2',
       };
 
-      expect(nextMeta.priority).toBe('P2');
-      expect(nextMeta.sprint).toBeUndefined();
-      expect(nextMeta.sprint_id).toBeUndefined();
+      const customFieldPayload = buildPayload({ metadata: nextMeta });
+
+      expect(customFieldPayload.metadata.priority).toBe('P2');
+      expect(customFieldPayload.metadata.sprint).toBeUndefined();
+      expect(customFieldPayload.metadata.sprint_id).toBeUndefined();
     });
   });
 
   describe('7. Form metadata deletion and explicit nullification', () => {
-    it('sets deleted metadata keys to null so reconcileSprintMetadata does not restore them', () => {
+    it('nullifies agent_prompt on deletion but deletes normal custom fields', () => {
       const fullItem = {
         id: 'item-1',
         metadata: {
@@ -668,11 +706,16 @@ describe('PR 159 Staging Review Fixes', () => {
       };
 
       for (const removedKey of deletedMetaKeys) {
-        mergedMetadata[removedKey] = null;
+        if (removedKey === 'agent_prompt') {
+          mergedMetadata[removedKey] = null;
+        } else {
+          delete mergedMetadata[removedKey];
+        }
       }
 
       expect(mergedMetadata.agent_prompt).toBeNull();
-      expect(mergedMetadata.custom_tag).toBeNull();
+      // Non-prompt custom field is deleted, not preserved as null
+      expect('custom_tag' in mergedMetadata).toBe(false);
 
       // Pass into reconcileSprintMetadata in full replacement mode (modal save)
       const reconciled = reconcileSprintMetadata(
@@ -682,9 +725,10 @@ describe('PR 159 Staging Review Fixes', () => {
         { fullReplacement: true }
       );
 
-      // Must be null, NOT restored to 'Instructions for agent'
+      // agent_prompt is explicitly null, NOT restored to 'Instructions for agent'
       expect(reconciled.agent_prompt).toBeNull();
-      expect(reconciled.custom_tag).toBeNull();
+      // custom_tag is deleted, NOT restored and NOT null
+      expect('custom_tag' in reconciled).toBe(false);
       expect(reconciled.priority).toBe('P2');
     });
   });

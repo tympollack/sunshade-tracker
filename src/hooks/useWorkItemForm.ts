@@ -376,7 +376,11 @@ export function useWorkItemForm({
         ...metadata,
       };
       for (const removedKey of deletedMetaKeysRef.current) {
-        mergedMetadata[removedKey] = null;
+        if (removedKey === 'agent_prompt') {
+          mergedMetadata[removedKey] = null;
+        } else {
+          delete mergedMetadata[removedKey];
+        }
       }
 
       // 4. Resolve description: if touched and cleared, send null; if untouched and empty, keep fullItem description

@@ -537,7 +537,14 @@ export function WorkItemInspectorDrawer({
 
     const payload = {
       ...updates,
-      ...(updates.metadata ? { metadata: { ...latestMetadataRef.current } } : {}),
+      ...(updates.metadata
+        ? {
+            metadata: {
+              ...latestMetadataRef.current,
+              ...updates.metadata,
+            },
+          }
+        : {}),
     };
 
     setIsSaving(true);
@@ -737,7 +744,10 @@ export function WorkItemInspectorDrawer({
       }
     }
 
-    handleFieldChange({ metadata: { ...updatedMetadata, sprint: newSprint || null } });
+    handleFieldChange({
+      sprint_id: newSprint ? undefined : null,
+      metadata: { ...updatedMetadata, sprint: newSprint || null },
+    });
   };
 
   const handleParentChange = (newParent: string) => {
