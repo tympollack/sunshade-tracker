@@ -442,7 +442,7 @@ export function WorkItemInspectorDrawer({
         setLocalMeta(meta);
         latestMetadataRef.current = meta;
       } else {
-        // Same item updated inline (e.g. status or title changed):
+        // Same item updated inline (e.g. delta refresh, status, points or title changed):
         // Preserve hydrated description and hidden metadata like agent_prompt
         if (item.description !== undefined && item.description !== null) {
           setDescription(item.description);
@@ -450,12 +450,17 @@ export function WorkItemInspectorDrawer({
           setDescription(hydratedDrawerDetailsRef.current.description);
         }
 
-        const mergedMeta = {
-          ...(hydratedDrawerDetailsRef.current?.metadata || {}),
-          ...(item.metadata || {}),
-        };
-        setLocalMeta(mergedMeta);
-        latestMetadataRef.current = mergedMeta;
+        const incomingMeta = item.metadata ? { ...item.metadata } : {};
+        // Preserve heavy fields omitted by the thin projection (specifically agent_prompt)
+        if (
+          hydratedDrawerDetailsRef.current?.metadata?.agent_prompt !== undefined &&
+          incomingMeta.agent_prompt === undefined
+        ) {
+          incomingMeta.agent_prompt = hydratedDrawerDetailsRef.current.metadata.agent_prompt;
+        }
+
+        setLocalMeta(incomingMeta);
+        latestMetadataRef.current = incomingMeta;
       }
     }
   }, [item]);
@@ -524,11 +529,22 @@ export function WorkItemInspectorDrawer({
         ...latestMetadataRef.current,
         ...updates.metadata,
       };
+      if (updates.metadata.sprint === null) {
+        delete latestMetadataRef.current.sprint;
+        delete latestMetadataRef.current.sprint_id;
+      }
     }
 
     const payload = {
       ...updates,
-      ...(updates.metadata ? { metadata: { ...latestMetadataRef.current } } : {}),
+      ...(updates.metadata
+        ? {
+            metadata: {
+              ...latestMetadataRef.current,
+              ...updates.metadata,
+            },
+          }
+        : {}),
     };
 
     setIsSaving(true);
@@ -566,6 +582,22 @@ export function WorkItemInspectorDrawer({
             }
           : {}),
       };
+
+      if (hydratedDrawerDetailsRef.current) {
+        if (payload.metadata) {
+          hydratedDrawerDetailsRef.current.metadata = {
+            ...hydratedDrawerDetailsRef.current.metadata,
+            ...payload.metadata,
+          };
+          if (payload.metadata.sprint === null) {
+            delete hydratedDrawerDetailsRef.current.metadata.sprint;
+            delete hydratedDrawerDetailsRef.current.metadata.sprint_id;
+          }
+        }
+        if (payload.description !== undefined) {
+          hydratedDrawerDetailsRef.current.description = payload.description || '';
+        }
+      }
     };
 
     const doSave = (): Promise<void> | void => {
@@ -688,14 +720,34 @@ export function WorkItemInspectorDrawer({
 
   const handleSprintChange = (newSprint: string) => {
     setSprint(newSprint);
-    const updatedMetadata = {
+    const updatedMetadata: Record<string, any> = {
       ...(item.metadata || {}),
       ...localMeta,
       ...latestMetadataRef.current,
       sprint: newSprint || null,
     };
+    if (!newSprint) {
+      delete updatedMetadata.sprint;
+      delete updatedMetadata.sprint_id;
+    }
     setLocalMeta(updatedMetadata);
-    handleFieldChange({ metadata: updatedMetadata });
+    latestMetadataRef.current = { ...updatedMetadata };
+
+    if (hydratedDrawerDetailsRef.current) {
+      hydratedDrawerDetailsRef.current.metadata = {
+        ...hydratedDrawerDetailsRef.current.metadata,
+        ...updatedMetadata,
+      };
+      if (!newSprint) {
+        delete hydratedDrawerDetailsRef.current.metadata.sprint;
+        delete hydratedDrawerDetailsRef.current.metadata.sprint_id;
+      }
+    }
+
+    handleFieldChange({
+      sprint_id: newSprint ? undefined : null,
+      metadata: { ...updatedMetadata, sprint: newSprint || null },
+    });
   };
 
   const handleParentChange = (newParent: string) => {

@@ -85,12 +85,30 @@ export class TrackerApiClient {
     const slug = projectSlug || this.projectSlug;
     const tenantParam = this.tenantSlug ? `&tenant_slug=${encodeURIComponent(this.tenantSlug)}` : '';
 
+    let directItem: any = null;
     // 1. Direct lookup by ID or external_ref_id via GET /api/v1/items/[id] (includes heavy metadata & agent_prompt)
     try {
       const res = await this.fetch(`/api/v1/items/${encodeURIComponent(idOrRef)}${tenantParam ? '?' + tenantParam.slice(1) : ''}`);
-      if (res?.item) return res.item;
+      if (res?.item) {
+        directItem = res.item;
+      }
     } catch {
       // If 404 or fails, fall through to list search
+    }
+
+    if (directItem) {
+      if (!slug || slug === 'all') {
+        return directItem;
+      }
+      try {
+        const project = await this.getProject(slug);
+        if (project && directItem.project_id === project.id) {
+          return directItem;
+        }
+      } catch {
+        // If project cannot be found or getProject throws, do not return directItem
+      }
+      // If directItem belongs to a different project, do not return it
     }
 
     // 2. Query project items or workspace items with include_heavy=true
