@@ -354,8 +354,15 @@ export function useWorkItemForm({
         }
       }
 
-      // 2. Reject save if hydration failed or error occurred to prevent destructive overwrite
-      if (hydrationError || (!fullItem && item.id)) {
+      // If the provided item already contains a full description (i.e. not a thin projection where description is undefined),
+      // treat the provided item as our baseline if remote hydration was not needed or unavailable.
+      const isThinItem = Boolean(item.id && item.description === undefined);
+      if (!fullItem && !isThinItem) {
+        fullItem = item;
+      }
+
+      // 2. Reject save if hydration failed or error occurred on a thin item to prevent destructive overwrite
+      if (isThinItem && (hydrationError || !fullItem)) {
         setIsSaving(false);
         setSaveError(
           hydrationError || 'Could not load complete item details. Please check your connection and retry.'

@@ -1049,6 +1049,9 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
     });
 
     it('does not delay recurrence base when unrelated rule in the same project has a future slot date', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(Date.UTC(2026, 10, 3, 12, 0, 0)));
+      try {
       // Monday fortnightly task was scheduled for 2026-11-02
       const mondaySlotDate = new Date(Date.UTC(2026, 10, 2, 14, 0, 0)).toISOString();
       // Unrelated Friday release rule has a far-future slot scheduled for 2026-12-04
@@ -1140,6 +1143,9 @@ describe('Automation Engine & Dynamic Template Expander (TASK-TRK-RULE-EXECUTOR)
       expect(scheduledDate.getUTCMonth()).toBe(10); // November (0-indexed 10 = Nov)
       expect(scheduledDate.getUTCDate()).toBe(16);
       expect(scheduledDate.getUTCDay()).toBe(1); // Monday
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
