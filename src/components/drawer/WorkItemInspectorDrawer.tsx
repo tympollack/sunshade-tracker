@@ -435,6 +435,40 @@ export function WorkItemInspectorDrawer({
     }
   }, [item]);
 
+  // On-demand full detail hydration from GET /api/v1/items/[id] (TASK-TRK-THIN-ITEM-PROJECTION)
+  useEffect(() => {
+    if (!item?.id || !isOpen) return;
+
+    let isCancelled = false;
+    const endpoint = `/api/v1/items/${encodeURIComponent(item.id)}`;
+
+    fetch(endpoint, {
+      headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isCancelled || !data?.item) return;
+        const fullItem: WorkItem = data.item;
+
+        if (fullItem.description !== undefined && fullItem.description !== null) {
+          setDescription((prev) => (prev ? prev : fullItem.description || ''));
+        }
+
+        if (fullItem.metadata) {
+          setLocalMeta((prev) => {
+            const nextMeta = { ...fullItem.metadata, ...prev };
+            latestMetadataRef.current = nextMeta;
+            return nextMeta;
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [item?.id, isOpen, tenantSlug]);
+
   if (!isOpen || !item) {
     return null;
   }
@@ -1156,6 +1190,26 @@ export function WorkItemInspectorDrawer({
             className="w-full bg-slate-950/60 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 focus:outline-hidden focus:border-slate-700 font-sans leading-relaxed custom-scrollbar resize-y"
           />
         </div>
+
+        {/* Agent Prompt Spec Viewer/Editor */}
+        {Boolean(localMeta.agent_prompt) && (
+          <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-slate-400">
+                Agent Prompt Specification
+              </label>
+              <span className="text-[10px] text-emerald-400 font-mono">SPEC</span>
+            </div>
+            <pre
+              data-testid="item-agent-prompt"
+              className="w-full bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 font-mono leading-relaxed overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap"
+            >
+              {typeof localMeta.agent_prompt === 'string'
+                ? localMeta.agent_prompt
+                : JSON.stringify(localMeta.agent_prompt, null, 2)}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );

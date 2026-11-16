@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Plus, Folder, Settings, Layers, Archive, Search } from 'lucide-react';
+import { prefetchProjectData } from '@/context/ProjectDataContext';
 
 function useSafeRouter() {
   try {
@@ -54,6 +55,38 @@ export function ProjectSwitcher({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const activeItemRef = useRef<HTMLAnchorElement>(null);
   const [coords, setCoords] = useState<{ top: number; left: number; maxHeight?: number } | null>(null);
+
+  const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleProjectHover = useCallback(
+    (project: { id: string; slug: string }) => {
+      if (prefetchTimerRef.current) {
+        clearTimeout(prefetchTimerRef.current);
+      }
+      prefetchTimerRef.current = setTimeout(() => {
+        if (router && typeof router.prefetch === 'function') {
+          router.prefetch(`/${tenantSlug}/${project.slug}`);
+        }
+        prefetchProjectData(project.id, tenantSlug);
+      }, 75);
+    },
+    [router, tenantSlug]
+  );
+
+  const handleProjectLeave = useCallback(() => {
+    if (prefetchTimerRef.current) {
+      clearTimeout(prefetchTimerRef.current);
+      prefetchTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (prefetchTimerRef.current) {
+        clearTimeout(prefetchTimerRef.current);
+      }
+    };
+  }, []);
 
   const isPortfolio = currentProjectSlug === 'portfolio';
   const isAll =
@@ -296,6 +329,8 @@ export function ProjectSwitcher({
                 ref={isAll ? activeItemRef : undefined}
                 href={`/${tenantSlug}/all`}
                 data-testid="project-switcher-item-all"
+                onMouseEnter={() => handleProjectHover({ id: 'all', slug: 'all' })}
+                onMouseLeave={handleProjectLeave}
                 onClick={(e) => {
                   if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
                     setOpen(false);
@@ -321,6 +356,8 @@ export function ProjectSwitcher({
                 ref={project.slug === currentProjectSlug ? activeItemRef : undefined}
                 href={`/${tenantSlug}/${project.slug}`}
                 data-testid={`project-switcher-item-${project.slug}`}
+                onMouseEnter={() => handleProjectHover(project)}
+                onMouseLeave={handleProjectLeave}
                 onClick={(e) => {
                   if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button !== 1) {
                     setOpen(false);

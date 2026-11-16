@@ -59,6 +59,12 @@ import {
   deleteSprintAction,
 } from '@/app/actions/sprintActions';
 import { mergeColdArchive, reconcileDelta } from '@/hooks/useProjectItems';
+import {
+  getProjectCache,
+  setProjectCache,
+  preloadPortfolioItems,
+  syncOptimisticMutationToCache,
+} from '@/context/ProjectDataContext';
 import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 import { validateTransitionGuards, formatGuardRejectionMessage } from '@/lib/automation/guardEvaluator';
 import { GuardRejectionToast } from '@/components/board/TransitionGuardFeedback';
@@ -95,14 +101,67 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
   });
 
-  const [selectedSprint, setSelectedSprint] = useState<string>('all');
+  const initialCache = getProjectCache(projectSlug, tenantSlug);
+
+  const syncFilterToUrl = useCallback((key: string, value: string | string[] | null) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      if (!value || (Array.isArray(value) && value.length === 0) || value === 'all') {
+        url.searchParams.delete(key);
+      } else if (Array.isArray(value)) {
+        url.searchParams.set(key, value.join(','));
+      } else {
+        url.searchParams.set(key, value);
+      }
+      const nextUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+      window.history.replaceState(window.history.state, '', nextUrl);
+    } catch {
+      // Non-fatal shallow sync
+    }
+  }, []);
+
+  const [selectedSprint, _setSelectedSprint] = useState<string>(() => requestedSprint || 'all');
+  const setSelectedSprint = useCallback((action: string | ((prev: string) => string)) => {
+    _setSelectedSprint((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      syncFilterToUrl('sprint', next);
+      return next;
+    });
+  }, [syncFilterToUrl]);
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<WorkItem | null>(null);
-  const [items, setItems] = useState<WorkItem[]>([]);
+  const [items, _setItems] = useState<WorkItem[]>(() => initialCache?.items || []);
   const [coldCount, setColdCount] = useState<number>(0);
   const [isLoadingColdArchive, setIsLoadingColdArchive] = useState(false);
-  const lastSyncedAtRef = useRef<string | null>(null);
+  const lastSyncedAtRef = useRef<string | null>(initialCache?.latestAt || null);
   const isPollingDeltaRef = useRef(false);
   const hasLoadedColdArchiveRef = useRef(false);
+  const projectSettingsRef = useRef<ProjectSettings>(initialCache?.settings || DEFAULT_PROJECT_SETTINGS);
+
+  const setItems: React.Dispatch<React.SetStateAction<WorkItem[]>> = useCallback(
+    (action) => {
+      _setItems((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        if (projectSlug && projectSlug !== 'all') {
+          const cur = getProjectCache(projectSlug, tenantSlug);
+          setProjectCache(
+            projectSlug,
+            {
+              items: next,
+              settings: projectSettingsRef.current || cur?.settings || DEFAULT_PROJECT_SETTINGS,
+              latestAt: lastSyncedAtRef.current || new Date().toISOString(),
+              tenantSlug,
+              isPartial: cur?.isPartial ?? false,
+            },
+            undefined,
+            tenantSlug
+          );
+        }
+        return next;
+      });
+    },
+    [projectSlug]
+  );
 
   const requestedItem = typeof searchParams?.item === 'string' ? searchParams.item : null;
   const {
@@ -379,7 +438,26 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [guardRejectedItemIds, setGuardRejectedItemIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [itemsToBulkDelete, setItemsToBulkDelete] = useState<WorkItem[]>([]);
-  const [projectSettings, setProjectSettings] = useState<ProjectSettings>(DEFAULT_PROJECT_SETTINGS);
+  const [projectSettings, _setProjectSettings] = useState<ProjectSettings>(() => initialCache?.settings || DEFAULT_PROJECT_SETTINGS);
+  const setProjectSettings: React.Dispatch<React.SetStateAction<ProjectSettings>> = useCallback(
+    (action) => {
+      _setProjectSettings((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        projectSettingsRef.current = next;
+        if (projectSlug && projectSlug !== 'all') {
+          const cur = getProjectCache(projectSlug);
+          if (cur) {
+            setProjectCache(projectSlug, {
+              ...cur,
+              settings: next,
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [projectSlug]
+  );
   const [isSavingSchema, setIsSavingSchema] = useState(false);
 
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
@@ -430,7 +508,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const sprintComparator = useMemo(() => createItemComparator(sprintSortBy, allProjects), [sprintSortBy, allProjects]);
 
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => !initialCache && !isAllProjects);
+
+  // Synchronize state immediately if projectSlug changes to a cached project
+  useEffect(() => {
+    const cached = getProjectCache(projectSlug);
+    if (cached) {
+      _setItems(cached.items);
+      _setProjectSettings(cached.settings);
+      projectSettingsRef.current = cached.settings;
+      lastSyncedAtRef.current = cached.latestAt;
+      setLoading(false);
+    }
+  }, [projectSlug]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -563,8 +653,39 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   } | null>(null);
 
   // Filter States
-  const [selectedStatuses, setSelectedStatuses] = useState<string[] | null>(null);
-  const [selectedLevels, setSelectedLevels] = useState<string[] | null>(null);
+  const [selectedStatuses, _setSelectedStatuses] = useState<string[] | null>(() => {
+    if (typeof searchParams?.status === 'string' && searchParams.status) {
+      return searchParams.status.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return null;
+  });
+  const setSelectedStatuses = useCallback(
+    (action: string[] | null | ((prev: string[] | null) => string[] | null)) => {
+      _setSelectedStatuses((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        syncFilterToUrl('status', next);
+        return next;
+      });
+    },
+    [syncFilterToUrl]
+  );
+
+  const [selectedLevels, _setSelectedLevels] = useState<string[] | null>(() => {
+    if (typeof searchParams?.level === 'string' && searchParams.level) {
+      return searchParams.level.split(',').map((l) => l.trim()).filter(Boolean);
+    }
+    return null;
+  });
+  const setSelectedLevels = useCallback(
+    (action: string[] | null | ((prev: string[] | null) => string[] | null)) => {
+      _setSelectedLevels((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        syncFilterToUrl('level', next);
+        return next;
+      });
+    },
+    [syncFilterToUrl]
+  );
 
   const effectiveSelectedStatuses = useMemo(() => {
     if (selectedStatuses !== null) return selectedStatuses;
@@ -918,7 +1039,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     }
   }, [projectSlug, loadedProjectSlug, projectSettings.sprint_settings, availableSprints, requestedSprint]);
 
+  const isFirstMountRef = useRef(true);
+
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
     setSelectedStatuses(null);
     setSelectedLevels(null);
     setTreeSelectedStatuses(null);
@@ -1027,75 +1154,145 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [apiFetch, tenantSlug]);
 
   const fetchData = useCallback(async () => {
+    const cached = getProjectCache(projectSlug);
+    if (!cached && !isAllProjects) {
+      setLoading(true);
+    }
     setIsRefreshing(true);
     setFetchError(null);
     try {
       let targetProjectId: string | undefined = undefined;
-      const settingsRes = await apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`);
-      if (settingsRes.ok) {
-        const sData = await settingsRes.json();
-        if (Array.isArray(sData.projects)) {
-          setAllProjects(sData.projects);
+
+      const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true&include_archived=true' : '';
+      const itemsUrl = isAllProjects
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}${coldQuery}`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}${coldQuery}`;
+
+      const sprintsUrl = isAllProjects
+        ? `/api/v1/sprints?tenant_slug=${tenantSlug}`
+        : `/api/v1/sprints?project_slug=${projectSlug}&tenant_slug=${tenantSlug}`;
+
+      const settingsPromise = !isAllProjects
+        ? apiFetch(`/api/v1/projects/${projectSlug}/settings`)
+        : Promise.resolve(null);
+
+      // Single Promise.all batch for tenant membership, projects list, project settings, initial items, and relational sprints
+      const [tenantRes, projectsRes, detailRes, itemsRes, sprintsRes] = await Promise.all([
+        apiFetch('/api/v1/tenants/me'),
+        apiFetch(`/api/v1/projects?tenant_slug=${tenantSlug}`),
+        settingsPromise,
+        apiFetch(itemsUrl),
+        apiFetch(sprintsUrl),
+      ]);
+
+      // 1. Process Tenant Info
+      if (tenantRes.ok) {
+        const tData = await tenantRes.json();
+        if (tData.user) {
+          setCurrentUser(tData.user);
         }
-        if (isAllProjects && Array.isArray(sData.projects) && sData.projects.length > 0) {
-          setSelectedSchemaProjectSlug((prev) => prev || sData.projects[0].slug);
-          const portfolioSettings = mergeProjectSettings(sData.projects);
-          setProjectSettings(normalizeProjectSettings(portfolioSettings));
-          setLoadedProjectSlug(projectSlug);
-        } else if (!isAllProjects) {
-          const proj = (sData.projects || []).find((p: ProjectInfo) => p.slug === projectSlug);
-          if (proj) {
-            targetProjectId = proj.id;
-            const detailRes = await apiFetch(`/api/v1/projects/${proj.id}/settings`);
-            if (detailRes.ok) {
-              const detail = await detailRes.json();
-              if (detail.settings) {
-                const normalized = normalizeProjectSettings(detail.settings);
-                const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
-                  ...h,
-                  color: h.color || getDefaultLevelHex(h.level),
-                }));
-                const enrichedSettings: ProjectSettings = {
-                  ...normalized,
-                  hierarchy: enrichedHierarchy,
-                };
-                setProjectSettings(enrichedSettings);
-                if (enrichedSettings.statuses?.length) {
-                  setSelectedStatuses((prev) => {
-                    if (prev === null) return null;
-                    const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
-                    return prev.filter((id) => validIds.has(id));
-                  });
-                }
-                if (enrichedSettings.hierarchy?.length) {
-                  setSelectedLevels((prev) => {
-                    if (prev === null) return null;
-                    const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
-                    return prev.filter((t) => validTypes.has(t));
-                  });
-                }
-              }
-            }
-            setLoadedProjectSlug(projectSlug);
+        setAllWorkspaces(tData.workspaces || []);
+        const currentWs = (tData.workspaces || []).find((w: any) => w.slug === tenantSlug);
+        const ws = currentWs || tData.primary_workspace;
+        if (ws) {
+          setTenantInfo({
+            id: ws.id,
+            slug: ws.slug,
+            name: ws.name,
+            tier: ws.tier,
+            api_key_preview: ws.api_key_preview,
+            role: ws.role,
+            settings: ws.settings || {},
+            metadata: ws.metadata || {},
+          });
+          if (Array.isArray(ws.projects) && ws.projects.length > 0) {
+            setAllProjects(ws.projects);
+          }
+          if (ws.members) {
+            setWorkspaceMembers(ws.members);
           }
         }
       }
 
-      // Fallback targetProjectId from known projects if projects fetch failed or omitted selected project
-      if (!isAllProjects && !targetProjectId) {
+      // 2. Process Projects List & Schema Settings
+      let sProjects: ProjectInfo[] = [];
+      if (projectsRes.ok) {
+        const sData = await projectsRes.json();
+        if (Array.isArray(sData.projects)) {
+          sProjects = sData.projects;
+          setAllProjects(sData.projects);
+        }
+      }
+
+      const matchedProj = sProjects.find((p: ProjectInfo) => p.slug === projectSlug);
+      if (matchedProj) {
+        targetProjectId = matchedProj.id;
+      } else if (!isAllProjects && !targetProjectId) {
         targetProjectId = allProjectsRef.current.find((p) => p.slug === projectSlug)?.id;
       }
 
-      const coldQuery = hasLoadedColdArchiveRef.current ? '&include_cold_archive=true' : '';
-      const itemsUrl = isAllProjects
-        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}${coldQuery}`
-        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}${coldQuery}`;
-      const itemsRes = await apiFetch(itemsUrl);
+      if (isAllProjects && sProjects.length > 0) {
+        setSelectedSchemaProjectSlug((prev) => prev || sProjects[0].slug);
+        const portfolioSettings = mergeProjectSettings(sProjects);
+        setProjectSettings(normalizeProjectSettings(portfolioSettings));
+        setLoadedProjectSlug(projectSlug);
+      } else if (!isAllProjects) {
+        let loadedSettings: ProjectSettings | null = null;
+        if (detailRes && detailRes.ok) {
+          const detail = await detailRes.json();
+          if (detail.settings) {
+            loadedSettings = detail.settings;
+          }
+        }
+        if (!loadedSettings && matchedProj?.settings) {
+          loadedSettings = matchedProj.settings;
+        }
+        if (loadedSettings) {
+          const normalized = normalizeProjectSettings(loadedSettings);
+          const enrichedHierarchy = (normalized.hierarchy || []).map((h: any) => ({
+            ...h,
+            color: h.color || getDefaultLevelHex(h.level),
+          }));
+          const enrichedSettings: ProjectSettings = {
+            ...normalized,
+            hierarchy: enrichedHierarchy,
+          };
+          setProjectSettings(enrichedSettings);
+          if (enrichedSettings.statuses?.length) {
+            setSelectedStatuses((prev) => {
+              if (prev === null) return null;
+              const validIds = new Set(enrichedSettings.statuses.map((s: any) => s.id));
+              return prev.filter((id) => validIds.has(id));
+            });
+          }
+          if (enrichedSettings.hierarchy?.length) {
+            setSelectedLevels((prev) => {
+              if (prev === null) return null;
+              const validTypes = new Set(enrichedSettings.hierarchy.map((h: any) => h.type));
+              return prev.filter((t) => validTypes.has(t));
+            });
+          }
+        }
+        setLoadedProjectSlug(projectSlug);
+      }
+
+      // 3. Process Work Items
       if (itemsRes.ok) {
         const iData = await itemsRes.json();
         setItems(iData.items || []);
         if (iData.latest_at) {
           lastSyncedAtRef.current = iData.latest_at;
+        }
+        if (projectSlug && projectSlug !== 'all') {
+          setProjectCache(
+            projectSlug,
+            {
+              items: iData.items || [],
+              settings: projectSettingsRef.current || DEFAULT_PROJECT_SETTINGS,
+              latestAt: iData.latest_at || new Date().toISOString(),
+            },
+            targetProjectId
+          );
         }
         if (typeof iData.cold_count === 'number') {
           setColdCount(iData.cold_count);
@@ -1107,31 +1304,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setFetchError(err.error || `Failed to load items (${itemsRes.status})`);
       }
 
-      // Query configured relational sprints from tracker.sprints table
-      // In single project view (!isAllProjects), only query when targetProjectId is known to prevent exposing unrelated sprints
-      if (isAllProjects || targetProjectId) {
+      // 4. Process Relational Sprints
+      if (sprintsRes && sprintsRes.ok) {
         try {
-          const sprintsUrl = !isAllProjects && targetProjectId
-            ? `/api/v1/sprints?project_id=${targetProjectId}&tenant_slug=${tenantSlug}`
-            : `/api/v1/sprints?tenant_slug=${tenantSlug}`;
-          const sprintsRes = await apiFetch(sprintsUrl);
-          if (sprintsRes.ok) {
-            const sData = await sprintsRes.json();
-            if (Array.isArray(sData.sprints)) {
-              const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
-                id: s.id,
-                project_id: s.project_id,
-                name: s.name,
-                status: s.status || (s.is_active ? 'active' : 'planned'),
-                goal: s.goal || null,
-                start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
-                end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
-                is_current: Boolean(s.is_active || s.status === 'active'),
-                committed_points: s.committed_points || 0,
-                metadata: s.metadata || undefined,
-              }));
-              setDbSprints(mappedDbSprints);
-            }
+          const sData = await sprintsRes.json();
+          if (Array.isArray(sData.sprints)) {
+            const mappedDbSprints: SprintDefinition[] = sData.sprints.map((s: any) => ({
+              id: s.id,
+              project_id: s.project_id,
+              name: s.name,
+              status: s.status || (s.is_active ? 'active' : 'planned'),
+              goal: s.goal || null,
+              start_date: s.start_date || (s.started_at ? String(s.started_at).slice(0, 10) : null),
+              end_date: s.end_date || (s.ends_at ? String(s.ends_at).slice(0, 10) : null),
+              is_current: Boolean(s.is_active || s.status === 'active'),
+              committed_points: s.committed_points || 0,
+              metadata: s.metadata || undefined,
+            }));
+            setDbSprints(mappedDbSprints);
           }
         } catch {
           // Silently tolerate in environments where relational endpoint is unmocked
@@ -1150,8 +1340,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     setIsLoadingColdArchive(true);
     try {
       const url = isAllProjects
-        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&include_cold_archive=true`
-        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&include_cold_archive=true`;
+        ? `/api/v1/items?all_projects=true&tenant_slug=${tenantSlug}&include_cold_archive=true&include_archived=true`
+        : `/api/v1/items?project_slug=${projectSlug}&tenant_slug=${tenantSlug}&include_cold_archive=true&include_archived=true`;
       const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -1309,9 +1499,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   }, [handleSaveSchema]);
 
   useEffect(() => {
-    fetchTenantInfo();
     fetchData();
-  }, [fetchTenantInfo, fetchData]);
+  }, [fetchData]);
+
+  useEffect(() => {
+    preloadPortfolioItems(tenantSlug);
+  }, [tenantSlug]);
 
   const isCompleteStatus = useCallback((statusId: string) => {
     const norm = (statusId || '').toLowerCase().trim();
