@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { WorkItem, ProjectSettings, HierarchyLevel, SprintDefinition, CustomFieldDefinition, normalizeCustomFields } from '@/types/tracker';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
@@ -133,8 +133,102 @@ export function useWorkItemForm({
       setMetaErrors({});
       setShowAddMeta(false);
       setSaveError(null);
+      isDescriptionTouchedRef.current = false;
+      deletedMetaKeysRef.current.clear();
     }
   }, [item, projectSettings]);
+
+  const isDescriptionTouchedRef = useRef(false);
+  const deletedMetaKeysRef = useRef<Set<string>>(new Set());
+  const hydratingPromiseRef = useRef<{ itemId: string; promise: Promise<WorkItem | null> } | null>(null);
+  const hydratedItemRef = useRef<{ itemId: string; item: WorkItem } | null>(null);
+  const [isHydratingDetail, setIsHydratingDetail] = useState(false);
+  const [hydrationError, setHydrationError] = useState<string | null>(null);
+
+  const handleSetDescription = (val: string | ((prev: string) => string)) => {
+    isDescriptionTouchedRef.current = true;
+    setDescription(val);
+  };
+
+  // On-demand full detail hydration from GET /api/v1/items/[id] (TASK-TRK-THIN-ITEM-PROJECTION)
+  useEffect(() => {
+    if (!item?.id || !isOpen) {
+      hydratingPromiseRef.current = null;
+      hydratedItemRef.current = null;
+      setIsHydratingDetail(false);
+      setHydrationError(null);
+      return;
+    }
+
+    // Clear previous item's hydrated reference immediately if switching open items
+    if (hydratedItemRef.current?.itemId !== item.id) {
+      hydratedItemRef.current = null;
+    }
+    if (hydratingPromiseRef.current?.itemId !== item.id) {
+      hydratingPromiseRef.current = null;
+    }
+
+    let isCancelled = false;
+    setIsHydratingDetail(true);
+    setHydrationError(null);
+    const targetItemId = item.id;
+    const endpoint = `/api/v1/items/${encodeURIComponent(targetItemId)}`;
+
+    const promise = fetch(endpoint, {
+      headers: tenantSlug ? { 'x-tenant-slug': tenantSlug } : {},
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load item details (${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
+        if (isCancelled || !data?.item) return null;
+        const fullItem: WorkItem = data.item;
+        hydratedItemRef.current = { itemId: targetItemId, item: fullItem };
+
+        if (!isDescriptionTouchedRef.current && fullItem.description !== undefined && fullItem.description !== null) {
+          setDescription(fullItem.description || '');
+        }
+
+        if (fullItem.metadata) {
+          setMetadata((prev) => {
+            const nextMeta = { ...fullItem.metadata, ...prev };
+            for (const k of deletedMetaKeysRef.current) {
+              delete nextMeta[k];
+            }
+            return nextMeta;
+          });
+
+          setMetaDrafts((prev) => {
+            const drafts = { ...prev };
+            Object.entries(fullItem.metadata).forEach(([k, v]) => {
+              if (!deletedMetaKeysRef.current.has(k) && (!(k in drafts) || !drafts[k])) {
+                drafts[k] = typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '');
+              }
+            });
+            return drafts;
+          });
+        }
+        return fullItem;
+      })
+      .catch((err) => {
+        if (!isCancelled) {
+          setHydrationError(err?.message || 'Failed to load full item details');
+        }
+        return null;
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsHydratingDetail(false);
+        }
+      });
+
+    hydratingPromiseRef.current = { itemId: targetItemId, promise };
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [item?.id, isOpen, tenantSlug]);
 
   const [projectCandidateItems, setProjectCandidateItems] = useState<WorkItem[]>([]);
   const [isLoadingParents, setIsLoadingParents] = useState(false);
@@ -248,15 +342,60 @@ export function useWorkItemForm({
     setIsSaving(true);
     setSaveError(null);
     try {
+      // 1. Verify and await detail hydration for THIS specific item to prevent cross-item copy or destructive save
+      let fullItem: WorkItem | null =
+        hydratedItemRef.current?.itemId === item.id ? hydratedItemRef.current.item : null;
+
+      if (!fullItem && hydratingPromiseRef.current?.itemId === item.id) {
+        try {
+          fullItem = await hydratingPromiseRef.current.promise;
+        } catch {
+          // Handled by safety guard below
+        }
+      }
+
+      // If the provided item already contains a full description (i.e. not a thin projection where description is undefined),
+      // treat the provided item as our baseline if remote hydration was not needed or unavailable.
+      const isThinItem = Boolean(item.id && item.description === undefined);
+      if (!fullItem && !isThinItem) {
+        fullItem = item;
+      }
+
+      // 2. Reject save if hydration failed or error occurred on a thin item to prevent destructive overwrite
+      if (isThinItem && (hydrationError || !fullItem)) {
+        setIsSaving(false);
+        setSaveError(
+          hydrationError || 'Could not load complete item details. Please check your connection and retry.'
+        );
+        return;
+      }
+
+      // 3. Merge metadata preserving untouched hidden keys, but strictly honouring explicitly deleted keys
+      const mergedMetadata = {
+        ...(fullItem?.metadata || {}),
+        ...metadata,
+      };
+      for (const removedKey of deletedMetaKeysRef.current) {
+        delete mergedMetadata[removedKey];
+      }
+
+      // 4. Resolve description: if touched and cleared, send null; if untouched and empty, keep fullItem description
+      let finalDescription: string | null = null;
+      if (isDescriptionTouchedRef.current) {
+        finalDescription = description.trim() || null;
+      } else {
+        finalDescription = description.trim() || fullItem?.description || null;
+      }
+
       const updates: Partial<WorkItem> = {
         title: title.trim(),
-        description: description.trim() || null,
+        description: finalDescription,
         status,
         item_type: itemType,
         parent_id: parentId || null,
         assignee: normalizeAssignee(assignee),
         external_ref_id: externalRef.trim() || null,
-        metadata,
+        metadata: mergedMetadata,
       };
       if (selectedProjectId) {
         const matchedProj = projects.find((p) => p.id === selectedProjectId || p.slug === selectedProjectId);
@@ -319,6 +458,7 @@ export function useWorkItemForm({
       }
     }
 
+    deletedMetaKeysRef.current.delete(key);
     setMetadata((prev) => ({ ...prev, [key]: parsedVal }));
     setMetaDrafts((prev) => ({
       ...prev,
@@ -334,6 +474,7 @@ export function useWorkItemForm({
   };
 
   const handleUpdateMetaField = (key: string, rawText: string) => {
+    deletedMetaKeysRef.current.delete(key);
     setMetaDrafts((prev) => ({ ...prev, [key]: rawText }));
 
     const def = fieldDefMap.get(key);
@@ -419,6 +560,7 @@ export function useWorkItemForm({
   };
 
   const handleRemoveMetaField = (key: string) => {
+    deletedMetaKeysRef.current.add(key);
     setMetadata((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -440,7 +582,7 @@ export function useWorkItemForm({
     title,
     setTitle,
     description,
-    setDescription,
+    setDescription: handleSetDescription,
     status,
     setStatus,
     itemType,
@@ -475,6 +617,8 @@ export function useWorkItemForm({
     levelColor,
     isLocked,
     isSprintLocked,
+    isHydratingDetail,
+    hydrationError,
     handleSave,
     handleAddMetaField,
     handleUpdateMetaField,

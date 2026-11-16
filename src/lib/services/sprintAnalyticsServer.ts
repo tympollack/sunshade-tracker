@@ -17,7 +17,11 @@ export async function getSprintHealthReport(
   tenantSlug: string,
   sprintIdOrName: string,
   projectIdOrSlug?: string | null,
-  now?: Date | string | number
+  now?: Date | string | number,
+  options?: {
+    startDate?: string | null;
+    endDate?: string | null;
+  }
 ): Promise<SprintHealthReport> {
   const service = supabaseAdmin;
 
@@ -266,11 +270,36 @@ export async function getSprintHealthReport(
     targetProj?.settings?.work_metric_config?.field_key ||
     targetProj?.settings?.work_unit_field;
 
+  // 5b. Optionally fetch sprint_events when custom window bounds are supplied
+  let sprintEvents: any[] = [];
+  if (options?.startDate && options?.endDate) {
+    try {
+      let evQuery: any = service
+        .from('sprint_events')
+        .select('*')
+        .eq('tenant_id', tenant.id);
+
+      if (targetSprint?.id && typeof evQuery?.eq === 'function') {
+        evQuery = evQuery.eq('sprint_id', targetSprint.id);
+      }
+
+      const evRes = await evQuery;
+      if (evRes?.data && Array.isArray(evRes.data)) {
+        sprintEvents = evRes.data;
+      }
+    } catch {
+      // sprint_events table may not exist in all environments or test mocks
+    }
+  }
+
   // 6. Run pure telemetry aggregation
   return computeSprintAnalytics({
     sprint: targetSprint,
     historicalSprints,
     items: targetSprintItems,
+    events: sprintEvents,
+    startDate: options?.startDate,
+    endDate: options?.endDate,
     rules: metricRules,
     metricKey: targetMetricKey,
     now,

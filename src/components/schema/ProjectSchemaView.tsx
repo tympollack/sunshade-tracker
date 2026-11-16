@@ -74,14 +74,17 @@ export function ProjectSchemaView({
     let isCancelled = false;
     const headers: Record<string, string> = {};
     if (tenantSlug) headers['x-tenant-slug'] = tenantSlug;
-    fetch('/api/v1/projects', { headers })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!isCancelled && data?.projects) {
-          setFetchedProjects(data.projects);
-        }
-      })
-      .catch(() => {});
+    const req = fetch('/api/v1/projects', { headers });
+    if (req && typeof req.then === 'function') {
+      req
+        .then((res) => (res && res.ok ? res.json() : null))
+        .then((data) => {
+          if (!isCancelled && data?.projects) {
+            setFetchedProjects(data.projects);
+          }
+        })
+        .catch(() => {});
+    }
     return () => {
       isCancelled = true;
     };

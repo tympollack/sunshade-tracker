@@ -389,7 +389,7 @@ export function BoardViewContainer(props: BoardViewContainerProps) {
                         className="text-[11px] text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap disabled:opacity-50 transition-colors underline cursor-pointer"
                       >
                         {isLoadingColdArchive
-                          ? 'Loading older tasks...'
+                          ? 'Loading older completed...'
                           : `Load older completed tasks (${coldCount} items)`}
                       </button>
                     </div>

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@/lib/supabase-browser';
+import { clearProjectCache } from '@/context/ProjectDataContext';
 import { ExternalLink, Mail, ArrowRight, Loader, CheckCircle, Zap, Shield } from 'lucide-react';
 
 interface LoginFormProps {
@@ -13,6 +14,9 @@ interface LoginFormProps {
 type State = 'idle' | 'loading' | 'sent' | 'error';
 
 export function LoginForm({ hubLoginUrl, isDevMode, returnUrl = '/onboarding' }: LoginFormProps) {
+  useEffect(() => {
+    clearProjectCache();
+  }, []);
   const [email, setEmail] = useState('');
   const [state, setState] = useState<State>('idle');
   const [errorMsg, setErrorMsg] = useState('');

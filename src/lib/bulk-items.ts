@@ -90,6 +90,14 @@ export function reconcileSprintMetadata(
     ? { ...incomingMeta }
     : { ...existingMeta, ...incomingMeta };
 
+  if (isFullReplacement) {
+    // Preserve existing agent_prompt if incoming metadata didn't explicitly include it
+    // (protects against thin-projection list callers overwriting hidden prompt during sprint moves or status updates)
+    if (existingMeta.agent_prompt !== undefined && incomingMeta.agent_prompt === undefined) {
+      merged.agent_prompt = existingMeta.agent_prompt;
+    }
+  }
+
   if (!isFullReplacement) {
     for (const [k, v] of Object.entries(incomingMeta)) {
       if (v === null) {

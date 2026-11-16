@@ -18,6 +18,9 @@ export type AuthResult =
   | { context: AuthContext; errorResponse: null }
   | { context: null; errorResponse: NextResponse };
 
+export { getSessionUser } from '@/lib/auth-claims';
+import { getSessionUser } from '@/lib/auth-claims';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Session-based auth (for frontend dashboard API calls)
 //
@@ -30,7 +33,20 @@ export type AuthResult =
 export async function authenticateSession(req: NextRequest): Promise<AuthResult> {
   try {
     const supabase = await createServerClient();
-    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    let user: any = null;
+    let userErr: any = null;
+
+    if (req.method === 'GET') {
+      // Local JWT verification via getClaims() on reads — eliminates outbound /auth/v1/user
+      const res = await getSessionUser(supabase);
+      user = res.user;
+      userErr = res.error;
+    } else {
+      // Write mutations (POST, PATCH, DELETE) strictly use getUser()
+      const { data, error } = await supabase.auth.getUser();
+      user = data?.user || null;
+      userErr = error;
+    }
     const service = supabaseAdmin;
 
     const userName = user

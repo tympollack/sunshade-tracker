@@ -142,7 +142,25 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status');
   const typeFilter = searchParams.get('item_type');
   const updatedSince = searchParams.get('updated_since');
-  const includeColdArchive = searchParams.get('include_cold_archive') === 'true';
+  const includeColdArchive =
+    searchParams.get('include_cold_archive') === 'true' ||
+    searchParams.get('include_archived') === 'true';
+  const includeHeavy = searchParams.get('include_heavy') === 'true';
+  const cardProjection = includeHeavy
+    ? '*'
+    : 'id, tenant_id, project_id, parent_id, sprint_id, external_ref_id, item_type, status, title, assignee, order_index, created_at, updated_at, deleted_at, metadata';
+
+  const mapThinCard = (row: any): WorkItem => {
+    if (includeHeavy) return row;
+    const meta: Record<string, any> = { ...(row.metadata || {}) };
+    delete meta.agent_prompt;
+
+    const { description, ...rest } = row;
+    return {
+      ...rest,
+      metadata: meta,
+    } as WorkItem;
+  };
   const sprintIdParam = searchParams.get('sprint_id');
   const sprintParam = searchParams.get('sprint');
   const targetSprint = sprintIdParam || sprintParam;
@@ -372,7 +390,7 @@ export async function GET(req: NextRequest) {
     if (updatedSince) {
       let deltaQuery: any = supabaseAdmin
         .from('work_items')
-        .select('*')
+        .select(cardProjection)
         .eq('tenant_id', authCtx.tenant.id);
 
       if (typeof deltaQuery.gt === 'function') {
@@ -393,7 +411,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: deltaErr.message }, { status: 500 });
       }
 
-      const allRows = (rawDeltaRows || []) as WorkItem[];
+      const allRows = ((rawDeltaRows || []) as any[]).map(mapThinCard);
       const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
       let items: WorkItem[] = [];
 
@@ -434,7 +452,7 @@ export async function GET(req: NextRequest) {
 
     let itemsQuery: any = supabaseAdmin
       .from('work_items')
-      .select('*')
+      .select(cardProjection)
       .eq('tenant_id', authCtx.tenant.id);
 
     if (typeof itemsQuery.is === 'function') {
@@ -449,7 +467,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: itemsErr.message }, { status: 500 });
     }
 
-    let allPortfolioItems = (rawItems || []) as WorkItem[];
+    let allPortfolioItems = ((rawItems || []) as any[]).map(mapThinCard);
 
     // If a specific sprint is requested (e.g. for on-demand lazy loading in portfolio view), resolve and filter directly
     const isTargetingSprint = Boolean(targetSprint);
@@ -714,7 +732,7 @@ export async function GET(req: NextRequest) {
   if (updatedSince) {
     let deltaQuery: any = supabaseAdmin
       .from('work_items')
-      .select('*')
+      .select(cardProjection)
       .eq('tenant_id', authCtx.tenant.id)
       .eq('project_id', project.id);
 
@@ -736,7 +754,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: deltaErr.message }, { status: 500 });
     }
 
-    const allRows = (rawDeltaRows || []) as WorkItem[];
+    const allRows = ((rawDeltaRows || []) as any[]).map(mapThinCard);
     const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
     let items: WorkItem[] = [];
 
@@ -777,7 +795,7 @@ export async function GET(req: NextRequest) {
   // Query active work items (exclude soft-deleted)
   let itemsQuery: any = supabaseAdmin
     .from('work_items')
-    .select('*')
+    .select(cardProjection)
     .eq('tenant_id', authCtx.tenant.id)
     .eq('project_id', project.id);
 
@@ -796,7 +814,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: itemsErr.message }, { status: 500 });
   }
 
-  let allItems = (rawItems || []) as WorkItem[];
+  let allItems = ((rawItems || []) as any[]).map(mapThinCard);
 
   // If a specific sprint is requested (e.g. for on-demand lazy loading), filter directly
   const isTargetingSprint = Boolean(targetSprint);
@@ -1284,6 +1302,9 @@ export async function PATCH(req: NextRequest) {
       if (isGovernanceBypassed) {
         resolvedMetadata.governance_bypass = true;
         resolvedMetadata.added_mid_sprint = true;
+        if (!resolvedMetadata.added_at) {
+          resolvedMetadata.added_at = new Date().toISOString();
+        }
       }
 
       // Guardrail 3: Immutable Estimates on active sprint items

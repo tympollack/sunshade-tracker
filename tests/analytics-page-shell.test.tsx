@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { AnalyticsHeader } from '@/components/analytics/AnalyticsHeader';
-import { KpiMetricCards } from '@/components/analytics/KpiMetricCards';
+import { KpiMetricCards, ScopeVolatilityCard } from '@/components/analytics/KpiMetricCards';
 
 describe('TASK-TRK-UI-PAGE-SHELL: Analytics Header and KPI Cards', () => {
   it('renders AnalyticsHeader with sprint select and date range controls', () => {
@@ -69,5 +69,28 @@ describe('TASK-TRK-UI-PAGE-SHELL: Analytics Header and KPI Cards', () => {
 
     const skeletonCards = container.querySelectorAll('.animate-pulse');
     expect(skeletonCards.length).toBe(4);
+  });
+
+  it('TASK-TRK-PERIOD-SCOPED-VOLATILITY-STATS: renders window-scoped volatility and [Window: <start> – <end>] badge when sub-sprint range is active', () => {
+    render(
+      <ScopeVolatilityCard
+        scopeVolatility={50}
+        isSubWindow={true}
+        windowStartDate="2026-10-15"
+        windowEndDate="2026-10-21"
+        periodVolatilityPct={0}
+        periodAddedPoints={0}
+        periodDroppedPoints={0}
+        baselineScopeVolatility={50}
+      />
+    );
+
+    expect(screen.getByTestId('scope-volatility-value')).toHaveTextContent('+0.0%');
+    expect(screen.getByTestId('scope-volatility-window-badge')).toHaveTextContent(
+      '[Window: 2026-10-15 – 2026-10-21]'
+    );
+    expect(screen.getByTestId('scope-volatility-baseline-caption')).toHaveTextContent(
+      'Full sprint baseline: +50%'
+    );
   });
 });
