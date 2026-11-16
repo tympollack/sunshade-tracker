@@ -376,7 +376,7 @@ export function useWorkItemForm({
         ...metadata,
       };
       for (const removedKey of deletedMetaKeysRef.current) {
-        delete mergedMetadata[removedKey];
+        mergedMetadata[removedKey] = null;
       }
 
       // 4. Resolve description: if touched and cleared, send null; if untouched and empty, keep fullItem description
