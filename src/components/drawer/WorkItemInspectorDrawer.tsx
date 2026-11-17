@@ -524,6 +524,8 @@ export function WorkItemInspectorDrawer({
   ) => {
     if (isReadOnly || !onUpdateItem || !item) return;
 
+    const saveItemId = item.id;
+
     if (updates.metadata) {
       latestMetadataRef.current = {
         ...latestMetadataRef.current,
@@ -551,8 +553,8 @@ export function WorkItemInspectorDrawer({
     setErrorMessage(null);
 
     const rollback = () => {
-      // Only reset local UI state if no subsequent saves are queued
-      if (pendingSavesRef.current <= 1) {
+      // Only reset local UI state if current item is still the one being rolled back and no subsequent saves are queued
+      if (currentDrawerItemIdRef.current === saveItemId && pendingSavesRef.current <= 1) {
         const confirmed = lastConfirmedItemRef.current || item;
         setTitle(confirmed.title || '');
         setDescription(confirmed.description || '');
@@ -569,21 +571,23 @@ export function WorkItemInspectorDrawer({
     };
 
     const recordSaveSuccess = () => {
-      const base = lastConfirmedItemRef.current || item;
-      lastConfirmedItemRef.current = {
-        ...base,
-        ...payload,
-        ...(payload.metadata
-          ? {
-              metadata: {
-                ...(base.metadata || {}),
-                ...payload.metadata,
-              },
-            }
-          : {}),
-      };
+      if (currentDrawerItemIdRef.current === saveItemId) {
+        const base = lastConfirmedItemRef.current || item;
+        lastConfirmedItemRef.current = {
+          ...base,
+          ...payload,
+          ...(payload.metadata
+            ? {
+                metadata: {
+                  ...(base.metadata || {}),
+                  ...payload.metadata,
+                },
+              }
+            : {}),
+        };
+      }
 
-      if (hydratedDrawerDetailsRef.current) {
+      if (hydratedDrawerDetailsRef.current && hydratedDrawerDetailsRef.current.id === saveItemId) {
         if (payload.metadata) {
           hydratedDrawerDetailsRef.current.metadata = {
             ...hydratedDrawerDetailsRef.current.metadata,
@@ -733,7 +737,7 @@ export function WorkItemInspectorDrawer({
     setLocalMeta(updatedMetadata);
     latestMetadataRef.current = { ...updatedMetadata };
 
-    if (hydratedDrawerDetailsRef.current) {
+    if (hydratedDrawerDetailsRef.current && hydratedDrawerDetailsRef.current.id === item.id) {
       hydratedDrawerDetailsRef.current.metadata = {
         ...hydratedDrawerDetailsRef.current.metadata,
         ...updatedMetadata,
