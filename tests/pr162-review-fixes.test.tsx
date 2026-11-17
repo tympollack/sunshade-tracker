@@ -218,14 +218,23 @@ describe('PR 162 Review Fixes: Real Component & Hook Handlers', () => {
 
       expect(screen.getByDisplayValue('Item A Title')).toBeInTheDocument();
 
-      // 2. Trigger edit on Item A which triggers deferred save
-      const statusSelect = screen.getByLabelText('Status');
+      // 2. Trigger metadata edit on Item A which triggers deferred save containing Prompt A
+      const pointsInput = screen.getByLabelText('Story Points');
       await act(async () => {
-        fireEvent.change(statusSelect, { target: { value: 'done' } });
+        fireEvent.change(pointsInput, { target: { value: '8' } });
+        fireEvent.blur(pointsInput);
       });
 
-      // Verify onUpdateItem was called for item-A
-      expect(onUpdateItem).toHaveBeenCalledWith('item-A', expect.anything());
+      // Verify onUpdateItem was called for item-A with metadata containing Prompt A
+      expect(onUpdateItem).toHaveBeenCalledWith(
+        'item-A',
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            story_points: 8,
+            agent_prompt: 'Prompt A',
+          }),
+        })
+      );
 
       // 3. User switches to Item B before Item A save finishes
       await act(async () => {
@@ -268,24 +277,27 @@ describe('PR 162 Review Fixes: Real Component & Hook Handlers', () => {
         );
       });
 
-      // 6. Now edit a field on Item B (status to done)
+      // 6. Now edit a metadata field on Item B (e.g. story points to 3)
       onUpdateItem.mockClear();
-      const statusSelectB = screen.getByLabelText('Status');
+      const pointsInputB = screen.getByLabelText('Story Points');
       await act(async () => {
-        fireEvent.change(statusSelectB, { target: { value: 'done' } });
+        fireEvent.change(pointsInputB, { target: { value: '3' } });
+        fireEvent.blur(pointsInputB);
       });
 
-      // Item B must retain its own updates, NEVER Item A's Prompt A!
+      // Item B must retain its own updates with Prompt B, NEVER Item A's Prompt A!
       expect(onUpdateItem).toHaveBeenCalledWith(
         'item-B',
         expect.objectContaining({
-          status: 'done',
+          metadata: expect.objectContaining({
+            story_points: 3,
+            agent_prompt: 'Prompt B',
+          }),
         })
       );
       const callArgsB = onUpdateItem.mock.calls[0][1];
-      if (callArgsB.metadata) {
-        expect(callArgsB.metadata.agent_prompt).not.toBe('Prompt A');
-      }
+      expect(callArgsB.metadata.agent_prompt).toBe('Prompt B');
+      expect(callArgsB.metadata.agent_prompt).not.toBe('Prompt A');
     });
   });
 
