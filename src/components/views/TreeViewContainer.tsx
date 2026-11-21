@@ -5,6 +5,9 @@ import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLev
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { TreeNode } from '@/components/TreeNode';
+import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
+import { RowColumnHeader } from '@/components/common/RowColumnHeader';
+import { useRowColumns } from '@/hooks/useRowColumns';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { isItemImmutableDueToCompletedSprint } from '@/lib/sprint-utils';
 
@@ -53,6 +56,9 @@ export interface TreeViewContainerProps {
   handleTreeCreateChild: (parentId: string, title: string, itemType: string) => Promise<void> | void;
   setEditingItem: (item: WorkItem) => void;
   availableSprintDefs?: SprintDefinition[];
+  tenantSlug?: string;
+  projectSlug?: string;
+  allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
 }
 
 export function TreeViewContainer(props: TreeViewContainerProps) {
@@ -101,7 +107,12 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
     handleTreeUpdateAssignee,
     handleTreeCreateChild,
     setEditingItem,
+    tenantSlug = 'default',
+    projectSlug = 'default',
+    allProjects = [],
   } = props;
+
+  const rowColumns = useRowColumns(projectSettings, 'tree', projectSlug, items, tenantSlug);
 
   return (
     <div className="p-3 sm:p-4 md:p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full">
@@ -188,6 +199,16 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
             </select>
           </div>
           <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
+          <RowColumnsPicker
+            view="tree"
+            availableColumns={rowColumns.availableColumns}
+            effectiveColumns={rowColumns.effectiveColumns}
+            activeKeys={rowColumns.activeKeys}
+            isCustomized={rowColumns.isCustomized}
+            onToggleColumn={rowColumns.toggleColumn}
+            onMoveColumn={rowColumns.moveColumn}
+            onResetToSchema={rowColumns.resetToSchema}
+          />
           {(selectedSprint !== 'all' ||
             effectiveTreeStatuses.length < projectSettings.statuses.length ||
             effectiveTreeLevels.length < projectSettings.hierarchy.length ||
@@ -252,6 +273,16 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
             </div>
           )}
 
+          {!loading && items.length > 0 && treeItems.length > 0 && (
+            <RowColumnHeader
+              columns={rowColumns.effectiveColumns}
+              actionsWidthClass="w-14"
+              leftIndentPaddingClass="pl-8"
+              testId="tree-column-header"
+              className="rounded-lg border border-slate-800/70"
+            />
+          )}
+
           {loading ? (
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-14 rounded-lg bg-slate-950 border border-slate-800 animate-pulse" />
@@ -290,6 +321,8 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
                 onDragEndNode={() => setTreeDraggedItemId(null)}
                 unit={getWorkMetricConfig(getItemProjectSettings(rootNode) || projectSettings).unit_label || 'pts'}
                 projectSettings={getItemProjectSettings(rootNode) || projectSettings}
+                visibleColumns={rowColumns.effectiveColumns}
+                allProjects={allProjects}
               />
             ))
           )}

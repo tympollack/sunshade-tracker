@@ -131,6 +131,7 @@ export function ProjectSchemaView({
           work_metric_config: sourceSettings.work_metric_config || draftData.work_metric_config,
           work_unit_field: sourceSettings.work_unit_field ?? draftData.work_unit_field,
           wip_limit: sourceSettings.wip_limit ?? draftData.wip_limit,
+          row_columns: sourceSettings.row_columns ?? draftData.row_columns,
         };
         setDraftData(updatedDraft);
         setRawText(JSON.stringify(updatedDraft, null, 2));

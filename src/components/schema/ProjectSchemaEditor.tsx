@@ -24,6 +24,7 @@ import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
 import { StatusTaxonomyEditor } from './StatusTaxonomyEditor';
 import { TransitionGuardsEditor } from './TransitionGuardsEditor';
 import { AutomationPipelineEditor } from './AutomationPipelineEditor';
+import { RowColumnsConfigEditor } from './RowColumnsConfigEditor';
 
 export {
   ProjectSettingsSchema,
@@ -490,7 +491,15 @@ export function ProjectSchemaEditor({
         </div>
       </div>
 
-      {/* 4. Visual Transition Guardrails Editor */}
+      {/* 4. Configurable Row & Table Columns Editor */}
+      <RowColumnsConfigEditor
+        settings={settings}
+        onChange={onChange}
+        activeItems={activeItems}
+        readOnly={readOnly}
+      />
+
+      {/* 5. Visual Transition Guardrails Editor */}
       <TransitionGuardsEditor
         settings={settings}
         onChange={onChange}

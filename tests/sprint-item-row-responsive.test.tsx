@@ -158,14 +158,18 @@ describe('TASK-TRK-ROW-RESPONSIVE-CONTAINER: Responsive Two-Tier Layout for Spri
     const rollupBadge = screen.getByTestId('tree-rollup-points-badge');
     expect(rollupBadge.textContent).toContain('16 pts Σ');
 
-    // Assignee
-    expect(within(tier2).getByText('Tymz')).toBeInTheDocument();
+    // Compact Assignee Avatar
+    const assigneeBtn = within(tier2).getByTestId(`assignee-avatar-btn-${item.id}`);
+    expect(assigneeBtn).toBeInTheDocument();
+    expect(assigneeBtn).toHaveClass('w-[22px]', 'h-[22px]', 'rounded-full');
+    expect(assigneeBtn).toHaveTextContent('T');
+    expect(assigneeBtn).toHaveAttribute('title', 'Tymz');
 
-    // Status dropdown
-    const statusSelect = screen.getByTestId(`sprint-status-select-${item.id}`);
-    expect(statusSelect).toBeInTheDocument();
-    expect(statusSelect).toHaveClass('py-0.5 px-1.5 text-xs');
-    expect(statusSelect).toHaveClass('md:py-1 md:px-3 md:text-sm');
+    // Compact Status Glyph
+    const statusBtn = within(tier2).getByTestId(`status-icon-btn-${item.id}`);
+    expect(statusBtn).toBeInTheDocument();
+    expect(statusBtn).toHaveClass('w-5', 'h-5', 'rounded-full');
+    expect(statusBtn).toHaveAttribute('title', 'Status: In Progress');
 
     // Sprint dropdown
     const sprintSelect = screen.getByDisplayValue('Sprint 2026-Q4');

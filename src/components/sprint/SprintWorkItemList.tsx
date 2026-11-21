@@ -5,6 +5,7 @@ import { WorkItem, WorkItemNode, HierarchyLevel, StatusDefinition } from '@/type
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { buildTree } from '@/lib/tree';
+import { ResolvedRowColumn } from '@/lib/row-columns';
 
 export interface SprintWorkItemListProps {
   items: WorkItem[];
@@ -20,11 +21,14 @@ export interface SprintWorkItemListProps {
   allProjects?: Array<{ id: string; name: string; slug?: string; settings?: any }>;
   projectSettings?: any;
   onUpdateStatus?: (itemId: string, status: string) => void;
+  onUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   onUpdateSprint?: (itemId: string, sprint: string) => void;
+  members?: Array<{ id: string; name: string }>;
   availableSprints?: string[];
   currentSprintName?: string;
   isTreeMode?: boolean;
   pointMode?: 'macro' | 'granular';
+  visibleColumns?: ResolvedRowColumn[];
   emptyMessage?: string;
   className?: string;
 }
@@ -43,11 +47,14 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
   allProjects = [],
   projectSettings,
   onUpdateStatus,
+  onUpdateAssignee,
   onUpdateSprint,
+  members = [],
   availableSprints = [],
   currentSprintName,
   isTreeMode = false,
   pointMode = 'granular',
+  visibleColumns,
   emptyMessage = 'No work items found.',
   className = '',
 }) => {
@@ -95,13 +102,16 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
           allProjects={allProjects}
           projectSettings={projectSettings}
           onUpdateStatus={onUpdateStatus}
+          onUpdateAssignee={onUpdateAssignee}
           onUpdateSprint={onUpdateSprint}
+          members={members}
           availableSprints={availableSprints}
           currentSprintName={currentSprintName}
           isTreeMode={true}
           childCount={childCount}
           rollupPoints={rollupPoints}
           pointMode={pointMode}
+          visibleColumns={visibleColumns}
         />
         {(node.children || []).map((child) => renderTreeNode(child, depth + 1))}
       </React.Fragment>
@@ -132,11 +142,14 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
                 allProjects={allProjects}
                 projectSettings={projectSettings}
                 onUpdateStatus={onUpdateStatus}
+                onUpdateAssignee={onUpdateAssignee}
                 onUpdateSprint={onUpdateSprint}
+                members={members}
                 availableSprints={availableSprints}
                 currentSprintName={currentSprintName}
                 isTreeMode={false}
                 pointMode={pointMode}
+                visibleColumns={visibleColumns}
               />
             );
           })}

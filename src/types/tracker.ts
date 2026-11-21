@@ -419,6 +419,19 @@ export interface TransitionGuard {
   [key: string]: any;
 }
 
+export type RowColumnSource = 'static' | 'dynamic';
+export type RowColumnViewTarget = 'tree' | 'table';
+export type RowColumnWidth = 'xs' | 'sm' | 'md' | 'lg';
+
+export interface RowColumnConfig {
+  key: string;
+  label?: string;
+  source?: RowColumnSource;
+  visible?: boolean;
+  width?: RowColumnWidth;
+  views?: RowColumnViewTarget[];
+}
+
 export interface ProjectSettings {
   schema_version: string;
   hierarchy: HierarchyLevel[];
@@ -427,6 +440,7 @@ export interface ProjectSettings {
   custom_metadata_fields?: CustomMetadataFieldDefinition[];
   work_metric_config?: WorkMetricConfig;
   work_unit_field?: string;
+  row_columns?: RowColumnConfig[];
   wip_limit?: number;
   sprint_settings?: SprintSettings;
   sprint_metrics?: MetricRules;

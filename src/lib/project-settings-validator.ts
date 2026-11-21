@@ -4,6 +4,7 @@
  * Enforces schema integrity on project settings mutations, validating
  * triggers and template action targets.
  */
+import { RowColumnConfigSchema, formatZodPath } from './project-settings-schema';
 
 export interface ValidationError {
   path: string;
@@ -143,6 +144,36 @@ export function validateProjectSettings(settings: any): ValidationResult {
       errors.push({
         path: 'work_unit_field',
         message: 'work_unit_field must be a string',
+      });
+    }
+  }
+
+  // Validate row_columns if present
+  if ('row_columns' in settings && settings.row_columns !== null && settings.row_columns !== undefined) {
+    if (!Array.isArray(settings.row_columns)) {
+      errors.push({
+        path: 'row_columns',
+        message: 'row_columns must be an array of column configurations',
+      });
+    } else {
+      settings.row_columns.forEach((col: any, idx: number) => {
+        if (!col || typeof col !== 'object' || Array.isArray(col)) {
+          errors.push({
+            path: `row_columns[${idx}]`,
+            message: 'row_columns entry must be an object',
+          });
+          return;
+        }
+        const parsed = RowColumnConfigSchema.safeParse(col);
+        if (!parsed.success) {
+          parsed.error.errors.forEach((err) => {
+            const subPath = err.path.length > 0 ? `.${formatZodPath(err.path)}` : '';
+            errors.push({
+              path: `row_columns[${idx}]${subPath}`,
+              message: err.message,
+            });
+          });
+        }
       });
     }
   }

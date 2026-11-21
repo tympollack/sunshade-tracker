@@ -206,7 +206,7 @@ describe('BUG-TRK-TREE-TITLE-TRUNCATE-ALIGN - Strict Two-Zone Layout & Column Ta
     expect(refTag).toHaveClass('shrink-0');
   });
 
-  it('TreeNode Right Zone enforces shrink-0 ml-auto with tracks: w-28 rollup, w-32 assignee, w-36 status, w-14 actions', () => {
+  it('TreeNode Right Zone enforces shrink-0 ml-auto with slim tracks: w-28 rollup, w-9 assignee, w-9 status, w-14 actions', () => {
     const item = createItem();
     render(
       <TreeNode
@@ -230,15 +230,14 @@ describe('BUG-TRK-TREE-TITLE-TRUNCATE-ALIGN - Strict Two-Zone Layout & Column Ta
     expect(rollupCol).toHaveClass('shrink-0');
     expect(rollupCol).toHaveClass('text-right');
 
-    // Assignee column
+    // Slim Assignee column
     const assigneeCol = screen.getByTestId('col-assignee');
-    expect(assigneeCol).toHaveClass('w-32');
+    expect(assigneeCol).toHaveClass('w-9');
     expect(assigneeCol).toHaveClass('shrink-0');
-    expect(assigneeCol).toHaveClass('truncate');
 
-    // Status column
+    // Slim Status column
     const statusCol = screen.getByTestId('col-status');
-    expect(statusCol).toHaveClass('w-36');
+    expect(statusCol).toHaveClass('w-9');
     expect(statusCol).toHaveClass('shrink-0');
 
     // Actions column

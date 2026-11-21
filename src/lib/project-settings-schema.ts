@@ -69,6 +69,15 @@ export const WorkMetricConfigSchema = z.object({
   unit_label: z.string().optional(),
 });
 
+export const RowColumnConfigSchema = z.object({
+  key: z.string().trim().min(1, 'Column key is required'),
+  label: z.string().optional(),
+  source: z.enum(['static', 'dynamic']).optional(),
+  visible: z.boolean().optional(),
+  width: z.enum(['xs', 'sm', 'md', 'lg']).optional(),
+  views: z.array(z.enum(['tree', 'table'])).optional(),
+});
+
 export const ProjectSettingsSchema = z
   .object({
     schema_version: z.string().optional().default('1.0'),
@@ -94,6 +103,7 @@ export const ProjectSettingsSchema = z
     custom_metadata_fields: z.array(z.any()).nullable().optional(),
     work_metric_config: WorkMetricConfigSchema.nullable().optional(),
     work_unit_field: z.string().nullable().optional(),
+    row_columns: z.array(RowColumnConfigSchema).nullable().optional(),
     wip_limit: z.number().int().min(1).nullable().optional(),
     sprint_settings: z.record(z.any()).nullable().optional(),
     sprint_metrics: z.record(z.any()).nullable().optional(),

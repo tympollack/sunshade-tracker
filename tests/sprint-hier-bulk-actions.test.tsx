@@ -84,12 +84,9 @@ describe('Sprint Hierarchy and Bulk Actions (TASK-TRK-SPRINT-HIER-BULK-ACTIONS)'
     expect(screen.getByTestId('immutable-lock-badge')).toBeDefined();
     expect(screen.getByTestId('immutable-lock-badge').textContent).toContain('Locked');
 
-    // Status and sprint select are disabled
-    const selects = screen.getAllByTitle('Item is locked in a closed sprint');
-    expect(selects.length).toBe(2);
-    selects.forEach((sel) => {
-      expect((sel as HTMLSelectElement).disabled).toBe(true);
-    });
+    // Status glyph button and sprint select are disabled
+    expect(screen.getByTestId('status-icon-btn-item-closed')).toBeDisabled();
+    expect(screen.getByTestId('sprint-reassign-select-item-closed')).toBeDisabled();
   });
 
   it('supports shift-click range selection across items in a pool', () => {
