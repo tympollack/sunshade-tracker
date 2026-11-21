@@ -127,8 +127,8 @@ describe('TASK-TRK-COMPACT-ASSIGNEE-STATUS-CELLS', () => {
       />
     );
 
-    expect(screen.getByTestId('sprint-col-assignee')).toHaveClass('w-8', 'shrink-0');
-    expect(screen.getByTestId('sprint-col-status')).toHaveClass('w-8', 'shrink-0');
+    expect(screen.getByTestId('sprint-col-assignee')).toHaveClass('w-9', 'shrink-0');
+    expect(screen.getByTestId('sprint-col-status')).toHaveClass('w-9', 'shrink-0');
     expect(screen.queryByTestId(`sprint-status-select-${item.id}`)).not.toBeInTheDocument();
 
     // Update assignee via compact popover

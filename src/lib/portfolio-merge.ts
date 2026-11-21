@@ -1,4 +1,4 @@
-import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition, CustomField } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition, CustomField, RowColumnConfig } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
 
 export interface ProjectLike {
@@ -150,6 +150,17 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     ? (projects.find((p) => p.settings?.work_unit_field)?.settings?.work_unit_field ?? mergedWorkMetricConfig?.field_key)
     : undefined;
 
+  const mergedRowColumns: RowColumnConfig[] = [];
+  const seenRowColKeys = new Set<string>();
+  projects.forEach((proj) => {
+    (proj.settings?.row_columns || []).forEach((col) => {
+      if (col && col.key && !seenRowColKeys.has(col.key)) {
+        seenRowColKeys.add(col.key);
+        mergedRowColumns.push({ ...col });
+      }
+    });
+  });
+
   return {
     schema_version: '1.0',
     statuses: finalStatuses,
@@ -162,6 +173,7 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     },
     ...(mergedWorkMetricConfig ? { work_metric_config: mergedWorkMetricConfig } : {}),
     ...(mergedWorkUnitField ? { work_unit_field: mergedWorkUnitField } : {}),
+    ...(mergedRowColumns.length > 0 ? { row_columns: mergedRowColumns } : {}),
     ...(firstGithubRepo ? { github_repo: firstGithubRepo } : {}),
   };
 }

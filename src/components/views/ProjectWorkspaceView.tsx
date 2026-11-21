@@ -4133,6 +4133,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleTreeUpdateAssignee={handleTreeUpdateAssignee}
                   handleTreeCreateChild={handleTreeCreateChild}
                   setEditingItem={selectDrawerItem}
+                  projectSlug={projectSlug}
+                  allProjects={allProjects}
                 />
               )}
 
@@ -4183,6 +4185,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleUpdateItemSprint={handleUpdateItemSprint}
                   members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
                   onLazyLoadSprint={handleLazyLoadSprint}
+                  projectSlug={projectSlug}
                 />
               )}
 

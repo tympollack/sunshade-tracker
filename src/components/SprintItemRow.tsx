@@ -9,13 +9,13 @@ import {
   Pencil,
   AlertTriangle,
 } from 'lucide-react';
-import { WorkItem, HierarchyLevel, StatusDefinition } from '@/types/tracker';
+import { WorkItem, HierarchyLevel, StatusDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { getHierarchyLevelColor } from '@/lib/hierarchy-colors';
-import { GitHubBadge } from '@/components/GitHubBadge';
-import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { CompactAssigneeCell, CompactStatusCell, RowMemberOption } from '@/components/common/CompactRowCells';
+import { RowFieldCell } from '@/components/common/RowFieldCell';
+import { ResolvedRowColumn, resolveEffectiveRowColumns } from '@/lib/row-columns';
 
 export interface SprintItemRowProps {
   item: WorkItem;
@@ -42,6 +42,7 @@ export interface SprintItemRowProps {
   childCount?: number;
   rollupPoints?: number;
   pointMode?: 'macro' | 'granular';
+  visibleColumns?: ResolvedRowColumn[];
 }
 
 export const SprintItemRow: React.FC<SprintItemRowProps> = ({
@@ -69,14 +70,23 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   childCount = 0,
   rollupPoints = 0,
   pointMode,
+  visibleColumns,
 }) => {
   const itemHierarchy = getItemHierarchy(item);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
-  const points = item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate;
+  const workMetric = getWorkMetricConfig(projectSettings);
+  const metricKey = workMetric.field_key;
+  const unitLabel = workMetric.unit_label || 'pts';
+  const points =
+    item.metadata?.[metricKey] ??
+    (metricKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined);
   const itemDevs = deviations.filter((d) => d.itemId === item.id);
-  const parentProject = (allProjects as any[])?.find((p) => p.id === item.project_id || p.slug === item.project_id);
-  const parentGithubRepo = parentProject?.settings?.github_repo || parentProject?.settings?.github_repository || projectSettings?.github_repo;
-  const { prUrl, commitHash, repo, owner } = extractGitHubMetadata(item.metadata, parentGithubRepo);
+  const effectiveColumns =
+    visibleColumns && visibleColumns.length > 0
+      ? visibleColumns
+      : resolveEffectiveRowColumns(projectSettings, 'table');
+  const showRefId = effectiveColumns.some((c) => c.key === 'ref_id');
+  const rightColumns = effectiveColumns.filter((c) => c.placement === 'right');
 
   return (
     <div
@@ -179,7 +189,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           )}
 
           {/* External Ref Tag */}
-          {item.external_ref_id && (
+          {showRefId && item.external_ref_id && (
             <CopyableRefId
               id={item.external_ref_id}
               className="shrink-0 inline-flex items-center text-xs font-medium max-w-[70px] sm:max-w-none truncate whitespace-nowrap"
@@ -208,17 +218,6 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           )}
         </div>
 
-        {/* Git Metadata Cluster (Desktop / Tablet Tier 1: hidden on narrow mobile to preserve title room) */}
-        {(prUrl || commitHash) && (
-          <div
-            className="shrink-0 flex max-sm:hidden items-center gap-1.5 whitespace-nowrap"
-            data-testid="git-metadata-cluster"
-          >
-            {prUrl && <GitHubBadge type="pr" compact value={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
-            {commitHash && <GitHubBadge type="commit" compact value={commitHash} prUrl={prUrl} repo={repo} owner={owner} className="shrink-0 inline-flex items-center text-xs whitespace-nowrap" />}
-          </div>
-        )}
-
         {/* Right group (Mobile Only): discreet (n) subtask count & edit icon button */}
         <div className="flex items-center space-x-1.5 shrink-0 md:hidden">
           {isTreeMode && childCount > 0 && (
@@ -242,7 +241,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         </div>
       </div>
 
-      {/* Secondary Row (Tier 2 - Mobile Only: pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1; Desktop: standard horizontal inline flush right) */}
+      {/* Secondary Row (Tier 2 - Mobile Only: pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1; Desktop: aligned tabular columns flush right) */}
       <div
         className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:shrink-0 md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
@@ -258,86 +257,137 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           </span>
         )}
 
-        {/* Consolidated Point Badge */}
-        {isTreeMode && rollupPoints > 0 ? (
-          <span
-            data-testid="tree-rollup-points-badge"
-            className="shrink-0 inline-flex items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 whitespace-nowrap select-none"
-            title={
-              points !== undefined
-                ? `Intrinsic: ${points} pts | Rollup: ${rollupPoints} pts`
-                : `Rollup: ${rollupPoints} pts`
-            }
-          >
-            <span className="md:hidden">
-              {pointMode === 'macro' && item.metadata?.story_points !== undefined
-                ? `${item.metadata.story_points} pts`
-                : `${rollupPoints} pts Σ`}
-            </span>
-            <span className="hidden md:inline">
-              {pointMode === 'macro' && item.metadata?.story_points !== undefined
-                ? `${item.metadata.story_points} pts intrinsic`
-                : `${rollupPoints} pts rollup`}
-            </span>
-          </span>
-        ) : points !== undefined ? (
-          <span
-            data-testid="sprint-points-badge"
-            className="shrink-0 inline-flex items-center text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none whitespace-nowrap"
-          >
-            {String(points)} pts
-          </span>
-        ) : null}
+        {rightColumns.map((col) => {
+          if (col.key === 'points') {
+            return (
+              <div
+                key={col.key}
+                className="md:w-28 shrink-0 flex items-center justify-end"
+                data-testid="sprint-col-points"
+              >
+                {isTreeMode && rollupPoints > 0 ? (
+                  <span
+                    data-testid="tree-rollup-points-badge"
+                    className="shrink-0 inline-flex items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 whitespace-nowrap select-none"
+                    title={
+                      points !== undefined
+                        ? `Intrinsic: ${points} ${unitLabel} | Rollup: ${rollupPoints} ${unitLabel}`
+                        : `Rollup: ${rollupPoints} ${unitLabel}`
+                    }
+                  >
+                    <span className="md:hidden">
+                      {pointMode === 'macro' && points !== undefined
+                        ? `${points} ${unitLabel}`
+                        : `${rollupPoints} ${unitLabel} Σ`}
+                    </span>
+                    <span className="hidden md:inline">
+                      {pointMode === 'macro' && points !== undefined
+                        ? `${points} ${unitLabel} intrinsic`
+                        : `${rollupPoints} ${unitLabel} rollup`}
+                    </span>
+                  </span>
+                ) : points !== undefined ? (
+                  <span
+                    data-testid="sprint-points-badge"
+                    className="shrink-0 inline-flex items-center text-xs px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400 font-mono select-none whitespace-nowrap"
+                  >
+                    {String(points)} {unitLabel}
+                  </span>
+                ) : (
+                  <span className="hidden md:inline text-[11px] text-slate-600 font-mono select-none">
+                    —
+                  </span>
+                )}
+              </div>
+            );
+          }
 
-        {/* Compact Assignee Avatar Cell */}
-        <div className="w-8 shrink-0 flex items-center justify-center" data-testid="sprint-col-assignee">
-          <CompactAssigneeCell
-            itemId={item.id}
-            assignee={item.assignee}
-            members={members}
-            onUpdateAssignee={onUpdateAssignee}
-            disabled={isImmutable}
-          />
-        </div>
+          if (col.key === 'assignee') {
+            return (
+              <div
+                key={col.key}
+                className="w-9 shrink-0 flex items-center justify-center"
+                data-testid="sprint-col-assignee"
+              >
+                <CompactAssigneeCell
+                  itemId={item.id}
+                  assignee={item.assignee}
+                  members={members}
+                  onUpdateAssignee={onUpdateAssignee}
+                  disabled={isImmutable}
+                />
+              </div>
+            );
+          }
 
-        {/* Compact Status Glyph Cell */}
-        <div className="w-8 shrink-0 flex items-center justify-center" data-testid="sprint-col-status">
-          <CompactStatusCell
-            itemId={item.id}
-            status={item.status}
-            statuses={getItemStatuses(item)}
-            onUpdateStatus={onUpdateStatus}
-            disabled={isImmutable}
-          />
-        </div>
+          if (col.key === 'status') {
+            return (
+              <div
+                key={col.key}
+                className="w-9 shrink-0 flex items-center justify-center"
+                data-testid="sprint-col-status"
+              >
+                <CompactStatusCell
+                  itemId={item.id}
+                  status={item.status}
+                  statuses={getItemStatuses(item)}
+                  onUpdateStatus={onUpdateStatus}
+                  disabled={isImmutable}
+                />
+              </div>
+            );
+          }
 
-        {/* Move / Reassign Sprint Select */}
-        <select
-          value={currentSprintName || item.metadata?.sprint || '__none__'}
-          onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
-          disabled={isImmutable}
-          className="bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 text-xs md:py-1 md:px-3 md:text-sm text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] truncate shrink-0"
-          title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}
-          data-testid={`sprint-reassign-select-${item.id}`}
-        >
-          <option value="__none__">Backlog (Unassigned)</option>
-          {availableSprints.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          if (col.key === 'sprint') {
+            return (
+              <div
+                key={col.key}
+                className="md:w-28 shrink-0 flex items-center justify-end"
+                data-testid={`row-cell-sprint-${item.id}`}
+              >
+                <select
+                  value={currentSprintName || item.metadata?.sprint || '__none__'}
+                  onChange={(e) => onUpdateSprint?.(item.id, e.target.value)}
+                  disabled={isImmutable}
+                  className="bg-slate-950 border border-slate-800 rounded py-0.5 px-1.5 text-xs md:py-1 md:px-2 text-emerald-400 font-medium focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed max-w-[130px] w-full truncate shrink-0"
+                  title={isImmutable ? 'Item is locked in a closed sprint' : 'Move to another sprint or backlog'}
+                  data-testid={`sprint-reassign-select-${item.id}`}
+                >
+                  <option value="__none__">Backlog (Unassigned)</option>
+                  {availableSprints.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          }
+
+          return (
+            <RowFieldCell
+              key={col.key}
+              item={item}
+              column={col}
+              allProjects={allProjects}
+              projectSettings={projectSettings}
+              isImmutable={isImmutable}
+            />
+          );
+        })}
 
         {/* Desktop Edit Button */}
-        <button
-          type="button"
-          onClick={() => onEditItem(item)}
-          className="p-1 rounded text-slate-500 hover:text-white transition-colors hidden md:inline-flex shrink-0"
-          title="Edit work item"
-          data-testid={`edit-item-desktop-${item.id}`}
-        >
-          <Pencil className="w-3.5 h-3.5" />
-        </button>
+        <div className="hidden md:flex w-7 shrink-0 items-center justify-end">
+          <button
+            type="button"
+            onClick={() => onEditItem(item)}
+            className="p-1 rounded text-slate-500 hover:text-white transition-colors hidden md:inline-flex shrink-0"
+            title="Edit work item"
+            data-testid={`edit-item-desktop-${item.id}`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </div>
   );

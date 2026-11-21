@@ -14,6 +14,8 @@ import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { PointBadge } from '@/components/common/PointBadge';
 import { CompactAssigneeCell, CompactStatusCell } from '@/components/common/CompactRowCells';
+import { RowFieldCell } from '@/components/common/RowFieldCell';
+import { ResolvedRowColumn, resolveEffectiveRowColumns } from '@/lib/row-columns';
 import { getLevelBadgeClasses, getLevelBadgeStyle } from '@/components/TreeNode';
 
 interface ValidChildType {
@@ -55,6 +57,8 @@ interface TreeNodeCardProps {
   projectSettings?: ProjectSettings;
   metricKey?: string;
   hierarchy?: HierarchyLevel[];
+  visibleColumns?: ResolvedRowColumn[];
+  allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
 }
 
 export function TreeNodeCard({
@@ -65,6 +69,7 @@ export function TreeNodeCard({
   unmappedLevelDev,
   nestingDev,
   unmappedStatusDev,
+  statusColor,
   effectiveStatuses,
   sanitizedTitle,
   isDescExpanded,
@@ -90,9 +95,17 @@ export function TreeNodeCard({
   projectSettings,
   metricKey: propMetricKey,
   hierarchy,
+  visibleColumns,
+  allProjects = [],
 }: TreeNodeCardProps) {
   const effectiveHierarchy =
     hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy || [];
+  const effectiveColumns =
+    visibleColumns && visibleColumns.length > 0
+      ? visibleColumns
+      : resolveEffectiveRowColumns(projectSettings, 'tree');
+  const showRefId = effectiveColumns.some((c) => c.key === 'ref_id');
+  const rightColumns = effectiveColumns.filter((c) => c.placement === 'right');
 
   return (
     <div
@@ -220,7 +233,7 @@ export function TreeNodeCard({
             </button>
           )}
 
-          {item.external_ref_id && (
+          {showRefId && item.external_ref_id && (
             <span
               className="shrink-0 max-w-[140px] truncate central-stage-ref-id"
               title={item.external_ref_id}
@@ -262,107 +275,154 @@ export function TreeNodeCard({
           )}
         </div>
 
-        {/* Right section: Rollup Points, Assignee (desktop), Status, Actions */}
+        {/* Right section: Schema/User-Configured Static & Dynamic Columns + Actions */}
         <div
           className="flex items-center gap-3 shrink-0 ml-auto w-full md:w-auto justify-between md:justify-end pt-1.5 md:pt-0 border-t border-slate-800/40 md:border-t-0"
           data-testid={`tree-node-right-zone-${item.id}`}
         >
-          {/* Rollup / Points Track */}
-          <div className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right central-stage-track-rollup" data-testid="col-rollup-points">
-            {(() => {
-              const pointsRollup = (item as any).points_rollup;
-              const childCount =
-                (item as any).child_count !== undefined
-                  ? (item as any).child_count
-                  : (item.children && item.children.length > 0)
-                  ? item.children.length
-                  : (item.descendantCount ?? 0);
-              const configuredKey = propMetricKey || (projectSettings ? getWorkMetricConfig(projectSettings).field_key : undefined);
-              const rawIntrinsic = configuredKey
-                ? (item.metadata?.[configuredKey] ?? (configuredKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined))
-                : (item.metadata?.story_points ?? item.metadata?.points ?? item.metadata?.estimate);
-              const intrinsicPoints =
-                rawIntrinsic !== undefined && !isNaN(Number(rawIntrinsic)) ? Number(rawIntrinsic) : undefined;
+          {rightColumns.map((col) => {
+            if (col.key === 'points') {
+              return (
+                <div
+                  key={col.key}
+                  className="w-28 shrink-0 flex items-center justify-start md:justify-end text-right central-stage-track-rollup"
+                  data-testid="col-rollup-points"
+                >
+                  {(() => {
+                    const pointsRollup = (item as any).points_rollup;
+                    const childCount =
+                      (item as any).child_count !== undefined
+                        ? (item as any).child_count
+                        : item.children && item.children.length > 0
+                        ? item.children.length
+                        : item.descendantCount ?? 0;
+                    const configuredKey =
+                      propMetricKey ||
+                      (projectSettings ? getWorkMetricConfig(projectSettings).field_key : undefined);
+                    const rawIntrinsic = configuredKey
+                      ? item.metadata?.[configuredKey] ??
+                        (configuredKey === 'story_points'
+                          ? item.metadata?.points ?? item.metadata?.estimate
+                          : undefined)
+                      : item.metadata?.story_points ??
+                        item.metadata?.points ??
+                        item.metadata?.estimate;
+                    const intrinsicPoints =
+                      rawIntrinsic !== undefined && !isNaN(Number(rawIntrinsic))
+                        ? Number(rawIntrinsic)
+                        : undefined;
 
-              if (pointsRollup !== undefined || pointMode !== undefined) {
-                const effectiveRollup =
-                  pointsRollup !== undefined
-                    ? pointsRollup
-                    : item.rollupPoints !== undefined
-                    ? item.rollupPoints
-                    : 0;
+                    if (pointsRollup !== undefined || pointMode !== undefined) {
+                      const effectiveRollup =
+                        pointsRollup !== undefined
+                          ? pointsRollup
+                          : item.rollupPoints !== undefined
+                          ? item.rollupPoints
+                          : 0;
 
-                return (
-                  <span data-testid="tree-node-rollup-points-badge" className="whitespace-nowrap shrink-0">
-                    <PointBadge
-                      storyPoints={intrinsicPoints}
-                      rollupPoints={effectiveRollup}
-                      childCount={childCount}
-                      pointMode={pointMode || 'granular'}
-                      unit={unit}
-                      className="whitespace-nowrap shrink-0"
-                    />
-                  </span>
-                );
-              }
-
-              if (item.rollupPoints !== undefined && item.rollupPoints > 0) {
-                return (
-                  <span
-                    data-testid="tree-node-rollup-points-badge"
-                    className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
-                    title={
-                      isFilteredBySprint
-                        ? `Subtree total: ${item.rollupPoints} ${unit} (sprint filtered)`
-                        : `Subtree total: ${item.rollupPoints} ${unit}`
+                      return (
+                        <span
+                          data-testid="tree-node-rollup-points-badge"
+                          className="whitespace-nowrap shrink-0"
+                        >
+                          <PointBadge
+                            storyPoints={intrinsicPoints}
+                            rollupPoints={effectiveRollup}
+                            childCount={childCount}
+                            pointMode={pointMode || 'granular'}
+                            unit={unit}
+                            className="whitespace-nowrap shrink-0"
+                          />
+                        </span>
+                      );
                     }
-                  >
-                    {item.rollupPoints} {unit} rollup
-                  </span>
-                );
-              }
 
-              return null;
-            })()}
-          </div>
+                    if (item.rollupPoints !== undefined && item.rollupPoints > 0) {
+                      return (
+                        <span
+                          data-testid="tree-node-rollup-points-badge"
+                          className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/50 shrink-0 whitespace-nowrap"
+                          title={
+                            isFilteredBySprint
+                              ? `Subtree total: ${item.rollupPoints} ${unit} (sprint filtered)`
+                              : `Subtree total: ${item.rollupPoints} ${unit}`
+                          }
+                        >
+                          {item.rollupPoints} {unit} rollup
+                        </span>
+                      );
+                    }
 
-          {/* Assignee Selector Track (Slim 22x22px Avatar + Micro-Popover) */}
-          <div className="w-9 shrink-0 hidden md:flex items-center justify-center central-stage-track-assignee" data-testid="col-assignee">
-            <CompactAssigneeCell
-              itemId={item.id}
-              assignee={item.assignee}
-              members={members}
-              onUpdateAssignee={onUpdateAssignee}
-              disabled={nodeIsImmutable}
-            />
-          </div>
+                    return null;
+                  })()}
+                </div>
+              );
+            }
 
-          {/* Status Selector Track (Slim 20x20px Status Glyph + Micro-Popover) */}
-          <div className="w-9 shrink-0 flex items-center justify-center gap-1 central-stage-track-status" data-testid="col-status">
-            <CompactStatusCell
-              itemId={item.id}
-              status={item.status}
-              statuses={effectiveStatuses}
-              onUpdateStatus={onUpdateStatus}
-              disabled={nodeIsImmutable}
-              hasDeviation={Boolean(unmappedStatusDev)}
-            />
+            if (col.key === 'assignee') {
+              return (
+                <div
+                  key={col.key}
+                  className="w-9 shrink-0 hidden md:flex items-center justify-center central-stage-track-assignee"
+                  data-testid="col-assignee"
+                >
+                  <CompactAssigneeCell
+                    itemId={item.id}
+                    assignee={item.assignee}
+                    members={members}
+                    onUpdateAssignee={onUpdateAssignee}
+                    disabled={nodeIsImmutable}
+                  />
+                </div>
+              );
+            }
 
-            {unmappedStatusDev && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenReconciliation?.(unmappedStatusDev);
-                }}
-                className="text-amber-400 hover:text-amber-300 transition-colors cursor-pointer text-xs shrink-0"
-                title={`${unmappedStatusDev.message} (Click to reconcile)`}
-                data-testid="unmapped-status-badge"
-              >
-                <AlertTriangle className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+            if (col.key === 'status') {
+              return (
+                <div
+                  key={col.key}
+                  className="w-9 shrink-0 flex items-center justify-center gap-1 central-stage-track-status"
+                  data-testid="col-status"
+                >
+                  <CompactStatusCell
+                    itemId={item.id}
+                    status={item.status}
+                    statuses={effectiveStatuses}
+                    statusColor={statusColor}
+                    onUpdateStatus={onUpdateStatus}
+                    disabled={nodeIsImmutable}
+                    hasDeviation={Boolean(unmappedStatusDev)}
+                  />
+
+                  {unmappedStatusDev && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenReconciliation?.(unmappedStatusDev);
+                      }}
+                      className="text-amber-400 hover:text-amber-300 transition-colors cursor-pointer text-xs shrink-0"
+                      title={`${unmappedStatusDev.message} (Click to reconcile)`}
+                      data-testid="unmapped-status-badge"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <RowFieldCell
+                key={col.key}
+                item={item}
+                column={col}
+                allProjects={allProjects}
+                projectSettings={projectSettings}
+                isImmutable={nodeIsImmutable}
+              />
+            );
+          })}
 
           {/* Actions Track (Add Child, Edit) */}
           <div className="w-14 shrink-0 flex items-center justify-end gap-0.5 ml-auto md:ml-0" data-testid="col-actions">

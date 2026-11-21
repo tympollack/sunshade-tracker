@@ -147,6 +147,30 @@ export function validateProjectSettings(settings: any): ValidationResult {
     }
   }
 
+  // Validate row_columns if present
+  if ('row_columns' in settings && settings.row_columns !== null && settings.row_columns !== undefined) {
+    if (!Array.isArray(settings.row_columns)) {
+      errors.push({
+        path: 'row_columns',
+        message: 'row_columns must be an array of column configurations',
+      });
+    } else {
+      settings.row_columns.forEach((col: any, idx: number) => {
+        if (!col || typeof col !== 'object' || Array.isArray(col)) {
+          errors.push({
+            path: `row_columns[${idx}]`,
+            message: 'row_columns entry must be an object',
+          });
+        } else if (!col.key || typeof col.key !== 'string' || !col.key.trim()) {
+          errors.push({
+            path: `row_columns[${idx}].key`,
+            message: 'row_columns entry key is required and must be a non-empty string',
+          });
+        }
+      });
+    }
+  }
+
   // Validate wip_limit if present
   if ('wip_limit' in settings && settings.wip_limit !== null && settings.wip_limit !== undefined) {
     if (typeof settings.wip_limit !== 'number' || !Number.isFinite(settings.wip_limit) || settings.wip_limit < 1) {

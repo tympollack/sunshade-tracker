@@ -5,6 +5,7 @@ import { WorkItem, WorkItemNode, HierarchyLevel, StatusDefinition } from '@/type
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { buildTree } from '@/lib/tree';
+import { ResolvedRowColumn } from '@/lib/row-columns';
 
 export interface SprintWorkItemListProps {
   items: WorkItem[];
@@ -27,6 +28,7 @@ export interface SprintWorkItemListProps {
   currentSprintName?: string;
   isTreeMode?: boolean;
   pointMode?: 'macro' | 'granular';
+  visibleColumns?: ResolvedRowColumn[];
   emptyMessage?: string;
   className?: string;
 }
@@ -52,6 +54,7 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
   currentSprintName,
   isTreeMode = false,
   pointMode = 'granular',
+  visibleColumns,
   emptyMessage = 'No work items found.',
   className = '',
 }) => {
@@ -108,6 +111,7 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
           childCount={childCount}
           rollupPoints={rollupPoints}
           pointMode={pointMode}
+          visibleColumns={visibleColumns}
         />
         {(node.children || []).map((child) => renderTreeNode(child, depth + 1))}
       </React.Fragment>
@@ -145,6 +149,7 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
                 currentSprintName={currentSprintName}
                 isTreeMode={false}
                 pointMode={pointMode}
+                visibleColumns={visibleColumns}
               />
             );
           })}

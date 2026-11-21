@@ -19,6 +19,9 @@ import {
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
+import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
+import { RowColumnHeader } from '@/components/common/RowColumnHeader';
+import { useRowColumns } from '@/hooks/useRowColumns';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import { ProjectGroupDivider } from '@/components/sprint/ProjectGroupDivider';
 import { isProjectSort } from '@/lib/utils/sortUtils';
@@ -82,6 +85,7 @@ export interface SprintViewContainerProps {
   members?: Array<{ id: string; name: string }>;
   availableSprintDefs?: SprintDefinition[];
   onLazyLoadSprint?: (sprintIdentifier: string) => Promise<void>;
+  projectSlug?: string;
 }
 
 export function SprintViewContainer(props: SprintViewContainerProps) {
@@ -131,7 +135,10 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     handleUpdateItemSprint,
     members = [],
     onLazyLoadSprint,
+    projectSlug = 'default',
   } = props;
+
+  const rowColumns = useRowColumns(projectSettings, 'table', projectSlug, items);
 
   const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
 
@@ -371,6 +378,16 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             </span>
           </div>
           <PointModeSwitcher mode={pointMode} onChange={handlePointModeChange} />
+          <RowColumnsPicker
+            view="table"
+            availableColumns={rowColumns.availableColumns}
+            effectiveColumns={rowColumns.effectiveColumns}
+            activeKeys={rowColumns.activeKeys}
+            isCustomized={rowColumns.isCustomized}
+            onToggleColumn={rowColumns.toggleColumn}
+            onMoveColumn={rowColumns.moveColumn}
+            onResetToSchema={rowColumns.resetToSchema}
+          />
         </div>
       </div>
 
@@ -469,6 +486,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   }}
                   isAllProjects={isAllProjects}
                   allProjects={allProjects}
+                  projectSettings={projectSettings}
                   onUpdateStatus={handleUpdateStatus}
                   onUpdateAssignee={handleUpdateAssignee}
                   onUpdateSprint={(id, sp) => handleUpdateItemSprint(id, sp)}
@@ -479,6 +497,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   childCount={childCount}
                   rollupPoints={rollupPoints}
                   pointMode={pointMode}
+                  visibleColumns={rowColumns.effectiveColumns}
                 />
                 {(node.children || []).map((child) => renderSprintTreeNode(child, depth + 1))}
               </React.Fragment>
@@ -629,6 +648,15 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
               {!isCollapsed && (
                 <div className="divide-y divide-slate-800/50">
+                  {sprintItems.length > 0 && (
+                    <RowColumnHeader
+                      columns={rowColumns.effectiveColumns}
+                      actionsWidthClass="w-7"
+                      gapClass="gap-2.5"
+                      leftIndentPaddingClass="pl-10"
+                      testId={`sprint-column-header-${sprintName}`}
+                    />
+                  )}
                   {sprintItems.length === 0 ? (
                     isUsingFrozenSummary ? (
                       <div
@@ -690,6 +718,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           }}
                           isAllProjects={isAllProjects}
                           allProjects={allProjects}
+                          projectSettings={projectSettings}
                           onUpdateStatus={handleUpdateStatus}
                           onUpdateAssignee={handleUpdateAssignee}
                           onUpdateSprint={handleUpdateItemSprint}
@@ -697,6 +726,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           availableSprints={availableSprints}
                           currentSprintName={sprintName}
                           isTreeMode={false}
+                          visibleColumns={rowColumns.effectiveColumns}
                         />
                         </React.Fragment>
                       );
@@ -790,6 +820,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   }}
                   isAllProjects={isAllProjects}
                   allProjects={allProjects}
+                  projectSettings={projectSettings}
                   onUpdateStatus={handleUpdateStatus}
                   onUpdateAssignee={handleUpdateAssignee}
                   onUpdateSprint={handleUpdateItemSprint}
@@ -800,6 +831,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   childCount={childCount}
                   rollupPoints={rollupPoints}
                   pointMode={pointMode}
+                  visibleColumns={rowColumns.effectiveColumns}
                 />
                 {(node.children || []).map((child) => renderBacklogTreeNode(child, depth + 1))}
               </React.Fragment>
@@ -866,6 +898,15 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
               {!isBacklogCollapsed && (
                 <div className="divide-y divide-slate-800/50">
+                  {backlogItems.length > 0 && (
+                    <RowColumnHeader
+                      columns={rowColumns.effectiveColumns}
+                      actionsWidthClass="w-7"
+                      gapClass="gap-2.5"
+                      leftIndentPaddingClass="pl-10"
+                      testId="sprint-column-header-backlog"
+                    />
+                  )}
                   {backlogItems.length === 0 ? (
                     <div className="p-6 text-center text-xs text-slate-500 italic">
                       Backlog is empty! All items are assigned to active sprints.
@@ -901,6 +942,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           }}
                           isAllProjects={isAllProjects}
                           allProjects={allProjects}
+                          projectSettings={projectSettings}
                           onUpdateStatus={handleUpdateStatus}
                           onUpdateAssignee={handleUpdateAssignee}
                           onUpdateSprint={handleUpdateItemSprint}
@@ -908,6 +950,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           availableSprints={availableSprints}
                           currentSprintName="__none__"
                           isTreeMode={false}
+                          visibleColumns={rowColumns.effectiveColumns}
                         />
                         </React.Fragment>
                       );

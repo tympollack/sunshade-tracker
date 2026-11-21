@@ -143,7 +143,7 @@ describe('TreeNode component', () => {
     expect(screen.getByText('Root Feature')).toBeInTheDocument();
     expect(screen.getByText('epic')).toBeInTheDocument();
     expect(screen.getByText('[FEAT-100]')).toBeInTheDocument();
-    expect(screen.getByText('planned')).toBeInTheDocument();
+    expect(screen.getByTestId('status-icon-btn-root-1')).toHaveAttribute('title', 'Status: planned');
 
     // No connector at depth 0
     expect(screen.queryByTestId('branch-connector')).not.toBeInTheDocument();
@@ -209,7 +209,7 @@ describe('TreeNode component', () => {
 
     render(<TreeNode item={node} getStatusColor={() => '#22c55e'} />);
 
-    const statusBadge = screen.getByText('complete');
+    const statusBadge = screen.getByTestId('status-icon-btn-item-1');
     expect(statusBadge).toHaveStyle({ color: '#22c55e' });
   });
 

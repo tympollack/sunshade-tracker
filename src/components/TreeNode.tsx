@@ -7,6 +7,7 @@ import { SchemaDeviation } from '@/lib/schema-deviation';
 import { TreeNodeCard } from '@/components/tree/TreeNodeCard';
 import { TreeNodeBranchRails, TreeNodeBranchConnector } from '@/components/tree/TreeNodeBranchRails';
 import { TreeNodeQuickChildForm } from '@/components/tree/TreeNodeQuickChildForm';
+import { ResolvedRowColumn } from '@/lib/row-columns';
 
 export interface TreeNodeProps {
   item: WorkItemNode;
@@ -44,6 +45,8 @@ export interface TreeNodeProps {
   unit?: string;
   projectSettings?: ProjectSettings;
   metricKey?: string;
+  visibleColumns?: ResolvedRowColumn[];
+  allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
 }
 
 export const INDENT_STEP = 20;
@@ -159,6 +162,8 @@ export function TreeNode({
   unit = 'pts',
   projectSettings,
   metricKey,
+  visibleColumns,
+  allProjects,
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
@@ -389,6 +394,8 @@ export function TreeNode({
             hierarchy={effectiveHierarchy}
             projectSettings={projectSettings}
             metricKey={metricKey}
+            visibleColumns={visibleColumns}
+            allProjects={allProjects}
           />
         </div>
 
@@ -461,6 +468,8 @@ export function TreeNode({
                 unit={unit}
                 projectSettings={projectSettings}
                 metricKey={metricKey}
+                visibleColumns={visibleColumns}
+                allProjects={allProjects}
               />
             );
           })}

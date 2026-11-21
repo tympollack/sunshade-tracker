@@ -25,6 +25,7 @@ export interface CompactStatusCellProps {
   itemId: string;
   status: string;
   statuses?: StatusDefinition[];
+  statusColor?: string | null;
   onUpdateStatus?: (itemId: string, newStatus: string) => Promise<void> | void;
   disabled?: boolean;
   hasDeviation?: boolean;
@@ -67,10 +68,14 @@ function computePopoverCoords(
   };
 }
 
-export function getStatusGlyph(status: string, statuses?: StatusDefinition[]) {
+export function getStatusGlyph(
+  status: string,
+  statuses?: StatusDefinition[],
+  fallbackColor?: string | null
+) {
   const norm = (status || '').toLowerCase().trim();
   const matched = statuses?.find((s) => s.id === status || s.id.toLowerCase() === norm);
-  const color = matched?.color;
+  const color = matched?.color || fallbackColor || undefined;
   const label = matched?.label || status || 'Not Started';
 
   const isCompleted =
@@ -333,6 +338,7 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
   itemId,
   status,
   statuses = [],
+  statusColor,
   onUpdateStatus,
   disabled = false,
   hasDeviation = false,
@@ -388,7 +394,7 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
     };
   }, [isOpen, updatePosition]);
 
-  const glyph = getStatusGlyph(status, statuses);
+  const glyph = getStatusGlyph(status, statuses, statusColor);
   const statusLabel = statuses.find((s) => s.id === status)?.label || glyph.label;
 
   return (
