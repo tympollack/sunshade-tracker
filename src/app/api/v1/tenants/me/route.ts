@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
 import { getSessionUser } from '@/lib/auth-claims';
+import { validateEfficiencyDashboardSchema } from '@/lib/efficiency-dashboard-schema';
 
 /**
  * GET /api/v1/tenants/me
@@ -147,6 +148,8 @@ export async function GET(req: NextRequest) {
                 notify_on_status_change: true,
                 ...(user.user_metadata?.notification_preferences || {}),
               },
+              efficiency_dashboard_preferences:
+                user.user_metadata?.efficiency_dashboard_preferences || null,
             },
             workspaces: [publicWs],
             primary_workspace: publicWs,
@@ -305,6 +308,8 @@ export async function GET(req: NextRequest) {
         email: user.email,
         full_name: currentFullName,
         notification_preferences: notificationPreferences,
+        efficiency_dashboard_preferences:
+          userMetadata.efficiency_dashboard_preferences || null,
       },
       workspaces,
       // Convenience: the first (primary) workspace
@@ -364,10 +369,32 @@ export async function PATCH(req: NextRequest) {
       ...sanitizedIncoming,
     };
 
+    let updatedDashboardPrefs = currentMeta.efficiency_dashboard_preferences || null;
+    if ('efficiency_dashboard_preferences' in body) {
+      const incomingDash = body.efficiency_dashboard_preferences;
+      if (incomingDash === null) {
+        updatedDashboardPrefs = null;
+      } else {
+        const validation = validateEfficiencyDashboardSchema(incomingDash);
+        if (!validation.valid) {
+          return NextResponse.json(
+            {
+              error: `Invalid efficiency_dashboard_preferences: ${validation.errors
+                .map((e) => `${e.path}: ${e.message}`)
+                .join('; ')}`,
+            },
+            { status: 400 }
+          );
+        }
+        updatedDashboardPrefs = incomingDash;
+      }
+    }
+
     const { error: updateErr } = await supabase.auth.updateUser({
       data: {
         ...currentMeta,
         notification_preferences: updatedPrefs,
+        efficiency_dashboard_preferences: updatedDashboardPrefs,
       },
     });
 
@@ -378,10 +405,12 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       success: true,
       notification_preferences: updatedPrefs,
+      efficiency_dashboard_preferences: updatedDashboardPrefs,
       user: {
         id: user.id,
         email: user.email,
         notification_preferences: updatedPrefs,
+        efficiency_dashboard_preferences: updatedDashboardPrefs,
       },
     });
   } catch (err: any) {

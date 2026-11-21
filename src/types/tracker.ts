@@ -1,3 +1,7 @@
+import type { EfficiencyDashboardSchema } from '@/types/efficiency-dashboard';
+
+export type { EfficiencyDashboardSchema };
+
 export type LifecycleStage = 'unstarted' | 'execution' | 'verification' | 'staging' | 'terminal';
 
 export interface LifecycleCategoryDefinition {
@@ -30,6 +34,7 @@ export const DEFAULT_LIVE_DASHBOARD_SETTINGS: LiveDashboardSettings = {
 
 export interface TenantSettings {
   live_dashboard_settings?: Partial<LiveDashboardSettings>;
+  efficiency_dashboard_settings?: Partial<EfficiencyDashboardSchema>;
   velocity_conversion?: {
     default_hours_per_point?: number;
     [key: string]: any;
