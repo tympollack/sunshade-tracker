@@ -254,6 +254,7 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                       lastActivityDate: item.updated_at || item.created_at,
                       processEfficiencyFactor:
                         projectEfficiencyMap.get(item.project_id) ?? item.metadata?.process_efficiency_factor,
+                      patronBoostTokens: item.metadata?.patron_boost_tokens,
                     });
 
                     return (

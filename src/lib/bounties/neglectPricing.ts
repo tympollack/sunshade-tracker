@@ -34,6 +34,7 @@ export interface NeglectCalculationResult {
   priority: TaskPriority;
   neglectMultiplier: number; // Between 1.0 and 2.0
   processEfficiencyFactor: number; // Clamped to [0.1, 5.0], default 1.0
+  patronBoostTokens: number; // Pool-backed Directed Patron Boost
   estimatedHours: number;
   baseTokens: number;
   dynamicBountyTokens: number;
@@ -106,27 +107,46 @@ export function calculateBountyPricing(options: {
   lastActivityDate?: string | Date | null;
   referenceNow?: Date;
   processEfficiencyFactor?: number | null;
+  patronBoostTokens?: number | null;
 }): NeglectCalculationResult {
   const priority = normalizePriority(options.priority);
   const priorityWeight = PRIORITY_WEIGHTS[priority];
   const daysDormant = calculateDaysDormant(options.lastActivityDate, options.referenceNow);
   const neglectMultiplier = calculateNeglectMultiplier(daysDormant, priority);
   const processEfficiencyFactor = normalizeProcessEfficiencyFactor(options.processEfficiencyFactor);
+  const rawBoost = Number(options.patronBoostTokens);
+  const patronBoostTokens = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.round(rawBoost) : 0;
 
   const rawHours = Number(options.estimatedHours);
   const estimatedHours = isNaN(rawHours) || rawHours <= 0 ? DEFAULT_ESTIMATED_HOURS : rawHours;
 
   const baseTokens = Math.round(estimatedHours * TOKEN_RATE_PER_HOUR);
-  const dynamicBountyTokens = Math.round(baseTokens * neglectMultiplier * processEfficiencyFactor);
+  const dynamicBountyTokens =
+    Math.round(baseTokens * neglectMultiplier * processEfficiencyFactor) + patronBoostTokens;
 
-  let formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens`;
-  if (neglectMultiplier > 1.0 && processEfficiencyFactor !== 1.0) {
-    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${neglectMultiplier.toFixed(2)}x Neglect · ${processEfficiencyFactor.toFixed(2)}x Efficiency)`;
-  } else if (neglectMultiplier > 1.0) {
-    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${neglectMultiplier.toFixed(2)}x Neglect Yield)`;
-  } else if (processEfficiencyFactor !== 1.0) {
-    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${processEfficiencyFactor.toFixed(2)}x Process Efficiency)`;
+  const badges: string[] = [];
+  if (neglectMultiplier > 1.0) {
+    badges.push(
+      processEfficiencyFactor !== 1.0
+        ? `${neglectMultiplier.toFixed(2)}x Neglect`
+        : `${neglectMultiplier.toFixed(2)}x Neglect Yield`
+    );
   }
+  if (processEfficiencyFactor !== 1.0) {
+    badges.push(
+      neglectMultiplier > 1.0
+        ? `${processEfficiencyFactor.toFixed(2)}x Efficiency`
+        : `${processEfficiencyFactor.toFixed(2)}x Process Efficiency`
+    );
+  }
+  if (patronBoostTokens > 0) {
+    badges.push(`+${patronBoostTokens.toLocaleString()} Patron Boost`);
+  }
+
+  const formattedRewardLabel =
+    badges.length > 0
+      ? `${dynamicBountyTokens.toLocaleString()} Tokens (${badges.join(' · ')})`
+      : `${dynamicBountyTokens.toLocaleString()} Tokens`;
 
   return {
     daysDormant,
@@ -134,6 +154,7 @@ export function calculateBountyPricing(options: {
     priority,
     neglectMultiplier,
     processEfficiencyFactor,
+    patronBoostTokens,
     estimatedHours,
     baseTokens,
     dynamicBountyTokens,
