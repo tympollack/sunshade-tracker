@@ -585,5 +585,258 @@ describe('Dual-Recipient Efficiency Mint Bridge Service', () => {
       expect(ledgerRows[0].user_id).toBe(SYSTEM_ECOSYSTEM_POOL_USER_ID);
       expect(ledgerRows[0].metadata.attributed_builder_id).toBe('tympollack');
     });
+
+    it('fails closed when ai_usage_logs lookup returns a database error', async () => {
+      const makeTable = (table: string) => {
+        if (table === 'ai_usage_logs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({
+                  data: null,
+                  error: { message: 'connection timeout' },
+                }),
+              })),
+            })),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      await expect(
+        mintTokensFromEfficiencyStatement(mockClient, {
+          tenantId: 'tenant-1',
+          workItemId: 'item-err-1',
+          grossRealizedValueUsd: 125,
+        })
+      ).rejects.toThrow('Failed to query ai_usage_logs compute costs: connection timeout');
+    });
+
+    it('rolls back attestation and artifact increment if hub_tokens_ledger insert fails so retry succeeds', async () => {
+      const attestations: any[] = [];
+      const ledgerRows: any[] = [];
+      const artifact = {
+        artifact_ref_id: 'TOOL-GH-TRACKER',
+        builder_user_id: 'tympollack',
+        cumulative_uses: 0,
+        survival_ratio: 1.0,
+      };
+      let failLedgerOnce = true;
+
+      const makeTable = (table: string) => {
+        if (table === 'ai_usage_logs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              })),
+            })),
+          };
+        }
+        if (table === 'efficiency_mint_attestations') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn((col: string, val: string) => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: attestations.find((a) => a[col] === val) || null,
+                  error: null,
+                }),
+              })),
+            })),
+            insert: vi.fn((row: any) => {
+              const saved = { id: `att-${attestations.length + 1}`, ...row };
+              attestations.push(saved);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: saved, error: null }),
+                })),
+              };
+            }),
+            delete: vi.fn(() => ({
+              eq: vi.fn((col: string, val: string) => {
+                const idx = attestations.findIndex((a) => a[col] === val);
+                if (idx >= 0) attestations.splice(idx, 1);
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'infrastructure_artifacts') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { ...artifact }, error: null }),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                artifact.cumulative_uses = patch.cumulative_uses;
+                return Promise.resolve({ data: { ...artifact }, error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'hub_tokens_ledger') {
+          return {
+            insert: vi.fn((row: any) => {
+              if (failLedgerOnce) {
+                failLedgerOnce = false;
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({
+                      data: null,
+                      error: { message: 'ledger write transient error' },
+                    }),
+                  })),
+                };
+              }
+              ledgerRows.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      await expect(
+        mintTokensFromEfficiencyStatement(mockClient, {
+          tenantId: 'tenant-1',
+          workItemId: 'item-rollback-1',
+          checkpointHash: 'cp-rollback-1',
+          grossRealizedValueUsd: 125,
+          artifactRefId: 'TOOL-GH-TRACKER',
+        })
+      ).rejects.toThrow('Failed to mint upkeep tokens to hub_tokens_ledger');
+
+      expect(attestations).toHaveLength(0);
+      expect(artifact.cumulative_uses).toBe(0);
+
+      // Retry succeeds cleanly
+      const retry = await mintTokensFromEfficiencyStatement(mockClient, {
+        tenantId: 'tenant-1',
+        workItemId: 'item-rollback-1',
+        checkpointHash: 'cp-rollback-1',
+        grossRealizedValueUsd: 125,
+        artifactRefId: 'TOOL-GH-TRACKER',
+      });
+      expect(retry.status).toBe('attested');
+      expect(ledgerRows).toHaveLength(1);
+      expect(artifact.cumulative_uses).toBe(1);
+    });
+
+    it('credits subsequent distinct checkpoints on the same workItemId while rejecting exact checkpoint replays', async () => {
+      const attestations: any[] = [];
+      const ledgerRows: any[] = [];
+      const artifact = {
+        artifact_ref_id: 'TOOL-GH-TRACKER',
+        builder_user_id: 'tympollack',
+        cumulative_uses: 0,
+        survival_ratio: 1.0,
+      };
+
+      const makeTable = (table: string) => {
+        if (table === 'ai_usage_logs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              })),
+            })),
+          };
+        }
+        if (table === 'efficiency_mint_attestations') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn((col: string, val: string) => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: attestations.find((a) => a[col] === val) || null,
+                  error: null,
+                }),
+              })),
+            })),
+            insert: vi.fn((row: any) => {
+              const saved = { id: `att-${attestations.length + 1}`, ...row };
+              attestations.push(saved);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: saved, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        if (table === 'infrastructure_artifacts') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { ...artifact }, error: null }),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(() => {
+                artifact.cumulative_uses = patch.cumulative_uses;
+                return Promise.resolve({ data: { ...artifact }, error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'hub_tokens_ledger') {
+          return {
+            insert: vi.fn((row: any) => {
+              ledgerRows.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      const commitA = await recordArtifactTelemetry('TOOL-GH-TRACKER', 'item-multi-sync', {
+        supabaseClient: mockClient,
+        tenantId: 'tenant-1',
+        checkpointHash: 'telemetry:TOOL-GH-TRACKER:item-multi-sync:pr1:shaA',
+      });
+      const commitB = await recordArtifactTelemetry('TOOL-GH-TRACKER', 'item-multi-sync', {
+        supabaseClient: mockClient,
+        tenantId: 'tenant-1',
+        checkpointHash: 'telemetry:TOOL-GH-TRACKER:item-multi-sync:pr1:shaB',
+      });
+      const replayB = await recordArtifactTelemetry('TOOL-GH-TRACKER', 'item-multi-sync', {
+        supabaseClient: mockClient,
+        tenantId: 'tenant-1',
+        checkpointHash: 'telemetry:TOOL-GH-TRACKER:item-multi-sync:pr1:shaB',
+      });
+
+      expect(commitA?.status).toBe('attested');
+      expect(commitA?.patronageCreditAwarded).toBe(2500);
+      expect(commitB?.status).toBe('attested');
+      expect(commitB?.patronageCreditAwarded).toBe(850);
+      expect(replayB?.status).toBe('already_attested');
+      expect(ledgerRows).toHaveLength(2);
+      expect(artifact.cumulative_uses).toBe(2);
+    });
   });
 });

@@ -283,6 +283,40 @@ function isUniqueViolation(err: any): boolean {
   return code === '23505' || msg.includes('duplicate key') || msg.includes('unique constraint');
 }
 
+function isMissingRpcError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === 'PGRST202' ||
+    code === '42883' ||
+    msg.includes('could not find the function') ||
+    (msg.includes('function') && msg.includes('does not exist'))
+  );
+}
+
+const artifactExecutionLocks = new Map<string, Promise<unknown>>();
+
+async function withArtifactLock<T>(key: string | null, fn: () => Promise<T>): Promise<T> {
+  if (!key) return fn();
+  const prev = artifactExecutionLocks.get(key) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = prev.then(() => current, () => current);
+  artifactExecutionLocks.set(key, chained);
+  await prev.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (artifactExecutionLocks.get(key) === chained) {
+      artifactExecutionLocks.delete(key);
+    }
+  }
+}
+
 /**
  * Deducts tracker.ai_usage_logs compute costs from gross realized value, checks idempotency,
  * mints 100% of verified upkeep tokens into public.hub_tokens_ledger under SYSTEM_ECOSYSTEM_POOL,
@@ -306,25 +340,26 @@ export async function mintTokensFromEfficiencyStatement(
     throw new Error('Either workItemId or checkpointHash is required for idempotent efficiency minting.');
   }
 
-  // 1. Deduct tracker.ai_usage_logs compute costs from gross realized value
+  // 1. Deduct tracker.ai_usage_logs compute costs from gross realized value (fail-closed on query error)
   let computeCostDeductedUsd = 0;
-  try {
-    const logsTable = trackerClient?.from?.('ai_usage_logs');
-    if (logsTable && typeof logsTable.select === 'function') {
-      let logsQuery: any = logsTable.select('compute_cost_usd, work_item_id, tenant_id').eq('tenant_id', params.tenantId);
-      if (workItemId && typeof logsQuery.eq === 'function') {
-        logsQuery = logsQuery.eq('work_item_id', workItemId);
-      }
-      const { data: usageLogs } = await logsQuery;
-      for (const row of usageLogs || []) {
-        const cost = Number(row?.compute_cost_usd ?? row?.cost_usd ?? 0);
-        if (Number.isFinite(cost) && cost > 0) {
-          computeCostDeductedUsd += cost;
-        }
+  const logsTable = trackerClient?.from?.('ai_usage_logs');
+  if (logsTable && typeof logsTable.select === 'function') {
+    let logsQuery: any = logsTable
+      .select('compute_cost_usd, work_item_id, tenant_id')
+      .eq('tenant_id', params.tenantId);
+    if (workItemId && typeof logsQuery.eq === 'function') {
+      logsQuery = logsQuery.eq('work_item_id', workItemId);
+    }
+    const { data: usageLogs, error: logsError } = await logsQuery;
+    if (logsError) {
+      throw new Error(`Failed to query ai_usage_logs compute costs: ${logsError.message}`);
+    }
+    for (const row of usageLogs || []) {
+      const cost = Number(row?.compute_cost_usd ?? row?.cost_usd ?? 0);
+      if (Number.isFinite(cost) && cost > 0) {
+        computeCostDeductedUsd += cost;
       }
     }
-  } catch {
-    // Non-fatal if ai_usage_logs table is absent in legacy mocks
   }
 
   computeCostDeductedUsd = Number(computeCostDeductedUsd.toFixed(6));
@@ -353,201 +388,318 @@ export async function mintTokensFromEfficiencyStatement(
     };
   }
 
-  // 2. Idempotency check in public.efficiency_mint_attestations
-  const attestTable = publicClient.from('efficiency_mint_attestations');
-  if (attestTable && typeof attestTable.select === 'function') {
-    let existing: any = null;
-    if (workItemId) {
-      const q = attestTable.select('*').eq('work_item_id', workItemId);
-      const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
-      existing = Array.isArray(res?.data) ? res.data[0] : res?.data;
-    }
-    if (!existing && checkpointHash) {
-      const q = attestTable.select('*').eq('checkpoint_hash', checkpointHash);
-      const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
-      existing = Array.isArray(res?.data) ? res.data[0] : res?.data;
-    }
-
-    if (existing) {
-      return {
-        status: 'already_attested',
-        reason: 'Efficiency statement already attested.',
-        mintedTokens: 0,
-        walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
-        computeCostDeductedUsd,
-        netRealizedValueUsd,
-        patronageCreditAwarded: Number(existing.patronage_credit_awarded || 0),
-        attributedBuilderId: existing.attributed_builder_id || null,
-        artifactRefId: existing.artifact_ref_id || artifactRefId,
-        survivalRatio: existing.metadata?.survival_ratio ?? null,
-        cumulativeUses: existing.metadata?.cumulative_uses ?? null,
-        attestation: existing,
-      };
-    }
-  }
-
-  // 3. Resolve infrastructure artifact (read-only first so concurrent duplicate attestations never double-increment)
-  let attributedBuilderId: string | null = null;
-  let patronageCreditAwarded = 0;
-  let survivalRatio: number | null = null;
-  let nextCumulativeUses: number | null = null;
-  let resolvedArtifactRow: any = null;
-
-  if (artifactRefId) {
-    const artifactsTable = publicClient.from('infrastructure_artifacts');
-
-    if (artifactsTable && typeof artifactsTable.select === 'function') {
-      const q = artifactsTable.select('*').eq('artifact_ref_id', artifactRefId);
-      const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
-      resolvedArtifactRow = Array.isArray(res?.data) ? res.data[0] : res?.data;
-    }
-
-    if (resolvedArtifactRow) {
-      const prevUses = Math.max(0, Number(resolvedArtifactRow.cumulative_uses ?? 0));
-      survivalRatio = Number(resolvedArtifactRow.survival_ratio ?? 1.0);
-      attributedBuilderId = resolvedArtifactRow.builder_user_id || params.builderUserId || null;
-
-      patronageCreditAwarded = attributedBuilderId
-        ? calculateAttributedPatronage({
-            cumulativeUses: prevUses,
-            survivalRatio,
-            baseUpkeepSlice: params.baseUpkeepSlice,
-            alpha: params.alpha,
-          })
-        : 0;
-
-      nextCumulativeUses = prevUses + 1;
-    }
-  }
-
-  const ledgerMetadata: Record<string, any> = {
-    ...(params.metadata || {}),
-    wallet_id: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
-    target_pool: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
-    stream: 'system_ecosystem_pool',
-    gross_realized_value_usd: grossUsd,
-    compute_cost_deducted_usd: computeCostDeductedUsd,
-    net_realized_value_usd: netRealizedValueUsd,
-    ...(workItemId ? { work_item_id: workItemId } : {}),
-    ...(checkpointHash ? { checkpoint_hash: checkpointHash } : {}),
-    ...(artifactRefId && attributedBuilderId
-      ? {
-          attributed_builder_id: attributedBuilderId,
-          artifact_ref_id: artifactRefId,
-          patronage_credit_awarded: patronageCreditAwarded,
-          survival_ratio: survivalRatio,
-          cumulative_uses: nextCumulativeUses,
-        }
-      : {}),
-  };
-
-  // 4. Insert idempotent attestation record before ledger write or artifact increment
-  let insertedAttestation: any = null;
-  if (attestTable && typeof attestTable.insert === 'function') {
-    const insertCall = attestTable.insert({
-      work_item_id: workItemId,
-      checkpoint_hash: checkpointHash,
-      tenant_id: params.tenantId,
-      project_id: params.projectId || null,
-      artifact_ref_id: attributedBuilderId ? artifactRefId : null,
-      attributed_builder_id: attributedBuilderId,
-      upkeep_tokens_minted: upkeepTokens,
-      patronage_credit_awarded: patronageCreditAwarded,
-      compute_cost_deducted: computeCostDeductedUsd,
-      metadata: ledgerMetadata,
-      attested_at: new Date().toISOString(),
+  // 2. Prefer single-transaction PostgreSQL RPC when available
+  if (typeof publicClient?.rpc === 'function') {
+    const rpcRes = await publicClient.rpc('mint_attributed_efficiency_upkeep', {
+      p_tenant_id: params.tenantId,
+      p_work_item_id: workItemId,
+      p_checkpoint_hash: checkpointHash,
+      p_project_id: params.projectId || null,
+      p_upkeep_tokens: upkeepTokens,
+      p_compute_cost_deducted: computeCostDeductedUsd,
+      p_artifact_ref_id: artifactRefId,
+      p_base_upkeep_slice: params.baseUpkeepSlice ?? DEFAULT_PATRONAGE_UPKEEP_SLICE,
+      p_alpha: params.alpha ?? DEFAULT_PATRONAGE_ALPHA,
+      p_metadata: {
+        ...(params.metadata || {}),
+        gross_realized_value_usd: grossUsd,
+        compute_cost_deducted_usd: computeCostDeductedUsd,
+        net_realized_value_usd: netRealizedValueUsd,
+      },
     });
-    const insertRes =
-      typeof insertCall.select === 'function'
-        ? await insertCall.select().single()
-        : await insertCall;
 
-    if (insertRes?.error) {
-      if (isUniqueViolation(insertRes.error)) {
+    if (rpcRes?.error) {
+      if (!isMissingRpcError(rpcRes.error)) {
+        throw new Error(`RPC mint_attributed_efficiency_upkeep failed: ${rpcRes.error.message}`);
+      }
+    } else if (rpcRes?.data?.status) {
+      const att = rpcRes.data.attestation || {};
+      if (rpcRes.data.status === 'already_attested') {
         return {
           status: 'already_attested',
-          reason: 'Concurrent attestation already recorded.',
+          reason: 'Efficiency statement already attested.',
+          mintedTokens: 0,
+          walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+          computeCostDeductedUsd,
+          netRealizedValueUsd,
+          patronageCreditAwarded: Number(att.patronage_credit_awarded || 0),
+          attributedBuilderId: att.attributed_builder_id || null,
+          artifactRefId: att.artifact_ref_id || artifactRefId,
+          survivalRatio: att.metadata?.survival_ratio ?? null,
+          cumulativeUses: att.metadata?.cumulative_uses ?? null,
+          attestation: att,
+        };
+      }
+      if (rpcRes.data.status === 'skipped') {
+        return {
+          status: 'skipped',
+          reason: rpcRes.data.reason,
           mintedTokens: 0,
           walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
           computeCostDeductedUsd,
           netRealizedValueUsd,
           patronageCreditAwarded: 0,
-          attributedBuilderId,
+          attributedBuilderId: null,
           artifactRefId,
-          survivalRatio,
-          cumulativeUses: nextCumulativeUses,
+          survivalRatio: null,
+          cumulativeUses: null,
         };
       }
-      throw new Error(`Failed to record efficiency attestation: ${insertRes.error.message}`);
+      return {
+        status: 'attested',
+        mintedTokens: Number(rpcRes.data.minted_tokens ?? upkeepTokens),
+        walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+        computeCostDeductedUsd,
+        netRealizedValueUsd,
+        patronageCreditAwarded: Number(rpcRes.data.patronage_credit_awarded ?? att.patronage_credit_awarded ?? 0),
+        attributedBuilderId: att.attributed_builder_id || null,
+        artifactRefId: att.artifact_ref_id || artifactRefId,
+        survivalRatio: att.metadata?.survival_ratio ?? null,
+        cumulativeUses: att.metadata?.cumulative_uses ?? null,
+        attestation: att,
+      };
     }
-    insertedAttestation = insertRes?.data || insertRes;
   }
 
-  // 5. Atomically increment cumulative_uses on infrastructure_artifacts after unique claim succeeds
-  if (artifactRefId && resolvedArtifactRow) {
-    const artifactsTable = publicClient.from('infrastructure_artifacts');
-    let incrementedViaRpc = false;
-    if (typeof publicClient.rpc === 'function') {
-      try {
-        const rpcRes = await publicClient.rpc('increment_infrastructure_artifact_use', {
-          p_artifact_ref_id: artifactRefId,
-        });
-        if (rpcRes?.data?.found) {
-          incrementedViaRpc = true;
-          nextCumulativeUses = Number(rpcRes.data.cumulative_uses ?? nextCumulativeUses);
+  // 3. Serialized table fallback with compensating rollback if ledger write fails
+  return withArtifactLock(artifactRefId, async () => {
+    const attestTable = publicClient.from('efficiency_mint_attestations');
+    if (attestTable && typeof attestTable.select === 'function') {
+      let existing: any = null;
+      if (checkpointHash) {
+        const q = attestTable.select('*').eq('checkpoint_hash', checkpointHash);
+        const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
+        if (res?.error) {
+          throw new Error(`Failed to check checkpoint attestation idempotency: ${res.error.message}`);
         }
-      } catch {
-        // Fall through to direct table update
+        existing = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      } else if (workItemId) {
+        let q: any = attestTable.select('*').eq('work_item_id', workItemId);
+        if (typeof q.is === 'function') {
+          q = q.is('checkpoint_hash', null);
+        }
+        const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
+        if (res?.error) {
+          throw new Error(`Failed to check work item attestation idempotency: ${res.error.message}`);
+        }
+        const candidate = Array.isArray(res?.data) ? res.data[0] : res?.data;
+        if (candidate && !candidate.checkpoint_hash) {
+          existing = candidate;
+        }
+      }
+
+      if (existing) {
+        return {
+          status: 'already_attested',
+          reason: 'Efficiency statement already attested.',
+          mintedTokens: 0,
+          walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+          computeCostDeductedUsd,
+          netRealizedValueUsd,
+          patronageCreditAwarded: Number(existing.patronage_credit_awarded || 0),
+          attributedBuilderId: existing.attributed_builder_id || null,
+          artifactRefId: existing.artifact_ref_id || artifactRefId,
+          survivalRatio: existing.metadata?.survival_ratio ?? null,
+          cumulativeUses: existing.metadata?.cumulative_uses ?? null,
+          attestation: existing,
+        };
       }
     }
-    if (!incrementedViaRpc && artifactsTable && typeof artifactsTable.update === 'function') {
-      await artifactsTable
-        .update({
-          cumulative_uses: nextCumulativeUses,
-          last_invoked_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('artifact_ref_id', artifactRefId);
+
+    let attributedBuilderId: string | null = null;
+    let patronageCreditAwarded = 0;
+    let survivalRatio: number | null = null;
+    let prevUses = 0;
+    let nextCumulativeUses: number | null = null;
+    let resolvedArtifactRow: any = null;
+
+    if (artifactRefId) {
+      const artifactsTable = publicClient.from('infrastructure_artifacts');
+
+      if (artifactsTable && typeof artifactsTable.select === 'function') {
+        const q = artifactsTable.select('*').eq('artifact_ref_id', artifactRefId);
+        const res = typeof q.maybeSingle === 'function' ? await q.maybeSingle() : await q;
+        if (res?.error) {
+          throw new Error(`Failed to load infrastructure artifact ${artifactRefId}: ${res.error.message}`);
+        }
+        resolvedArtifactRow = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      }
+
+      if (resolvedArtifactRow) {
+        prevUses = Math.max(0, Number(resolvedArtifactRow.cumulative_uses ?? 0));
+        survivalRatio = Number(resolvedArtifactRow.survival_ratio ?? 1.0);
+        attributedBuilderId = resolvedArtifactRow.builder_user_id || params.builderUserId || null;
+
+        patronageCreditAwarded = attributedBuilderId
+          ? calculateAttributedPatronage({
+              cumulativeUses: prevUses,
+              survivalRatio,
+              baseUpkeepSlice: params.baseUpkeepSlice,
+              alpha: params.alpha,
+            })
+          : 0;
+
+        nextCumulativeUses = prevUses + 1;
+      }
     }
-  }
 
-  // 5. Insert upkeep mint strictly into SYSTEM_ECOSYSTEM_POOL on public.hub_tokens_ledger
-  const ledgerTable = publicClient.from('hub_tokens_ledger');
-  let insertedLedger: any = null;
-  if (ledgerTable && typeof ledgerTable.insert === 'function') {
-    const ledgerInsert = ledgerTable.insert({
-      user_id: SYSTEM_ECOSYSTEM_POOL_USER_ID,
-      token_class: 'work_rebate_token',
-      transaction_type: 'ECOSYSTEM_UPKEEP_MINT',
-      amount: upkeepTokens,
-      description: 'Verified Ecosystem Upkeep Mint into SYSTEM_ECOSYSTEM_POOL',
-      metadata: ledgerMetadata,
-    });
-    const ledgerRes =
-      typeof ledgerInsert.select === 'function'
-        ? await ledgerInsert.select().single()
-        : await ledgerInsert;
+    const ledgerMetadata: Record<string, any> = {
+      ...(params.metadata || {}),
+      wallet_id: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+      target_pool: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+      stream: checkpointHash ? `telemetry:${checkpointHash}` : 'system_ecosystem_pool',
+      gross_realized_value_usd: grossUsd,
+      compute_cost_deducted_usd: computeCostDeductedUsd,
+      net_realized_value_usd: netRealizedValueUsd,
+      ...(workItemId ? { work_item_id: workItemId } : {}),
+      ...(checkpointHash ? { checkpoint_hash: checkpointHash } : {}),
+      ...(artifactRefId && attributedBuilderId
+        ? {
+            attributed_builder_id: attributedBuilderId,
+            artifact_ref_id: artifactRefId,
+            patronage_credit_awarded: patronageCreditAwarded,
+            survival_ratio: survivalRatio,
+            cumulative_uses: nextCumulativeUses,
+          }
+        : {}),
+    };
 
-    if (ledgerRes?.error) {
-      throw new Error(`Failed to mint upkeep tokens to hub_tokens_ledger: ${ledgerRes.error.message}`);
+    let insertedAttestation: any = null;
+    if (attestTable && typeof attestTable.insert === 'function') {
+      const insertCall = attestTable.insert({
+        work_item_id: workItemId,
+        checkpoint_hash: checkpointHash,
+        tenant_id: params.tenantId,
+        project_id: params.projectId || null,
+        artifact_ref_id: attributedBuilderId ? artifactRefId : null,
+        attributed_builder_id: attributedBuilderId,
+        upkeep_tokens_minted: upkeepTokens,
+        patronage_credit_awarded: patronageCreditAwarded,
+        compute_cost_deducted: computeCostDeductedUsd,
+        metadata: ledgerMetadata,
+        attested_at: new Date().toISOString(),
+      });
+      const insertRes =
+        typeof insertCall.select === 'function'
+          ? await insertCall.select().single()
+          : await insertCall;
+
+      if (insertRes?.error) {
+        if (isUniqueViolation(insertRes.error)) {
+          return {
+            status: 'already_attested',
+            reason: 'Concurrent attestation already recorded.',
+            mintedTokens: 0,
+            walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+            computeCostDeductedUsd,
+            netRealizedValueUsd,
+            patronageCreditAwarded: 0,
+            attributedBuilderId,
+            artifactRefId,
+            survivalRatio,
+            cumulativeUses: nextCumulativeUses,
+          };
+        }
+        throw new Error(`Failed to record efficiency attestation: ${insertRes.error.message}`);
+      }
+      insertedAttestation = insertRes?.data || insertRes;
     }
-    insertedLedger = ledgerRes?.data || ledgerRes;
-  }
 
-  return {
-    status: 'attested',
-    mintedTokens: upkeepTokens,
-    walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
-    computeCostDeductedUsd,
-    netRealizedValueUsd,
-    patronageCreditAwarded,
-    attributedBuilderId,
-    artifactRefId,
-    survivalRatio,
-    cumulativeUses: nextCumulativeUses,
-    attestation: insertedAttestation,
-    ledgerEntry: insertedLedger,
-  };
+    const rollbackAttestation = async () => {
+      if (insertedAttestation && attestTable && typeof attestTable.delete === 'function') {
+        try {
+          if (insertedAttestation.id) {
+            await attestTable.delete().eq('id', insertedAttestation.id);
+          } else if (checkpointHash) {
+            await attestTable.delete().eq('checkpoint_hash', checkpointHash);
+          } else if (workItemId) {
+            await attestTable.delete().eq('work_item_id', workItemId);
+          }
+        } catch {
+          // Best-effort rollback in non-transactional fallback
+        }
+      }
+    };
+
+    let artifactIncremented = false;
+    const rollbackArtifactUse = async () => {
+      if (artifactIncremented && artifactRefId && resolvedArtifactRow) {
+        const artifactsTable = publicClient.from('infrastructure_artifacts');
+        if (artifactsTable && typeof artifactsTable.update === 'function') {
+          try {
+            await artifactsTable
+              .update({
+                cumulative_uses: prevUses,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('artifact_ref_id', artifactRefId);
+          } catch {
+            // Best-effort rollback in non-transactional fallback
+          }
+        }
+      }
+    };
+
+    try {
+      if (artifactRefId && resolvedArtifactRow) {
+        const artifactsTable = publicClient.from('infrastructure_artifacts');
+        if (artifactsTable && typeof artifactsTable.update === 'function') {
+          const updRes = await artifactsTable
+            .update({
+              cumulative_uses: nextCumulativeUses,
+              last_invoked_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('artifact_ref_id', artifactRefId);
+          if (updRes?.error) {
+            throw new Error(`Failed to update infrastructure artifact usage: ${updRes.error.message}`);
+          }
+          artifactIncremented = true;
+        }
+      }
+
+      const ledgerTable = publicClient.from('hub_tokens_ledger');
+      let insertedLedger: any = null;
+      if (ledgerTable && typeof ledgerTable.insert === 'function') {
+        const ledgerInsert = ledgerTable.insert({
+          user_id: SYSTEM_ECOSYSTEM_POOL_USER_ID,
+          token_class: 'work_rebate_token',
+          transaction_type: 'ECOSYSTEM_UPKEEP_MINT',
+          amount: upkeepTokens,
+          description: 'Verified Ecosystem Upkeep Mint into SYSTEM_ECOSYSTEM_POOL',
+          metadata: ledgerMetadata,
+        });
+        const ledgerRes =
+          typeof ledgerInsert.select === 'function'
+            ? await ledgerInsert.select().single()
+            : await ledgerInsert;
+
+        if (ledgerRes?.error) {
+          throw new Error(`Failed to mint upkeep tokens to hub_tokens_ledger: ${ledgerRes.error.message}`);
+        }
+        insertedLedger = ledgerRes?.data || ledgerRes;
+      }
+
+      return {
+        status: 'attested',
+        mintedTokens: upkeepTokens,
+        walletId: SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
+        computeCostDeductedUsd,
+        netRealizedValueUsd,
+        patronageCreditAwarded,
+        attributedBuilderId,
+        artifactRefId,
+        survivalRatio,
+        cumulativeUses: nextCumulativeUses,
+        attestation: insertedAttestation,
+        ledgerEntry: insertedLedger,
+      };
+    } catch (err) {
+      await rollbackArtifactUse();
+      await rollbackAttestation();
+      throw err;
+    }
+  });
 }
 
 /**

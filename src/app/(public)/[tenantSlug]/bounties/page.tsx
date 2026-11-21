@@ -278,6 +278,15 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                           )}
                         </div>
 
+                        {pricing.patronBoostTokens > 0 && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                              <Coins className="w-3 h-3 text-emerald-400" />
+                              +{pricing.patronBoostTokens.toLocaleString()} Patron Boost
+                            </span>
+                          </div>
+                        )}
+
                         {!item.metadata?.bounty_reward && pricing.neglectMultiplier > 1.0 && (
                           <div className="flex items-center gap-1.5">
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">

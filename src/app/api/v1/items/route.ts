@@ -1598,6 +1598,7 @@ export async function PATCH(req: NextRequest) {
         tenantId: authCtx.tenant.id,
         assignee: effectiveAssignee,
         candidateItem,
+        projectSettings: effectiveProjectSettings,
         adminOverride,
       });
 

@@ -315,4 +315,191 @@ describe('TASK-TRK-GH-TRACKER-TELEMETRY: Genesis Attributed Artifact (TOOL-GH-TR
 
     expect(ledgerRows).toHaveLength(0);
   });
+
+  it('prices batched artifact syncs sequentially and blocks personal_organizer or malformed PR proofs', async () => {
+    const ledgerRows: any[] = [];
+    const artifact = {
+      artifact_ref_id: 'TOOL-GH-TRACKER',
+      builder_user_id: 'tympollack',
+      cumulative_uses: 0,
+      survival_ratio: 1.0,
+    };
+    const attestations: any[] = [];
+    let currentProject = { ...mockProject };
+
+    vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'projects') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: currentProject, error: null }),
+              })),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'work_items') {
+        let idx = 0;
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: { order_index: 1000 }, error: null }),
+                })),
+              })),
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+          upsert: vi.fn((payload: any) => {
+            idx++;
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: `batch-item-${idx}`, ...payload },
+                  error: null,
+                }),
+              })),
+            };
+          }),
+        } as any;
+      }
+      if (table === 'ai_usage_logs') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            })),
+          })),
+        } as any;
+      }
+      if (table === 'efficiency_mint_attestations') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn((col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: attestations.find((a) => a[col] === val) || null,
+                error: null,
+              }),
+            })),
+          })),
+          insert: vi.fn((row: any) => {
+            attestations.push(row);
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: row, error: null }),
+              })),
+            };
+          }),
+        } as any;
+      }
+      if (table === 'infrastructure_artifacts') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { ...artifact }, error: null }),
+            })),
+          })),
+          update: vi.fn((patch: any) => ({
+            eq: vi.fn(() => {
+              artifact.cumulative_uses = patch.cumulative_uses;
+              return Promise.resolve({ data: { ...artifact }, error: null });
+            }),
+          })),
+        } as any;
+      }
+      if (table === 'hub_tokens_ledger') {
+        return {
+          insert: vi.fn((row: any) => {
+            ledgerRows.push(row);
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({ data: row, error: null }),
+              })),
+            };
+          }),
+        } as any;
+      }
+      return {} as any;
+    });
+
+    // 1. Batched two valid items in one POST -> sequentially priced 2500 then 850
+    const batchReq = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'sunshade-tracker',
+        items: [
+          {
+            external_ref_id: 'TASK-BATCH-1',
+            title: 'Batch 1',
+            metadata: {
+              pr_url: 'https://github.com/tympollack/sunshade-tracker/pull/201',
+              synced_by_artifact: 'TOOL-GH-TRACKER',
+            },
+          },
+          {
+            external_ref_id: 'TASK-BATCH-2',
+            title: 'Batch 2',
+            metadata: {
+              pr_url: 'https://github.com/tympollack/sunshade-tracker/pull/202',
+              synced_by_artifact: 'TOOL-GH-TRACKER',
+            },
+          },
+        ],
+      }),
+    });
+
+    const batchRes = await ingestHandler(batchReq);
+    expect(batchRes.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+
+    expect(ledgerRows).toHaveLength(2);
+    expect(ledgerRows[0].metadata.patronage_credit_awarded).toBe(2500);
+    expect(ledgerRows[1].metadata.patronage_credit_awarded).toBe(850);
+    expect(artifact.cumulative_uses).toBe(2);
+
+    // 2. Personal organizer project must never trigger minting
+    currentProject = {
+      ...mockProject,
+      settings: { ...mockProject.settings, ledger_mode: 'personal_organizer' } as any,
+    };
+    const personalReq = new NextRequest('http://localhost:3000/api/v1/items/ingest', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer tk_live_sunshade_master_key',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        project_slug: 'sunshade-tracker',
+        items: [
+          {
+            external_ref_id: 'TASK-PERSONAL-1',
+            title: 'Personal chore',
+            metadata: {
+              pr_url: 'https://github.com/tympollack/sunshade-tracker/pull/203',
+              synced_by_artifact: 'TOOL-GH-TRACKER',
+            },
+          },
+        ],
+      }),
+    });
+    const personalRes = await ingestHandler(personalReq);
+    expect(personalRes.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(ledgerRows).toHaveLength(2);
+  });
 });

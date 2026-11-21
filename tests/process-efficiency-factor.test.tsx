@@ -6,7 +6,7 @@ import {
   enrichItemWithNeglectPricing,
   normalizeProcessEfficiencyFactor,
 } from '@/lib/bounties/neglectPricing';
-import { getItemTokenCommitment } from '@/lib/bounties/flexLedgerService';
+import { getItemTokenCommitment, assertRunnerWeeklyCapacity } from '@/lib/bounties/flexLedgerService';
 import { lintProjectSettings } from '@/lib/project-settings-schema';
 import { validateProjectSettings } from '@/lib/project-settings-validator';
 import { normalizeProjectSettings } from '@/lib/project-settings-utils';
@@ -129,6 +129,66 @@ describe('TASK-TRK-EFFICIENCY-FACTOR-SCHEMA: process_efficiency_factor in Projec
         },
       });
       expect(commitment).toBe(180000);
+    });
+
+    it('enforces project-level process_efficiency_factor in assertRunnerWeeklyCapacity for candidate and existing commitments', async () => {
+      const mockClient = {
+        from: vi.fn((table: string) => {
+          if (table === 'work_items') {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  eq: vi.fn(() => ({
+                    neq: vi.fn().mockResolvedValue({
+                      data: [
+                        // 7.5 hrs * 2.0x project efficiency = 15 hrs = 900,000 tokens
+                        {
+                          id: 'existing-proj-item',
+                          project_id: 'proj-2x',
+                          status: 'in_progress',
+                          metadata: { bounty_hours: 7.5 },
+                        },
+                      ],
+                      error: null,
+                    }),
+                  })),
+                })),
+              })),
+            };
+          }
+          if (table === 'projects') {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  is: vi.fn().mockResolvedValue({
+                    data: [{ id: 'proj-2x', settings: { process_efficiency_factor: 2.0 } }],
+                    error: null,
+                  }),
+                })),
+              })),
+            };
+          }
+          return {};
+        }),
+      };
+
+      // Candidate 4 hrs * 2.0x project efficiency = 480,000 tokens -> 900,000 + 480,000 = 1,380,000 > 1,200,000
+      const result = await assertRunnerWeeklyCapacity({
+        supabaseClient: mockClient,
+        tenantId: 'tenant-1',
+        assignee: 'runner-1',
+        candidateItem: {
+          id: 'cand-1',
+          project_id: 'proj-2x',
+          metadata: { bounty_hours: 4.0 },
+        },
+        projectSettings: { process_efficiency_factor: 2.0 },
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.currentWeeklyTokens).toBe(900000);
+      expect(result.candidateBountyTokens).toBe(480000);
+      expect(result.tokensExceeded).toBe(180000);
     });
   });
 
