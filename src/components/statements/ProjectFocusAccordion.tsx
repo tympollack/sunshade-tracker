@@ -17,6 +17,7 @@ export interface ProjectFocusAccordionProps {
   projects: ProjectCalibrationGroup[];
   tenantSlug?: string;
   targetVelocityRatio?: number;
+  defaultExpanded?: boolean;
   onSelectItem?: (externalRefId: string) => void;
   className?: string;
 }
@@ -30,6 +31,7 @@ export function ProjectFocusAccordion({
   projects = EMPTY_PROJECTS,
   tenantSlug,
   targetVelocityRatio = 2.0,
+  defaultExpanded = true,
   onSelectItem,
   className = '',
 }: ProjectFocusAccordionProps) {
@@ -49,13 +51,13 @@ export function ProjectFocusAccordion({
       // Fallback
     }
 
-    // Default: expand all projects initially, respecting saved preferences for known projects
+    // Default: respect schema defaultExpanded, respecting saved preferences for known projects
     const defaults = projects.reduce<Record<string, boolean>>((acc, p) => {
-      acc[p.projectId] = savedMap[p.projectId] !== undefined ? savedMap[p.projectId] : true;
+      acc[p.projectId] = savedMap[p.projectId] !== undefined ? savedMap[p.projectId] : defaultExpanded;
       return acc;
     }, {});
     setOpenMap(defaults);
-  }, [projects, tenantSlug]);
+  }, [projects, tenantSlug, defaultExpanded]);
 
   const toggleProject = (projectId: string) => {
     setOpenMap((prev) => {

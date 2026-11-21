@@ -14,9 +14,19 @@ import {
 } from 'lucide-react';
 import { InFlightTelemetryPayload, SystemicBlockerEntry } from '@/lib/services/inFlightTelemetryCore';
 
+export const DEFAULT_TELEMETRY_KPI_IDS = [
+  'tel_kpi_wip_saturation',
+  'tel_kpi_queue_flow_radar',
+  'tel_kpi_scope_inflow',
+  'tel_kpi_throughput_cadence',
+] as const;
+
 export interface FlowTelemetryRibbonProps {
   telemetry: InFlightTelemetryPayload;
   onSelectBlockerItem?: (itemRefOrId: string) => void;
+  showBlockerMarquee?: boolean;
+  showMetricCards?: boolean;
+  visibleKpiIds?: string[];
 }
 
 const STAGE_DISPLAY_NAMES: Record<string, string> = {
@@ -30,6 +40,9 @@ const STAGE_DISPLAY_NAMES: Record<string, string> = {
 export function FlowTelemetryRibbon({
   telemetry,
   onSelectBlockerItem,
+  showBlockerMarquee = true,
+  showMetricCards = true,
+  visibleKpiIds,
 }: FlowTelemetryRibbonProps) {
   const [blockersCollapsed, setBlockersCollapsed] = useState(false);
 
@@ -72,6 +85,172 @@ export function FlowTelemetryRibbon({
     }
   };
 
+  const kpisToRender = showMetricCards
+    ? visibleKpiIds ?? [...DEFAULT_TELEMETRY_KPI_IDS]
+    : [];
+  const shouldShowMarquee = showBlockerMarquee && blockers.length > 0;
+
+  if (!shouldShowMarquee && kpisToRender.length === 0) {
+    return null;
+  }
+
+  const renderMetricCard = (kpiId: string) => {
+    if (kpiId === 'tel_kpi_wip_saturation') {
+      return (
+        <div
+          key={kpiId}
+          data-testid="metric-wip-saturation"
+          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
+              <Gauge className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span>WIP Saturation Index</span>
+            </div>
+            <span
+              data-testid="wip-saturation-status-badge"
+              className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border ${
+                isQueuingRisk
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                  : isApproaching
+                  ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+              }`}
+            >
+              {isQueuingRisk ? 'Queuing Risk' : 'Optimal'}
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-bold font-mono text-white">
+                {saturationPct}% of Concurrency Limit
+              </span>
+              <span className="text-[11px] font-mono text-slate-400">
+                {telemetry.total_active_items}/{telemetry.total_wip_capacity} items
+              </span>
+            </div>
+
+            <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  isQueuingRisk
+                    ? 'bg-amber-400'
+                    : isApproaching
+                    ? 'bg-cyan-400'
+                    : 'bg-emerald-400'
+                }`}
+                style={{ width: `${clampedBarPct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (kpiId === 'tel_kpi_queue_flow_radar') {
+      return (
+        <div
+          key={kpiId}
+          data-testid="metric-queue-flow-radar"
+          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
+              <Radar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Queue Flow Radar</span>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-400 border border-slate-800">
+              {telemetry.stage_dwell_radar.length > 0
+                ? `${telemetry.stage_dwell_radar.length} stalled`
+                : 'Flowing'}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-sm font-bold text-white truncate">
+              {bottleneckStageKey
+                ? `Bottleneck: ${bottleneckLabel} · ${bottleneckUnits} units waiting`
+                : 'No Active Stage Bottleneck'}
+            </div>
+            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+              {longestDwellStage && longestDwellStage.median_dwell_hours > 0
+                ? `Median Stage Dwell: ${longestDwellStage.median_dwell_hours}h (${longestDwellStage.label})`
+                : `Total Active Volume: ${telemetry.total_active_units} units`}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (kpiId === 'tel_kpi_scope_inflow') {
+      return (
+        <div
+          key={kpiId}
+          data-testid="metric-scope-inflow"
+          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
+              <GitPullRequestDraft className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>Mid-Cycle Scope Inflow</span>
+            </div>
+            <span
+              className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border ${
+                netDrift > 0
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+              }`}
+            >
+              {netDrift === 0 ? 'Stable Scope' : 'Scope Shift'}
+            </span>
+          </div>
+
+          <div>
+            <div className="text-sm font-bold font-mono text-white">
+              {netDrift > 0 ? `+${netDrift}` : netDrift} units net volatility
+            </div>
+            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+              +{addedUnits} added · -{droppedUnits} dropped since lock
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (kpiId === 'tel_kpi_throughput_cadence') {
+      return (
+        <div
+          key={kpiId}
+          data-testid="metric-throughput-cadence"
+          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Throughput Cadence</span>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
+              Rolling 24h
+            </span>
+          </div>
+
+          <div>
+            <div className="text-sm font-bold font-mono text-white flex items-baseline gap-1.5">
+              <span>{telemetry.rolling_24h_completed_units} units completed</span>
+            </div>
+            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+              {telemetry.rolling_24h_completed_items} deliverable
+              {telemetry.rolling_24h_completed_items === 1 ? '' : 's'} cleared in last 24h
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <section
       data-testid="flow-telemetry-ribbon"
@@ -79,7 +258,7 @@ export function FlowTelemetryRibbon({
       className="w-full space-y-2.5"
     >
       {/* Ambient Blocker Marquee (renders when active items have systemic blockers or CI failures) */}
-      {blockers.length > 0 && (
+      {shouldShowMarquee && (
         <div
           data-testid="ambient-blocker-marquee"
           role="region"
@@ -143,145 +322,15 @@ export function FlowTelemetryRibbon({
         </div>
       )}
 
-      {/* 4 Systemic Metric Badges Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        {/* 1. WIP Saturation Index */}
+      {/* Systemic Metric Badges Grid */}
+      {kpisToRender.length > 0 && (
         <div
-          data-testid="metric-wip-saturation"
-          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
+          data-testid="telemetry-metric-badges-grid"
+          className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3"
         >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
-              <Gauge className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-              <span>WIP Saturation Index</span>
-            </div>
-            <span
-              data-testid="wip-saturation-status-badge"
-              className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border ${
-                isQueuingRisk
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                  : isApproaching
-                  ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
-                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-              }`}
-            >
-              {isQueuingRisk ? 'Queuing Risk' : 'Optimal'}
-            </span>
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-bold font-mono text-white">
-                {saturationPct}% of Concurrency Limit
-              </span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {telemetry.total_active_items}/{telemetry.total_wip_capacity} items
-              </span>
-            </div>
-
-            <div className="w-full h-1.5 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  isQueuingRisk
-                    ? 'bg-amber-400'
-                    : isApproaching
-                    ? 'bg-cyan-400'
-                    : 'bg-emerald-400'
-                }`}
-                style={{ width: `${clampedBarPct}%` }}
-              />
-            </div>
-          </div>
+          {kpisToRender.map((kpiId) => renderMetricCard(kpiId))}
         </div>
-
-        {/* 2. Queue Flow Radar */}
-        <div
-          data-testid="metric-queue-flow-radar"
-          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
-              <Radar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Queue Flow Radar</span>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-950 text-slate-400 border border-slate-800">
-              {telemetry.stage_dwell_radar.length > 0
-                ? `${telemetry.stage_dwell_radar.length} stalled`
-                : 'Flowing'}
-            </span>
-          </div>
-
-          <div>
-            <div className="text-sm font-bold text-white truncate">
-              {bottleneckStageKey
-                ? `Bottleneck: ${bottleneckLabel} · ${bottleneckUnits} units waiting`
-                : 'No Active Stage Bottleneck'}
-            </div>
-            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-              {longestDwellStage && longestDwellStage.median_dwell_hours > 0
-                ? `Median Stage Dwell: ${longestDwellStage.median_dwell_hours}h (${longestDwellStage.label})`
-                : `Total Active Volume: ${telemetry.total_active_units} units`}
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Mid-Cycle Scope Inflow */}
-        <div
-          data-testid="metric-scope-inflow"
-          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
-              <GitPullRequestDraft className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span>Mid-Cycle Scope Inflow</span>
-            </div>
-            <span
-              className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border ${
-                netDrift > 0
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-              }`}
-            >
-              {netDrift === 0 ? 'Stable Scope' : 'Scope Shift'}
-            </span>
-          </div>
-
-          <div>
-            <div className="text-sm font-bold font-mono text-white">
-              {netDrift > 0 ? `+${netDrift}` : netDrift} units net volatility
-            </div>
-            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-              +{addedUnits} added · -{droppedUnits} dropped since lock
-            </div>
-          </div>
-        </div>
-
-        {/* 4. Throughput Cadence */}
-        <div
-          data-testid="metric-throughput-cadence"
-          className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-md flex flex-col justify-between space-y-2 shadow-sm"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>Throughput Cadence</span>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
-              Rolling 24h
-            </span>
-          </div>
-
-          <div>
-            <div className="text-sm font-bold font-mono text-white flex items-baseline gap-1.5">
-              <span>{telemetry.rolling_24h_completed_units} units completed</span>
-            </div>
-            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
-              {telemetry.rolling_24h_completed_items} deliverable
-              {telemetry.rolling_24h_completed_items === 1 ? '' : 's'} cleared in last 24h
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </section>
   );
 }

@@ -28,6 +28,12 @@ import {
   formatEfficiencyStatementCSV,
   formatEfficiencyStatementJSON,
 } from '@/lib/services/valueLedgerService';
+import type { EfficiencyDashboardSchema } from '@/types/efficiency-dashboard';
+import { useEfficiencyDashboardConfig } from '@/hooks/useEfficiencyDashboardConfig';
+import {
+  CustomizeDashboardButton,
+  CustomizeDashboardDrawer,
+} from './CustomizeDashboardDrawer';
 
 export function EfficiencyStatementSkeleton({ tenantSlug }: { tenantSlug: string }) {
   return (
@@ -56,23 +62,62 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
   const [error, setError] = useState<string | null>(null);
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
+  const [workspaceSchema, setWorkspaceSchema] = useState<Partial<EfficiencyDashboardSchema> | null>(null);
+  const [userOverrides, setUserOverrides] = useState<Partial<EfficiencyDashboardSchema> | null>(null);
+  const [canSaveWorkspaceDefault, setCanSaveWorkspaceDefault] = useState(false);
+  const [hasAuthenticatedUser, setHasAuthenticatedUser] = useState(false);
+  const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
+
+  const dashboardConfig = useEfficiencyDashboardConfig({
+    tenantSlug,
+    surface: 'efficiency',
+    workspaceSchema,
+    initialUserOverrides: userOverrides,
+    syncToProfile: hasAuthenticatedUser,
+  });
+
+  const activePeriod = dashboardConfig.resolved.default_views.efficiency.defaultPeriod;
+  const compactMode = dashboardConfig.resolved.default_views.efficiency.compactMode;
 
   const fetchStatement = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const efficiencyUrl =
+        activePeriod === 'all-time'
+          ? `/api/v1/tenants/efficiency?tenant_slug=${tenantSlug}&period=all-time`
+          : `/api/v1/tenants/efficiency?tenant_slug=${tenantSlug}`;
+
       const [workspacesRes, efficiencyRes] = await Promise.all([
         fetch('/api/v1/tenants/me', {
           headers: { 'x-tenant-slug': tenantSlug },
         }).catch(() => null),
-        fetch(`/api/v1/tenants/efficiency?tenant_slug=${tenantSlug}`, {
+        fetch(efficiencyUrl, {
           headers: { 'x-tenant-slug': tenantSlug },
         }),
       ]);
 
       if (workspacesRes && workspacesRes.ok) {
         const wsData = await workspacesRes.json().catch(() => ({}));
-        setAllWorkspaces(wsData.workspaces || []);
+        const wsList = wsData.workspaces || [];
+        setAllWorkspaces(wsList);
+        const activeWs = wsList.find((w: any) => w.slug === tenantSlug);
+        if (activeWs) {
+          setWorkspaceSchema(
+            activeWs.settings?.efficiency_dashboard_settings ||
+              activeWs.metadata?.efficiency_dashboard_settings ||
+              null
+          );
+          setCanSaveWorkspaceDefault(
+            Boolean(wsData.user && activeWs.role && activeWs.role !== 'viewer')
+          );
+        }
+        if (wsData.user?.id) {
+          setHasAuthenticatedUser(true);
+        }
+        if (wsData.user?.efficiency_dashboard_preferences) {
+          setUserOverrides(wsData.user.efficiency_dashboard_preferences);
+        }
       }
 
       if (!efficiencyRes.ok) {
@@ -87,7 +132,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
     } finally {
       setLoading(false);
     }
-  }, [tenantSlug]);
+  }, [tenantSlug, activePeriod]);
 
   useEffect(() => {
     fetchStatement();
@@ -262,6 +307,11 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
               <Calendar className="w-3.5 h-3.5 text-sky-400" />
               <span>Custom Range</span>
             </Link>
+            <CustomizeDashboardButton
+              onClick={() => setIsCustomizerOpen(true)}
+              isCustomized={dashboardConfig.isSurfaceCustomized}
+              label="Customize"
+            />
             <button
               onClick={fetchStatement}
               disabled={loading}
@@ -273,233 +323,335 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
           </div>
         </div>
 
-        {/* Summary KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-4">
-          <div className="p-5 rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-medium uppercase tracking-wider">Hours Reclaimed</span>
-              <Clock className="w-4 h-4 text-emerald-400 print:text-black" />
-            </div>
-            <div className="text-2xl font-bold font-mono text-white print:text-black">
-              {kpis?.totalHoursReclaimed?.toFixed(1) ?? '0.0'}
-              <span className="text-xs text-slate-500 font-sans ml-1 font-normal">hrs</span>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Across {kpis?.completedItemsCount ?? 0} completed items & {kpis?.activeProjectsCount ?? 0} projects
-            </p>
-          </div>
+        {/* Declarative Schema-Driven Modules */}
+        {(() => {
+          const visibleKpis = dashboardConfig.getWidgets('kpi', { visibleOnly: true });
+          const visibleModules = dashboardConfig.getWidgets('module', { visibleOnly: true });
+          const cardPad = compactMode ? 'p-3.5' : 'p-5';
 
-          <div className="p-5 rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-medium uppercase tracking-wider">Velocity Factor</span>
-              <TrendingUp className="w-4 h-4 text-indigo-400 print:text-black" />
-            </div>
-            <div className="text-2xl font-bold font-mono text-indigo-300 print:text-black">
-              {kpis?.velocityFactor ?? '+18%'}
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Derived cycle-time reduction vs manual workflows
-            </p>
-          </div>
-
-          <div className="p-5 rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50">
-            <div className="flex items-center justify-between text-slate-400">
-              <span className="text-xs font-medium uppercase tracking-wider">Gross Realized Value</span>
-              <DollarSign className="w-4 h-4 text-amber-400 print:text-black" />
-            </div>
-            <div className="text-2xl font-bold font-mono text-amber-300 print:text-black">
-              ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? '0.00'}
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Evaluated at ${kpis?.hourlyRate ?? 125}/hr market engineering baseline
-            </p>
-          </div>
-
-          <div className="p-5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2 print:border-emerald-700 print:bg-emerald-50">
-            <div className="flex items-center justify-between text-emerald-400">
-              <span className="text-xs font-bold uppercase tracking-wider">Platform Subscription</span>
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-300 print:text-emerald-800">
-              $0.00
-            </div>
-            <p className="text-[11px] text-emerald-400/80">
-              Self-administered · 100% net realized yield
-            </p>
-          </div>
-        </div>
-
-        {/* Anti-Chore Farming & Sovereign Token Minting Breakdown */}
-        <div className="p-5 rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-4 print:border-gray-300 print:bg-gray-50">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/60 pb-3 print:border-gray-300">
-            <div className="flex items-center space-x-2">
-              <Coins className="w-4 h-4 text-amber-400 print:text-black" />
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-200 print:text-black">
-                Sovereign Token Yield & Verification Filter
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 print:hidden">
-                Projected Eligibility
-              </span>
-            </div>
-            <div className="flex items-center space-x-2 flex-wrap gap-y-1 print:hidden">
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                <Check className="w-3 h-3" />
-                {kpis?.breakdown?.verifiedArtifactCount ?? 0} Artifact-Verified
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-800 text-slate-400 border border-slate-700/60">
-                {kpis?.breakdown?.unverifiedExcludedCount ?? 0} Unverified Commercial
-              </span>
-              {(kpis?.breakdown?.personalExcludedCount ?? 0) > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center gap-1">
-                  <Lock className="w-3 h-3" />
-                  {kpis?.breakdown?.personalExcludedCount} Personal / Chores Excluded
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Stream A: Ecosystem Upkeep */}
-            <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
-                  <Layers className="w-3.5 h-3.5 text-indigo-400 print:text-black" />
-                  Stream A: Ecosystem Upkeep Pool
+          const renderKpiCard = (widgetId: string) => {
+            if (widgetId === 'eff_kpi_hours_reclaimed') {
+              return (
+                <div
+                  key={widgetId}
+                  data-testid="efficiency-kpi-hours-reclaimed"
+                  className={`${cardPad} rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50`}
+                >
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-xs font-medium uppercase tracking-wider">Hours Reclaimed</span>
+                    <Clock className="w-4 h-4 text-emerald-400 print:text-black" />
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-white print:text-black">
+                    {kpis?.totalHoursReclaimed?.toFixed(1) ?? '0.0'}
+                    <span className="text-xs text-slate-500 font-sans ml-1 font-normal">hrs</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Across {kpis?.completedItemsCount ?? 0} completed items & {kpis?.activeProjectsCount ?? 0} projects
+                  </p>
                 </div>
-                <div className="text-lg font-bold font-mono text-white mt-1 print:text-black">
-                  {((kpis?.completedItemsCount ?? 0) * 3000).toLocaleString()}
-                  <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
+              );
+            }
+            if (widgetId === 'eff_kpi_velocity_factor') {
+              return (
+                <div
+                  key={widgetId}
+                  data-testid="efficiency-kpi-velocity-factor"
+                  className={`${cardPad} rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50`}
+                >
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-xs font-medium uppercase tracking-wider">Velocity Factor</span>
+                    <TrendingUp className="w-4 h-4 text-indigo-400 print:text-black" />
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-indigo-300 print:text-black">
+                    {kpis?.velocityFactor ?? '+18%'}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Derived cycle-time reduction vs manual workflows
+                  </p>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
-                  Projected Escrow Allocation (3,000 tokens/item upkeep dividend for commercial triage)
+              );
+            }
+            if (widgetId === 'eff_kpi_gross_value') {
+              return (
+                <div
+                  key={widgetId}
+                  data-testid="efficiency-kpi-gross-value"
+                  className={`${cardPad} rounded-xl bg-slate-900/70 border border-slate-800/80 space-y-2 print:border-gray-300 print:bg-gray-50`}
+                >
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-xs font-medium uppercase tracking-wider">Gross Realized Value</span>
+                    <DollarSign className="w-4 h-4 text-amber-400 print:text-black" />
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-amber-300 print:text-black">
+                    ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? '0.00'}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Evaluated at ${kpis?.hourlyRate ?? 125}/hr market engineering baseline
+                  </p>
+                </div>
+              );
+            }
+            if (widgetId === 'eff_kpi_platform_fee') {
+              return (
+                <div
+                  key={widgetId}
+                  data-testid="efficiency-kpi-platform-fee"
+                  className={`${cardPad} rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2 print:border-emerald-700 print:bg-emerald-50`}
+                >
+                  <div className="flex items-center justify-between text-emerald-400">
+                    <span className="text-xs font-bold uppercase tracking-wider">Platform Subscription</span>
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-emerald-300 print:text-emerald-800">
+                    $0.00
+                  </div>
+                  <p className="text-[11px] text-emerald-400/80">
+                    Self-administered · 100% net realized yield
+                  </p>
+                </div>
+              );
+            }
+            return null;
+          };
+
+          if (visibleModules.length === 0) {
+            return (
+              <div
+                data-testid="efficiency-empty-modules"
+                className="p-8 rounded-2xl bg-slate-900/60 border border-dashed border-slate-800 text-center space-y-3"
+              >
+                <p className="text-sm font-semibold text-slate-300">
+                  All efficiency dashboard modules are currently hidden.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setIsCustomizerOpen(true)}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Open Customize Dashboard
+                </button>
               </div>
-            </div>
+            );
+          }
 
-            {/* Stream B: Personal Execution Bounty */}
-            <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
-                  <Coins className="w-3.5 h-3.5 text-amber-400 print:text-black" />
-                  Stream B: Personal Execution Bounties
+          return visibleModules.map((mod) => {
+            if (mod.id === 'eff_mod_summary_kpis') {
+              if (visibleKpis.length === 0) return null;
+              return (
+                <div
+                  key={mod.id}
+                  data-testid="efficiency-module-summary-kpis"
+                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-4"
+                >
+                  {visibleKpis.map((kpi) => renderKpiCard(kpi.id))}
                 </div>
-                <div className="text-lg font-bold font-mono text-amber-300 mt-1 print:text-black">
-                  {((kpis?.breakdown?.verifiedArtifactCount ?? 0) * 12000).toLocaleString()}
-                  <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
-                  Projected Assignee Allocation (12,000 tokens baseline for verified artifacts, scaled by neglect multiplier)
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+              );
+            }
 
-        {/* Itemized Audit Table */}
-        <div className="rounded-xl bg-slate-900/60 border border-slate-800/80 overflow-hidden print:border-gray-300">
-          <div className="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 print:text-black">
-              Itemized Yield Breakdown
-            </h2>
-            <span className="text-xs text-slate-500 font-mono">
-              {data?.dateRange.periodLabel}
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-mono uppercase tracking-wider print:bg-gray-100 print:text-black">
-                  <th className="py-3 px-6">Operational Friction Point</th>
-                  <th className="py-3 px-6">Yield / Volume Metrics</th>
-                  <th className="py-3 px-6 text-right">Hours Reclaimed</th>
-                  <th className="py-3 px-6 text-right">Valuation Rate</th>
-                  <th className="py-3 px-6 text-right">Realized Value</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300 print:text-black print:divide-gray-200">
-                {itemized.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="py-4 px-6 font-sans">
-                      <div className="font-semibold text-white print:text-black">
-                        {row.frictionPoint}
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5 print:text-slate-600">
-                        {row.description}
-                      </div>
-                    </td>
-                    <td className="py-4 px-6 text-slate-400 font-sans">
-                      <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[11px] font-mono text-slate-300 print:border-gray-300 print:bg-gray-100 print:text-black">
-                        {row.metric}
+            if (mod.id === 'eff_mod_token_yield') {
+              return (
+                <div
+                  key={mod.id}
+                  data-testid="efficiency-module-token-yield"
+                  className={`${cardPad} rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-4 print:border-gray-300 print:bg-gray-50`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/60 pb-3 print:border-gray-300">
+                    <div className="flex items-center space-x-2">
+                      <Coins className="w-4 h-4 text-amber-400 print:text-black" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-200 print:text-black">
+                        Sovereign Token Yield & Verification Filter
                       </span>
-                    </td>
-                    <td className="py-4 px-6 text-right text-emerald-400 font-semibold print:text-black">
-                      {row.hoursReclaimed.toFixed(2)} hrs
-                    </td>
-                    <td className="py-4 px-6 text-right text-slate-400">
-                      ${row.ratePerHour.toFixed(2)}/hr
-                    </td>
-                    <td className="py-4 px-6 text-right text-white font-bold print:text-black">
-                      ${row.realizedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-slate-800 bg-slate-950/80 font-mono text-xs font-bold text-white print:bg-gray-100 print:text-black">
-                  <td colSpan={2} className="py-3.5 px-6 uppercase tracking-wider font-sans text-slate-400">
-                    Gross Operational Yield
-                  </td>
-                  <td className="py-3.5 px-6 text-right text-emerald-400">
-                    {kpis?.totalHoursReclaimed?.toFixed(2)} hrs
-                  </td>
-                  <td className="py-3.5 px-6 text-right text-slate-400">
-                    Avg ${kpis?.hourlyRate}/hr
-                  </td>
-                  <td className="py-3.5 px-6 text-right text-emerald-300">
-                    ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30 print:hidden">
+                        Projected Eligibility
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-2 flex-wrap gap-y-1 print:hidden">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <Check className="w-3 h-3" />
+                        {kpis?.breakdown?.verifiedArtifactCount ?? 0} Artifact-Verified
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-slate-800 text-slate-400 border border-slate-700/60">
+                        {kpis?.breakdown?.unverifiedExcludedCount ?? 0} Unverified Commercial
+                      </span>
+                      {(kpis?.breakdown?.personalExcludedCount ?? 0) > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                          <Lock className="w-3 h-3" />
+                          {kpis?.breakdown?.personalExcludedCount} Personal / Chores Excluded
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-        {/* Bottom Line / Reverse Invoice Card */}
-        <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-6 print:border-gray-300 print:bg-gray-50">
-          <div className="space-y-1 max-w-xl">
-            <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-emerald-400">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Net Tenant Benefit Summary</span>
-            </div>
-            <p className="text-sm font-semibold text-white print:text-black">
-              Zero Platform Tax · Full Realized Productivity Dividend
-            </p>
-            <p className="text-xs text-slate-400 italic pt-1 print:text-slate-600">
-              &ldquo;{data?.ecosystemNote}&rdquo;
-            </p>
-          </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Stream A: Ecosystem Upkeep */}
+                    <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
+                          <Layers className="w-3.5 h-3.5 text-indigo-400 print:text-black" />
+                          Stream A: Ecosystem Upkeep Pool
+                        </div>
+                        <div className="text-lg font-bold font-mono text-white mt-1 print:text-black">
+                          {((kpis?.completedItemsCount ?? 0) * 3000).toLocaleString()}
+                          <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
+                          Projected Escrow Allocation (3,000 tokens/item upkeep dividend for commercial triage)
+                        </p>
+                      </div>
+                    </div>
 
-          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-right space-y-1 min-w-[240px] print:border-gray-300 print:bg-white">
-            <div className="flex justify-between text-xs text-slate-400">
-              <span>Gross Reclaimed Value:</span>
-              <span className="font-mono text-white print:text-black">
-                ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs text-slate-400">
-              <span>SunShade Subscription Fee:</span>
-              <span className="font-mono text-emerald-400 font-bold">$0.00</span>
-            </div>
-            <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-bold">
-              <span className="text-white print:text-black">Net Realized Savings:</span>
-              <span className="font-mono text-emerald-400">
-                ${kpis?.netRealizedSavings?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-        </div>
+                    {/* Stream B: Personal Execution Bounty */}
+                    <div className="p-4 rounded-lg bg-slate-950/60 border border-slate-800/60 flex items-start justify-between print:bg-white print:border-gray-200">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 print:text-slate-700">
+                          <Coins className="w-3.5 h-3.5 text-amber-400 print:text-black" />
+                          Stream B: Personal Execution Bounties
+                        </div>
+                        <div className="text-lg font-bold font-mono text-amber-300 mt-1 print:text-black">
+                          {((kpis?.breakdown?.verifiedArtifactCount ?? 0) * 12000).toLocaleString()}
+                          <span className="text-xs font-normal text-slate-400 font-sans ml-1.5">tokens</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5 print:text-slate-600">
+                          Projected Assignee Allocation (12,000 tokens baseline for verified artifacts, scaled by neglect multiplier)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            if (mod.id === 'eff_mod_itemized_breakdown') {
+              return (
+                <div
+                  key={mod.id}
+                  data-testid="efficiency-module-itemized-breakdown"
+                  className="rounded-xl bg-slate-900/60 border border-slate-800/80 overflow-hidden print:border-gray-300"
+                >
+                  <div className="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between">
+                    <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 print:text-black">
+                      Itemized Yield Breakdown
+                    </h2>
+                    <span className="text-xs text-slate-500 font-mono">
+                      {data?.dateRange.periodLabel}
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-mono uppercase tracking-wider print:bg-gray-100 print:text-black">
+                          <th className="py-3 px-6">Operational Friction Point</th>
+                          <th className="py-3 px-6">Yield / Volume Metrics</th>
+                          <th className="py-3 px-6 text-right">Hours Reclaimed</th>
+                          <th className="py-3 px-6 text-right">Valuation Rate</th>
+                          <th className="py-3 px-6 text-right">Realized Value</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300 print:text-black print:divide-gray-200">
+                        {itemized.map((row) => (
+                          <tr key={row.id} className="hover:bg-slate-800/30 transition-colors">
+                            <td className="py-4 px-6 font-sans">
+                              <div className="font-semibold text-white print:text-black">
+                                {row.frictionPoint}
+                              </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5 print:text-slate-600">
+                                {row.description}
+                              </div>
+                            </td>
+                            <td className="py-4 px-6 text-slate-400 font-sans">
+                              <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[11px] font-mono text-slate-300 print:border-gray-300 print:bg-gray-100 print:text-black">
+                                {row.metric}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 text-right text-emerald-400 font-semibold print:text-black">
+                              {row.hoursReclaimed.toFixed(2)} hrs
+                            </td>
+                            <td className="py-4 px-6 text-right text-slate-400">
+                              ${row.ratePerHour.toFixed(2)}/hr
+                            </td>
+                            <td className="py-4 px-6 text-right text-white font-bold print:text-black">
+                              ${row.realizedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-slate-800 bg-slate-950/80 font-mono text-xs font-bold text-white print:bg-gray-100 print:text-black">
+                          <td colSpan={2} className="py-3.5 px-6 uppercase tracking-wider font-sans text-slate-400">
+                            Gross Operational Yield
+                          </td>
+                          <td className="py-3.5 px-6 text-right text-emerald-400">
+                            {kpis?.totalHoursReclaimed?.toFixed(2)} hrs
+                          </td>
+                          <td className="py-3.5 px-6 text-right text-slate-400">
+                            Avg ${kpis?.hourlyRate}/hr
+                          </td>
+                          <td className="py-3.5 px-6 text-right text-emerald-300">
+                            ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            }
+
+            if (mod.id === 'eff_mod_net_benefit') {
+              return (
+                <div
+                  key={mod.id}
+                  data-testid="efficiency-module-net-benefit"
+                  className={`${compactMode ? 'p-4' : 'p-6'} rounded-2xl bg-slate-900/80 border border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-6 print:border-gray-300 print:bg-gray-50`}
+                >
+                  <div className="space-y-1 max-w-xl">
+                    <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-emerald-400">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Net Tenant Benefit Summary</span>
+                    </div>
+                    <p className="text-sm font-semibold text-white print:text-black">
+                      Zero Platform Tax · Full Realized Productivity Dividend
+                    </p>
+                    <p className="text-xs text-slate-400 italic pt-1 print:text-slate-600">
+                      &ldquo;{data?.ecosystemNote}&rdquo;
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-right space-y-1 min-w-[240px] print:border-gray-300 print:bg-white">
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>Gross Reclaimed Value:</span>
+                      <span className="font-mono text-white print:text-black">
+                        ${kpis?.grossRealizedValue?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>SunShade Subscription Fee:</span>
+                      <span className="font-mono text-emerald-400 font-bold">$0.00</span>
+                    </div>
+                    <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-bold">
+                      <span className="text-white print:text-black">Net Realized Savings:</span>
+                      <span className="font-mono text-emerald-400">
+                        ${kpis?.netRealizedSavings?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            return null;
+          });
+        })()}
       </main>
+
+      <CustomizeDashboardDrawer
+        isOpen={isCustomizerOpen}
+        onClose={() => setIsCustomizerOpen(false)}
+        activeSurface="efficiency"
+        config={dashboardConfig}
+        canSaveWorkspaceDefault={canSaveWorkspaceDefault}
+      />
     </div>
   );
 }

@@ -34,6 +34,7 @@ export default function DynamicStatementsPage(props: PageProps) {
 
 function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [userMeta, setUserMeta] = useState<any>(null);
 
   const {
     selectedItem,
@@ -51,9 +52,19 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.workspaces) setWorkspaces(d.workspaces);
+        if (d?.user) setUserMeta(d.user);
       })
       .catch(() => {});
   }, [tenantSlug]);
+
+  const activeWorkspace = workspaces.find((w: any) => w.slug === tenantSlug);
+  const workspaceSchema =
+    activeWorkspace?.settings?.efficiency_dashboard_settings ||
+    activeWorkspace?.metadata?.efficiency_dashboard_settings ||
+    null;
+  const canSaveWorkspaceDefault = Boolean(
+    userMeta && activeWorkspace?.role && activeWorkspace.role !== 'viewer'
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 print:bg-white print:text-black">
@@ -109,7 +120,13 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
         </div>
 
         {/* Dynamic Statement Generator Component */}
-        <StatementGenerator tenantSlug={tenantSlug} />
+        <StatementGenerator
+          tenantSlug={tenantSlug}
+          workspaceSchema={workspaceSchema}
+          userOverrides={userMeta?.efficiency_dashboard_preferences || null}
+          canSaveWorkspaceDefault={canSaveWorkspaceDefault}
+          syncToProfile={Boolean(userMeta?.id)}
+        />
       </main>
 
       {/* RHN Work Item Inspector Drawer */}
