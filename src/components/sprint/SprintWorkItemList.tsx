@@ -20,7 +20,9 @@ export interface SprintWorkItemListProps {
   allProjects?: Array<{ id: string; name: string; slug?: string; settings?: any }>;
   projectSettings?: any;
   onUpdateStatus?: (itemId: string, status: string) => void;
+  onUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   onUpdateSprint?: (itemId: string, sprint: string) => void;
+  members?: Array<{ id: string; name: string }>;
   availableSprints?: string[];
   currentSprintName?: string;
   isTreeMode?: boolean;
@@ -43,7 +45,9 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
   allProjects = [],
   projectSettings,
   onUpdateStatus,
+  onUpdateAssignee,
   onUpdateSprint,
+  members = [],
   availableSprints = [],
   currentSprintName,
   isTreeMode = false,
@@ -95,7 +99,9 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
           allProjects={allProjects}
           projectSettings={projectSettings}
           onUpdateStatus={onUpdateStatus}
+          onUpdateAssignee={onUpdateAssignee}
           onUpdateSprint={onUpdateSprint}
+          members={members}
           availableSprints={availableSprints}
           currentSprintName={currentSprintName}
           isTreeMode={true}
@@ -132,7 +138,9 @@ export const SprintWorkItemList: React.FC<SprintWorkItemListProps> = ({
                 allProjects={allProjects}
                 projectSettings={projectSettings}
                 onUpdateStatus={onUpdateStatus}
+                onUpdateAssignee={onUpdateAssignee}
                 onUpdateSprint={onUpdateSprint}
+                members={members}
                 availableSprints={availableSprints}
                 currentSprintName={currentSprintName}
                 isTreeMode={false}

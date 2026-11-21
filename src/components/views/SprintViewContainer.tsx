@@ -77,7 +77,9 @@ export interface SprintViewContainerProps {
   isAllProjects: boolean;
   allProjects: { id: string; slug: string; name: string; settings?: ProjectSettings }[];
   handleUpdateStatus: (itemId: string, newStatus: string) => Promise<void> | void;
+  handleUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   handleUpdateItemSprint: (itemId: string, sprintName: string | null) => Promise<void> | void;
+  members?: Array<{ id: string; name: string }>;
   availableSprintDefs?: SprintDefinition[];
   onLazyLoadSprint?: (sprintIdentifier: string) => Promise<void>;
 }
@@ -125,7 +127,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     isAllProjects,
     allProjects,
     handleUpdateStatus,
+    handleUpdateAssignee,
     handleUpdateItemSprint,
+    members = [],
     onLazyLoadSprint,
   } = props;
 
@@ -466,7 +470,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   isAllProjects={isAllProjects}
                   allProjects={allProjects}
                   onUpdateStatus={handleUpdateStatus}
+                  onUpdateAssignee={handleUpdateAssignee}
                   onUpdateSprint={(id, sp) => handleUpdateItemSprint(id, sp)}
+                  members={members}
                   availableSprints={availableSprints}
                   currentSprintName={sprintName}
                   isTreeMode={true}
@@ -685,7 +691,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           isAllProjects={isAllProjects}
                           allProjects={allProjects}
                           onUpdateStatus={handleUpdateStatus}
+                          onUpdateAssignee={handleUpdateAssignee}
                           onUpdateSprint={handleUpdateItemSprint}
+                          members={members}
                           availableSprints={availableSprints}
                           currentSprintName={sprintName}
                           isTreeMode={false}
@@ -783,7 +791,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                   isAllProjects={isAllProjects}
                   allProjects={allProjects}
                   onUpdateStatus={handleUpdateStatus}
+                  onUpdateAssignee={handleUpdateAssignee}
                   onUpdateSprint={handleUpdateItemSprint}
+                  members={members}
                   availableSprints={availableSprints}
                   currentSprintName="__none__"
                   isTreeMode={true}
@@ -892,7 +902,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                           isAllProjects={isAllProjects}
                           allProjects={allProjects}
                           onUpdateStatus={handleUpdateStatus}
+                          onUpdateAssignee={handleUpdateAssignee}
                           onUpdateSprint={handleUpdateItemSprint}
+                          members={members}
                           availableSprints={availableSprints}
                           currentSprintName="__none__"
                           isTreeMode={false}

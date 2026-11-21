@@ -40,7 +40,7 @@ function createItem(overrides: Partial<WorkItemNode> = {}): WorkItemNode {
 }
 
 describe('PRJ-05 - Loading Guard & Sprint View Status Color-Coding', () => {
-  it('SprintItemRow applies color-coded styling to status select based on status color', () => {
+  it('SprintItemRow applies color-coded styling to compact status glyph based on status color', () => {
     const item = createItem({ status: 'done' });
     const getItemStatuses = () => mockStatuses;
     const getItemHierarchy = () => mockHierarchy;
@@ -59,13 +59,13 @@ describe('PRJ-05 - Loading Guard & Sprint View Status Color-Coding', () => {
       />
     );
 
-    const statusSelect = screen.getByTestId(`sprint-status-select-${item.id}`);
-    expect(statusSelect).toBeInTheDocument();
+    const statusBtn = screen.getByTestId(`status-icon-btn-${item.id}`);
+    expect(statusBtn).toBeInTheDocument();
     // Done status has color #10b981
-    expect(statusSelect).toHaveStyle({
+    expect(statusBtn).toHaveStyle({
       color: '#10b981',
       backgroundColor: 'rgba(16, 185, 129, 0.125)',
-      border: '1px solid #10b98140',
+      borderColor: '#10b98160',
     });
   });
 
@@ -88,11 +88,11 @@ describe('PRJ-05 - Loading Guard & Sprint View Status Color-Coding', () => {
       />
     );
 
-    const statusSelect = screen.getByTestId(`sprint-status-select-${item.id}`);
-    expect(statusSelect).toHaveStyle({
+    const statusBtn = screen.getByTestId(`status-icon-btn-${item.id}`);
+    expect(statusBtn).toHaveStyle({
       color: '#3b82f6',
       backgroundColor: 'rgba(59, 130, 246, 0.125)',
-      border: '1px solid #3b82f640',
+      borderColor: '#3b82f660',
     });
   });
 });
@@ -227,16 +227,16 @@ describe('BUG-TRK-TREE-TABLE-ALIGNMENT - Tabular Tracks & Title Truncation', () 
     expect(rollupCol).toHaveClass('w-28');
     expect(rollupCol).toHaveClass('shrink-0');
 
-    // Assignee column track
+    // Slim Assignee column track
     const assigneeCol = screen.getByTestId('col-assignee');
     expect(assigneeCol).toBeInTheDocument();
-    expect(assigneeCol).toHaveClass('w-32');
+    expect(assigneeCol).toHaveClass('w-9');
     expect(assigneeCol).toHaveClass('shrink-0');
 
-    // Status column track
+    // Slim Status column track
     const statusCol = screen.getByTestId('col-status');
     expect(statusCol).toBeInTheDocument();
-    expect(statusCol).toHaveClass('w-36');
+    expect(statusCol).toHaveClass('w-9');
     expect(statusCol).toHaveClass('shrink-0');
 
     // Actions column track

@@ -6,7 +6,6 @@ import {
   MinusSquare,
   Square,
   Lock,
-  User,
   Pencil,
   AlertTriangle,
 } from 'lucide-react';
@@ -16,7 +15,7 @@ import { GitHubBadge } from '@/components/GitHubBadge';
 import { extractGitHubMetadata } from '@/lib/github-metadata';
 import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
-import { SprintStatusSelect } from '@/components/sprint/SprintStatusSelect';
+import { CompactAssigneeCell, CompactStatusCell, RowMemberOption } from '@/components/common/CompactRowCells';
 
 export interface SprintItemRowProps {
   item: WorkItem;
@@ -34,7 +33,9 @@ export interface SprintItemRowProps {
   allProjects?: Array<{ id: string; name: string; slug?: string; settings?: any }>;
   projectSettings?: any;
   onUpdateStatus?: (itemId: string, status: string) => void;
+  onUpdateAssignee?: (itemId: string, newAssignee: string | null) => Promise<void> | void;
   onUpdateSprint?: (itemId: string, sprint: string) => void;
+  members?: RowMemberOption[];
   availableSprints?: string[];
   currentSprintName?: string;
   isTreeMode?: boolean;
@@ -59,7 +60,9 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   allProjects = [],
   projectSettings,
   onUpdateStatus,
+  onUpdateAssignee,
   onUpdateSprint,
+  members = [],
   availableSprints = [],
   currentSprintName,
   isTreeMode = false,
@@ -286,20 +289,27 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           </span>
         ) : null}
 
-        {/* Assignee avatar/name pill */}
-        <span className="text-xs text-slate-400 flex items-center space-x-1 font-mono shrink-0 bg-slate-950/40 px-1.5 py-0.5 rounded border border-slate-800/60 md:bg-transparent md:px-0 md:py-0 md:border-0 whitespace-nowrap">
-          <User className="w-3 h-3 text-slate-500 shrink-0" />
-          <span className="truncate max-w-[100px] md:max-w-none">{item.assignee || 'Unassigned'}</span>
-        </span>
+        {/* Compact Assignee Avatar Cell */}
+        <div className="w-8 shrink-0 flex items-center justify-center" data-testid="sprint-col-assignee">
+          <CompactAssigneeCell
+            itemId={item.id}
+            assignee={item.assignee}
+            members={members}
+            onUpdateAssignee={onUpdateAssignee}
+            disabled={isImmutable}
+          />
+        </div>
 
-        {/* Status Select with Hierarchy Color-Coding */}
-        <SprintStatusSelect
-          itemId={item.id}
-          status={item.status}
-          statuses={getItemStatuses(item)}
-          onChange={onUpdateStatus}
-          disabled={isImmutable}
-        />
+        {/* Compact Status Glyph Cell */}
+        <div className="w-8 shrink-0 flex items-center justify-center" data-testid="sprint-col-status">
+          <CompactStatusCell
+            itemId={item.id}
+            status={item.status}
+            statuses={getItemStatuses(item)}
+            onUpdateStatus={onUpdateStatus}
+            disabled={isImmutable}
+          />
+        </div>
 
         {/* Move / Reassign Sprint Select */}
         <select
