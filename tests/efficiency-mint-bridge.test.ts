@@ -3,10 +3,14 @@ import {
   calculateItemEfficiencyYield,
   calculateTenantEfficiencyMintSummary,
   attestAndMintEfficiencyYield,
+  calculateAttributedPatronage,
+  mintTokensFromEfficiencyStatement,
+  recordArtifactTelemetry,
   TOKEN_PER_HOUR,
   TRIAGE_UPKEEP_HOURS_PER_ITEM,
   AUTONOMOUS_BOUNTY_HOURS_PER_ITEM,
   SYSTEM_ECOSYSTEM_POOL_USER_ID,
+  SYSTEM_ECOSYSTEM_POOL_WALLET_ID,
 } from '@/lib/services/efficiencyMintBridge';
 import type { WorkItemWithProjectMode } from '@/types/statements';
 
@@ -304,6 +308,282 @@ describe('Dual-Recipient Efficiency Mint Bridge Service', () => {
       expect(rpcPayload.p_project_id).toBe('real-project-id');
       expect(rpcPayload.p_assignee).toBe('real-runner');
       expect(rpcPayload.p_recipient_user_id).toBe('real-user-id');
+    });
+  });
+
+  describe('TASK-TRK-EFFICIENCY-MINT-BRIDGE: Usage-Attenuated Relevance Curve & Pool Minting', () => {
+    it('computes high initial attribution at cumulativeUses=0, tapers to 10-100 $SHT at 10000, and returns 0 when survivalRatio=0 or invocations=0', () => {
+      const initial = calculateAttributedPatronage({ cumulativeUses: 0, survivalRatio: 1.0 });
+      expect(initial).toBe(2500);
+      expect(initial).toBeGreaterThanOrEqual(1000);
+      expect(initial).toBeLessThanOrEqual(2500);
+
+      const mature = calculateAttributedPatronage({ cumulativeUses: 10000, survivalRatio: 1.0 });
+      expect(mature).toBeGreaterThanOrEqual(10);
+      expect(mature).toBeLessThanOrEqual(100);
+      expect(mature).toBe(93);
+
+      expect(calculateAttributedPatronage({ cumulativeUses: 5, survivalRatio: 0 })).toBe(0);
+      expect(calculateAttributedPatronage({ cumulativeUses: 5, survivalRatio: 1.0, invocations: 0 })).toBe(0);
+    });
+
+    it('deducts ai_usage_logs compute costs, mints 100% into SYSTEM_ECOSYSTEM_POOL, and stays idempotent on repeat runs', async () => {
+      const attestations: any[] = [];
+      const ledgerRows: any[] = [];
+      const artifact = {
+        artifact_ref_id: 'TOOL-GH-TRACKER',
+        builder_user_id: 'tympollack',
+        cumulative_uses: 0,
+        survival_ratio: 1.0,
+      };
+
+      const buildMockClient = () => {
+        const makeTable = (table: string) => {
+          if (table === 'ai_usage_logs') {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  eq: vi.fn().mockResolvedValue({
+                    data: [{ compute_cost_usd: 25 }],
+                    error: null,
+                  }),
+                })),
+              })),
+            };
+          }
+          if (table === 'efficiency_mint_attestations') {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn((col: string, val: string) => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: attestations.find((a) => a[col] === val) || null,
+                    error: null,
+                  }),
+                })),
+              })),
+              insert: vi.fn((row: any) => {
+                const duplicate = attestations.some(
+                  (a) =>
+                    (row.work_item_id && a.work_item_id === row.work_item_id) ||
+                    (row.checkpoint_hash && a.checkpoint_hash === row.checkpoint_hash)
+                );
+                const result = duplicate
+                  ? { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } }
+                  : (() => {
+                      const saved = { id: `att-${attestations.length + 1}`, ...row };
+                      attestations.push(saved);
+                      return { data: saved, error: null };
+                    })();
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue(result),
+                  })),
+                };
+              }),
+            };
+          }
+          if (table === 'infrastructure_artifacts') {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn((_col: string, val: string) => ({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: val === artifact.artifact_ref_id ? { ...artifact } : null,
+                    error: null,
+                  }),
+                })),
+              })),
+              update: vi.fn((patch: any) => ({
+                eq: vi.fn((_col: string, val: string) => {
+                  if (val === artifact.artifact_ref_id) {
+                    artifact.cumulative_uses = patch.cumulative_uses;
+                  }
+                  return Promise.resolve({ data: { ...artifact }, error: null });
+                }),
+              })),
+            };
+          }
+          if (table === 'hub_tokens_ledger') {
+            return {
+              insert: vi.fn((row: any) => {
+                const saved = { id: `ledger-${ledgerRows.length + 1}`, ...row };
+                ledgerRows.push(saved);
+                return {
+                  select: vi.fn(() => ({
+                    single: vi.fn().mockResolvedValue({ data: saved, error: null }),
+                  })),
+                };
+              }),
+            };
+          }
+          return {};
+        };
+
+        return {
+          schema: vi.fn(() => ({
+            from: vi.fn(makeTable),
+          })),
+          from: vi.fn(makeTable),
+        };
+      };
+
+      const mockClient = buildMockClient();
+
+      // First run: gross $125 - $25 compute = $100 net => (100/125) * 60,000 = 48,000 tokens
+      const first = await mintTokensFromEfficiencyStatement(mockClient, {
+        tenantId: 'tenant-1',
+        workItemId: 'item-uuid-100',
+        projectId: 'proj-1',
+        grossRealizedValueUsd: 125,
+        artifactRefId: 'TOOL-GH-TRACKER',
+      });
+
+      expect(first.status).toBe('attested');
+      expect(first.computeCostDeductedUsd).toBe(25);
+      expect(first.netRealizedValueUsd).toBe(100);
+      expect(first.mintedTokens).toBe(48000);
+      expect(first.walletId).toBe(SYSTEM_ECOSYSTEM_POOL_WALLET_ID);
+      expect(first.attributedBuilderId).toBe('tympollack');
+      expect(first.patronageCreditAwarded).toBe(2500);
+      expect(artifact.cumulative_uses).toBe(1);
+
+      expect(ledgerRows).toHaveLength(1);
+      expect(ledgerRows[0].user_id).toBe(SYSTEM_ECOSYSTEM_POOL_USER_ID);
+      expect(ledgerRows[0].transaction_type).toBe('ECOSYSTEM_UPKEEP_MINT');
+      expect(ledgerRows[0].amount).toBe(48000);
+      expect(ledgerRows[0].metadata.wallet_id).toBe('SYSTEM_ECOSYSTEM_POOL');
+      expect(ledgerRows[0].metadata.attributed_builder_id).toBe('tympollack');
+      expect(ledgerRows[0].metadata.artifact_ref_id).toBe('TOOL-GH-TRACKER');
+      expect(ledgerRows[0].metadata.patronage_credit_awarded).toBe(2500);
+      expect(ledgerRows[0].metadata.survival_ratio).toBe(1.0);
+
+      // Second run on the exact same completed item must be idempotent (zero duplicate mints)
+      const second = await mintTokensFromEfficiencyStatement(mockClient, {
+        tenantId: 'tenant-1',
+        workItemId: 'item-uuid-100',
+        projectId: 'proj-1',
+        grossRealizedValueUsd: 125,
+        artifactRefId: 'TOOL-GH-TRACKER',
+      });
+
+      expect(second.status).toBe('already_attested');
+      expect(second.mintedTokens).toBe(0);
+      expect(ledgerRows).toHaveLength(1);
+      expect(artifact.cumulative_uses).toBe(1);
+    });
+
+    it('skips minting when ai_usage_logs compute costs exceed gross realized value', async () => {
+      const makeTable = (table: string) => {
+        if (table === 'ai_usage_logs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({
+                  data: [{ compute_cost_usd: 150 }],
+                  error: null,
+                }),
+              })),
+            })),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      const res = await mintTokensFromEfficiencyStatement(mockClient, {
+        tenantId: 'tenant-1',
+        workItemId: 'item-over-budget',
+        grossRealizedValueUsd: 125,
+      });
+
+      expect(res.status).toBe('skipped');
+      expect(res.netRealizedValueUsd).toBe(0);
+      expect(res.mintedTokens).toBe(0);
+    });
+
+    it('recordArtifactTelemetry records pool upkeep mint and patronage credit for artifact sync', async () => {
+      const ledgerRows: any[] = [];
+      const attestations: any[] = [];
+      const makeTable = (table: string) => {
+        if (table === 'ai_usage_logs') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              })),
+            })),
+          };
+        }
+        if (table === 'efficiency_mint_attestations') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              })),
+            })),
+            insert: vi.fn((row: any) => {
+              attestations.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        if (table === 'infrastructure_artifacts') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    artifact_ref_id: 'TOOL-GH-TRACKER',
+                    builder_user_id: 'tympollack',
+                    cumulative_uses: 10000,
+                    survival_ratio: 1.0,
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn().mockResolvedValue({ data: {}, error: null }),
+            })),
+          };
+        }
+        if (table === 'hub_tokens_ledger') {
+          return {
+            insert: vi.fn((row: any) => {
+              ledgerRows.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      const res = await recordArtifactTelemetry('TOOL-GH-TRACKER', 'item-sync-1', {
+        supabaseClient: mockClient,
+        tenantId: 'tenant-1',
+      });
+
+      expect(res?.status).toBe('attested');
+      expect(res?.mintedTokens).toBe(3000);
+      expect(res?.patronageCreditAwarded).toBe(93);
+      expect(ledgerRows[0].user_id).toBe(SYSTEM_ECOSYSTEM_POOL_USER_ID);
+      expect(ledgerRows[0].metadata.attributed_builder_id).toBe('tympollack');
     });
   });
 });
