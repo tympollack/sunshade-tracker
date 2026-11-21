@@ -27,9 +27,9 @@ import type {
 } from '@/types/efficiency-dashboard';
 
 export type DefaultViewAppliedEvent =
-  | { surface: 'efficiency'; updates: Partial<EfficiencySurfaceDefaultView> }
-  | { surface: 'statements'; updates: Partial<StatementsSurfaceDefaultView> }
-  | { surface: 'telemetry'; updates: Partial<TelemetrySurfaceDefaultView> };
+  | { surface: 'efficiency'; updates: Partial<EfficiencySurfaceDefaultView>; isReset?: boolean }
+  | { surface: 'statements'; updates: Partial<StatementsSurfaceDefaultView>; isReset?: boolean }
+  | { surface: 'telemetry'; updates: Partial<TelemetrySurfaceDefaultView>; isReset?: boolean };
 import type { UseEfficiencyDashboardConfigResult } from '@/hooks/useEfficiencyDashboardConfig';
 import {
   getSurfaceWidgets,
@@ -125,16 +125,26 @@ export function CustomizeDashboardDrawer({
   const [drawerSurface, setDrawerSurface] = useState<DashboardSurface>(activeSurface);
   const [savedWorkspaceNotice, setSavedWorkspaceNotice] = useState(false);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      previousFocusRef.current =
+        typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
       setDrawerSurface(activeSurface);
       setSavedWorkspaceNotice(false);
-      // Move focus to close button when drawer opens
+      // Move focus into the drawer when opened
       const timer = setTimeout(() => {
         closeBtnRef.current?.focus();
       }, 0);
       return () => clearTimeout(timer);
+    } else if (previousFocusRef.current) {
+      const prev = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (typeof prev.focus === 'function') {
+        prev.focus();
+      }
     }
   }, [isOpen, activeSurface]);
 
@@ -143,6 +153,30 @@ export function CustomizeDashboardDrawer({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
+        return;
+      }
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first || !dialogRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last || !dialogRef.current.contains(document.activeElement)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -500,6 +534,7 @@ export function CustomizeDashboardDrawer({
       <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs" aria-hidden="true" />
 
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="customize-dashboard-title"
@@ -606,7 +641,14 @@ export function CustomizeDashboardDrawer({
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => config.resetSurface(drawerSurface)}
+              onClick={() => {
+                config.resetSurface(drawerSurface);
+                onDefaultViewApplied?.({
+                  surface: drawerSurface,
+                  updates: config.workspaceBaseline.default_views[drawerSurface],
+                  isReset: true,
+                } as DefaultViewAppliedEvent);
+              }}
               disabled={!surfaceCustomized}
               data-testid="customize-dashboard-reset-btn"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"

@@ -484,6 +484,73 @@ export function mergeEfficiencyDashboardSchemas(
   };
 }
 
+/**
+ * Merges sparse schema patches without materializing built-in defaults for untouched
+ * surfaces or widgets, preserving legacy fallbacks (such as live_dashboard_settings).
+ */
+export function mergeSparseEfficiencyDashboardSchemas(
+  ...layers: Array<Partial<EfficiencyDashboardSchema> | null | undefined>
+): EfficiencyDashboardSchema {
+  let schemaVersion = '1.0';
+  const widgetMap = new Map<string, EfficiencyWidgetOverride>();
+  const defaultViews: EfficiencyDefaultViewsPatch = {};
+
+  for (const layer of layers) {
+    if (!layer || typeof layer !== 'object') continue;
+    if (typeof layer.schema_version === 'string' && layer.schema_version.trim()) {
+      schemaVersion = layer.schema_version.trim();
+    }
+    if (layer.default_views && typeof layer.default_views === 'object') {
+      if (layer.default_views.efficiency) {
+        defaultViews.efficiency = {
+          ...(defaultViews.efficiency || {}),
+          ...layer.default_views.efficiency,
+        };
+      }
+      if (layer.default_views.statements) {
+        defaultViews.statements = {
+          ...(defaultViews.statements || {}),
+          ...layer.default_views.statements,
+        };
+      }
+      if (layer.default_views.telemetry) {
+        defaultViews.telemetry = {
+          ...(defaultViews.telemetry || {}),
+          ...layer.default_views.telemetry,
+        };
+      }
+    }
+    if (Array.isArray(layer.widgets)) {
+      for (const w of layer.widgets) {
+        if (!w || typeof w.id !== 'string' || !WIDGET_CATALOG_MAP.has(w.id)) continue;
+        const prev = widgetMap.get(w.id);
+        const def = WIDGET_CATALOG_MAP.get(w.id)!;
+        widgetMap.set(w.id, {
+          id: w.id,
+          visible: typeof w.visible === 'boolean' ? w.visible : prev?.visible ?? def.defaultVisible,
+          ...(typeof w.order === 'number' && Number.isFinite(w.order) && w.order >= 0
+            ? { order: w.order }
+            : prev?.order !== undefined
+            ? { order: prev.order }
+            : {}),
+          ...(typeof w.label === 'string' && w.label.trim()
+            ? { label: w.label.trim() }
+            : prev?.label
+            ? { label: prev.label }
+            : {}),
+        });
+      }
+    }
+  }
+
+  const widgets = Array.from(widgetMap.values());
+  return {
+    schema_version: schemaVersion,
+    ...(widgets.length > 0 ? { widgets } : {}),
+    ...(Object.keys(defaultViews).length > 0 ? { default_views: defaultViews } : {}),
+  };
+}
+
 export interface ResolveEfficiencyDashboardInput {
   workspaceSettings?: Partial<EfficiencyDashboardSchema> | null;
   liveDashboardSettings?: Partial<LiveDashboardSettings> | null;

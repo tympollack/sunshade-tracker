@@ -26,6 +26,7 @@ export interface LiveFlightDeckViewProps {
   liveDashboardSettings?: Partial<LiveDashboardSettings> | null;
   efficiencyDashboardSettings?: Partial<EfficiencyDashboardSchema> | null;
   userDashboardPreferences?: Partial<EfficiencyDashboardSchema> | null;
+  profileLoaded?: boolean;
   canSaveWorkspaceDefault?: boolean;
   syncToProfile?: boolean;
   initialPivot?: string | null;
@@ -42,6 +43,7 @@ export function LiveFlightDeckView({
   liveDashboardSettings,
   efficiencyDashboardSettings,
   userDashboardPreferences,
+  profileLoaded = false,
   canSaveWorkspaceDefault = false,
   syncToProfile = false,
   initialPivot,
@@ -56,6 +58,7 @@ export function LiveFlightDeckView({
     workspaceSchema: efficiencyDashboardSettings,
     liveDashboardSettings,
     initialUserOverrides: userDashboardPreferences,
+    profileLoaded,
     syncToProfile,
   });
 
@@ -64,6 +67,9 @@ export function LiveFlightDeckView({
     dashboardConfig.resolved.default_views.telemetry.defaultRefreshIntervalMs;
 
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
+
+  const hasUserSelectedPivotRef = useRef(false);
+  const hasUserSelectedCadenceRef = useRef(false);
 
   // Determine initial pivot from URL ?pivot= or resolved dashboard schema
   const [activePivot, setActivePivot] = useState<LivePivotMode>(() => {
@@ -89,24 +95,15 @@ export function LiveFlightDeckView({
     return 60000;
   });
 
-  // Sync workspace-configured defaults when tenantInfo loads asynchronously
-  const hasHydratedRemoteSettingsRef = useRef(
-    Boolean(liveDashboardSettings || efficiencyDashboardSettings)
-  );
+  // Sync resolved defaults whenever workspace settings or profile preferences finish loading,
+  // unless user has explicitly interacted with the toolbar or URL ?pivot= overrides it.
   useEffect(() => {
-    if (
-      (!liveDashboardSettings && !efficiencyDashboardSettings) ||
-      hasHydratedRemoteSettingsRef.current
-    ) {
-      return;
-    }
-    hasHydratedRemoteSettingsRef.current = true;
-
     const urlPivot =
       typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('pivot')
         : null;
     if (
+      !hasUserSelectedPivotRef.current &&
       !initialPivot &&
       urlPivot !== 'project_swimlanes' &&
       urlPivot !== 'stage_flow' &&
@@ -116,20 +113,25 @@ export function LiveFlightDeckView({
     }
 
     if (
-      configuredRefreshMs === 30000 ||
-      configuredRefreshMs === 60000 ||
-      configuredRefreshMs === 120000 ||
-      configuredRefreshMs === 0
+      !hasUserSelectedCadenceRef.current &&
+      (configuredRefreshMs === 30000 ||
+        configuredRefreshMs === 60000 ||
+        configuredRefreshMs === 120000 ||
+        configuredRefreshMs === 0)
     ) {
       setPollingCadenceMs(configuredRefreshMs);
     }
-  }, [
-    liveDashboardSettings,
-    efficiencyDashboardSettings,
-    configuredPivot,
-    configuredRefreshMs,
-    initialPivot,
-  ]);
+  }, [configuredPivot, configuredRefreshMs, initialPivot]);
+
+  const handleToolbarPivotChange = useCallback((pivot: LivePivotMode) => {
+    hasUserSelectedPivotRef.current = true;
+    setActivePivot(pivot);
+  }, []);
+
+  const handleToolbarCadenceChange = useCallback((cadence: PollingCadenceMs) => {
+    hasUserSelectedCadenceRef.current = true;
+    setPollingCadenceMs(cadence);
+  }, []);
 
   // Compute baseline telemetry immediately from in-memory workspace items & projects
   const computedBaseline = useMemo<InFlightTelemetryPayload>(() => {
@@ -253,9 +255,9 @@ export function LiveFlightDeckView({
       {/* Top Control Toolbar */}
       <LiveDashboardToolbar
         activePivot={activePivot}
-        onPivotChange={setActivePivot}
+        onPivotChange={handleToolbarPivotChange}
         pollingCadenceMs={pollingCadenceMs}
-        onPollingCadenceChange={setPollingCadenceMs}
+        onPollingCadenceChange={handleToolbarCadenceChange}
         isKioskMode={isKioskMode}
         onToggleKioskMode={onToggleKioskMode}
         lastSyncedAt={effectiveTelemetry.synced_at}
@@ -294,8 +296,7 @@ export function LiveFlightDeckView({
 
         const marqueeIdx = visibleModules.findIndex((m) => m.id === 'tel_mod_blocker_marquee');
         const ribbonIdx = visibleModules.findIndex((m) => m.id === 'tel_mod_telemetry_ribbon');
-        const canCombineRibbon =
-          marqueeIdx !== -1 && ribbonIdx !== -1 && Math.abs(marqueeIdx - ribbonIdx) === 1;
+        const canCombineRibbon = marqueeIdx !== -1 && ribbonIdx === marqueeIdx + 1;
 
         const elements: React.ReactNode[] = [];
         let renderedCombined = false;
@@ -373,10 +374,16 @@ export function LiveFlightDeckView({
         canSaveWorkspaceDefault={canSaveWorkspaceDefault}
         onDefaultViewApplied={(event) => {
           if (event.surface === 'telemetry') {
+            if (event.isReset) {
+              hasUserSelectedPivotRef.current = false;
+              hasUserSelectedCadenceRef.current = false;
+            }
             if (event.updates.defaultPivot) {
+              if (!event.isReset) hasUserSelectedPivotRef.current = true;
               setActivePivot(event.updates.defaultPivot);
             }
             if (typeof event.updates.defaultRefreshIntervalMs === 'number') {
+              if (!event.isReset) hasUserSelectedCadenceRef.current = true;
               setPollingCadenceMs(event.updates.defaultRefreshIntervalMs);
             }
           }

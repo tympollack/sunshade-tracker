@@ -5,6 +5,7 @@ import {
   DEFAULT_EFFICIENCY_DEFAULT_VIEWS,
   validateEfficiencyDashboardSchema,
   mergeEfficiencyDashboardSchemas,
+  mergeSparseEfficiencyDashboardSchemas,
   resolveEfficiencyDashboardConfig,
   getSurfaceWidgets,
   isDashboardWidgetVisible,
@@ -22,13 +23,18 @@ vi.mock('next/cache', () => ({
 }));
 
 const mockGetUser = vi.fn();
+const mockUpdateUser = vi.fn();
+const mockFrom = vi.fn();
+
 vi.mock('@/lib/supabase-server', () => ({
   createServerClient: vi.fn(async () => ({
-    auth: { getUser: mockGetUser },
+    auth: { getUser: mockGetUser, updateUser: mockUpdateUser },
+  })),
+  createServiceClient: vi.fn(() => ({
+    from: (...args: any[]) => mockFrom(...args),
   })),
 }));
 
-const mockFrom = vi.fn();
 vi.mock('@/lib/db', () => ({
   supabaseAdmin: {
     from: (...args: any[]) => mockFrom(...args),
@@ -268,6 +274,171 @@ describe('TASK-TRK-EFFICIENCY-DASHBOARD-SCHEMA-ENGINE', () => {
       expect(mockRevalidatePath).toHaveBeenCalledWith('/sunshade/settings/efficiency');
       expect(mockRevalidatePath).toHaveBeenCalledWith('/sunshade/statements');
       expect(mockRevalidatePath).toHaveBeenCalledWith('/sunshade/all');
+    });
+
+    it('preserves legacy live_dashboard_settings when saving unrelated efficiency/statements surfaces (sparse merge)', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'owner-1' } } });
+      let savedSettings: any = null;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return {
+            select: vi.fn(() =>
+              createChainMock({
+                data: {
+                  id: 't-1',
+                  slug: 'sunshade',
+                  owner_id: 'owner-1',
+                  settings: {
+                    live_dashboard_settings: {
+                      default_pivot: 'project_swimlanes',
+                      default_refresh_interval_ms: 0,
+                    },
+                  },
+                },
+                error: null,
+              })
+            ),
+            update: vi.fn((payload: any) => {
+              savedSettings = payload.settings;
+              return createChainMock({ data: null, error: null });
+            }),
+          };
+        }
+        return createChainMock({ data: null, error: null });
+      });
+
+      const res = await updateEfficiencyDashboardSchemaAction('sunshade', {
+        schema_version: '1.0',
+        widgets: [{ id: 'eff_mod_token_yield', visible: false }],
+        default_views: {
+          efficiency: { defaultPeriod: 'all-time', compactMode: true },
+        },
+      });
+
+      expect(res.success).toBe(true);
+      // Telemetry must remain unset in sparse efficiency_dashboard_settings so legacy live_dashboard_settings stays authoritative
+      expect(savedSettings.efficiency_dashboard_settings.default_views?.telemetry).toBeUndefined();
+      expect(res.resolved.default_views.telemetry.defaultPivot).toBe('project_swimlanes');
+      expect(res.resolved.default_views.telemetry.defaultRefreshIntervalMs).toBe(0);
+    });
+
+    it('never discloses private dashboard settings on unauthorized or viewer write denials', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: null } });
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return createChainMock({
+            data: {
+              id: 't-priv',
+              slug: 'secret-ws',
+              owner_id: 'owner-999',
+              settings: {
+                efficiency_dashboard_settings: {
+                  schema_version: '1.0',
+                  widgets: [{ id: 'eff_mod_token_yield', visible: false }],
+                  default_views: { efficiency: { defaultPeriod: 'all-time', compactMode: true } },
+                },
+              },
+            },
+            error: null,
+          });
+        }
+        return createChainMock({ data: null, error: null });
+      });
+
+      const unauthRes = await updateEfficiencyDashboardSchemaAction('secret-ws', {
+        schema_version: '1.0',
+        widgets: [{ id: 'eff_kpi_hours_reclaimed', visible: true }],
+      });
+
+      expect(unauthRes.success).toBe(false);
+      expect(unauthRes.error).toContain('Unauthorized');
+      expect(unauthRes.resolved.default_views.efficiency.defaultPeriod).toBe('monthly');
+      expect(isDashboardWidgetVisible(unauthRes.resolved, 'eff_mod_token_yield')).toBe(true);
+    });
+
+    it('mergeSparseEfficiencyDashboardSchemas merges only explicit keys', () => {
+      const sparse = mergeSparseEfficiencyDashboardSchemas(
+        { default_views: { statements: { defaultTimeframe: 'quarter' } } },
+        { default_views: { efficiency: { compactMode: true } } }
+      );
+      expect(sparse.default_views?.statements?.defaultTimeframe).toBe('quarter');
+      expect(sparse.default_views?.efficiency?.compactMode).toBe(true);
+      expect(sparse.default_views?.telemetry).toBeUndefined();
+    });
+  });
+
+  describe('API Routes (/api/v1/tenants/efficiency-schema & /api/v1/tenants/me)', () => {
+    it('PATCH /api/v1/tenants/efficiency-schema rejects viewers/unauthenticated and saves sparsely for owners', async () => {
+      const { NextRequest } = await import('next/server');
+      const { PATCH } = await import('@/app/api/v1/tenants/efficiency-schema/route');
+
+      mockGetUser.mockResolvedValue({ data: { user: null } });
+      const unauthReq = new NextRequest('http://localhost/api/v1/tenants/efficiency-schema', {
+        method: 'PATCH',
+        body: JSON.stringify({ tenant_slug: 'sunshade', updates: { schema_version: '1.0' } }),
+      });
+      const unauthRes = await PATCH(unauthReq);
+      expect(unauthRes.status).toBe(401);
+
+      mockGetUser.mockResolvedValue({ data: { user: { id: 'viewer-1' } } });
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'tenants') {
+          return createChainMock({
+            data: { id: 't-1', slug: 'sunshade', owner_id: 'owner-1', settings: {} },
+            error: null,
+          });
+        }
+        if (table === 'tenant_members') {
+          return createChainMock({ data: { role: 'viewer' }, error: null });
+        }
+        return createChainMock({ data: null, error: null });
+      });
+
+      const viewerReq = new NextRequest('http://localhost/api/v1/tenants/efficiency-schema', {
+        method: 'PATCH',
+        body: JSON.stringify({ tenant_slug: 'sunshade', updates: { schema_version: '1.0' } }),
+      });
+      const viewerRes = await PATCH(viewerReq);
+      expect(viewerRes.status).toBe(403);
+    });
+
+    it('PATCH /api/v1/tenants/me stores efficiency_dashboard_preferences scoped per tenant_slug', async () => {
+      const { NextRequest } = await import('next/server');
+      const { PATCH } = await import('@/app/api/v1/tenants/me/route');
+
+      mockGetUser.mockResolvedValue({
+        data: {
+          user: {
+            id: 'user-1',
+            email: 'tymz@sunshade.icu',
+            user_metadata: {
+              efficiency_dashboard_preferences: {
+                'ws-a': {
+                  schema_version: '1.0',
+                  widgets: [{ id: 'eff_kpi_velocity_factor', visible: false }],
+                },
+              },
+            },
+          },
+        },
+      });
+      mockUpdateUser.mockResolvedValue({ error: null });
+
+      const req = new NextRequest('http://localhost/api/v1/tenants/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          tenant_slug: 'ws-b',
+          efficiency_dashboard_preferences: {
+            schema_version: '1.0',
+            widgets: [{ id: 'eff_kpi_velocity_factor', visible: true }],
+          },
+        }),
+      });
+      const res = await PATCH(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.efficiency_dashboard_preferences_map['ws-a'].widgets[0].visible).toBe(false);
+      expect(body.efficiency_dashboard_preferences_map['ws-b'].widgets[0].visible).toBe(true);
     });
   });
 });

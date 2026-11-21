@@ -14,6 +14,7 @@ import type {
 } from '@/types/efficiency-dashboard';
 import {
   mergeEfficiencyDashboardSchemas,
+  mergeSparseEfficiencyDashboardSchemas,
   resolveEfficiencyDashboardConfig,
   validateEfficiencyDashboardSchema,
 } from '@/lib/efficiency-dashboard-schema';
@@ -558,19 +559,12 @@ export async function updateEfficiencyDashboardSchemaAction(
     }
 
     const existingSettings = tenant.settings || {};
-    const existingResolved = resolveEfficiencyDashboardConfig({
-      workspaceSettings: existingSettings.efficiency_dashboard_settings,
-      liveDashboardSettings: existingSettings.live_dashboard_settings,
-    });
-    const existingSchema = mergeEfficiencyDashboardSchemas(
-      existingSettings.efficiency_dashboard_settings
-    );
 
     if (!user) {
       return {
         success: false,
-        schema: existingSchema,
-        resolved: existingResolved,
+        schema: fallbackSchema,
+        resolved: fallbackResolved,
         error: 'Unauthorized: Session required to modify workspace settings.',
       };
     }
@@ -586,14 +580,22 @@ export async function updateEfficiencyDashboardSchemaAction(
       if (memberErr || !member || member.role === 'viewer') {
         return {
           success: false,
-          schema: existingSchema,
-          resolved: existingResolved,
+          schema: fallbackSchema,
+          resolved: fallbackResolved,
           error: 'Forbidden: You do not have permissions to edit workspace settings.',
         };
       }
     }
 
-    const mergedSchema = mergeEfficiencyDashboardSchemas(
+    const existingResolved = resolveEfficiencyDashboardConfig({
+      workspaceSettings: existingSettings.efficiency_dashboard_settings,
+      liveDashboardSettings: existingSettings.live_dashboard_settings,
+    });
+    const existingSchema = mergeSparseEfficiencyDashboardSchemas(
+      existingSettings.efficiency_dashboard_settings
+    );
+
+    const mergedSchema = mergeSparseEfficiencyDashboardSchemas(
       existingSettings.efficiency_dashboard_settings,
       updates
     );

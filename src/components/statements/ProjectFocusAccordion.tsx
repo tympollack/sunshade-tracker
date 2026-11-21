@@ -35,33 +35,29 @@ export function ProjectFocusAccordion({
   onSelectItem,
   className = '',
 }: ProjectFocusAccordionProps) {
-  // Retain open/closed state in localStorage
-  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+  // Retain sparse per-project open/closed overrides in localStorage
+  const [overridesMap, setOverridesMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    if (!Array.isArray(projects) || projects.length === 0) return;
-
     let savedMap: Record<string, boolean> = {};
     try {
       const saved = localStorage.getItem(getStorageKey(tenantSlug));
       if (saved) {
-        savedMap = JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          savedMap = parsed;
+        }
       }
     } catch {
       // Fallback
     }
-
-    // Default: respect schema defaultExpanded, respecting saved preferences for known projects
-    const defaults = projects.reduce<Record<string, boolean>>((acc, p) => {
-      acc[p.projectId] = savedMap[p.projectId] !== undefined ? savedMap[p.projectId] : defaultExpanded;
-      return acc;
-    }, {});
-    setOpenMap(defaults);
-  }, [projects, tenantSlug, defaultExpanded]);
+    setOverridesMap(savedMap);
+  }, [tenantSlug]);
 
   const toggleProject = (projectId: string) => {
-    setOpenMap((prev) => {
-      const next = { ...prev, [projectId]: !prev[projectId] };
+    setOverridesMap((prev) => {
+      const currentVal = prev[projectId] !== undefined ? prev[projectId] : defaultExpanded;
+      const next = { ...prev, [projectId]: !currentVal };
       try {
         localStorage.setItem(getStorageKey(tenantSlug), JSON.stringify(next));
       } catch {
@@ -111,7 +107,10 @@ export function ProjectFocusAccordion({
 
       <div className="space-y-3">
         {projects.map((project) => {
-          const isOpen = Boolean(openMap[project.projectId]);
+          const isOpen =
+            overridesMap[project.projectId] !== undefined
+              ? Boolean(overridesMap[project.projectId])
+              : defaultExpanded;
           const targetRatio = project.configuredRatio || targetVelocityRatio;
           const isRatioBeaten = project.empiricalRatio > 0 && project.empiricalRatio <= targetRatio;
           const isRatioOver = project.empiricalRatio > targetRatio;
@@ -125,6 +124,7 @@ export function ProjectFocusAccordion({
               {/* Accordion Header Row */}
               <button
                 type="button"
+                aria-expanded={isOpen}
                 data-testid={`accordion-toggle-${project.projectId}`}
                 onClick={() => toggleProject(project.projectId)}
                 className="w-full p-4 sm:p-5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 text-left hover:bg-slate-800/30 transition-colors cursor-pointer select-none"

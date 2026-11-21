@@ -33,6 +33,7 @@ export interface UseEfficiencyDashboardConfigOptions {
   workspaceSchema?: Partial<EfficiencyDashboardSchema> | null;
   liveDashboardSettings?: Partial<LiveDashboardSettings> | null;
   initialUserOverrides?: Partial<EfficiencyDashboardSchema> | null;
+  profileLoaded?: boolean;
   syncToProfile?: boolean;
   onWorkspaceSchemaSaved?: (schema: EfficiencyDashboardSchema) => void;
 }
@@ -81,40 +82,71 @@ function readStoredOverrides(storageKey: string): Partial<EfficiencyDashboardSch
   return null;
 }
 
+function writeStoredOverrides(
+  storageKey: string,
+  next: Partial<EfficiencyDashboardSchema> | null
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (next === null) {
+      localStorage.removeItem(storageKey);
+    } else {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export function useEfficiencyDashboardConfig({
   tenantSlug = 'default',
   surface,
   workspaceSchema,
   liveDashboardSettings,
   initialUserOverrides,
+  profileLoaded = false,
   syncToProfile = false,
   onWorkspaceSchemaSaved,
 }: UseEfficiencyDashboardConfigOptions): UseEfficiencyDashboardConfigResult {
-  const storageKey = getEfficiencyDashboardStorageKey(tenantSlug);
+  const cleanTenantSlug = (tenantSlug || 'default').replace(/^@/, '').trim() || 'default';
+  const storageKey = getEfficiencyDashboardStorageKey(cleanTenantSlug);
+
   const [userOverrides, setUserOverrides] = useState<Partial<EfficiencyDashboardSchema> | null>(
     () => readStoredOverrides(storageKey) ?? initialUserOverrides ?? null
   );
-  const [localWorkspaceSchema, setLocalWorkspaceSchema] = useState<
+  const [savedWorkspaceSchema, setSavedWorkspaceSchema] = useState<
     Partial<EfficiencyDashboardSchema> | null | undefined
-  >(workspaceSchema);
+  >(undefined);
   const [isSavingWorkspaceDefault, setIsSavingWorkspaceDefault] = useState(false);
   const [workspaceSaveError, setWorkspaceSaveError] = useState<string | null>(null);
 
+  const hasLocalEditRef = useRef(false);
+  const prevStorageKeyRef = useRef(storageKey);
+
   useEffect(() => {
-    setLocalWorkspaceSchema(workspaceSchema);
+    setSavedWorkspaceSchema(undefined);
   }, [workspaceSchema]);
 
-  // Rehydrate from localStorage when tenantSlug changes
+  const effectiveWorkspaceSchema =
+    savedWorkspaceSchema !== undefined ? savedWorkspaceSchema : workspaceSchema;
+
+  // Rehydrate from localStorage when switching workspace
   useEffect(() => {
-    const stored = readStoredOverrides(storageKey);
-    if (stored) {
-      setUserOverrides(stored);
-    } else if (initialUserOverrides) {
-      setUserOverrides(initialUserOverrides);
-    } else {
-      setUserOverrides(null);
+    if (prevStorageKeyRef.current !== storageKey) {
+      prevStorageKeyRef.current = storageKey;
+      hasLocalEditRef.current = false;
+      const stored = readStoredOverrides(storageKey);
+      setUserOverrides(stored ?? initialUserOverrides ?? null);
     }
   }, [storageKey, initialUserOverrides]);
+
+  // Reconcile local cache with authoritative signed-in profile preferences when loaded
+  useEffect(() => {
+    if (!profileLoaded || hasLocalEditRef.current) return;
+    const serverPrefs = initialUserOverrides ?? null;
+    setUserOverrides(serverPrefs);
+    writeStoredOverrides(storageKey, serverPrefs);
+  }, [profileLoaded, initialUserOverrides, storageKey]);
 
   const userOverridesRef = useRef(userOverrides);
   userOverridesRef.current = userOverrides;
@@ -122,45 +154,43 @@ export function useEfficiencyDashboardConfig({
   const workspaceBaseline = useMemo(
     () =>
       resolveEfficiencyDashboardConfig({
-        workspaceSettings: localWorkspaceSchema,
+        workspaceSettings: effectiveWorkspaceSchema,
         liveDashboardSettings,
       }),
-    [localWorkspaceSchema, liveDashboardSettings]
+    [effectiveWorkspaceSchema, liveDashboardSettings]
   );
 
   const resolved = useMemo(
     () =>
       resolveEfficiencyDashboardConfig({
-        workspaceSettings: localWorkspaceSchema,
+        workspaceSettings: effectiveWorkspaceSchema,
         liveDashboardSettings,
         userOverrides,
       }),
-    [localWorkspaceSchema, liveDashboardSettings, userOverrides]
+    [effectiveWorkspaceSchema, liveDashboardSettings, userOverrides]
   );
 
   const persistUserOverrides = useCallback(
     (next: EfficiencyDashboardSchema | null) => {
+      hasLocalEditRef.current = true;
       setUserOverrides(next);
-      if (typeof window !== 'undefined') {
-        try {
-          if (next === null) {
-            localStorage.removeItem(storageKey);
-          } else {
-            localStorage.setItem(storageKey, JSON.stringify(next));
-          }
-        } catch {
-          // Ignore storage quota errors
-        }
-      }
+      writeStoredOverrides(storageKey, next);
+
       if (syncToProfile && typeof fetch === 'function') {
         fetch('/api/v1/tenants/me', {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ efficiency_dashboard_preferences: next }),
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-slug': cleanTenantSlug,
+          },
+          body: JSON.stringify({
+            tenant_slug: cleanTenantSlug,
+            efficiency_dashboard_preferences: next,
+          }),
         }).catch(() => {});
       }
     },
-    [storageKey, syncToProfile]
+    [storageKey, syncToProfile, cleanTenantSlug]
   );
 
   const toggleWidget = useCallback(
@@ -220,15 +250,24 @@ export function useEfficiencyDashboardConfig({
       setWorkspaceSaveError(null);
       try {
         const surfaceSchema = extractSurfaceSchema(resolved, targetSurface);
-        const { updateEfficiencyDashboardSchemaAction } = await import(
-          '@/app/actions/settingsActions'
-        );
-        const result = await updateEfficiencyDashboardSchemaAction(tenantSlug, surfaceSchema);
-        if (!result.success) {
-          setWorkspaceSaveError(result.error || 'Failed to save workspace default');
+        const res = await fetch('/api/v1/tenants/efficiency-schema', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-tenant-slug': cleanTenantSlug,
+          },
+          body: JSON.stringify({
+            tenant_slug: cleanTenantSlug,
+            updates: surfaceSchema,
+          }),
+        });
+
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok || !result?.success) {
+          setWorkspaceSaveError(result?.error || `HTTP ${res.status}: Failed to save workspace default`);
           return false;
         }
-        setLocalWorkspaceSchema(result.schema);
+        setSavedWorkspaceSchema(result.schema);
         onWorkspaceSchemaSaved?.(result.schema);
         return true;
       } catch (err: any) {
@@ -238,7 +277,7 @@ export function useEfficiencyDashboardConfig({
         setIsSavingWorkspaceDefault(false);
       }
     },
-    [resolved, surface, tenantSlug, onWorkspaceSchemaSaved]
+    [resolved, surface, cleanTenantSlug, onWorkspaceSchemaSaved]
   );
 
   const getWidgets = useCallback(

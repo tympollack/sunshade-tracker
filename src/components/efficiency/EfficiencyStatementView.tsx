@@ -73,6 +73,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
     surface: 'efficiency',
     workspaceSchema,
     initialUserOverrides: userOverrides,
+    profileLoaded: hasAuthenticatedUser,
     syncToProfile: hasAuthenticatedUser,
   });
 
@@ -114,9 +115,11 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
         }
         if (wsData.user?.id) {
           setHasAuthenticatedUser(true);
-        }
-        if (wsData.user?.efficiency_dashboard_preferences) {
-          setUserOverrides(wsData.user.efficiency_dashboard_preferences);
+          const scopedPrefs =
+            wsData.user.efficiency_dashboard_preferences_map?.[tenantSlug] ??
+            wsData.user.efficiency_dashboard_preferences ??
+            null;
+          setUserOverrides(scopedPrefs);
         }
       }
 

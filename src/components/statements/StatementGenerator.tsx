@@ -48,6 +48,8 @@ export interface StatementGeneratorProps {
   onDataChange?: (data: EfficiencyMetricsPayload) => void;
   workspaceSchema?: Partial<EfficiencyDashboardSchema> | null;
   userOverrides?: Partial<EfficiencyDashboardSchema> | null;
+  isConfigReady?: boolean;
+  profileLoaded?: boolean;
   canSaveWorkspaceDefault?: boolean;
   syncToProfile?: boolean;
   className?: string;
@@ -59,6 +61,8 @@ export function StatementGenerator({
   onDataChange,
   workspaceSchema,
   userOverrides,
+  isConfigReady = true,
+  profileLoaded = false,
   canSaveWorkspaceDefault = false,
   syncToProfile = false,
   className = '',
@@ -68,6 +72,7 @@ export function StatementGenerator({
     surface: 'statements',
     workspaceSchema,
     initialUserOverrides: userOverrides,
+    profileLoaded,
     syncToProfile,
   });
 
@@ -229,9 +234,10 @@ export function StatementGenerator({
     [tenantSlug, onDataChange, fetchCalibration]
   );
 
-  // Initialize from URL search parameters on mount if available, or fetch initial preset if no initialData
+  // Initialize from URL search parameters once config is ready, or fetch configured preset if no initialData
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (!isConfigReady) return;
     if (isInitialMountDoneRef.current && prevTenantSlugRef.current === tenantSlug) {
       return;
     }
@@ -255,6 +261,17 @@ export function StatementGenerator({
         }
         return;
       }
+      if (tfParam !== 'custom') {
+        const { start, end } = getPresetDates(tfParam);
+        setCustomStartDate(start);
+        setCustomEndDate(end);
+        if (!initialData) {
+          fetchStatement(tfParam, start, end);
+        } else {
+          fetchCalibration(start, end);
+        }
+        return;
+      }
     }
 
     if (!initialData) {
@@ -269,6 +286,7 @@ export function StatementGenerator({
     }
   }, [
     tenantSlug,
+    isConfigReady,
     fetchStatement,
     fetchCalibration,
     getPresetDates,
@@ -478,7 +496,7 @@ export function StatementGenerator({
       )}
 
       {/* Loading state */}
-      {loading && (
+      {(loading || (!isConfigReady && !data)) && (
         <div className="py-12 flex items-center justify-center space-x-2 text-slate-400" data-testid="statement-loading">
           <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
           <span className="text-sm">Calculating dynamic statement metrics...</span>
