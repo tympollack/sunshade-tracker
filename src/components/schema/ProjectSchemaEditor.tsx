@@ -13,6 +13,7 @@ import {
   normalizeCustomField,
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+import { formatNumber, t } from '@/lib/i18n';
 import { ProjectSettingsSchema, lintProjectSettings } from '@/lib/project-settings-schema';
 import {
   isLateInflowEnforced,
@@ -42,6 +43,7 @@ export interface ProjectSchemaEditorProps {
   activeItems?: WorkItem[];
   readOnly?: boolean;
   hideValidationBanner?: boolean;
+  locale?: string;
 }
 
 export function ProjectSchemaEditor({
@@ -50,7 +52,10 @@ export function ProjectSchemaEditor({
   activeItems = [],
   readOnly = false,
   hideValidationBanner = false,
+  locale,
 }: ProjectSchemaEditorProps) {
+  const effectiveLocale =
+    locale || (typeof navigator !== 'undefined' ? navigator.language : undefined);
   const lintResult = useMemo(() => lintProjectSettings(settings), [settings]);
   // Active work metric configuration
   const currentMetricConfig = useMemo(() => getWorkMetricConfig(settings), [settings]);
@@ -461,7 +466,7 @@ export function ProjectSchemaEditor({
               <div className="space-y-1 pt-1 border-t border-slate-900">
                 <div className="flex items-center justify-between">
                   <label htmlFor="process-efficiency-factor-input" className="text-[11px] font-medium text-slate-400">
-                    Process Efficiency Factor
+                    {t('schema.processEfficiency.title', undefined, effectiveLocale)}
                   </label>
                   <span className="text-[10px] font-mono text-slate-500">process_efficiency_factor</span>
                 </div>
@@ -471,7 +476,7 @@ export function ProjectSchemaEditor({
                   step="0.05"
                   min="0.1"
                   max="5.0"
-                  aria-label="Process efficiency factor"
+                  aria-label={t('schema.processEfficiency.ariaLabel', undefined, effectiveLocale)}
                   value={settings.process_efficiency_factor ?? ''}
                   disabled={readOnly}
                   onChange={handleProcessEfficiencyChange}
@@ -479,9 +484,19 @@ export function ProjectSchemaEditor({
                   className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
                 />
                 <div className="flex items-center justify-between text-[10px] text-slate-500">
-                  <span>Bounty multiplier (0.10x – 5.00x).</span>
+                  <span>{t('schema.processEfficiency.help', undefined, effectiveLocale)}</span>
                   <span className="font-mono text-amber-300">
-                    {effectiveProcessEfficiency.toFixed(2)}x ({Math.round(60000 * effectiveProcessEfficiency).toLocaleString()} Tokens/hr)
+                    {t(
+                      'schema.processEfficiency.ratePreview',
+                      {
+                        factor: effectiveProcessEfficiency.toFixed(2),
+                        tokensPerHour: formatNumber(
+                          Math.round(60000 * effectiveProcessEfficiency),
+                          effectiveLocale
+                        ),
+                      },
+                      effectiveLocale
+                    )}
                   </span>
                 </div>
               </div>

@@ -9,6 +9,7 @@
  * 1 hour   = 60,000 tokens
  * 1 minute = 1,000 tokens
  */
+import { formatNumber, t } from '@/lib/i18n';
 
 export const TOKEN_RATE_PER_HOUR = 60000;
 export const SOVEREIGN_WEEKLY_HOURS_CAP = 20;
@@ -108,6 +109,7 @@ export function calculateBountyPricing(options: {
   referenceNow?: Date;
   processEfficiencyFactor?: number | null;
   patronBoostTokens?: number | null;
+  locale?: string | null;
 }): NeglectCalculationResult {
   const priority = normalizePriority(options.priority);
   const priorityWeight = PRIORITY_WEIGHTS[priority];
@@ -116,6 +118,7 @@ export function calculateBountyPricing(options: {
   const processEfficiencyFactor = normalizeProcessEfficiencyFactor(options.processEfficiencyFactor);
   const rawBoost = Number(options.patronBoostTokens);
   const patronBoostTokens = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.round(rawBoost) : 0;
+  const locale = options.locale;
 
   const rawHours = Number(options.estimatedHours);
   const estimatedHours = isNaN(rawHours) || rawHours <= 0 ? DEFAULT_ESTIMATED_HOURS : rawHours;
@@ -128,25 +131,28 @@ export function calculateBountyPricing(options: {
   if (neglectMultiplier > 1.0) {
     badges.push(
       processEfficiencyFactor !== 1.0
-        ? `${neglectMultiplier.toFixed(2)}x Neglect`
-        : `${neglectMultiplier.toFixed(2)}x Neglect Yield`
+        ? t('bounty.reward.badge.neglect', { multiplier: neglectMultiplier.toFixed(2) }, locale)
+        : t('bounty.reward.badge.neglectYield', { multiplier: neglectMultiplier.toFixed(2) }, locale)
     );
   }
   if (processEfficiencyFactor !== 1.0) {
     badges.push(
       neglectMultiplier > 1.0
-        ? `${processEfficiencyFactor.toFixed(2)}x Efficiency`
-        : `${processEfficiencyFactor.toFixed(2)}x Process Efficiency`
+        ? t('bounty.reward.badge.efficiency', { factor: processEfficiencyFactor.toFixed(2) }, locale)
+        : t('bounty.reward.badge.processEfficiency', { factor: processEfficiencyFactor.toFixed(2) }, locale)
     );
   }
   if (patronBoostTokens > 0) {
-    badges.push(`+${patronBoostTokens.toLocaleString()} Patron Boost`);
+    badges.push(
+      t('bounty.reward.badge.patronBoost', { amount: formatNumber(patronBoostTokens, locale) }, locale)
+    );
   }
 
+  const formattedAmount = formatNumber(dynamicBountyTokens, locale);
   const formattedRewardLabel =
     badges.length > 0
-      ? `${dynamicBountyTokens.toLocaleString()} Tokens (${badges.join(' · ')})`
-      : `${dynamicBountyTokens.toLocaleString()} Tokens`;
+      ? t('bounty.reward.tokensWithBadges', { amount: formattedAmount, badges: badges.join(' · ') }, locale)
+      : t('bounty.reward.tokens', { amount: formattedAmount }, locale);
 
   return {
     daysDormant,
@@ -168,7 +174,8 @@ export function calculateBountyPricing(options: {
 export function enrichItemWithNeglectPricing(
   item: any,
   referenceNow?: Date,
-  projectSettings?: { process_efficiency_factor?: number | null } | null
+  projectSettings?: { process_efficiency_factor?: number | null } | null,
+  locale?: string | null
 ) {
   const meta = item.metadata || {};
   const dateToUse = item.updated_at || item.created_at;
@@ -185,6 +192,8 @@ export function enrichItemWithNeglectPricing(
     lastActivityDate: dateToUse,
     referenceNow,
     processEfficiencyFactor: factorToUse,
+    patronBoostTokens: meta.patron_boost_tokens,
+    locale,
   });
 
   return {

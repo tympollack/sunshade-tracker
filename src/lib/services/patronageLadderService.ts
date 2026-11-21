@@ -1,3 +1,5 @@
+import { t, type TranslationKey } from '@/lib/i18n';
+
 export type PatronageLadderTier =
   | 'leaf_contributor'
   | 'force_multiplier'
@@ -22,6 +24,7 @@ export interface BuilderPatronageStatus {
   hoursSponsored: number;
   activeArtifactsCount: number;
   ladderTier: PatronageLadderTier;
+  ladderTierLabel: string;
   canDirectPatronBoost: boolean;
   isOversightSteward: boolean;
   nextTier: PatronageLadderTier | null;
@@ -64,6 +67,14 @@ export function resolvePatronageLadderTier(totalPatronageCredits: number): Patro
     return 'force_multiplier';
   }
   return 'leaf_contributor';
+}
+
+export function getPatronageLadderTierLabel(
+  tier: PatronageLadderTier,
+  locale?: string | null
+): string {
+  const key = `patronage.tier.${tier}` as TranslationKey;
+  return t(key, undefined, locale);
 }
 
 export function canAttachDirectedPatronBoost(
@@ -115,7 +126,8 @@ function getNextTierProgress(totalCredits: number): {
  */
 export async function getBuilderPatronageStatus(
   userId: string,
-  supabaseClient?: any
+  supabaseClient?: any,
+  locale?: string | null
 ): Promise<BuilderPatronageStatus> {
   const cleanUserId = String(userId || '').trim();
   if (!cleanUserId) {
@@ -185,6 +197,7 @@ export async function getBuilderPatronageStatus(
     hoursSponsored,
     activeArtifactsCount,
     ladderTier,
+    ladderTierLabel: getPatronageLadderTierLabel(ladderTier, locale),
     canDirectPatronBoost: totalPatronageCredits >= PATRONAGE_LADDER_THRESHOLDS.bounty_patron,
     isOversightSteward: totalPatronageCredits >= PATRONAGE_LADDER_THRESHOLDS.oversight_steward,
     nextTier,
