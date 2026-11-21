@@ -3989,6 +3989,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                       tenantInfo?.metadata?.live_dashboard_settings ||
                       null
                     }
+                    efficiencyDashboardSettings={
+                      tenantInfo?.settings?.efficiency_dashboard_settings ||
+                      tenantInfo?.metadata?.efficiency_dashboard_settings ||
+                      null
+                    }
+                    userDashboardPreferences={
+                      (currentUser as any)?.efficiency_dashboard_preferences_map?.[tenantSlug] ??
+                      (currentUser as any)?.efficiency_dashboard_preferences ??
+                      null
+                    }
+                    profileLoaded={Boolean(currentUser?.id)}
+                    canSaveWorkspaceDefault={!isReadOnly}
+                    syncToProfile={Boolean(currentUser?.id)}
                     initialPivot={typeof searchParams?.pivot === 'string' ? searchParams.pivot : null}
                     selectedItemRef={
                       selectedDrawerItem

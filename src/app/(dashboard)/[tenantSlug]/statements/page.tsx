@@ -34,6 +34,8 @@ export default function DynamicStatementsPage(props: PageProps) {
 
 function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
   const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [userMeta, setUserMeta] = useState<any>(null);
+  const [isTenantLoaded, setIsTenantLoaded] = useState(false);
 
   const {
     selectedItem,
@@ -45,15 +47,38 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
   });
 
   useEffect(() => {
+    let active = true;
+    setIsTenantLoaded(false);
     fetch('/api/v1/tenants/me', {
       headers: { 'x-tenant-slug': tenantSlug },
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
+        if (!active) return;
         if (d?.workspaces) setWorkspaces(d.workspaces);
+        if (d?.user) setUserMeta(d.user);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (active) setIsTenantLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
   }, [tenantSlug]);
+
+  const activeWorkspace = workspaces.find((w: any) => w.slug === tenantSlug);
+  const workspaceSchema =
+    activeWorkspace?.settings?.efficiency_dashboard_settings ||
+    activeWorkspace?.metadata?.efficiency_dashboard_settings ||
+    null;
+  const canSaveWorkspaceDefault = Boolean(
+    userMeta && activeWorkspace?.role && activeWorkspace.role !== 'viewer'
+  );
+  const scopedUserOverrides =
+    userMeta?.efficiency_dashboard_preferences_map?.[tenantSlug] ??
+    userMeta?.efficiency_dashboard_preferences ??
+    null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 print:bg-white print:text-black">
@@ -109,7 +134,15 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
         </div>
 
         {/* Dynamic Statement Generator Component */}
-        <StatementGenerator tenantSlug={tenantSlug} />
+        <StatementGenerator
+          tenantSlug={tenantSlug}
+          workspaceSchema={workspaceSchema}
+          userOverrides={scopedUserOverrides}
+          isConfigReady={isTenantLoaded}
+          profileLoaded={Boolean(userMeta?.id)}
+          canSaveWorkspaceDefault={canSaveWorkspaceDefault}
+          syncToProfile={Boolean(userMeta?.id)}
+        />
       </main>
 
       {/* RHN Work Item Inspector Drawer */}
