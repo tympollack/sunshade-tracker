@@ -6,6 +6,7 @@ import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 import { executeProjectAutomations } from '@/lib/automation-engine';
+import { recordArtifactTelemetry } from '@/lib/services/efficiencyMintBridge';
 
 
 export async function POST(req: NextRequest) {
@@ -464,6 +465,51 @@ export async function POST(req: NextRequest) {
         }
       } catch {
         queueMicrotask(runAutomations);
+      }
+    }
+
+    // Trigger non-blocking artifact attribution telemetry when synced_by_artifact accompanies a new PR or commit link
+    const telemetryTriggers = itemMutationSnapshots.filter(({ item, prior }) => {
+      const meta = item?.metadata || {};
+      const priorMeta = prior?.metadata || {};
+      const artifactRef = typeof meta.synced_by_artifact === 'string' ? meta.synced_by_artifact.trim() : '';
+      if (!artifactRef || !item?.id) return false;
+
+      const hasNewPrUrl = Boolean(meta.pr_url && meta.pr_url !== priorMeta.pr_url);
+      const hasNewCommitHash = Boolean(meta.commit_hash && meta.commit_hash !== priorMeta.commit_hash);
+      return hasNewPrUrl || hasNewCommitHash;
+    });
+
+    if (telemetryTriggers.length > 0) {
+      const runArtifactTelemetry = () =>
+        Promise.allSettled(
+          telemetryTriggers.map(({ item }) => {
+            const meta = item.metadata || {};
+            const artifactRef = String(meta.synced_by_artifact).trim();
+            const checkpointParts = [artifactRef, item.id, meta.commit_hash || meta.pr_url || 'sync'];
+            return recordArtifactTelemetry(artifactRef, item.id, {
+              supabaseClient: supabaseAdmin,
+              tenantId: tenant.id,
+              projectId: item.project_id,
+              checkpointHash: `telemetry:${checkpointParts.join(':')}`,
+              metadata: {
+                ...(meta.pr_url ? { pr_url: meta.pr_url } : {}),
+                ...(meta.commit_hash ? { commit_hash: meta.commit_hash } : {}),
+              },
+            });
+          })
+        ).catch((telErr) => {
+          console.warn('[tracker:ingest:telemetry] Non-blocking artifact telemetry error:', telErr);
+        });
+
+      try {
+        if (typeof after === 'function') {
+          after(runArtifactTelemetry);
+        } else {
+          queueMicrotask(runArtifactTelemetry);
+        }
+      } catch {
+        queueMicrotask(runArtifactTelemetry);
       }
     }
 
