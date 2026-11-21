@@ -164,11 +164,23 @@ export function normalizeProjectSettings(rawSettings: unknown): ProjectSettings 
     normalizedCustomFields = baseClone.custom_fields;
   }
 
+  let process_efficiency_factor: number | undefined;
+  if (
+    typeof raw.process_efficiency_factor === 'number' &&
+    Number.isFinite(raw.process_efficiency_factor) &&
+    raw.process_efficiency_factor > 0
+  ) {
+    process_efficiency_factor = Number(
+      Math.min(5.0, Math.max(0.1, raw.process_efficiency_factor)).toFixed(2)
+    );
+  }
+
   return {
     ...raw,
     schema_version,
     hierarchy: normalizedHierarchy,
     statuses: normalizedStatuses,
     custom_fields: normalizedCustomFields,
+    ...(process_efficiency_factor !== undefined ? { process_efficiency_factor } : {}),
   };
 }

@@ -2,6 +2,7 @@ import {
   SOVEREIGN_WEEKLY_TOKEN_CAP,
   SOVEREIGN_WEEKLY_HOURS_CAP,
   TOKEN_RATE_PER_HOUR,
+  normalizeProcessEfficiencyFactor,
 } from './neglectPricing';
 
 export interface CalendarWeekRange {
@@ -120,7 +121,10 @@ export function validateWeeklyBountyClaim(params: {
  * Derives token commitment for a work item in the weekly calculation.
  * Supports dynamic_tokens, bounty_tokens, estimated_hours, and bounty_hours.
  */
-export function getItemTokenCommitment(item: any): number {
+export function getItemTokenCommitment(
+  item: any,
+  projectEfficiencyFactor?: number | null
+): number {
   const meta = item?.metadata || {};
   if (meta.dynamic_tokens && !isNaN(Number(meta.dynamic_tokens))) {
     return Number(meta.dynamic_tokens);
@@ -132,7 +136,10 @@ export function getItemTokenCommitment(item: any): number {
   if (rawHours !== undefined && !isNaN(Number(rawHours))) {
     const hours = Number(rawHours);
     const mult = Number(meta.neglect_multiplier || 1.0);
-    return Math.round(hours * TOKEN_RATE_PER_HOUR * mult);
+    const effFactor = normalizeProcessEfficiencyFactor(
+      meta.process_efficiency_factor ?? item?.process_efficiency_factor ?? projectEfficiencyFactor
+    );
+    return Math.round(hours * TOKEN_RATE_PER_HOUR * mult * effFactor);
   }
   // Default 1-hr task
   return TOKEN_RATE_PER_HOUR;
@@ -148,19 +155,41 @@ export async function assertRunnerWeeklyCapacity(params: {
   assignee: string;
   candidateItem: {
     id: string;
+    project_id?: string;
     metadata?: Record<string, any>;
     [key: string]: any;
   };
+  projectSettings?: { process_efficiency_factor?: number | null } | null;
   adminOverride?: boolean;
 }): Promise<WeeklyCapacityValidationResult> {
   const { startOfWeek, endOfWeek } = getCalendarWeekRange();
 
   const { data: userItems } = await params.supabaseClient
     .from('work_items')
-    .select('id, metadata, status, updated_at, created_at')
+    .select('id, project_id, metadata, status, updated_at, created_at')
     .eq('tenant_id', params.tenantId)
     .eq('assignee', params.assignee)
     .neq('id', params.candidateItem.id);
+
+  // Resolve project-level process_efficiency_factor overrides safely
+  const projectEfficiencyMap = new Map<string, number>();
+  try {
+    const projTable: any = params.supabaseClient.from('projects');
+    if (projTable && typeof projTable.select === 'function') {
+      let projQuery: any = projTable.select('id, settings').eq('tenant_id', params.tenantId);
+      if (typeof projQuery?.is === 'function') {
+        projQuery = projQuery.is('deleted_at', null);
+      }
+      const projRes = await projQuery;
+      for (const proj of projRes?.data || []) {
+        if (proj?.id && typeof proj?.settings?.process_efficiency_factor === 'number') {
+          projectEfficiencyMap.set(proj.id, proj.settings.process_efficiency_factor);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal fallback when projects table is absent in legacy mocks
+  }
 
   const ACTIVE_COMMITMENT_STATUSES = new Set(['in_progress', 'in_review']);
 
@@ -185,8 +214,19 @@ export async function assertRunnerWeeklyCapacity(params: {
     return inWeek(claimedAt) || inWeek(completedAt) || inWeek(updated) || inWeek(created);
   });
 
-  const { totalTokens: currentWeeklyTokens } = computeUserWeeklyUtilization(weeklyItems);
-  const candidateBountyTokens = getItemTokenCommitment(params.candidateItem);
+  const { totalTokens: currentWeeklyTokens } = computeUserWeeklyUtilization(
+    weeklyItems,
+    projectEfficiencyMap
+  );
+  const candidateEfficiencyFactor =
+    params.projectSettings?.process_efficiency_factor ??
+    (params.candidateItem.project_id
+      ? projectEfficiencyMap.get(params.candidateItem.project_id)
+      : undefined);
+  const candidateBountyTokens = getItemTokenCommitment(
+    params.candidateItem,
+    candidateEfficiencyFactor
+  );
 
   return validateWeeklyBountyClaim({
     candidateBountyTokens,
@@ -198,7 +238,10 @@ export async function assertRunnerWeeklyCapacity(params: {
 /**
  * Computes weekly utilization from an array of a user's work items active or completed in the week.
  */
-export function computeUserWeeklyUtilization(items: any[]): {
+export function computeUserWeeklyUtilization(
+  items: any[],
+  projectEfficiencyMap?: Map<string, number>
+): {
   totalTokens: number;
   totalHours: number;
   itemCount: number;
@@ -207,7 +250,9 @@ export function computeUserWeeklyUtilization(items: any[]): {
   let itemCount = 0;
 
   for (const item of items) {
-    totalTokens += getItemTokenCommitment(item);
+    const projFactor =
+      item?.project_id && projectEfficiencyMap ? projectEfficiencyMap.get(item.project_id) : undefined;
+    totalTokens += getItemTokenCommitment(item, projFactor);
     itemCount++;
   }
 

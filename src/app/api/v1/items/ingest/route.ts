@@ -6,6 +6,8 @@ import { recordBulkAuditLogs, computeChangedFields } from '@/lib/audit-log';
 import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/notifications';
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 import { executeProjectAutomations } from '@/lib/automation-engine';
+import { recordArtifactTelemetry } from '@/lib/services/efficiencyMintBridge';
+import { hasVerifiableArtifactProof } from '@/lib/services/valueLedgerService';
 
 
 export async function POST(req: NextRequest) {
@@ -464,6 +466,86 @@ export async function POST(req: NextRequest) {
         }
       } catch {
         queueMicrotask(runAutomations);
+      }
+    }
+
+    // Trigger non-blocking artifact attribution telemetry when an authorized pipeline/owner/admin
+    // syncs a verified PR or commit link via a registered artifact (never on personal_organizer or forged member imports)
+    const isAuthorizedTelemetryCaller =
+      auth.context.userId === null ||
+      auth.context.role === 'owner' ||
+      auth.context.role === 'admin';
+    const isCommercialProject = project.settings?.ledger_mode !== 'personal_organizer';
+    const configuredRepo =
+      typeof project.settings?.github_repo === 'string'
+        ? project.settings.github_repo.trim().toLowerCase()
+        : '';
+
+    const telemetryTriggers =
+      isAuthorizedTelemetryCaller && isCommercialProject
+        ? itemMutationSnapshots.filter(({ item, prior }) => {
+            const meta = item?.metadata || {};
+            const priorMeta = prior?.metadata || {};
+            const artifactRef =
+              typeof meta.synced_by_artifact === 'string' ? meta.synced_by_artifact.trim() : '';
+            if (!artifactRef || !item?.id) return false;
+
+            const hasNewPrUrl = Boolean(meta.pr_url && meta.pr_url !== priorMeta.pr_url);
+            const hasNewCommitHash = Boolean(
+              meta.commit_hash && meta.commit_hash !== priorMeta.commit_hash
+            );
+            if (!hasNewPrUrl && !hasNewCommitHash) return false;
+
+            const proof = hasVerifiableArtifactProof({
+              id: item.id,
+              project_id: item.project_id,
+              status: item.status,
+              metadata: meta,
+            });
+            if (!proof.hasArtifactProof) return false;
+
+            if (configuredRepo && meta.pr_url) {
+              const prLower = String(meta.pr_url).toLowerCase();
+              if (prLower.includes('github.com/') && !prLower.includes(`github.com/${configuredRepo}/`)) {
+                return false;
+              }
+            }
+
+            return true;
+          })
+        : [];
+
+    if (telemetryTriggers.length > 0) {
+      const runArtifactTelemetry = async () => {
+        try {
+          for (const { item } of telemetryTriggers) {
+            const meta = item.metadata || {};
+            const artifactRef = String(meta.synced_by_artifact).trim();
+            const checkpointHash = `telemetry:${artifactRef}:${item.id}:${String(meta.pr_url || '')}:${String(meta.commit_hash || '')}`;
+            await recordArtifactTelemetry(artifactRef, item.id, {
+              supabaseClient: supabaseAdmin,
+              tenantId: tenant.id,
+              projectId: item.project_id,
+              checkpointHash,
+              metadata: {
+                ...(meta.pr_url ? { pr_url: meta.pr_url } : {}),
+                ...(meta.commit_hash ? { commit_hash: meta.commit_hash } : {}),
+              },
+            });
+          }
+        } catch (telErr) {
+          console.warn('[tracker:ingest:telemetry] Non-blocking artifact telemetry error:', telErr);
+        }
+      };
+
+      try {
+        if (typeof after === 'function') {
+          after(runArtifactTelemetry);
+        } else {
+          queueMicrotask(runArtifactTelemetry);
+        }
+      } catch {
+        queueMicrotask(runArtifactTelemetry);
       }
     }
 

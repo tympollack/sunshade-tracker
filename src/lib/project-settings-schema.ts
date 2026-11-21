@@ -103,6 +103,13 @@ export const ProjectSettingsSchema = z
     custom_metadata_fields: z.array(z.any()).nullable().optional(),
     work_metric_config: WorkMetricConfigSchema.nullable().optional(),
     work_unit_field: z.string().nullable().optional(),
+    process_efficiency_factor: z
+      .number({ invalid_type_error: 'process_efficiency_factor must be a number' })
+      .finite('process_efficiency_factor must be a finite number')
+      .min(0.1, 'process_efficiency_factor must be >= 0.1')
+      .max(5.0, 'process_efficiency_factor must be <= 5.0')
+      .nullable()
+      .optional(),
     row_columns: z.array(RowColumnConfigSchema).nullable().optional(),
     wip_limit: z.number().int().min(1).nullable().optional(),
     sprint_settings: z.record(z.any()).nullable().optional(),
