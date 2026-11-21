@@ -91,6 +91,26 @@ export default async function PublicBountiesPage({ params }: PageProps) {
     return it.metadata?.bounty_active === true;
   });
 
+  // 3b. Resolve project-level process_efficiency_factor overrides safely
+  const projectEfficiencyMap = new Map<string, number>();
+  try {
+    const projTable: any = supabaseAdmin.from('projects');
+    if (projTable && typeof projTable.select === 'function') {
+      let projQuery: any = projTable.select('id, settings').eq('tenant_id', tenant.id);
+      if (typeof projQuery?.is === 'function') {
+        projQuery = projQuery.is('deleted_at', null);
+      }
+      const projRes = await projQuery;
+      for (const proj of projRes?.data || []) {
+        if (proj?.id && typeof proj?.settings?.process_efficiency_factor === 'number') {
+          projectEfficiencyMap.set(proj.id, proj.settings.process_efficiency_factor);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal fallback to default 1.0 factor
+  }
+
   const columns = [
     { id: 'not_started', label: 'Open Bounties', icon: PlayCircle, color: 'text-amber-400 border-amber-500/20' },
     { id: 'in_progress', label: 'Claimed / In Progress', icon: Clock, color: 'text-sky-400 border-sky-500/20' },
@@ -232,6 +252,8 @@ export default async function PublicBountiesPage({ params }: PageProps) {
                       estimatedHours: item.metadata?.estimated_hours || item.metadata?.bounty_hours,
                       priority: item.priority || item.metadata?.priority,
                       lastActivityDate: item.updated_at || item.created_at,
+                      processEfficiencyFactor:
+                        projectEfficiencyMap.get(item.project_id) ?? item.metadata?.process_efficiency_factor,
                     });
 
                     return (

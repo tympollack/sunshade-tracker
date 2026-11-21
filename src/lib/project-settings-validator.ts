@@ -148,6 +148,21 @@ export function validateProjectSettings(settings: any): ValidationResult {
     }
   }
 
+  // Validate process_efficiency_factor if present
+  if (
+    'process_efficiency_factor' in settings &&
+    settings.process_efficiency_factor !== null &&
+    settings.process_efficiency_factor !== undefined
+  ) {
+    const pef = settings.process_efficiency_factor;
+    if (typeof pef !== 'number' || !Number.isFinite(pef) || pef < 0.1 || pef > 5.0) {
+      errors.push({
+        path: 'process_efficiency_factor',
+        message: 'process_efficiency_factor must be a finite number between 0.1 and 5.0',
+      });
+    }
+  }
+
   // Validate row_columns if present
   if ('row_columns' in settings && settings.row_columns !== null && settings.row_columns !== undefined) {
     if (!Array.isArray(settings.row_columns)) {

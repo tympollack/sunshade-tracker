@@ -15,6 +15,7 @@ export interface ItemVerificationProof {
 
 export interface ProjectSettingsWithLedger {
   ledger_mode?: LedgerMode;
+  process_efficiency_factor?: number | null;
   [key: string]: any;
 }
 
@@ -22,6 +23,7 @@ export interface WorkItemWithProjectMode {
   id: string;
   project_id: string;
   project_ledger_mode?: LedgerMode;
+  project_process_efficiency_factor?: number | null;
   status: string;
   metadata?: Record<string, any>;
   assignee?: string | null;

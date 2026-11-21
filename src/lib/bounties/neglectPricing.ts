@@ -15,6 +15,9 @@ export const SOVEREIGN_WEEKLY_HOURS_CAP = 20;
 export const SOVEREIGN_WEEKLY_TOKEN_CAP = SOVEREIGN_WEEKLY_HOURS_CAP * TOKEN_RATE_PER_HOUR; // 1,200,000 tokens
 export const MAX_NEGLECT_MULTIPLIER = 2.0;
 export const DEFAULT_ESTIMATED_HOURS = 1.0;
+export const DEFAULT_PROCESS_EFFICIENCY_FACTOR = 1.0;
+export const MIN_PROCESS_EFFICIENCY_FACTOR = 0.1;
+export const MAX_PROCESS_EFFICIENCY_FACTOR = 5.0;
 
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 
@@ -30,10 +33,26 @@ export interface NeglectCalculationResult {
   priorityWeight: number;
   priority: TaskPriority;
   neglectMultiplier: number; // Between 1.0 and 2.0
+  processEfficiencyFactor: number; // Clamped to [0.1, 5.0], default 1.0
   estimatedHours: number;
   baseTokens: number;
   dynamicBountyTokens: number;
   formattedRewardLabel: string;
+}
+
+/**
+ * Normalizes a project's process_efficiency_factor into [0.1, 5.0], defaulting to 1.0.
+ */
+export function normalizeProcessEfficiencyFactor(rawFactor?: number | null): number {
+  if (rawFactor === null || rawFactor === undefined) {
+    return DEFAULT_PROCESS_EFFICIENCY_FACTOR;
+  }
+  const n = Number(rawFactor);
+  if (!Number.isFinite(n) || n <= 0) {
+    return DEFAULT_PROCESS_EFFICIENCY_FACTOR;
+  }
+  const clamped = Math.min(MAX_PROCESS_EFFICIENCY_FACTOR, Math.max(MIN_PROCESS_EFFICIENCY_FACTOR, n));
+  return Number(clamped.toFixed(2));
 }
 
 /**
@@ -86,28 +105,35 @@ export function calculateBountyPricing(options: {
   priority?: string | null;
   lastActivityDate?: string | Date | null;
   referenceNow?: Date;
+  processEfficiencyFactor?: number | null;
 }): NeglectCalculationResult {
   const priority = normalizePriority(options.priority);
   const priorityWeight = PRIORITY_WEIGHTS[priority];
   const daysDormant = calculateDaysDormant(options.lastActivityDate, options.referenceNow);
   const neglectMultiplier = calculateNeglectMultiplier(daysDormant, priority);
+  const processEfficiencyFactor = normalizeProcessEfficiencyFactor(options.processEfficiencyFactor);
 
   const rawHours = Number(options.estimatedHours);
   const estimatedHours = isNaN(rawHours) || rawHours <= 0 ? DEFAULT_ESTIMATED_HOURS : rawHours;
 
   const baseTokens = Math.round(estimatedHours * TOKEN_RATE_PER_HOUR);
-  const dynamicBountyTokens = Math.round(baseTokens * neglectMultiplier);
+  const dynamicBountyTokens = Math.round(baseTokens * neglectMultiplier * processEfficiencyFactor);
 
-  const formattedRewardLabel =
-    neglectMultiplier > 1.0
-      ? `${dynamicBountyTokens.toLocaleString()} Tokens (${neglectMultiplier.toFixed(2)}x Neglect Yield)`
-      : `${dynamicBountyTokens.toLocaleString()} Tokens`;
+  let formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens`;
+  if (neglectMultiplier > 1.0 && processEfficiencyFactor !== 1.0) {
+    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${neglectMultiplier.toFixed(2)}x Neglect · ${processEfficiencyFactor.toFixed(2)}x Efficiency)`;
+  } else if (neglectMultiplier > 1.0) {
+    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${neglectMultiplier.toFixed(2)}x Neglect Yield)`;
+  } else if (processEfficiencyFactor !== 1.0) {
+    formattedRewardLabel = `${dynamicBountyTokens.toLocaleString()} Tokens (${processEfficiencyFactor.toFixed(2)}x Process Efficiency)`;
+  }
 
   return {
     daysDormant,
     priorityWeight,
     priority,
     neglectMultiplier,
+    processEfficiencyFactor,
     estimatedHours,
     baseTokens,
     dynamicBountyTokens,
@@ -118,17 +144,26 @@ export function calculateBountyPricing(options: {
 /**
  * Enriches a work item metadata object with calculated neglect pricing fields.
  */
-export function enrichItemWithNeglectPricing(item: any, referenceNow?: Date) {
+export function enrichItemWithNeglectPricing(
+  item: any,
+  referenceNow?: Date,
+  projectSettings?: { process_efficiency_factor?: number | null } | null
+) {
   const meta = item.metadata || {};
   const dateToUse = item.updated_at || item.created_at;
   const priorityToUse = item.priority || meta.priority;
   const hoursToUse = meta.estimated_hours || meta.bounty_hours;
+  const factorToUse =
+    projectSettings?.process_efficiency_factor ??
+    item.process_efficiency_factor ??
+    meta.process_efficiency_factor;
 
   const pricing = calculateBountyPricing({
     estimatedHours: hoursToUse,
     priority: priorityToUse,
     lastActivityDate: dateToUse,
     referenceNow,
+    processEfficiencyFactor: factorToUse,
   });
 
   return {
@@ -137,6 +172,7 @@ export function enrichItemWithNeglectPricing(item: any, referenceNow?: Date) {
       ...meta,
       bounty_active: meta.bounty_active ?? true,
       neglect_multiplier: pricing.neglectMultiplier,
+      process_efficiency_factor: pricing.processEfficiencyFactor,
       days_dormant: pricing.daysDormant,
       priority_weight: pricing.priorityWeight,
       base_tokens: pricing.baseTokens,

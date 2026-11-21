@@ -9,6 +9,7 @@ import {
   WorkItem,
   WorkMetricConfig,
   getWorkMetricConfig,
+  getProcessEfficiencyFactor,
   normalizeCustomField,
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
@@ -193,6 +194,30 @@ export function ProjectSchemaEditor({
   const handleGithubRepoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
     onChange({ ...settings, github_repo: e.target.value });
+  };
+
+  // Update Process Efficiency Factor
+  const effectiveProcessEfficiency = useMemo(
+    () => getProcessEfficiencyFactor(settings),
+    [settings]
+  );
+
+  const handleProcessEfficiencyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
+    const raw = e.target.value;
+    if (raw.trim() === '') {
+      const next = { ...settings };
+      delete next.process_efficiency_factor;
+      onChange(next);
+      return;
+    }
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      onChange({
+        ...settings,
+        process_efficiency_factor: parsed,
+      });
+    }
   };
 
   return (
@@ -430,6 +455,34 @@ export function ProjectSchemaEditor({
                     placeholder="e.g. pts"
                     className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
                   />
+                </div>
+              </div>
+
+              <div className="space-y-1 pt-1 border-t border-slate-900">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="process-efficiency-factor-input" className="text-[11px] font-medium text-slate-400">
+                    Process Efficiency Factor
+                  </label>
+                  <span className="text-[10px] font-mono text-slate-500">process_efficiency_factor</span>
+                </div>
+                <input
+                  id="process-efficiency-factor-input"
+                  type="number"
+                  step="0.05"
+                  min="0.1"
+                  max="5.0"
+                  aria-label="Process efficiency factor"
+                  value={settings.process_efficiency_factor ?? ''}
+                  disabled={readOnly}
+                  onChange={handleProcessEfficiencyChange}
+                  placeholder="1.0"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                />
+                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                  <span>Bounty multiplier (0.10x – 5.00x).</span>
+                  <span className="font-mono text-amber-300">
+                    {effectiveProcessEfficiency.toFixed(2)}x ({Math.round(60000 * effectiveProcessEfficiency).toLocaleString()} Tokens/hr)
+                  </span>
                 </div>
               </div>
 

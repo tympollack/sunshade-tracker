@@ -2,6 +2,7 @@ import {
   SOVEREIGN_WEEKLY_TOKEN_CAP,
   SOVEREIGN_WEEKLY_HOURS_CAP,
   TOKEN_RATE_PER_HOUR,
+  normalizeProcessEfficiencyFactor,
 } from './neglectPricing';
 
 export interface CalendarWeekRange {
@@ -132,7 +133,10 @@ export function getItemTokenCommitment(item: any): number {
   if (rawHours !== undefined && !isNaN(Number(rawHours))) {
     const hours = Number(rawHours);
     const mult = Number(meta.neglect_multiplier || 1.0);
-    return Math.round(hours * TOKEN_RATE_PER_HOUR * mult);
+    const effFactor = normalizeProcessEfficiencyFactor(
+      meta.process_efficiency_factor ?? item?.process_efficiency_factor
+    );
+    return Math.round(hours * TOKEN_RATE_PER_HOUR * mult * effFactor);
   }
   // Default 1-hr task
   return TOKEN_RATE_PER_HOUR;

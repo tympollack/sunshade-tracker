@@ -276,6 +276,23 @@ export const DEFAULT_WORK_METRIC_CONFIG: WorkMetricConfig = {
   unit_label: 'pts',
 };
 
+export const DEFAULT_PROCESS_EFFICIENCY_FACTOR = 1.0;
+export const MIN_PROCESS_EFFICIENCY_FACTOR = 0.1;
+export const MAX_PROCESS_EFFICIENCY_FACTOR = 5.0;
+
+/**
+ * Resolves and clamps a project's process_efficiency_factor to [0.1, 5.0],
+ * defaulting to 1.0 when unset or invalid.
+ */
+export function getProcessEfficiencyFactor(settings?: ProjectSettings | null): number {
+  const raw = settings?.process_efficiency_factor;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_PROCESS_EFFICIENCY_FACTOR;
+  }
+  const clamped = Math.min(MAX_PROCESS_EFFICIENCY_FACTOR, Math.max(MIN_PROCESS_EFFICIENCY_FACTOR, raw));
+  return Number(clamped.toFixed(2));
+}
+
 export function getWorkMetricConfig(settings?: ProjectSettings | null): WorkMetricConfig {
   if (settings?.work_metric_config?.field_key) {
     return {
@@ -445,6 +462,7 @@ export interface ProjectSettings {
   custom_metadata_fields?: CustomMetadataFieldDefinition[];
   work_metric_config?: WorkMetricConfig;
   work_unit_field?: string;
+  process_efficiency_factor?: number | null;
   row_columns?: RowColumnConfig[];
   wip_limit?: number;
   sprint_settings?: SprintSettings;
