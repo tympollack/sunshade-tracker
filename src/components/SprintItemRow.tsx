@@ -15,7 +15,7 @@ import { SchemaDeviation } from '@/lib/schema-deviation';
 import { CopyableRefId } from '@/components/CopyableRefId';
 import { CompactAssigneeCell, CompactStatusCell, RowMemberOption } from '@/components/common/CompactRowCells';
 import { RowFieldCell } from '@/components/common/RowFieldCell';
-import { ResolvedRowColumn, resolveEffectiveRowColumns } from '@/lib/row-columns';
+import { ResolvedRowColumn, resolveEffectiveRowColumns, getResponsiveMdTrackWidthClass } from '@/lib/row-columns';
 
 export interface SprintItemRowProps {
   item: WorkItem;
@@ -82,9 +82,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
     (metricKey === 'story_points' ? (item.metadata?.points ?? item.metadata?.estimate) : undefined);
   const itemDevs = deviations.filter((d) => d.itemId === item.id);
   const effectiveColumns =
-    visibleColumns && visibleColumns.length > 0
-      ? visibleColumns
-      : resolveEffectiveRowColumns(projectSettings, 'table');
+    visibleColumns ?? resolveEffectiveRowColumns(projectSettings, 'table');
   const showRefId = effectiveColumns.some((c) => c.key === 'ref_id');
   const rightColumns = effectiveColumns.filter((c) => c.placement === 'right');
 
@@ -258,11 +256,12 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         )}
 
         {rightColumns.map((col) => {
+          const mdTrackWidth = getResponsiveMdTrackWidthClass(col.width, col.key);
           if (col.key === 'points') {
             return (
               <div
                 key={col.key}
-                className="md:w-28 shrink-0 flex items-center justify-end"
+                className={`${mdTrackWidth} shrink-0 flex items-center justify-end`}
                 data-testid="sprint-col-points"
               >
                 {isTreeMode && rollupPoints > 0 ? (
@@ -342,7 +341,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             return (
               <div
                 key={col.key}
-                className="md:w-28 shrink-0 flex items-center justify-end"
+                className={`${mdTrackWidth} shrink-0 flex items-center justify-end`}
                 data-testid={`row-cell-sprint-${item.id}`}
               >
                 <select

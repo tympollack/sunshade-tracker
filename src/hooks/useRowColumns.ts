@@ -9,8 +9,12 @@ import {
   resolveEffectiveRowColumns,
 } from '@/lib/row-columns';
 
-export function getRowColumnsStorageKey(projectSlug: string, view: RowColumnViewTarget): string {
-  return `tracker_row_columns_${projectSlug || 'default'}_${view}`;
+export function getRowColumnsStorageKey(
+  projectSlug: string,
+  view: RowColumnViewTarget,
+  tenantSlug: string = 'default'
+): string {
+  return `tracker_row_columns_${tenantSlug || 'default'}_${projectSlug || 'default'}_${view}`;
 }
 
 export interface UseRowColumnsResult {
@@ -27,9 +31,10 @@ export function useRowColumns(
   projectSettings: ProjectSettings | null | undefined,
   view: RowColumnViewTarget,
   projectSlug: string = 'default',
-  items?: WorkItem[]
+  items?: WorkItem[],
+  tenantSlug: string = 'default'
 ): UseRowColumnsResult {
-  const storageKey = getRowColumnsStorageKey(projectSlug, view);
+  const storageKey = getRowColumnsStorageKey(projectSlug, view, tenantSlug);
   const [userKeys, setUserKeys] = useState<string[] | null>(null);
 
   useEffect(() => {
@@ -94,15 +99,28 @@ export function useRowColumns(
     (key: string, direction: 'up' | 'down') => {
       const currentKeys =
         userKeys !== null ? [...userKeys] : getDefaultRowColumnKeys(projectSettings, view);
+      const placementByKey = new Map(availableColumns.map((c) => [c.key, c.placement]));
+      const targetPlacement = placementByKey.get(key) || (key === 'ref_id' ? 'left' : 'right');
       const idx = currentKeys.indexOf(key);
       if (idx === -1) return;
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-      if (targetIdx < 0 || targetIdx >= currentKeys.length) return;
+
+      let targetIdx = -1;
+      const step = direction === 'up' ? -1 : 1;
+      for (let i = idx + step; i >= 0 && i < currentKeys.length; i += step) {
+        const candidatePlacement =
+          placementByKey.get(currentKeys[i]) || (currentKeys[i] === 'ref_id' ? 'left' : 'right');
+        if (candidatePlacement === targetPlacement) {
+          targetIdx = i;
+          break;
+        }
+      }
+      if (targetIdx === -1) return;
+
       const next = [...currentKeys];
       [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
       persistKeys(next);
     },
-    [userKeys, projectSettings, view, persistKeys]
+    [userKeys, projectSettings, view, availableColumns, persistKeys]
   );
 
   const resetToSchema = useCallback(() => {

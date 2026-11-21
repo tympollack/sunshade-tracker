@@ -4,6 +4,7 @@
  * Enforces schema integrity on project settings mutations, validating
  * triggers and template action targets.
  */
+import { RowColumnConfigSchema, formatZodPath } from './project-settings-schema';
 
 export interface ValidationError {
   path: string;
@@ -161,10 +162,16 @@ export function validateProjectSettings(settings: any): ValidationResult {
             path: `row_columns[${idx}]`,
             message: 'row_columns entry must be an object',
           });
-        } else if (!col.key || typeof col.key !== 'string' || !col.key.trim()) {
-          errors.push({
-            path: `row_columns[${idx}].key`,
-            message: 'row_columns entry key is required and must be a non-empty string',
+          return;
+        }
+        const parsed = RowColumnConfigSchema.safeParse(col);
+        if (!parsed.success) {
+          parsed.error.errors.forEach((err) => {
+            const subPath = err.path.length > 0 ? `.${formatZodPath(err.path)}` : '';
+            errors.push({
+              path: `row_columns[${idx}]${subPath}`,
+              message: err.message,
+            });
           });
         }
       });

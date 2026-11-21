@@ -101,9 +101,7 @@ export function TreeNodeCard({
   const effectiveHierarchy =
     hierarchy && hierarchy.length > 0 ? hierarchy : projectSettings?.hierarchy || [];
   const effectiveColumns =
-    visibleColumns && visibleColumns.length > 0
-      ? visibleColumns
-      : resolveEffectiveRowColumns(projectSettings, 'tree');
+    visibleColumns ?? resolveEffectiveRowColumns(projectSettings, 'tree');
   const showRefId = effectiveColumns.some((c) => c.key === 'ref_id');
   const rightColumns = effectiveColumns.filter((c) => c.placement === 'right');
 
@@ -277,7 +275,7 @@ export function TreeNodeCard({
 
         {/* Right section: Schema/User-Configured Static & Dynamic Columns + Actions */}
         <div
-          className="flex items-center gap-3 shrink-0 ml-auto w-full md:w-auto justify-between md:justify-end pt-1.5 md:pt-0 border-t border-slate-800/40 md:border-t-0"
+          className="flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-3 shrink-0 ml-auto w-full md:w-auto justify-between md:justify-end pt-1.5 md:pt-0 border-t border-slate-800/40 md:border-t-0"
           data-testid={`tree-node-right-zone-${item.id}`}
         >
           {rightColumns.map((col) => {

@@ -12,7 +12,10 @@ import {
   resolveAvailableRowColumns,
   resolveEffectiveRowColumns,
   formatRowCellValue,
+  getDefaultRowColumnKeys,
 } from '@/lib/row-columns';
+import { getRowColumnsStorageKey } from '@/hooks/useRowColumns';
+import { SprintItemRow } from '@/components/SprintItemRow';
 import { lintProjectSettings } from '@/lib/project-settings-schema';
 import { validateProjectSettings } from '@/lib/project-settings-validator';
 import { mergeProjectSettings } from '@/lib/portfolio-merge';
@@ -185,6 +188,51 @@ describe('TASK-TRK-CONFIGURABLE-STATIC-DYNAMIC-FIELDS', () => {
         },
       ]);
       expect(merged.row_columns?.map((c) => c.key)).toEqual(['priority', 'ai_credits']);
+    });
+
+    it('rejects non-string column labels, invalid widths/views, and whitespace keys in validateProjectSettings', () => {
+      const badSettings = {
+        ...baseSettings,
+        row_columns: [
+          { key: 'status', label: { en: 'Status' }, source: 'static', width: 'xl', views: ['board'] },
+          { key: '   ' },
+        ],
+      };
+      const res = validateProjectSettings(badSettings);
+      expect(res.valid).toBe(false);
+      expect(res.errors.some((e) => e.path.startsWith('row_columns[0]'))).toBe(true);
+      expect(res.errors.some((e) => e.path.startsWith('row_columns[1]'))).toBe(true);
+    });
+
+    it('merges per-view visibility across projects and keeps unconfigured projects defaults', () => {
+      const merged = mergeProjectSettings([
+        {
+          id: 'p1',
+          slug: 'proj-a',
+          settings: {
+            ...baseSettings,
+            row_columns: [{ key: 'priority', source: 'dynamic', views: ['tree'] }],
+          },
+        },
+        {
+          id: 'p2',
+          slug: 'proj-b',
+          settings: {
+            ...baseSettings,
+            row_columns: [{ key: 'priority', source: 'dynamic', views: ['table'] }],
+          },
+        },
+        {
+          id: 'p3',
+          slug: 'proj-c',
+          settings: {
+            ...baseSettings,
+          },
+        },
+      ]);
+      const priorityCol = merged.row_columns?.find((c) => c.key === 'priority');
+      expect(priorityCol?.views).toEqual(expect.arrayContaining(['tree', 'table']));
+      expect(merged.row_columns?.some((c) => c.key === 'status' && c.views?.includes('table'))).toBe(true);
     });
   });
 
@@ -368,6 +416,124 @@ describe('TASK-TRK-CONFIGURABLE-STATIC-DYNAMIC-FIELDS', () => {
 
       expect(screen.queryByTestId(`row-cell-github-${item.id}`)).not.toBeInTheDocument();
       expect(screen.getByTestId(`row-cell-complexity-${item.id}`)).toHaveTextContent('3');
+    });
+
+    it('preserves explicit empty column selections without falling back to defaults and isolates storage by tenant', () => {
+      const item = createItem();
+      const emptySchemaSettings: ProjectSettings = {
+        ...baseSettings,
+        row_columns: [],
+      };
+      expect(getDefaultRowColumnKeys(emptySchemaSettings, 'tree')).toEqual([]);
+      expect(getDefaultRowColumnKeys(emptySchemaSettings, 'table')).toEqual([]);
+
+      render(
+        <SprintItemRow
+          item={item}
+          isSelected={false}
+          onToggleSelect={vi.fn()}
+          isImmutable={false}
+          onEditItem={vi.fn()}
+          getItemHierarchy={() => mockHierarchy}
+          getItemStatuses={() => mockStatuses}
+          visibleColumns={[]}
+        />
+      );
+      expect(screen.queryByTestId('sprint-col-status')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('sprint-col-assignee')).not.toBeInTheDocument();
+
+      // Tenant isolation in storage keys
+      expect(getRowColumnsStorageKey('all', 'tree', 'acme')).not.toBe(
+        getRowColumnsStorageKey('all', 'tree', 'studio')
+      );
+    });
+
+    it('handles null row_columns drafts safely in ProjectSchemaEditor and aligns custom sprint widths', () => {
+      const item = createItem();
+      const malformedSettings = {
+        ...baseSettings,
+        row_columns: [null, { key: 'sprint', source: 'static', width: 'lg', views: ['table'] }],
+      } as unknown as ProjectSettings;
+
+      render(<ProjectSchemaEditor settings={malformedSettings} onChange={vi.fn()} />);
+      expect(screen.getByTestId('row-columns-config-editor')).toBeInTheDocument();
+
+      const customWidthCols = resolveEffectiveRowColumns(
+        {
+          ...baseSettings,
+          row_columns: [{ key: 'sprint', source: 'static', width: 'lg', views: ['table'] }],
+        },
+        'table'
+      );
+      render(
+        <SprintItemRow
+          item={item}
+          isSelected={false}
+          onToggleSelect={vi.fn()}
+          isImmutable={false}
+          onEditItem={vi.fn()}
+          getItemHierarchy={() => mockHierarchy}
+          getItemStatuses={() => mockStatuses}
+          visibleColumns={customWidthCols}
+        />
+      );
+      expect(screen.getByTestId(`row-cell-sprint-${item.id}`)).toHaveClass('md:w-36');
+    });
+
+    it('pins left-zone ref_id and disables moving the first right-zone column past it', () => {
+      const item = createItem();
+      render(
+        <TreeViewContainer
+          handleExpandAllTreeNodes={vi.fn()}
+          handleCollapseAllTreeNodes={vi.fn()}
+          selectedSprint="all"
+          setSelectedSprint={vi.fn()}
+          availableSprints={['Sprint 2026-Q4']}
+          statusFilterOptions={[]}
+          effectiveTreeStatuses={['not_started', 'in_progress', 'complete']}
+          setTreeSelectedStatuses={vi.fn()}
+          levelFilterOptions={[]}
+          effectiveTreeLevels={['story', 'task']}
+          setTreeSelectedLevels={vi.fn()}
+          assigneeFilterOptions={[]}
+          effectiveTreeAssignees={[]}
+          setTreeSelectedAssignees={vi.fn()}
+          treeSortBy="order_index"
+          setTreeSortBy={vi.fn()}
+          pointMode="granular"
+          handlePointModeChange={vi.fn()}
+          treeFilteredItems={[item]}
+          projectSettings={baseSettings}
+          isReadOnly={false}
+          loading={false}
+          items={[item]}
+          treeItems={[item]}
+          isTreeRootOver={false}
+          setIsTreeRootOver={vi.fn()}
+          treeDraggedItemId={null}
+          setTreeDraggedItemId={vi.fn()}
+          handleTreeReparent={vi.fn()}
+          getStatusColor={() => '#38bdf8'}
+          deviations={[]}
+          onOpenReconciliation={vi.fn()}
+          getItemStatuses={() => mockStatuses}
+          getItemHierarchy={() => mockHierarchy}
+          workspaceMembers={[{ user_id: 'u1', full_name: 'Tymz' }]}
+          getItemProjectSettings={() => baseSettings}
+          collapsedTreeNodes={new Set()}
+          handleToggleCollapseTreeNode={vi.fn()}
+          handleUpdateStatus={vi.fn()}
+          handleTreeUpdateAssignee={vi.fn()}
+          handleTreeCreateChild={vi.fn()}
+          setEditingItem={vi.fn()}
+          tenantSlug="acme"
+          projectSlug="sunshade-tracker"
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('row-columns-picker-btn-tree'));
+      expect(screen.queryByTestId('row-column-move-up-ref_id')).not.toBeInTheDocument();
+      expect(screen.getByTestId('row-column-move-up-points')).toBeDisabled();
     });
   });
 });

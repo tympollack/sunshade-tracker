@@ -70,7 +70,7 @@ export const WorkMetricConfigSchema = z.object({
 });
 
 export const RowColumnConfigSchema = z.object({
-  key: z.string().min(1, 'Column key is required'),
+  key: z.string().trim().min(1, 'Column key is required'),
   label: z.string().optional(),
   source: z.enum(['static', 'dynamic']).optional(),
   visible: z.boolean().optional(),

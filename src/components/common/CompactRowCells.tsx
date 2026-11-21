@@ -185,6 +185,10 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
   useLayoutEffect(() => {
     if (isOpen) {
       updatePosition();
+      const target =
+        menuRef.current?.querySelector<HTMLButtonElement>('[data-selected="true"]') ||
+        menuRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]');
+      target?.focus();
     }
   }, [isOpen, updatePosition]);
 
@@ -203,7 +207,10 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     window.addEventListener('resize', handleScrollResize);
     window.addEventListener('scroll', handleScrollResize, true);
@@ -235,6 +242,8 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
         }}
         title={tooltipText}
         aria-label={`Assignee: ${trimmedAssignee || 'Unassigned'}`}
+        aria-haspopup={isInteractive ? 'menu' : undefined}
+        aria-expanded={isInteractive ? isOpen : undefined}
         data-testid={testId || `assignee-avatar-btn-${itemId}`}
         className={`w-[22px] h-[22px] rounded-full shrink-0 inline-flex items-center justify-center font-semibold text-[10px] border transition-all ${
           disabled
@@ -260,6 +269,7 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
         createPortal(
           <div
             ref={menuRef}
+            role="menu"
             data-testid={popoverTestId || `assignee-popover-${itemId}`}
             onClick={(e) => e.stopPropagation()}
             className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[180px] max-h-60 overflow-y-auto custom-scrollbar text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
@@ -270,9 +280,12 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
             </div>
             <button
               type="button"
+              role="menuitem"
+              data-selected={!trimmedAssignee ? 'true' : 'false'}
               onClick={() => {
                 onUpdateAssignee?.(itemId, null);
                 setIsOpen(false);
+                triggerRef.current?.focus();
               }}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
                 !trimmedAssignee
@@ -288,9 +301,12 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
             {trimmedAssignee && !members.some((m) => m.name === trimmedAssignee) && (
               <button
                 type="button"
+                role="menuitem"
+                data-selected="true"
                 onClick={() => {
                   onUpdateAssignee?.(itemId, trimmedAssignee);
                   setIsOpen(false);
+                  triggerRef.current?.focus();
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer bg-slate-800 text-white font-semibold"
               >
@@ -305,9 +321,12 @@ export const CompactAssigneeCell: React.FC<CompactAssigneeCellProps> = ({
               <button
                 key={m.id}
                 type="button"
+                role="menuitem"
+                data-selected={trimmedAssignee === m.name ? 'true' : 'false'}
                 onClick={() => {
                   onUpdateAssignee?.(itemId, m.name);
                   setIsOpen(false);
+                  triggerRef.current?.focus();
                 }}
                 className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
                   trimmedAssignee === m.name
@@ -362,6 +381,10 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
   useLayoutEffect(() => {
     if (isOpen) {
       updatePosition();
+      const target =
+        menuRef.current?.querySelector<HTMLButtonElement>('[data-selected="true"]') ||
+        menuRef.current?.querySelector<HTMLButtonElement>('button[role="menuitem"]');
+      target?.focus();
     }
   }, [isOpen, updatePosition]);
 
@@ -380,7 +403,10 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsOpen(false);
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     window.addEventListener('resize', handleScrollResize);
     window.addEventListener('scroll', handleScrollResize, true);
@@ -411,6 +437,8 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
         style={glyph.style}
         title={disabled ? `${statusLabel} (Locked)` : `Status: ${statusLabel}`}
         aria-label={`Status: ${statusLabel}`}
+        aria-haspopup={isInteractive ? 'menu' : undefined}
+        aria-expanded={isInteractive ? isOpen : undefined}
         data-testid={testId || `status-icon-btn-${itemId}`}
         className={`w-5 h-5 rounded-full inline-flex items-center justify-center shrink-0 border transition-all ${
           glyph.bg
@@ -432,6 +460,7 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
         createPortal(
           <div
             ref={menuRef}
+            role="menu"
             data-testid={popoverTestId || `status-popover-${itemId}`}
             onClick={(e) => e.stopPropagation()}
             className="fixed z-50 bg-slate-900 border border-slate-800 rounded-lg p-1.5 shadow-2xl min-w-[160px] max-h-60 overflow-y-auto custom-scrollbar text-xs font-mono space-y-0.5 animate-in fade-in-0 zoom-in-95"
@@ -446,9 +475,12 @@ export const CompactStatusCell: React.FC<CompactStatusCellProps> = ({
                 <button
                   key={st.id}
                   type="button"
+                  role="menuitem"
+                  data-selected={isSelected ? 'true' : 'false'}
                   onClick={() => {
                     onUpdateStatus?.(itemId, st.id);
                     setIsOpen(false);
+                    triggerRef.current?.focus();
                   }}
                   className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left transition-colors cursor-pointer ${
                     isSelected

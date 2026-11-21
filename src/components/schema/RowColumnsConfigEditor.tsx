@@ -26,21 +26,35 @@ function buildEffectiveConfigList(
   activeItems?: WorkItem[]
 ): RowColumnConfig[] {
   const available = resolveAvailableRowColumns(settings, activeItems);
-  const existing = Array.isArray(settings.row_columns) ? settings.row_columns : null;
+  const hasExplicitConfig = Array.isArray(settings.row_columns);
 
-  if (existing && existing.length > 0) {
-    const byKey = new Map(existing.map((c) => [c.key, c]));
+  if (hasExplicitConfig) {
+    const validExisting = (settings.row_columns || []).filter(
+      (c): c is RowColumnConfig =>
+        Boolean(c && typeof c === 'object' && typeof c.key === 'string' && c.key.trim())
+    );
+    const byKey = new Map(validExisting.map((c) => [c.key, c]));
     const ordered: RowColumnConfig[] = [];
-    for (const c of existing) {
-      if (!c?.key) continue;
+    for (const c of validExisting) {
       const meta = available.find((a) => a.key === c.key);
+      const safeLabel =
+        typeof c.label === 'string' && c.label.trim() ? c.label : meta?.label || c.key;
+      const safeViews = Array.isArray(c.views)
+        ? c.views.filter((v): v is RowColumnViewTarget => v === 'tree' || v === 'table')
+        : (['tree', 'table'] as RowColumnViewTarget[]);
+      const safeSource =
+        c.source === 'static' || c.source === 'dynamic' ? c.source : meta?.source || 'dynamic';
+      const safeWidth =
+        c.width === 'xs' || c.width === 'sm' || c.width === 'md' || c.width === 'lg'
+          ? c.width
+          : meta?.width || 'sm';
       ordered.push({
         key: c.key,
-        label: c.label || meta?.label || c.key,
-        source: c.source || meta?.source || 'dynamic',
-        visible: c.visible ?? true,
-        width: c.width || meta?.width || 'sm',
-        views: c.views && c.views.length > 0 ? c.views : ['tree', 'table'],
+        label: safeLabel,
+        source: safeSource,
+        visible: c.visible ?? safeViews.length > 0,
+        width: safeWidth,
+        views: safeViews,
       });
     }
     for (const avail of available) {
@@ -86,7 +100,7 @@ export const RowColumnsConfigEditor: React.FC<RowColumnsConfigEditorProps> = ({
     [settings, activeItems]
   );
 
-  const hasCustomSchema = Array.isArray(settings.row_columns) && settings.row_columns.length > 0;
+  const hasCustomSchema = Array.isArray(settings.row_columns);
 
   const commitColumns = (nextCols: RowColumnConfig[]) => {
     if (readOnly) return;

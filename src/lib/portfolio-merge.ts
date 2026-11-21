@@ -1,5 +1,6 @@
-import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition, CustomField, RowColumnConfig } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, CustomMetadataFieldDefinition, CustomField, RowColumnConfig, RowColumnViewTarget } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+import { getDefaultRowColumnKeys } from '@/lib/row-columns';
 
 export interface ProjectLike {
   id?: string;
@@ -150,16 +151,45 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     ? (projects.find((p) => p.settings?.work_unit_field)?.settings?.work_unit_field ?? mergedWorkMetricConfig?.field_key)
     : undefined;
 
-  const mergedRowColumns: RowColumnConfig[] = [];
-  const seenRowColKeys = new Set<string>();
-  projects.forEach((proj) => {
-    (proj.settings?.row_columns || []).forEach((col) => {
-      if (col && col.key && !seenRowColKeys.has(col.key)) {
-        seenRowColKeys.add(col.key);
-        mergedRowColumns.push({ ...col });
-      }
+  const hasAnyCustomRowColumns = projects.some((p) => Array.isArray(p.settings?.row_columns));
+  const mergedRowColumnsMap = new Map<string, RowColumnConfig>();
+  if (hasAnyCustomRowColumns) {
+    const sortedProjects = [...projects].sort((a, b) => {
+      const keyA = a.slug || a.id || '';
+      const keyB = b.slug || b.id || '';
+      return keyA.localeCompare(keyB);
     });
-  });
+
+    sortedProjects.forEach((proj) => {
+      const projConfiguredCols = Array.isArray(proj.settings?.row_columns)
+        ? proj.settings.row_columns
+        : [];
+      const views: RowColumnViewTarget[] = ['tree', 'table'];
+      views.forEach((view) => {
+        const effectiveKeys = getDefaultRowColumnKeys(proj.settings, view);
+        effectiveKeys.forEach((key) => {
+          const sourceCol = projConfiguredCols.find((c) => c && c.key === key);
+          const existing = mergedRowColumnsMap.get(key);
+          if (!existing) {
+            mergedRowColumnsMap.set(key, {
+              ...(sourceCol ? { ...sourceCol } : { key }),
+              key,
+              visible: true,
+              views: [view],
+            });
+          } else {
+            const nextViews = new Set<RowColumnViewTarget>(existing.views || []);
+            nextViews.add(view);
+            mergedRowColumnsMap.set(key, {
+              ...existing,
+              views: Array.from(nextViews),
+            });
+          }
+        });
+      });
+    });
+  }
+  const mergedRowColumns = Array.from(mergedRowColumnsMap.values());
 
   return {
     schema_version: '1.0',
@@ -173,7 +203,7 @@ export function mergeProjectSettings(projects: ProjectLike[]): ProjectSettings {
     },
     ...(mergedWorkMetricConfig ? { work_metric_config: mergedWorkMetricConfig } : {}),
     ...(mergedWorkUnitField ? { work_unit_field: mergedWorkUnitField } : {}),
-    ...(mergedRowColumns.length > 0 ? { row_columns: mergedRowColumns } : {}),
+    ...(hasAnyCustomRowColumns ? { row_columns: mergedRowColumns } : {}),
     ...(firstGithubRepo ? { github_repo: firstGithubRepo } : {}),
   };
 }

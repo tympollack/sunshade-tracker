@@ -94,7 +94,7 @@ export const RowColumnsPicker: React.FC<RowColumnsPickerProps> = ({
 
   const staticColumns = availableColumns.filter((c) => c.source === 'static');
   const dynamicColumns = availableColumns.filter((c) => c.source === 'dynamic');
-  const effectiveOrder = effectiveColumns.map((c) => c.key);
+  const rightOrder = effectiveColumns.filter((c) => c.placement === 'right').map((c) => c.key);
 
   const renderSection = (title: string, cols: ResolvedRowColumn[]) => {
     if (cols.length === 0) return null;
@@ -105,7 +105,8 @@ export const RowColumnsPicker: React.FC<RowColumnsPickerProps> = ({
         </div>
         {cols.map((col) => {
           const checked = activeKeys.has(col.key);
-          const orderIdx = effectiveOrder.indexOf(col.key);
+          const isMovable = col.placement === 'right';
+          const orderIdx = isMovable ? rightOrder.indexOf(col.key) : -1;
           return (
             <div
               key={col.key}
@@ -133,7 +134,7 @@ export const RowColumnsPicker: React.FC<RowColumnsPickerProps> = ({
                 <span className="truncate">{col.label}</span>
               </button>
 
-              {checked && onMoveColumn && (
+              {checked && isMovable && onMoveColumn && (
                 <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     type="button"
@@ -148,7 +149,7 @@ export const RowColumnsPicker: React.FC<RowColumnsPickerProps> = ({
                   <button
                     type="button"
                     onClick={() => onMoveColumn(col.key, 'down')}
-                    disabled={orderIdx === -1 || orderIdx >= effectiveOrder.length - 1}
+                    disabled={orderIdx === -1 || orderIdx >= rightOrder.length - 1}
                     title={`Move ${col.label} right/down`}
                     data-testid={`row-column-move-down-${col.key}`}
                     className="p-0.5 rounded text-slate-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"

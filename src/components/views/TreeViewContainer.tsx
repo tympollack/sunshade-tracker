@@ -56,6 +56,7 @@ export interface TreeViewContainerProps {
   handleTreeCreateChild: (parentId: string, title: string, itemType: string) => Promise<void> | void;
   setEditingItem: (item: WorkItem) => void;
   availableSprintDefs?: SprintDefinition[];
+  tenantSlug?: string;
   projectSlug?: string;
   allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
 }
@@ -106,11 +107,12 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
     handleTreeUpdateAssignee,
     handleTreeCreateChild,
     setEditingItem,
+    tenantSlug = 'default',
     projectSlug = 'default',
     allProjects = [],
   } = props;
 
-  const rowColumns = useRowColumns(projectSettings, 'tree', projectSlug, items);
+  const rowColumns = useRowColumns(projectSettings, 'tree', projectSlug, items, tenantSlug);
 
   return (
     <div className="p-3 sm:p-4 md:p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full">

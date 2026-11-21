@@ -160,4 +160,25 @@ describe('TASK-TRK-COMPACT-ASSIGNEE-STATUS-CELLS', () => {
     expect(screen.getByTestId('col-assignee')).toHaveClass('w-9', 'shrink-0');
     expect(screen.getByTestId('col-status')).toHaveClass('w-9', 'shrink-0');
   });
+
+  it('moves focus into opened compact row menu and restores focus to trigger on Escape', () => {
+    render(
+      <CompactStatusCell
+        itemId="focus-s"
+        status="in_review"
+        statuses={mockStatuses}
+        onUpdateStatus={vi.fn()}
+      />
+    );
+
+    const trigger = screen.getByTestId('status-icon-btn-focus-s');
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const selectedOption = screen.getByTestId('status-option-in_review');
+    expect(document.activeElement).toBe(selectedOption);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(document.activeElement).toBe(trigger);
+  });
 });

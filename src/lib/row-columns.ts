@@ -142,6 +142,23 @@ export function getColumnTrackWidthClass(width: RowColumnWidth = 'sm', key?: str
   }
 }
 
+export function getResponsiveMdTrackWidthClass(width: RowColumnWidth = 'sm', key?: string): string {
+  if (key === 'points') return 'md:w-28';
+  if (key === 'assignee' || key === 'status') return 'md:w-9';
+  switch (width) {
+    case 'xs':
+      return 'md:w-16';
+    case 'sm':
+      return 'md:w-24';
+    case 'md':
+      return 'md:w-28';
+    case 'lg':
+      return 'md:w-36';
+    default:
+      return 'md:w-24';
+  }
+}
+
 export function getStaticRowColumns(projectSettings?: ProjectSettings | null): ResolvedRowColumn[] {
   const workMetric = getWorkMetricConfig(projectSettings);
   return [
@@ -232,20 +249,28 @@ export function resolveAvailableRowColumns(
   });
 
   // 3. Explicit columns referenced in projectSettings.row_columns
-  (projectSettings?.row_columns || []).forEach((rc) => {
-    if (!rc?.key) return;
+  (Array.isArray(projectSettings?.row_columns) ? projectSettings.row_columns : []).forEach((rc) => {
+    if (!rc || typeof rc !== 'object' || typeof rc.key !== 'string' || !rc.key.trim()) return;
+    const safeLabel =
+      typeof rc.label === 'string' && rc.label.trim() ? rc.label : undefined;
+    const safeWidth: RowColumnWidth | undefined =
+      rc.width === 'xs' || rc.width === 'sm' || rc.width === 'md' || rc.width === 'lg'
+        ? rc.width
+        : undefined;
+    const safeSource: RowColumnSource | undefined =
+      rc.source === 'static' || rc.source === 'dynamic' ? rc.source : undefined;
     const existing = byKey.get(rc.key);
     if (existing) {
       byKey.set(rc.key, {
         ...existing,
-        label: rc.label || existing.label,
-        width: rc.width || existing.width,
-        source: rc.source || existing.source,
+        label: safeLabel || existing.label,
+        width: safeWidth || existing.width,
+        source: safeSource || existing.source,
       });
     } else {
       registerDynamic(rc.key, {
-        label: rc.label,
-        width: rc.width,
+        label: safeLabel,
+        width: safeWidth,
       });
     }
   });
@@ -269,12 +294,14 @@ export function getDefaultRowColumnKeys(
   view: RowColumnViewTarget
 ): string[] {
   const configured = projectSettings?.row_columns;
-  if (Array.isArray(configured) && configured.length > 0) {
+  if (Array.isArray(configured)) {
     return configured
       .filter((col) => {
-        if (!col || !col.key) return false;
+        if (!col || typeof col !== 'object' || typeof col.key !== 'string' || !col.key.trim()) {
+          return false;
+        }
         if (col.visible === false) return false;
-        if (Array.isArray(col.views) && col.views.length > 0 && !col.views.includes(view)) {
+        if (Array.isArray(col.views) && !col.views.includes(view)) {
           return false;
         }
         return true;

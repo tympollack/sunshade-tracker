@@ -85,6 +85,7 @@ export interface SprintViewContainerProps {
   members?: Array<{ id: string; name: string }>;
   availableSprintDefs?: SprintDefinition[];
   onLazyLoadSprint?: (sprintIdentifier: string) => Promise<void>;
+  tenantSlug?: string;
   projectSlug?: string;
 }
 
@@ -135,10 +136,11 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     handleUpdateItemSprint,
     members = [],
     onLazyLoadSprint,
+    tenantSlug = 'default',
     projectSlug = 'default',
   } = props;
 
-  const rowColumns = useRowColumns(projectSettings, 'table', projectSlug, items);
+  const rowColumns = useRowColumns(projectSettings, 'table', projectSlug, items, tenantSlug);
 
   const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
 
@@ -647,7 +649,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isCollapsed && (
-                <div className="divide-y divide-slate-800/50">
+                <div className="overflow-x-auto custom-scrollbar">
+                <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
                       columns={rowColumns.effectiveColumns}
@@ -755,6 +758,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       </button>
                     </div>
                   )}
+                </div>
                 </div>
               )}
             </div>
@@ -897,7 +901,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isBacklogCollapsed && (
-                <div className="divide-y divide-slate-800/50">
+                <div className="overflow-x-auto custom-scrollbar">
+                <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader
                       columns={rowColumns.effectiveColumns}
@@ -956,6 +961,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       );
                     })
                   )}
+                </div>
                 </div>
               )}
             </div>

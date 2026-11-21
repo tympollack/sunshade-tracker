@@ -8,6 +8,7 @@ import {
   ResolvedRowColumn,
   formatRowCellValue,
   getColumnTrackWidthClass,
+  getResponsiveMdTrackWidthClass,
 } from '@/lib/row-columns';
 
 export interface RowFieldCellProps {
@@ -121,10 +122,11 @@ export const RowFieldCell: React.FC<RowFieldCellProps> = ({
   }
 
   const formatted = formatRowCellValue(item, column, { allProjects });
+  const mdWidthClass = getResponsiveMdTrackWidthClass(column.width, column.key);
 
   return (
     <div
-      className={`${widthClass} shrink-0 hidden md:flex items-center justify-end overflow-hidden`}
+      className={`w-auto ${mdWidthClass} shrink-0 flex items-center md:justify-end overflow-hidden`}
       data-testid={`row-cell-${column.key}-${item.id}`}
       title={formatted.rawText ? `${column.label}: ${formatted.rawText}` : `${column.label}: Empty`}
     >
