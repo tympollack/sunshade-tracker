@@ -28,6 +28,7 @@ import {
   formatEfficiencyStatementCSV,
   formatEfficiencyStatementJSON,
 } from '@/lib/services/valueLedgerService';
+import type { LiveDashboardSettings } from '@/types/tracker';
 import type { EfficiencyDashboardSchema } from '@/types/efficiency-dashboard';
 import { useEfficiencyDashboardConfig } from '@/hooks/useEfficiencyDashboardConfig';
 import {
@@ -63,6 +64,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
   const [copiedNotification, setCopiedNotification] = useState<string | null>(null);
   const [allWorkspaces, setAllWorkspaces] = useState<any[]>([]);
   const [workspaceSchema, setWorkspaceSchema] = useState<Partial<EfficiencyDashboardSchema> | null>(null);
+  const [liveDashboardSettings, setLiveDashboardSettings] = useState<Partial<LiveDashboardSettings> | null>(null);
   const [userOverrides, setUserOverrides] = useState<Partial<EfficiencyDashboardSchema> | null>(null);
   const [canSaveWorkspaceDefault, setCanSaveWorkspaceDefault] = useState(false);
   const [hasAuthenticatedUser, setHasAuthenticatedUser] = useState(false);
@@ -72,6 +74,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
     tenantSlug,
     surface: 'efficiency',
     workspaceSchema,
+    liveDashboardSettings,
     initialUserOverrides: userOverrides,
     profileLoaded: hasAuthenticatedUser,
     syncToProfile: hasAuthenticatedUser,
@@ -109,6 +112,7 @@ export function EfficiencyStatementView({ tenantSlug }: { tenantSlug: string }) 
               activeWs.metadata?.efficiency_dashboard_settings ||
               null
           );
+          setLiveDashboardSettings(activeWs.settings?.live_dashboard_settings || null);
           setCanSaveWorkspaceDefault(
             Boolean(wsData.user && activeWs.role && activeWs.role !== 'viewer')
           );

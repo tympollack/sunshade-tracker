@@ -1685,6 +1685,13 @@ export async function PATCH(req: NextRequest) {
         .update({ project_id: project_id })
         .in('item_id', allAffectedIds)
         .eq('tenant_id', authCtx.tenant.id);
+
+      // Invalidate project HTTP freshness cache timestamps for source and destination projects
+      await supabaseAdmin
+        .from('projects')
+        .update({ updated_at: new Date().toISOString() })
+        .in('id', [existingItem.project_id, project_id])
+        .eq('tenant_id', authCtx.tenant.id);
     }
 
     // Cascade sprint change to all descendants

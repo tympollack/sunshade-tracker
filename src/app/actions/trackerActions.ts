@@ -296,6 +296,18 @@ export async function reassignWorkItemProject(
         .eq('tenant_id', tenantId);
     }
 
+    // Bump updated_at on both source project and destination project so HTTP 304 freshness cache
+    // properly invalidates on subsequent client requests
+    if (targetItem.project_id && targetItem.project_id !== newProjectId) {
+      const projTable = service.from('projects') as any;
+      if (typeof projTable?.update === 'function') {
+        await projTable
+          .update({ updated_at: nowIso })
+          .in('id', [targetItem.project_id, newProjectId])
+          .eq('tenant_id', tenantId);
+      }
+    }
+
     // 7. Audit log for migration
     const userName =
       user.user_metadata?.full_name ??
@@ -541,6 +553,20 @@ export async function bulkReassignProjects(
       await auditTable
         .update({ project_id: newProjectId })
         .in('item_id', allAffectedIds)
+        .eq('tenant_id', tenantId);
+    }
+
+    // Bump updated_at on all source projects and destination project so HTTP 304 freshness cache
+    // properly invalidates on subsequent client requests
+    const sourceProjectIds = Array.from(
+      new Set(targetItems.map((it) => it.project_id).filter((pid) => pid && pid !== newProjectId))
+    );
+    const affectedProjectIds = Array.from(new Set([...sourceProjectIds, newProjectId]));
+    const projTable = service.from('projects') as any;
+    if (typeof projTable?.update === 'function' && affectedProjectIds.length > 0) {
+      await projTable
+        .update({ updated_at: nowIso })
+        .in('id', affectedProjectIds)
         .eq('tenant_id', tenantId);
     }
 

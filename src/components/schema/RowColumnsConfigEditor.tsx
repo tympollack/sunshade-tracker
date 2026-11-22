@@ -133,14 +133,42 @@ export const RowColumnsConfigEditor: React.FC<RowColumnsConfigEditorProps> = ({
     commitColumns(nextCols);
   };
 
+  const isColActive = (c: RowColumnConfig) =>
+    Boolean(c.visible !== false && Array.isArray(c.views) && c.views.length > 0);
+
   const handleMove = (key: string, direction: 'up' | 'down') => {
     if (readOnly) return;
-    const idx = columns.findIndex((c) => c.key === key);
-    if (idx === -1) return;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    const curIdx = columns.findIndex((c) => c.key === key);
+    if (curIdx === -1) return;
+    const curCol = columns[curIdx];
+    const curActive = isColActive(curCol);
+
+    // If moving an active column, swap with adjacent active column
+    // so hidden columns don't absorb reorder clicks.
+    let targetIdx = -1;
+    if (curActive) {
+      if (direction === 'up') {
+        for (let i = curIdx - 1; i >= 0; i--) {
+          if (isColActive(columns[i])) {
+            targetIdx = i;
+            break;
+          }
+        }
+      } else {
+        for (let i = curIdx + 1; i < columns.length; i++) {
+          if (isColActive(columns[i])) {
+            targetIdx = i;
+            break;
+          }
+        }
+      }
+    } else {
+      targetIdx = direction === 'up' ? curIdx - 1 : curIdx + 1;
+    }
+
     if (targetIdx < 0 || targetIdx >= columns.length) return;
     const next = [...columns];
-    [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
+    [next[curIdx], next[targetIdx]] = [next[targetIdx], next[curIdx]];
     commitColumns(next);
   };
 
@@ -187,6 +215,13 @@ export const RowColumnsConfigEditor: React.FC<RowColumnsConfigEditorProps> = ({
           const inTree = Boolean(col.visible !== false && col.views?.includes('tree'));
           const inTable = Boolean(col.visible !== false && col.views?.includes('table'));
           const isStatic = col.source === 'static';
+          const isActive = inTree || inTable;
+          const canMoveUp = isActive
+            ? columns.slice(0, idx).some(isColActive)
+            : idx > 0;
+          const canMoveDown = isActive
+            ? columns.slice(idx + 1).some(isColActive)
+            : idx < columns.length - 1;
           return (
             <div
               key={col.key}
@@ -244,7 +279,7 @@ export const RowColumnsConfigEditor: React.FC<RowColumnsConfigEditorProps> = ({
                 <div className="flex items-center gap-0.5 ml-1">
                   <button
                     type="button"
-                    disabled={readOnly || idx === 0}
+                    disabled={readOnly || !canMoveUp}
                     onClick={() => handleMove(col.key, 'up')}
                     title="Move column up"
                     data-testid={`schema-row-col-up-${col.key}`}
@@ -254,7 +289,7 @@ export const RowColumnsConfigEditor: React.FC<RowColumnsConfigEditorProps> = ({
                   </button>
                   <button
                     type="button"
-                    disabled={readOnly || idx === columns.length - 1}
+                    disabled={readOnly || !canMoveDown}
                     onClick={() => handleMove(col.key, 'down')}
                     title="Move column down"
                     data-testid={`schema-row-col-down-${col.key}`}

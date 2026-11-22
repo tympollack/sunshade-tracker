@@ -23,6 +23,7 @@ import {
   StatementDateStepper,
   StatementTimeframe,
 } from './StatementDateStepper';
+import type { LiveDashboardSettings } from '@/types/tracker';
 import { ProjectFocusAccordion } from './ProjectFocusAccordion';
 import { VelocitySettingsPopover } from './VelocitySettingsPopover';
 import { EstimationCalibrationPayload } from '@/lib/services/estimationCalibrationService';
@@ -47,6 +48,7 @@ export interface StatementGeneratorProps {
   initialData?: EfficiencyMetricsPayload | null;
   onDataChange?: (data: EfficiencyMetricsPayload) => void;
   workspaceSchema?: Partial<EfficiencyDashboardSchema> | null;
+  liveDashboardSettings?: Partial<LiveDashboardSettings> | null;
   userOverrides?: Partial<EfficiencyDashboardSchema> | null;
   isConfigReady?: boolean;
   profileLoaded?: boolean;
@@ -60,6 +62,7 @@ export function StatementGenerator({
   initialData,
   onDataChange,
   workspaceSchema,
+  liveDashboardSettings,
   userOverrides,
   isConfigReady = true,
   profileLoaded = false,
@@ -71,6 +74,7 @@ export function StatementGenerator({
     tenantSlug,
     surface: 'statements',
     workspaceSchema,
+    liveDashboardSettings,
     initialUserOverrides: userOverrides,
     profileLoaded,
     syncToProfile,

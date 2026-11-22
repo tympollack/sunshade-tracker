@@ -2988,11 +2988,26 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setBulkToast(`Failed to change project: ${res.error || 'Server rejected migration'}`);
         setTimeout(() => setBulkToast(null), 4000);
       } else {
+        // Optimistically remove migrated items and their descendants from local state
+        const { getDescendantIds } = await import('@/lib/tree');
+        const allDescendantIds = new Set<string>();
+        for (const id of selectedIds) {
+          getDescendantIds(items, id).forEach((d) => allDescendantIds.add(d));
+        }
+        const removeSet = new Set([...selectedIds, ...allDescendantIds]);
+        setItems((prev) => prev.filter((it) => !removeSet.has(it.id)));
+
         const movedCount = res.updatedCount || selectedIds.length;
         setBulkToast(`Moved ${movedCount} items to ${targetProjectName}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
         fetchData();
+        broadcastItemMutation({
+          type: 'ITEMS_REFRESH',
+          tenantSlug,
+          projectId: targetProjectId,
+          sourceProjectId: currentProjectId,
+        });
       }
     } catch (err: any) {
       setBulkToast(`Error changing project: ${err?.message || 'Failed to communicate with server'}`);

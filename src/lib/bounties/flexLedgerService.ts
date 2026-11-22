@@ -133,16 +133,12 @@ export function getItemTokenCommitment(
     return Number(meta.bounty_tokens);
   }
   const rawHours = meta.estimated_hours ?? meta.bounty_hours;
-  if (rawHours !== undefined && !isNaN(Number(rawHours))) {
-    const hours = Number(rawHours);
-    const mult = Number(meta.neglect_multiplier || 1.0);
-    const effFactor = normalizeProcessEfficiencyFactor(
-      meta.process_efficiency_factor ?? item?.process_efficiency_factor ?? projectEfficiencyFactor
-    );
-    return Math.round(hours * TOKEN_RATE_PER_HOUR * mult * effFactor);
-  }
-  // Default 1-hr task
-  return TOKEN_RATE_PER_HOUR;
+  const hours = rawHours !== undefined && !isNaN(Number(rawHours)) ? Number(rawHours) : 1.0;
+  const mult = Number(meta.neglect_multiplier || 1.0);
+  const effFactor = normalizeProcessEfficiencyFactor(
+    meta.process_efficiency_factor ?? item?.process_efficiency_factor ?? projectEfficiencyFactor
+  );
+  return Math.round(hours * TOKEN_RATE_PER_HOUR * mult * effFactor);
 }
 
 /**

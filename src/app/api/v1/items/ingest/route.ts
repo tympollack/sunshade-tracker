@@ -504,9 +504,13 @@ export async function POST(req: NextRequest) {
             });
             if (!proof.hasArtifactProof) return false;
 
-            if (configuredRepo && meta.pr_url) {
-              const prLower = String(meta.pr_url).toLowerCase();
-              if (prLower.includes('github.com/') && !prLower.includes(`github.com/${configuredRepo}/`)) {
+            // Ingest telemetry requires verifiable PR proof to prevent fabricated work from minting shared tokens
+            const prUrl = typeof meta.pr_url === 'string' ? meta.pr_url.trim() : '';
+            if (!prUrl) return false;
+
+            if (configuredRepo) {
+              const prLower = prUrl.toLowerCase();
+              if (!prLower.includes(`github.com/${configuredRepo}/`)) {
                 return false;
               }
             }
@@ -522,7 +526,7 @@ export async function POST(req: NextRequest) {
             const meta = item.metadata || {};
             const artifactRef = String(meta.synced_by_artifact).trim();
             const checkpointHash = `telemetry:${artifactRef}:${item.id}:${String(meta.pr_url || '')}:${String(meta.commit_hash || '')}`;
-            await recordArtifactTelemetry(artifactRef, item.id, {
+            const res = await recordArtifactTelemetry(artifactRef, item.id, {
               supabaseClient: supabaseAdmin,
               tenantId: tenant.id,
               projectId: item.project_id,
@@ -532,6 +536,19 @@ export async function POST(req: NextRequest) {
                 ...(meta.commit_hash ? { commit_hash: meta.commit_hash } : {}),
               },
             });
+            if (res && (res.status === 'attested' || res.status === 'already_attested')) {
+              const wiTable = supabaseAdmin.from('work_items');
+              if (wiTable && typeof wiTable.update === 'function') {
+                await wiTable
+                  .update({
+                    metadata: {
+                      ...meta,
+                      artifact_telemetry_synced_at: new Date().toISOString(),
+                    },
+                  })
+                  .eq('id', item.id);
+              }
+            }
           }
         } catch (telErr) {
           console.warn('[tracker:ingest:telemetry] Non-blocking artifact telemetry error:', telErr);

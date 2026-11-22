@@ -137,6 +137,7 @@ function StatementsContent({ tenantSlug }: { tenantSlug: string }) {
         <StatementGenerator
           tenantSlug={tenantSlug}
           workspaceSchema={workspaceSchema}
+          liveDashboardSettings={activeWorkspace?.settings?.live_dashboard_settings || null}
           userOverrides={scopedUserOverrides}
           isConfigReady={isTenantLoaded}
           profileLoaded={Boolean(userMeta?.id)}

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
 import { getSessionUser } from '@/lib/auth-claims';
-import { validateEfficiencyDashboardSchema } from '@/lib/efficiency-dashboard-schema';
+import {
+  validateEfficiencyDashboardSchema,
+  WIDGET_CATALOG_MAP,
+} from '@/lib/efficiency-dashboard-schema';
 
 function isFlatDashboardSchema(val: any): boolean {
   return Boolean(
@@ -33,6 +36,53 @@ function resolveScopedDashboardPrefs(raw: any, tenantSlug: string): any {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   if (isFlatDashboardSchema(raw)) return raw;
   return raw[tenantSlug] || null;
+}
+
+function mergeSurfacePreferences(
+  existing: any,
+  incoming: any,
+  targetSurface: string
+): any {
+  if (!existing && !incoming) return null;
+  const prevWidgets = Array.isArray(existing?.widgets) ? existing.widgets : [];
+  const otherWidgets = prevWidgets.filter((w: any) => {
+    const def = WIDGET_CATALOG_MAP.get(w?.id);
+    return def && def.surface !== targetSurface;
+  });
+
+  const incomingWidgets = Array.isArray(incoming?.widgets) ? incoming.widgets : [];
+  const incomingSurfaceWidgets = incomingWidgets.filter((w: any) => {
+    const def = WIDGET_CATALOG_MAP.get(w?.id);
+    return def && def.surface === targetSurface;
+  });
+
+  const mergedWidgets = [...otherWidgets, ...incomingSurfaceWidgets];
+
+  const prevViews =
+    existing?.default_views && typeof existing.default_views === 'object'
+      ? { ...existing.default_views }
+      : {};
+
+  if (
+    incoming?.default_views &&
+    typeof incoming.default_views === 'object' &&
+    incoming.default_views[targetSurface]
+  ) {
+    prevViews[targetSurface] = incoming.default_views[targetSurface];
+  } else if (!incoming || !incoming.default_views?.[targetSurface]) {
+    delete prevViews[targetSurface];
+  }
+
+  const hasViews = Object.keys(prevViews).length > 0;
+  if (mergedWidgets.length === 0 && !hasViews) {
+    return null;
+  }
+
+  return {
+    schema_version: incoming?.schema_version || existing?.schema_version || '1.0',
+    ...(mergedWidgets.length > 0 ? { widgets: mergedWidgets } : {}),
+    ...(hasViews ? { default_views: prevViews } : {}),
+  };
 }
 
 /**
@@ -331,7 +381,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const userMetadata = user.user_metadata || {};
+    let userMetadata = user.user_metadata || {};
+    try {
+      if (typeof service.auth?.admin?.getUserById === 'function') {
+        const { data: freshUser } = await service.auth.admin.getUserById(user.id);
+        if (freshUser?.user?.user_metadata) {
+          userMetadata = freshUser.user.user_metadata;
+        }
+      }
+    } catch {
+      // Non-fatal, use token user_metadata
+    }
     const notificationPreferences = {
       notify_in_app: true,
       notify_email: true,
@@ -425,21 +485,36 @@ export async function PATCH(req: NextRequest) {
     );
     if ('efficiency_dashboard_preferences' in body) {
       const incomingDash = body.efficiency_dashboard_preferences;
-      if (incomingDash === null) {
+      const targetSurface =
+        typeof body.surface === 'string' && body.surface.trim() ? body.surface.trim() : undefined;
+
+      if (incomingDash === null && !targetSurface) {
         delete updatedDashboardPrefsMap[cleanTenantSlug];
       } else {
-        const validation = validateEfficiencyDashboardSchema(incomingDash);
-        if (!validation.valid) {
-          return NextResponse.json(
-            {
-              error: `Invalid efficiency_dashboard_preferences: ${validation.errors
-                .map((e) => `${e.path}: ${e.message}`)
-                .join('; ')}`,
-            },
-            { status: 400 }
-          );
+        const existingWorkspacePref = updatedDashboardPrefsMap[cleanTenantSlug] || null;
+        if (targetSurface && existingWorkspacePref) {
+          const merged = mergeSurfacePreferences(existingWorkspacePref, incomingDash, targetSurface);
+          if (merged === null) {
+            delete updatedDashboardPrefsMap[cleanTenantSlug];
+          } else {
+            updatedDashboardPrefsMap[cleanTenantSlug] = merged;
+          }
+        } else if (incomingDash === null) {
+          delete updatedDashboardPrefsMap[cleanTenantSlug];
+        } else {
+          const validation = validateEfficiencyDashboardSchema(incomingDash);
+          if (!validation.valid) {
+            return NextResponse.json(
+              {
+                error: `Invalid efficiency_dashboard_preferences: ${validation.errors
+                  .map((e) => `${e.path}: ${e.message}`)
+                  .join('; ')}`,
+              },
+              { status: 400 }
+            );
+          }
+          updatedDashboardPrefsMap[cleanTenantSlug] = incomingDash;
         }
-        updatedDashboardPrefsMap[cleanTenantSlug] = incomingDash;
       }
     }
 

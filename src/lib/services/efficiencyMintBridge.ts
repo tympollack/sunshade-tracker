@@ -644,17 +644,55 @@ export async function mintTokensFromEfficiencyStatement(
       if (artifactRefId && resolvedArtifactRow) {
         const artifactsTable = publicClient.from('infrastructure_artifacts');
         if (artifactsTable && typeof artifactsTable.update === 'function') {
-          const updRes = await artifactsTable
-            .update({
-              cumulative_uses: nextCumulativeUses,
-              last_invoked_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('artifact_ref_id', artifactRefId);
-          if (updRes?.error) {
-            throw new Error(`Failed to update infrastructure artifact usage: ${updRes.error.message}`);
+          let retryCount = 0;
+          let currentBaseUses = prevUses;
+          let calculatedNextUses = nextCumulativeUses;
+          let success = false;
+
+          while (!success && retryCount < 3) {
+            let updQuery: any = artifactsTable
+              .update({
+                cumulative_uses: calculatedNextUses,
+                last_invoked_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              .eq('artifact_ref_id', artifactRefId);
+
+            if (typeof currentBaseUses === 'number' && typeof updQuery.eq === 'function') {
+              updQuery = updQuery.eq('cumulative_uses', currentBaseUses);
+            }
+            if (typeof updQuery.select === 'function') {
+              updQuery = updQuery.select();
+            }
+
+            const updRes = await updQuery;
+            if (updRes?.error) {
+              throw new Error(`Failed to update infrastructure artifact usage: ${updRes.error.message}`);
+            }
+
+            const rowsMatched = Array.isArray(updRes?.data) ? updRes.data.length : 1;
+            if (rowsMatched > 0) {
+              success = true;
+              artifactIncremented = true;
+            } else {
+              retryCount++;
+              const fetchQuery: any = artifactsTable
+                .select('cumulative_uses')
+                .eq('artifact_ref_id', artifactRefId);
+              const { data: freshArtifact } =
+                typeof fetchQuery?.maybeSingle === 'function'
+                  ? await fetchQuery.maybeSingle()
+                  : typeof fetchQuery?.single === 'function'
+                  ? await fetchQuery.single().catch(() => ({ data: null }))
+                  : { data: null };
+              if (freshArtifact) {
+                currentBaseUses = Number(freshArtifact.cumulative_uses) || 0;
+                calculatedNextUses = currentBaseUses + 1;
+              } else {
+                break;
+              }
+            }
           }
-          artifactIncremented = true;
         }
       }
 
