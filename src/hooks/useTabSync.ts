@@ -234,10 +234,12 @@ export function useTabSync({
       } else if (msg.type === 'ITEMS_REFRESH') {
         if (!isAllProjects && currentProjectId) {
           const isTarget = msg.projectId && msg.projectId === currentProjectId;
-          const isSource = msg.sourceProjectId && msg.sourceProjectId === currentProjectId;
+          const isSource =
+            (msg.sourceProjectId && msg.sourceProjectId === currentProjectId) ||
+            (Array.isArray(msg.sourceProjectIds) && msg.sourceProjectIds.includes(currentProjectId));
           const isSlug = msg.projectSlug && msg.projectSlug === projectSlug;
 
-          if (msg.projectId || msg.sourceProjectId || msg.projectSlug) {
+          if (msg.projectId || msg.sourceProjectId || msg.sourceProjectIds || msg.projectSlug) {
             if (!isTarget && !isSource && !isSlug) {
               return;
             }

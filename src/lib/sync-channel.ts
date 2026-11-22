@@ -34,6 +34,7 @@ export type SyncMessage =
       projectSlug?: string;
       projectId?: string;
       sourceProjectId?: string;
+      sourceProjectIds?: string[];
     };
 
 let channelInstance: BroadcastChannel | null = null;

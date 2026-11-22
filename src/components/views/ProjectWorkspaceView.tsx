@@ -3002,11 +3002,24 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
         fetchData();
+
+        const selectedProjectIds = Array.from(
+          new Set(
+            items
+              .filter((it) => selectedItemIds.has(it.id) && it.project_id)
+              .map((it) => it.project_id)
+          )
+        );
+        if (currentProjectId && !selectedProjectIds.includes(currentProjectId)) {
+          selectedProjectIds.push(currentProjectId);
+        }
+
         broadcastItemMutation({
           type: 'ITEMS_REFRESH',
           tenantSlug,
           projectId: targetProjectId,
-          sourceProjectId: currentProjectId,
+          sourceProjectId: currentProjectId || selectedProjectIds[0],
+          sourceProjectIds: selectedProjectIds,
         });
       }
     } catch (err: any) {

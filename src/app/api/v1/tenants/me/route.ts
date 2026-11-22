@@ -442,7 +442,19 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const currentMeta = user.user_metadata || {};
+    const service = createServiceClient();
+    let currentMeta = user.user_metadata || {};
+    try {
+      if (typeof service?.auth?.admin?.getUserById === 'function') {
+        const { data: freshUser } = await service.auth.admin.getUserById(user.id);
+        if (freshUser?.user?.user_metadata) {
+          currentMeta = freshUser.user.user_metadata;
+        }
+      }
+    } catch {
+      // Fallback to session user_metadata
+    }
+
     const currentPrefs = {
       notify_in_app: true,
       notify_email: true,
@@ -488,31 +500,45 @@ export async function PATCH(req: NextRequest) {
       const targetSurface =
         typeof body.surface === 'string' && body.surface.trim() ? body.surface.trim() : undefined;
 
-      if (incomingDash === null && !targetSurface) {
+      if (incomingDash === null && (!targetSurface || targetSurface === 'all')) {
         delete updatedDashboardPrefsMap[cleanTenantSlug];
       } else {
-        const existingWorkspacePref = updatedDashboardPrefsMap[cleanTenantSlug] || null;
-        if (targetSurface && existingWorkspacePref) {
-          const merged = mergeSurfacePreferences(existingWorkspacePref, incomingDash, targetSurface);
-          if (merged === null) {
-            delete updatedDashboardPrefsMap[cleanTenantSlug];
-          } else {
-            updatedDashboardPrefsMap[cleanTenantSlug] = merged;
-          }
-        } else if (incomingDash === null) {
-          delete updatedDashboardPrefsMap[cleanTenantSlug];
-        } else {
-          const validation = validateEfficiencyDashboardSchema(incomingDash);
-          if (!validation.valid) {
+        if (incomingDash !== null) {
+          const incomingValidation = validateEfficiencyDashboardSchema(incomingDash);
+          if (!incomingValidation.valid) {
             return NextResponse.json(
               {
-                error: `Invalid efficiency_dashboard_preferences: ${validation.errors
+                error: `Invalid efficiency_dashboard_preferences: ${incomingValidation.errors
                   .map((e) => `${e.path}: ${e.message}`)
                   .join('; ')}`,
               },
               { status: 400 }
             );
           }
+        }
+
+        const existingWorkspacePref = updatedDashboardPrefsMap[cleanTenantSlug] || null;
+        if (targetSurface && targetSurface !== 'all' && existingWorkspacePref) {
+          const merged = mergeSurfacePreferences(existingWorkspacePref, incomingDash, targetSurface);
+          if (merged === null) {
+            delete updatedDashboardPrefsMap[cleanTenantSlug];
+          } else {
+            const mergedValidation = validateEfficiencyDashboardSchema(merged);
+            if (!mergedValidation.valid) {
+              return NextResponse.json(
+                {
+                  error: `Invalid efficiency_dashboard_preferences: ${mergedValidation.errors
+                    .map((e) => `${e.path}: ${e.message}`)
+                    .join('; ')}`,
+                },
+                { status: 400 }
+              );
+            }
+            updatedDashboardPrefsMap[cleanTenantSlug] = merged;
+          }
+        } else if (incomingDash === null) {
+          delete updatedDashboardPrefsMap[cleanTenantSlug];
+        } else {
           updatedDashboardPrefsMap[cleanTenantSlug] = incomingDash;
         }
       }

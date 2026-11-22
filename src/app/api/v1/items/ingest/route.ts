@@ -7,7 +7,7 @@ import { getTenantMemberRecipients, dispatchItemNotifications } from '@/lib/noti
 import { deriveProjectPrefix, generateSequentialRefsForBatch } from '@/lib/ref-generator';
 import { executeProjectAutomations } from '@/lib/automation-engine';
 import { recordArtifactTelemetry } from '@/lib/services/efficiencyMintBridge';
-import { hasVerifiableArtifactProof } from '@/lib/services/valueLedgerService';
+import { hasVerifiableArtifactProof, PR_URL_REGEX } from '@/lib/services/valueLedgerService';
 
 
 export async function POST(req: NextRequest) {
@@ -506,7 +506,7 @@ export async function POST(req: NextRequest) {
 
             // Ingest telemetry requires verifiable PR proof to prevent fabricated work from minting shared tokens
             const prUrl = typeof meta.pr_url === 'string' ? meta.pr_url.trim() : '';
-            if (!prUrl) return false;
+            if (!prUrl || !PR_URL_REGEX.test(prUrl)) return false;
 
             if (configuredRepo) {
               const prLower = prUrl.toLowerCase();
@@ -539,10 +539,26 @@ export async function POST(req: NextRequest) {
             if (res && (res.status === 'attested' || res.status === 'already_attested')) {
               const wiTable = supabaseAdmin.from('work_items');
               if (wiTable && typeof wiTable.update === 'function') {
+                let currentMeta = meta;
+                try {
+                  const sel = wiTable.select('metadata').eq('id', item.id);
+                  const freshRes =
+                    typeof sel?.maybeSingle === 'function'
+                      ? await sel.maybeSingle()
+                      : typeof sel?.single === 'function'
+                      ? await sel.single()
+                      : null;
+                  if (freshRes?.data?.metadata && typeof freshRes.data.metadata === 'object') {
+                    currentMeta = freshRes.data.metadata;
+                  }
+                } catch {
+                  // Fallback to captured meta if select fails
+                }
+
                 await wiTable
                   .update({
                     metadata: {
-                      ...meta,
+                      ...currentMeta,
                       artifact_telemetry_synced_at: new Date().toISOString(),
                     },
                   })

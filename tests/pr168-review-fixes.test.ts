@@ -370,7 +370,7 @@ describe('PR #168 Review Fixes & Cross-Project Move 304 Cache Invalidation', () 
               { id: 'stmt_kpi_hours_reclaimed', visible: false, order: 1 }, // statements widget
             ],
             default_views: {
-              statements: { defaultTimeframe: 'quarterly', expandProjectAccordions: false },
+              statements: { defaultTimeframe: 'quarter', expandProjectAccordions: false },
             },
           },
         },
@@ -385,7 +385,7 @@ describe('PR #168 Review Fixes & Cross-Project Move 304 Cache Invalidation', () 
         },
       };
 
-      const { createServerClient } = await import('@/lib/supabase-server');
+      const { createServerClient, createServiceClient } = await import('@/lib/supabase-server');
       vi.mocked(createServerClient).mockResolvedValue({
         auth: {
           getUser: vi.fn().mockResolvedValue({
@@ -399,6 +399,24 @@ describe('PR #168 Review Fixes & Cross-Project Move 304 Cache Invalidation', () 
             error: null,
           }),
           updateUser: mockSupabase.auth.updateUser,
+        },
+      } as any);
+
+      vi.mocked(createServiceClient).mockReturnValue({
+        auth: {
+          admin: {
+            getUserById: vi.fn().mockImplementation(() =>
+              Promise.resolve({
+                data: {
+                  user: {
+                    id: 'u-1',
+                    user_metadata: savedMetadata,
+                  },
+                },
+                error: null,
+              })
+            ),
+          },
         },
       } as any);
 
@@ -429,10 +447,229 @@ describe('PR #168 Review Fixes & Cross-Project Move 304 Cache Invalidation', () 
 
       // Verify that Tab 1's statements preferences and Tab 2's telemetry preferences both coexist!
       const mergedPrefs = savedMetadata.efficiency_dashboard_preferences.sunshade;
-      expect(mergedPrefs.default_views.statements.defaultTimeframe).toBe('quarterly');
+      expect(mergedPrefs.default_views.statements.defaultTimeframe).toBe('quarter');
       expect(mergedPrefs.default_views.telemetry.defaultPivot).toBe('project_swimlanes');
       expect(mergedPrefs.widgets.some((w: any) => w.id === 'stmt_kpi_hours_reclaimed')).toBe(true);
       expect(mergedPrefs.widgets.some((w: any) => w.id === 'tel_kpi_wip_saturation')).toBe(true);
+    });
+
+    it('rejects invalid view or widget schemas with 400 during surface updates', async () => {
+      const { PATCH: tenantMePatch } = await import('@/app/api/v1/tenants/me/route');
+      const { NextRequest } = await import('next/server');
+
+      let savedMetadata: any = {
+        efficiency_dashboard_preferences: {
+          sunshade: {
+            schema_version: '1.0',
+            widgets: [
+              { id: 'stmt_kpi_hours_reclaimed', visible: false, order: 1 },
+            ],
+            default_views: {},
+          },
+        },
+      };
+
+      const { createServerClient, createServiceClient } = await import('@/lib/supabase-server');
+      vi.mocked(createServerClient).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'u-1', user_metadata: savedMetadata } },
+            error: null,
+          }),
+          updateUser: vi.fn().mockResolvedValue({ data: null, error: null }),
+        },
+      } as any);
+      vi.mocked(createServiceClient).mockReturnValue({
+        auth: {
+          admin: {
+            getUserById: vi.fn().mockImplementation(() =>
+              Promise.resolve({
+                data: { user: { id: 'u-1', user_metadata: savedMetadata } },
+                error: null,
+              })
+            ),
+          },
+        },
+      } as any);
+
+      // Send invalid widget ID on surface update
+      const patchReq = new NextRequest('http://localhost:3000/api/v1/tenants/me', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-slug': 'sunshade',
+        },
+        body: JSON.stringify({
+          tenant_slug: 'sunshade',
+          surface: 'telemetry',
+          efficiency_dashboard_preferences: {
+            schema_version: '1.0',
+            widgets: [
+              { id: 'invalid_malicious_widget_id', visible: true, order: 1 },
+            ],
+          },
+        }),
+      });
+
+      const res = await tenantMePatch(patchReq);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain('Invalid efficiency_dashboard_preferences');
+    });
+
+    it('clears all surface preferences when surface is all or omitted with null preferences', async () => {
+      const { PATCH: tenantMePatch } = await import('@/app/api/v1/tenants/me/route');
+      const { NextRequest } = await import('next/server');
+
+      let savedMetadata: any = {
+        efficiency_dashboard_preferences: {
+          sunshade: {
+            schema_version: '1.0',
+            widgets: [{ id: 'stmt_kpi_hours_reclaimed', visible: false, order: 1 }],
+          },
+        },
+      };
+
+      const { createServerClient, createServiceClient } = await import('@/lib/supabase-server');
+      vi.mocked(createServerClient).mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: { id: 'u-1', user_metadata: savedMetadata } },
+            error: null,
+          }),
+          updateUser: vi.fn().mockImplementation((payload) => {
+            savedMetadata = payload.data;
+            return Promise.resolve({ data: { user: { id: 'u-1', user_metadata: savedMetadata } }, error: null });
+          }),
+        },
+      } as any);
+      vi.mocked(createServiceClient).mockReturnValue({
+        auth: {
+          admin: {
+            getUserById: vi.fn().mockImplementation(() =>
+              Promise.resolve({
+                data: { user: { id: 'u-1', user_metadata: savedMetadata } },
+                error: null,
+              })
+            ),
+          },
+        },
+      } as any);
+
+      const patchReq = new NextRequest('http://localhost:3000/api/v1/tenants/me', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-slug': 'sunshade',
+        },
+        body: JSON.stringify({
+          tenant_slug: 'sunshade',
+          surface: 'all',
+          efficiency_dashboard_preferences: null,
+        }),
+      });
+
+      const res = await tenantMePatch(patchReq);
+      expect(res.status).toBe(200);
+      expect(savedMetadata.efficiency_dashboard_preferences.sunshade).toBeUndefined();
+    });
+  });
+
+  describe('efficiencyMintBridge retry concurrency and patronage recalculation', () => {
+    it('recalculates patronage credit and updates ledger/attestation based on fresh reserved count on conflict', async () => {
+      const { mintTokensFromEfficiencyStatement } = await import('@/lib/services/efficiencyMintBridge');
+
+      const artifact = {
+        artifact_ref_id: 'TOOL-GH-TRACKER',
+        builder_user_id: 'tympollack',
+        cumulative_uses: 0,
+        survival_ratio: 1.0,
+      };
+
+      let attempt = 0;
+      const attestations: any[] = [];
+      const ledgerRows: any[] = [];
+
+      const makeTable = (table: string) => {
+        if (table === 'infrastructure_artifacts') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    ...artifact,
+                    cumulative_uses: attempt === 0 ? 0 : 1,
+                  },
+                  error: null,
+                }),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn((col1: string, val1: any) => ({
+                eq: vi.fn((col2: string, val2: any) => ({
+                  select: vi.fn().mockImplementation(() => {
+                    attempt++;
+                    if (attempt === 1) {
+                      // Simulate concurrent conflict on first attempt
+                      return Promise.resolve({ data: [], error: null });
+                    }
+                    // Success on retry with new base count = 1
+                    artifact.cumulative_uses = patch.cumulative_uses;
+                    return Promise.resolve({ data: [{ ...artifact }], error: null });
+                  }),
+                })),
+              })),
+            })),
+          };
+        }
+        if (table === 'efficiency_mint_attestations') {
+          return {
+            insert: vi.fn((row: any) => {
+              attestations.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        if (table === 'hub_tokens_ledger') {
+          return {
+            insert: vi.fn((row: any) => {
+              ledgerRows.push(row);
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                })),
+              };
+            }),
+          };
+        }
+        return {};
+      };
+
+      const mockClient = {
+        schema: vi.fn(() => ({ from: vi.fn(makeTable) })),
+        from: vi.fn(makeTable),
+      };
+
+      const res = await mintTokensFromEfficiencyStatement(mockClient, {
+        tenantId: 'tenant-1',
+        workItemId: 'item-retry-test',
+        checkpointHash: 'cp-retry-test',
+        grossRealizedValueUsd: 125,
+        artifactRefId: 'TOOL-GH-TRACKER',
+      });
+
+      expect(res.status).toBe('attested');
+      // On retry, base count was 1, so next cumulative uses is 2
+      expect(res.cumulativeUses).toBe(2);
+      expect(artifact.cumulative_uses).toBe(2);
+      // Awarded patronage credit must match use 1 (around 850), NOT initial use 0 (2500)
+      expect(res.patronageCreditAwarded).toBe(850);
+      expect(attestations[0].patronage_credit_awarded).toBe(850);
+      expect(ledgerRows[0].metadata.patronage_credit_awarded).toBe(850);
     });
   });
 });

@@ -75,9 +75,9 @@ export const ECOSYSTEM_NOTE =
 
 export const COMPLETION_STATUSES = new Set(['complete', 'completed', 'done', 'closed', 'resolved']);
 
-const GIT_COMMIT_SHA_REGEX = /^(commit-|sha-)?[0-9a-f]{3,40}$/i;
-const PR_URL_REGEX = /^https?:\/\/[^\s/$.?#].[^\s]*(\/pull\/|\/merge_requests?\/|\/pull-requests?\/)\d+/i;
-const ZKP_PROOF_REGEX = /^[a-zA-Z0-9_\-]{8,128}$/;
+export const GIT_COMMIT_SHA_REGEX = /^(commit-|sha-)?[0-9a-f]{3,40}$/i;
+export const PR_URL_REGEX = /^https?:\/\/[^\s/$.?#].[^\s]*(\/pull\/|\/merge_requests?\/|\/pull-requests?\/)\d+/i;
+export const ZKP_PROOF_REGEX = /^[a-zA-Z0-9_\-]{8,128}$/;
 
 /**
  * Validates whether a completed item possesses verifiable artifact proof of execution.

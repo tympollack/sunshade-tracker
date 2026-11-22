@@ -172,23 +172,29 @@ export function useEfficiencyDashboardConfig({
   );
 
   const persistUserOverrides = useCallback(
-    (next: EfficiencyDashboardSchema | null, targetSurface?: DashboardSurface) => {
+    (next: EfficiencyDashboardSchema | null, targetSurface?: DashboardSurface | 'all') => {
       hasLocalEditRef.current = true;
       setUserOverrides(next);
       writeStoredOverrides(storageKey, next);
 
       if (syncToProfile && typeof fetch === 'function') {
+        const payload: Record<string, any> = {
+          tenant_slug: cleanTenantSlug,
+          efficiency_dashboard_preferences: next,
+        };
+        if (targetSurface === 'all') {
+          payload.surface = 'all';
+        } else if (targetSurface || surface) {
+          payload.surface = targetSurface || surface;
+        }
+
         fetch('/api/v1/tenants/me', {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
             'x-tenant-slug': cleanTenantSlug,
           },
-          body: JSON.stringify({
-            tenant_slug: cleanTenantSlug,
-            efficiency_dashboard_preferences: next,
-            surface: targetSurface || surface,
-          }),
+          body: JSON.stringify(payload),
         }).catch(() => {});
       }
     },
@@ -245,7 +251,7 @@ export function useEfficiencyDashboardConfig({
   );
 
   const resetAll = useCallback(() => {
-    persistUserOverrides(null);
+    persistUserOverrides(null, 'all');
   }, [persistUserOverrides]);
 
   const saveAsWorkspaceDefault = useCallback(
