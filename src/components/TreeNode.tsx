@@ -47,6 +47,7 @@ export interface TreeNodeProps {
   metricKey?: string;
   visibleColumns?: ResolvedRowColumn[];
   allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
+  stickyTopOffset?: string;
 }
 
 export const INDENT_STEP = 20;
@@ -164,6 +165,7 @@ export function TreeNode({
   metricKey,
   visibleColumns,
   allProjects,
+  stickyTopOffset = 'top-0',
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
@@ -204,6 +206,7 @@ export function TreeNode({
 
   const hasChildren = Boolean(item.children && item.children.length > 0);
   const isCollapsed = Boolean(collapsedNodeIds?.has(item.id));
+  const isStickyTopLevelGroup = item.depth === 0 && hasChildren && !isCollapsed;
   const isBeingDragged = isDraggingItemId === item.id;
   const sanitizedTitle = sanitizeTitle(item.title);
 
@@ -327,7 +330,14 @@ export function TreeNode({
       )}
 
       {/* Node Content Container with ancestor guide rails */}
-      <div className="relative flex flex-col">
+      <div
+        className={`relative flex flex-col ${
+          isStickyTopLevelGroup
+            ? `sticky ${stickyTopOffset} z-10 bg-[#0b1120]/95 backdrop-blur-md rounded-lg`
+            : ''
+        }`}
+        data-sticky-header={isStickyTopLevelGroup ? 'true' : undefined}
+      >
         <TreeNodeBranchRails
           ancestorRails={ancestorRails}
           isLastChild={isLastChild}
@@ -371,6 +381,7 @@ export function TreeNode({
             statusColor={statusColor}
             effectiveStatuses={effectiveStatuses}
             sanitizedTitle={sanitizedTitle}
+            isCollapsed={isCollapsed}
             isDescExpanded={isDescExpanded}
             setIsDescExpanded={setIsDescExpanded}
             pointMode={pointMode}

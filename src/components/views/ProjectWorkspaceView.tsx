@@ -69,6 +69,8 @@ import {
 import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 import { validateTransitionGuards, formatGuardRejectionMessage } from '@/lib/automation/guardEvaluator';
 import { GuardRejectionToast } from '@/components/board/TransitionGuardFeedback';
+import { useAutoCollapsedTreeNodes, useAutoCollapsedSprints } from '@/hooks/useAutoCollapseState';
+import { TREE_COLLAPSE_STORAGE_PREFIX, SPRINT_COLLAPSE_STORAGE_PREFIX } from '@/lib/tree-collapse';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -236,74 +238,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const [sprintSortBy, setSprintSortBy] = useState<string>('order_index');
   const [activeSprintPopover, setActiveSprintPopover] = useState<string | null>(null);
 
-  // Interactive Hierarchy Tree states
-  const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => {
-    if (typeof window === 'undefined') return new Set();
-    try {
-      const stored = localStorage.getItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = localStorage.getItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
-      setCollapsedTreeNodes(stored ? new Set(JSON.parse(stored)) : new Set());
-    } catch {
-      setCollapsedTreeNodes(new Set());
-    }
-  }, [projectSlug]);
-
   const [treeDraggedItemId, setTreeDraggedItemId] = useState<string | null>(null);
   const [isTreeRootOver, setIsTreeRootOver] = useState(false);
-
-  const handleToggleCollapseTreeNode = (nodeId: string) => {
-    setCollapsedTreeNodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      try {
-        localStorage.setItem(
-          `tracker_collapsed_tree_nodes_${projectSlug}`,
-          JSON.stringify(Array.from(next))
-        );
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleExpandAllTreeNodes = () => {
-    setCollapsedTreeNodes(new Set());
-    try {
-      localStorage.removeItem(`tracker_collapsed_tree_nodes_${projectSlug}`);
-    } catch {}
-  };
-
-  const handleCollapseAllTreeNodes = () => {
-    const parentIds = new Set<string>();
-    const collectParents = (nodes: WorkItemNode[]) => {
-      for (const n of nodes) {
-        if (n.children && n.children.length > 0) {
-          parentIds.add(n.id);
-          collectParents(n.children);
-        }
-      }
-    };
-    collectParents(treeItems);
-    setCollapsedTreeNodes(parentIds);
-    try {
-      localStorage.setItem(
-        `tracker_collapsed_tree_nodes_${projectSlug}`,
-        JSON.stringify(Array.from(parentIds))
-      );
-    } catch {}
-  };
 
   // Sprint View Mode: 'flat' or 'tree'
   const [sprintViewMode, setSprintViewMode] = useState<'flat' | 'tree'>('flat');
@@ -311,17 +247,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   // Multi-Selection State for Bulk Actions
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const lastSelectedIdRef = useRef<string | null>(null);
-
-  // Sprint Swimlane Collapse State
-  const [collapsedSprints, setCollapsedSprints] = useState<Set<string>>(() => {
-    if (typeof window === 'undefined') return new Set();
-    try {
-      const stored = localStorage.getItem(`tracker_collapsed_sprints_${projectSlug}`);
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
 
   const [hideCompletedSprints, setHideCompletedSprints] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -1114,6 +1039,36 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const getItemStatuses = useCallback((item: WorkItem): StatusDefinition[] => {
     return getItemProjectSettings(item).statuses || projectSettings.statuses;
   }, [getItemProjectSettings, projectSettings.statuses]);
+
+  const {
+    collapsedIds: collapsedTreeNodes,
+    toggleNode: handleToggleCollapseTreeNode,
+    expandNode: expandTreeNode,
+    expandAll: handleExpandAllTreeNodes,
+    collapseAll: collapseAllTreeNodes,
+  } = useAutoCollapsedTreeNodes(
+    `${TREE_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    treeItems,
+    getItemStatuses
+  );
+
+  const handleCollapseAllTreeNodes = useCallback(() => {
+    collapseAllTreeNodes(treeItems);
+  }, [collapseAllTreeNodes, treeItems]);
+
+  const {
+    collapsedSprints,
+    toggleSprint: toggleSprintCollapse,
+    toggleAllSprints,
+  } = useAutoCollapsedSprints(
+    `${SPRINT_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    availableSprints,
+    availableSprintDefs
+  );
+
+  const handleToggleCollapseAllSprints = useCallback(() => {
+    toggleAllSprints([...visibleSprints, '__backlog__']);
+  }, [toggleAllSprints, visibleSprints]);
 
   const activeSchemaSettings = useMemo(() => {
     if (isAllProjects) {
@@ -2092,17 +2047,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     const created = await res.json();
     if (created.item) {
       setItems((prev) => [...prev, created.item]);
-      setCollapsedTreeNodes((prev) => {
-        const next = new Set(prev);
-        next.delete(parentId);
-        try {
-          localStorage.setItem(
-            `tracker_collapsed_tree_nodes_${projectSlug}`,
-            JSON.stringify(Array.from(next))
-          );
-        } catch {}
-        return next;
-      });
+      expandTreeNode(parentId, true);
     } else {
       fetchData();
     }
@@ -2200,11 +2145,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         )
       );
 
-      setCollapsedTreeNodes((prev) => {
-        const next = new Set(prev);
-        next.delete(targetId);
-        return next;
-      });
+      expandTreeNode(targetId);
 
       try {
         const res = await apiFetch('/api/v1/items', {
@@ -2327,38 +2268,6 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       broadcastItemMutation({ type: 'ITEMS_REFRESH', tenantSlug, projectId: currentProjectId, projectSlug });
       return false;
     }
-  };
-
-  const toggleSprintCollapse = (sprintKey: string) => {
-    setCollapsedSprints((prev) => {
-      const next = new Set(prev);
-      if (next.has(sprintKey)) {
-        next.delete(sprintKey);
-      } else {
-        next.add(sprintKey);
-      }
-      try {
-        localStorage.setItem(
-          `tracker_collapsed_sprints_${projectSlug}`,
-          JSON.stringify(Array.from(next))
-        );
-      } catch {}
-      return next;
-    });
-  };
-
-  const handleToggleCollapseAllSprints = () => {
-    const allKeys = [...visibleSprints, '__backlog__'];
-    setCollapsedSprints((prev) => {
-      const next = prev.size === allKeys.length ? new Set<string>() : new Set<string>(allKeys);
-      try {
-        localStorage.setItem(
-          `tracker_collapsed_sprints_${projectSlug}`,
-          JSON.stringify(Array.from(next))
-        );
-      } catch {}
-      return next;
-    });
   };
 
   const handleSaveSprints = async (sprints: SprintDefinition[]) => {
@@ -4003,7 +3912,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               className={
                 isKioskMode && activeTab === 'live'
                   ? 'flex-1 p-0 max-w-none h-[100dvh] w-full max-w-full overflow-x-hidden'
-                  : 'flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden'
+                  : 'flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-clip'
               }
             >
               <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>

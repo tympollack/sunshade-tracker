@@ -22,6 +22,11 @@ import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
 import { useRowColumns } from '@/hooks/useRowColumns';
+import { useAutoCollapsedTreeNodes } from '@/hooks/useAutoCollapseState';
+import {
+  SPRINT_TREE_COLLAPSE_STORAGE_PREFIX,
+  flattenVisibleTreeNodes,
+} from '@/lib/tree-collapse';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import { ProjectGroupDivider } from '@/components/sprint/ProjectGroupDivider';
 import { isProjectSort } from '@/lib/utils/sortUtils';
@@ -142,6 +147,20 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
   const rowColumns = useRowColumns(projectSettings, 'table', projectSlug, items, tenantSlug);
 
+  const sprintAllTreeRoots = React.useMemo(
+    () => (sprintViewMode === 'tree' ? buildTree(items, null, 0, new Set(), sprintComparator) : []),
+    [items, sprintViewMode, sprintComparator]
+  );
+
+  const {
+    collapsedIds: collapsedSprintTreeNodes,
+    toggleNode: toggleSprintTreeNode,
+  } = useAutoCollapsedTreeNodes(
+    `${SPRINT_TREE_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    sprintAllTreeRoots,
+    getItemStatuses
+  );
+
   const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
 
   const handleLazyLoadSprint = async (sprintIdentifier: string) => {
@@ -183,6 +202,96 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
   const completionSet = getCompletedStatusSet(projectSettings?.statuses);
 
   const showProjectGroups = isAllProjects && isProjectSort(sprintSortBy);
+
+  const renderSprintTreeBranch = (
+    node: WorkItemNode,
+    poolItems: WorkItem[],
+    currentSprintName: string,
+    depth = 0
+  ): React.ReactNode => {
+    const childCount = (node.children || []).length;
+    const getSubtreePoints = (n: WorkItemNode): number => {
+      const children = n.children || [];
+      if (children.length === 0) {
+        return getItemWorkMetric(n, projectSettings);
+      }
+      let sum = 0;
+      for (const c of children) {
+        sum += getSubtreePoints(c);
+      }
+      return sum;
+    };
+    const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
+    const isImmutable =
+      isItemImmutableDueToCompletedSprint(node, projectSettings, availableSprintDefs) || isReadOnly;
+    const descendantIds = getDescendantIds(items, node.id);
+    const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
+    const isNodeSelected = selectedItemIds.has(node.id);
+    const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
+    const isNodeCollapsed = collapsedSprintTreeNodes.has(node.id);
+    const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
+    const stickyHeaderClass = isStickyRootEpic
+      ? showProjectGroups
+        ? 'md:sticky md:top-8 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        : 'md:sticky md:top-0 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+      : undefined;
+
+    const branchContent = (
+      <>
+        <SprintItemRow
+          item={node}
+          depth={depth}
+          isSelected={isNodeSelected}
+          isIndeterminate={isNodeIndeterminate}
+          onToggleSelect={(id, e) => handleToggleSelectItem(id, e, poolItems, true)}
+          isImmutable={isImmutable}
+          onEditItem={setEditingItem}
+          getItemHierarchy={getItemHierarchy}
+          getItemStatuses={getItemStatuses}
+          deviations={deviations}
+          onOpenReconciliation={(dev) => {
+            setFocusedDeviationId(dev?.id || null);
+            setIsReconciliationModalOpen(true);
+          }}
+          isAllProjects={isAllProjects}
+          allProjects={allProjects}
+          projectSettings={projectSettings}
+          onUpdateStatus={handleUpdateStatus}
+          onUpdateAssignee={handleUpdateAssignee}
+          onUpdateSprint={(id, sp) => handleUpdateItemSprint(id, sp)}
+          members={members}
+          availableSprints={availableSprints}
+          currentSprintName={currentSprintName}
+          isTreeMode={true}
+          childCount={childCount}
+          rollupPoints={rollupPoints}
+          pointMode={pointMode}
+          visibleColumns={rowColumns.effectiveColumns}
+          isCollapsed={isNodeCollapsed}
+          onToggleCollapse={toggleSprintTreeNode}
+          stickyHeaderClass={stickyHeaderClass}
+        />
+        {!isNodeCollapsed &&
+          (node.children || []).map((child) =>
+            renderSprintTreeBranch(child, poolItems, currentSprintName, depth + 1)
+          )}
+      </>
+    );
+
+    if (depth === 0) {
+      return (
+        <div
+          key={node.id}
+          className="divide-y divide-slate-800/50"
+          data-testid={`sprint-tree-branch-${node.id}`}
+        >
+          {branchContent}
+        </div>
+      );
+    }
+
+    return <React.Fragment key={node.id}>{branchContent}</React.Fragment>;
+  };
 
   // Renders a project boundary divider when the project changes between adjacent rows
   const renderProjectDivider = (
@@ -264,7 +373,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors flex items-center space-x-1.5 cursor-pointer"
             data-testid="sprint-toggle-all-collapse"
           >
-            {collapsedSprints.size === (visibleSprints.length + 1) ? (
+            {visibleSprints.every((s) => collapsedSprints.has(s)) && collapsedSprints.has('__backlog__') ? (
               <>
                 <Maximize2 className="w-3.5 h-3.5" />
                 <span>Expand All</span>
@@ -448,64 +557,6 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const someSprintSelected =
             !allSprintSelected && sprintItems.some((it) => selectedItemIds.has(it.id));
 
-          // Tree renderer for hierarchy mode
-          const renderSprintTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
-            const childCount = (node.children || []).length;
-            const getSubtreePoints = (n: WorkItemNode): number => {
-              const children = n.children || [];
-              if (children.length === 0) {
-                return getItemWorkMetric(n, projectSettings);
-              }
-              let sum = 0;
-              for (const c of children) {
-                sum += getSubtreePoints(c);
-              }
-              return sum;
-            };
-            const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings, availableSprintDefs) || isReadOnly;
-            const descendantIds = getDescendantIds(items, node.id);
-            const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
-            const isNodeSelected = selectedItemIds.has(node.id);
-            const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
-
-            return (
-              <React.Fragment key={node.id}>
-                <SprintItemRow
-                  item={node}
-                  depth={depth}
-                  isSelected={isNodeSelected}
-                  isIndeterminate={isNodeIndeterminate}
-                  onToggleSelect={(id, e) => handleToggleSelectItem(id, e, sprintItems, true)}
-                  isImmutable={isImmutable}
-                  onEditItem={setEditingItem}
-                  getItemHierarchy={getItemHierarchy}
-                  getItemStatuses={getItemStatuses}
-                  deviations={deviations}
-                  onOpenReconciliation={(dev) => {
-                    setFocusedDeviationId(dev?.id || null);
-                    setIsReconciliationModalOpen(true);
-                  }}
-                  isAllProjects={isAllProjects}
-                  allProjects={allProjects}
-                  projectSettings={projectSettings}
-                  onUpdateStatus={handleUpdateStatus}
-                  onUpdateAssignee={handleUpdateAssignee}
-                  onUpdateSprint={(id, sp) => handleUpdateItemSprint(id, sp)}
-                  members={members}
-                  availableSprints={availableSprints}
-                  currentSprintName={sprintName}
-                  isTreeMode={true}
-                  childCount={childCount}
-                  rollupPoints={rollupPoints}
-                  pointMode={pointMode}
-                  visibleColumns={rowColumns.effectiveColumns}
-                />
-                {(node.children || []).map((child) => renderSprintTreeNode(child, depth + 1))}
-              </React.Fragment>
-            );
-          };
-
           return (
             <div
               key={sprintName}
@@ -516,9 +567,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             >
               {/* Sprint Header */}
               <div
-                className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 relative has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
-                  activeSprintPopover === sprintName ? '!z-30' : 'z-10'
-                } ${isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'}`}
+                className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+                  activeSprintPopover === sprintName ? '!z-30' : 'z-20'
+                } ${isCollapsed ? 'relative rounded-xl border-b-0' : 'sticky top-0 rounded-t-xl'}`}
               >
                 <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <button
@@ -649,7 +700,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar">
+                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid={`sprint-body-scroll-${sprintName}`}>
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
@@ -691,12 +742,25 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       </div>
                     )
                   ) : sprintViewMode === 'tree' ? (
-                    buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node, idx, arr) => (
-                      <React.Fragment key={node.id}>
-                        {renderProjectDivider(node, arr[idx - 1], sprintItems)}
-                        {renderSprintTreeNode(node)}
-                      </React.Fragment>
-                    ))
+                    (() => {
+                      const sprintTreeRoots = buildTree(
+                        sprintItems,
+                        null,
+                        0,
+                        new Set(),
+                        sprintComparator
+                      );
+                      const visibleSprintPool = flattenVisibleTreeNodes(
+                        sprintTreeRoots,
+                        collapsedSprintTreeNodes
+                      );
+                      return sprintTreeRoots.map((node, idx, arr) => (
+                        <React.Fragment key={node.id}>
+                          {renderProjectDivider(node, arr[idx - 1], sprintItems)}
+                          {renderSprintTreeBranch(node, visibleSprintPool, sprintName)}
+                        </React.Fragment>
+                      ));
+                    })()
                   ) : (
                     sprintItems.map((item, itemIdx) => {
                       const isImmutable =
@@ -785,69 +849,16 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const someBacklogSelected =
             !allBacklogSelected && backlogItems.some((it) => selectedItemIds.has(it.id));
 
-          const renderBacklogTreeNode = (node: WorkItemNode, depth = 0): React.ReactNode => {
-            const childCount = (node.children || []).length;
-            const getSubtreePoints = (n: WorkItemNode): number => {
-              const children = n.children || [];
-              if (children.length === 0) {
-                return getItemWorkMetric(n, projectSettings);
-              }
-              let sum = 0;
-              for (const c of children) {
-                sum += getSubtreePoints(c);
-              }
-              return sum;
-            };
-            const rollupPoints = childCount > 0 ? getSubtreePoints(node) : 0;
-            const isImmutable = isItemImmutableDueToCompletedSprint(node, projectSettings, availableSprintDefs) || isReadOnly;
-            const descendantIds = getDescendantIds(items, node.id);
-            const selectedDescendantsCount = descendantIds.filter((id) => selectedItemIds.has(id)).length;
-            const isNodeSelected = selectedItemIds.has(node.id);
-            const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
-
-            return (
-              <React.Fragment key={node.id}>
-                <SprintItemRow
-                  item={node}
-                  depth={depth}
-                  isSelected={isNodeSelected}
-                  isIndeterminate={isNodeIndeterminate}
-                  onToggleSelect={(id, e) => handleToggleSelectItem(id, e, backlogItems, true)}
-                  isImmutable={isImmutable}
-                  onEditItem={setEditingItem}
-                  getItemHierarchy={getItemHierarchy}
-                  getItemStatuses={getItemStatuses}
-                  deviations={deviations}
-                  onOpenReconciliation={(dev) => {
-                    setFocusedDeviationId(dev?.id || null);
-                    setIsReconciliationModalOpen(true);
-                  }}
-                  isAllProjects={isAllProjects}
-                  allProjects={allProjects}
-                  projectSettings={projectSettings}
-                  onUpdateStatus={handleUpdateStatus}
-                  onUpdateAssignee={handleUpdateAssignee}
-                  onUpdateSprint={handleUpdateItemSprint}
-                  members={members}
-                  availableSprints={availableSprints}
-                  currentSprintName="__none__"
-                  isTreeMode={true}
-                  childCount={childCount}
-                  rollupPoints={rollupPoints}
-                  pointMode={pointMode}
-                  visibleColumns={rowColumns.effectiveColumns}
-                />
-                {(node.children || []).map((child) => renderBacklogTreeNode(child, depth + 1))}
-              </React.Fragment>
-            );
-          };
-
           return (
             <div
-              className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+              className="rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative"
               data-testid="backlog-swimlane"
             >
-              <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+              <div
+                className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
+                  isBacklogCollapsed ? 'rounded-xl border-b-0' : 'sticky top-0 z-20 rounded-t-xl'
+                }`}
+              >
                 <div className="flex items-center space-x-3">
                   <button
                     type="button"
@@ -901,7 +912,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isBacklogCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar">
+                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid="backlog-body-scroll">
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader
@@ -917,12 +928,25 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       Backlog is empty! All items are assigned to active sprints.
                     </div>
                   ) : sprintViewMode === 'tree' ? (
-                    buildTree(backlogItems, null, 0, new Set(), sprintComparator).map((node, idx, arr) => (
-                      <React.Fragment key={node.id}>
-                        {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
-                        {renderBacklogTreeNode(node)}
-                      </React.Fragment>
-                    ))
+                    (() => {
+                      const backlogTreeRoots = buildTree(
+                        backlogItems,
+                        null,
+                        0,
+                        new Set(),
+                        sprintComparator
+                      );
+                      const visibleBacklogPool = flattenVisibleTreeNodes(
+                        backlogTreeRoots,
+                        collapsedSprintTreeNodes
+                      );
+                      return backlogTreeRoots.map((node, idx, arr) => (
+                        <React.Fragment key={node.id}>
+                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
+                          {renderSprintTreeBranch(node, visibleBacklogPool, '__none__')}
+                        </React.Fragment>
+                      ));
+                    })()
                   ) : (
                     backlogItems.map((item, itemIdx) => {
                       const isImmutable =
