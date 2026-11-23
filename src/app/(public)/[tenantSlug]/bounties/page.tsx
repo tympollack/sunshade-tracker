@@ -1,28 +1,36 @@
 import React from 'react';
+import { headers } from 'next/headers';
 import { supabaseAdmin } from '@/lib/db';
 import {
   ShieldAlert,
   Award,
   GitPullRequest,
   Terminal,
-  CheckCircle2,
-  Clock,
-  PlayCircle,
   Coins,
   Flame,
-  Layers,
   ShieldCheck,
 } from 'lucide-react';
-import { calculateBountyPricing } from '@/lib/bounties/neglectPricing';
+import { BountyGatewayBoard } from '@/components/bounties/BountyGatewayBoard';
+import { DEFAULT_LOCALE, resolveLocale, t } from '@/lib/i18n';
 
 interface PageProps {
   params: Promise<{ tenantSlug: string }>;
+}
+
+async function resolveRequestLocale(): Promise<string> {
+  try {
+    const hdrs = await headers();
+    return resolveLocale(hdrs.get('accept-language'));
+  } catch {
+    return DEFAULT_LOCALE;
+  }
 }
 
 export default async function PublicBountiesPage({ params }: PageProps) {
   const resolvedParams = await params;
   const rawSlug = resolvedParams?.tenantSlug || '';
   const tenantSlug = rawSlug.replace(/^@/, '');
+  const locale = await resolveRequestLocale();
 
   // 1. Resolve Tenant
   let tenantQuery: any = supabaseAdmin
@@ -51,15 +59,17 @@ export default async function PublicBountiesPage({ params }: PageProps) {
           <div className="w-12 h-12 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-4">
             <ShieldAlert className="w-6 h-6" />
           </div>
-          <h1 className="text-xl font-bold text-slate-100 mb-2">Private Workspace</h1>
+          <h1 className="text-xl font-bold text-slate-100 mb-2">
+            {t('bounty.gateway.privateTitle', undefined, locale)}
+          </h1>
           <p className="text-sm text-slate-400 mb-6">
-            Workspace &ldquo;{tenantSlug}&rdquo; is private. Only authenticated members can view internal roadmap items and bounties.
+            {t('bounty.gateway.privateDescription', { tenantSlug }, locale)}
           </p>
           <a
             href="/login"
             className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm transition-colors"
           >
-            Sign In with Workspace Account
+            {t('bounty.gateway.signIn', undefined, locale)}
           </a>
         </div>
       </main>
@@ -87,16 +97,27 @@ export default async function PublicBountiesPage({ params }: PageProps) {
   const { data: allItems } = await itemsQuery;
 
   // Security: Strictly filter for active bounties to prevent exposing private task details
-  const items = (allItems || []).filter((it: any) => {
-    return it.metadata?.bounty_active === true;
-  });
+  const items = (allItems || []).filter((it: any) => it.metadata?.bounty_active === true);
 
-  const columns = [
-    { id: 'not_started', label: 'Open Bounties', icon: PlayCircle, color: 'text-amber-400 border-amber-500/20' },
-    { id: 'in_progress', label: 'Claimed / In Progress', icon: Clock, color: 'text-sky-400 border-sky-500/20' },
-    { id: 'in_review', label: 'Under Review', icon: GitPullRequest, color: 'text-purple-400 border-purple-500/20' },
-    { id: 'complete', label: 'Completed & Verified', icon: CheckCircle2, color: 'text-emerald-400 border-emerald-500/20' },
-  ];
+  // 3b. Resolve project-level process_efficiency_factor overrides safely
+  const projectEfficiencyMap = new Map<string, number>();
+  try {
+    const projTable: any = supabaseAdmin.from('projects');
+    if (projTable && typeof projTable.select === 'function') {
+      let projQuery: any = projTable.select('id, settings').eq('tenant_id', tenant.id);
+      if (typeof projQuery?.is === 'function') {
+        projQuery = projQuery.is('deleted_at', null);
+      }
+      const projRes = await projQuery;
+      for (const proj of projRes?.data || []) {
+        if (proj?.id && typeof proj?.settings?.process_efficiency_factor === 'number') {
+          projectEfficiencyMap.set(proj.id, proj.settings.process_efficiency_factor);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal fallback to default 1.0 factor
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-10 font-sans">
@@ -106,15 +127,15 @@ export default async function PublicBountiesPage({ params }: PageProps) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Public Roadmap & Bounties
+                {t('bounty.gateway.badge', undefined, locale)}
               </span>
               <span className="text-xs text-slate-500 font-mono">@{tenant.slug}</span>
             </div>
             <h1 className="text-3xl font-extrabold text-white tracking-tight">
-              {tenant.name} Bounty Gateway
+              {t('bounty.gateway.title', { tenantName: tenant.name }, locale)}
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              Autonomous agents and open-source contributors can claim tasks and submit pull requests for automated reward verification.
+              {t('bounty.gateway.subtitle', undefined, locale)}
             </p>
           </div>
 
@@ -123,7 +144,7 @@ export default async function PublicBountiesPage({ params }: PageProps) {
               href={`/${tenant.slug}`}
               className="px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-850 text-slate-300 text-sm font-medium transition-colors"
             >
-              View Full Board
+              {t('bounty.gateway.viewBoard', undefined, locale)}
             </a>
           </div>
         </div>
@@ -136,24 +157,26 @@ export default async function PublicBountiesPage({ params }: PageProps) {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-white">Sovereign 20-Hour Token Economy</span>
+                <span className="text-sm font-bold text-white">
+                  {t('bounty.gateway.banner.title', undefined, locale)}
+                </span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                  Closed-Loop Work Rebate
+                  {t('bounty.gateway.banner.badge', undefined, locale)}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Anchored to 1,200,000 Tokens/Week (60,000 Tokens/Hr · 1,000 Tokens/Min) with dynamic neglect surge pricing up to 2.00x.
+                {t('bounty.gateway.banner.subtitle', undefined, locale)}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2 font-mono text-xs text-slate-300">
             <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-1.5">
               <Flame className="w-3.5 h-3.5 text-amber-400" />
-              <span>Up to 2.0x Dormancy Bonus</span>
+              <span>{t('bounty.gateway.banner.dormancyChip', undefined, locale)}</span>
             </div>
             <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Artifact Proof Guard</span>
+              <span>{t('bounty.gateway.banner.proofChip', undefined, locale)}</span>
             </div>
           </div>
         </div>
@@ -165,7 +188,9 @@ export default async function PublicBountiesPage({ params }: PageProps) {
               <Terminal className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-200">1. Claim with CLI</h2>
+              <h2 className="text-sm font-semibold text-slate-200">
+                {t('bounty.gateway.steps.claimTitle', undefined, locale)}
+              </h2>
               <p className="text-xs text-slate-400 mt-0.5 font-mono">
                 sunshade-cli task:claim &lt;REF-ID&gt;
               </p>
@@ -177,9 +202,12 @@ export default async function PublicBountiesPage({ params }: PageProps) {
               <GitPullRequest className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-200">2. Reference in PR</h2>
+              <h2 className="text-sm font-semibold text-slate-200">
+                {t('bounty.gateway.steps.referenceTitle', undefined, locale)}
+              </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Include Ref ID in PR title: <code className="text-purple-300 text-xs">feat: [&lt;REF-ID&gt;]</code>
+                {t('bounty.gateway.steps.referenceDesc', undefined, locale)}{' '}
+                <code className="text-purple-300 text-xs">feat: [&lt;REF-ID&gt;]</code>
               </p>
             </div>
           </div>
@@ -189,126 +217,22 @@ export default async function PublicBountiesPage({ params }: PageProps) {
               <Award className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-200">3. Automated Reward</h2>
+              <h2 className="text-sm font-semibold text-slate-200">
+                {t('bounty.gateway.steps.rewardTitle', undefined, locale)}
+              </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Merge automatically moves card to Complete and verifies bounty.
+                {t('bounty.gateway.steps.rewardDesc', undefined, locale)}
               </p>
             </div>
           </div>
         </section>
       </header>
 
-      {/* Kanban Board Grid */}
-      <section className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {columns.map((col) => {
-          const colItems = items.filter((it: any) => it.status === col.id);
-          const Icon = col.icon;
-
-          return (
-            <div
-              key={col.id}
-              className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 flex flex-col min-h-[500px]"
-            >
-              {/* Column Header */}
-              <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Icon className={`w-4 h-4 ${col.color.split(' ')[0]}`} />
-                  <h3 className="text-sm font-bold text-slate-200">{col.label}</h3>
-                </div>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
-                  {colItems.length}
-                </span>
-              </div>
-
-              {/* Cards List */}
-              <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
-                {colItems.length === 0 ? (
-                  <div className="flex-1 flex items-center justify-center p-6 text-center text-xs text-slate-600 italic">
-                    No items in this column
-                  </div>
-                ) : (
-                  colItems.map((item: any) => {
-                    const pricing = calculateBountyPricing({
-                      estimatedHours: item.metadata?.estimated_hours || item.metadata?.bounty_hours,
-                      priority: item.priority || item.metadata?.priority,
-                      lastActivityDate: item.updated_at || item.created_at,
-                    });
-
-                    return (
-                      <article
-                        key={item.id}
-                        className="bg-slate-900 border border-slate-800/90 rounded-lg p-4 shadow-sm hover:border-slate-700 transition-all flex flex-col gap-2.5"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="px-2 py-0.5 rounded bg-sky-950/60 text-sky-400 border border-sky-800/50 text-xs font-mono font-semibold">
-                            {item.external_ref_id || item.id.slice(0, 8)}
-                          </span>
-                          {item.metadata?.bounty_reward ? (
-                            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-bold font-mono">
-                              {item.metadata.bounty_reward}
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs font-bold font-mono flex items-center gap-1">
-                              <Coins className="w-3 h-3 text-amber-400" />
-                              {pricing.dynamicBountyTokens.toLocaleString()} Tokens
-                            </span>
-                          )}
-                        </div>
-
-                        {!item.metadata?.bounty_reward && pricing.neglectMultiplier > 1.0 && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
-                              <Flame className="w-3 h-3 text-amber-400" />
-                              {pricing.neglectMultiplier.toFixed(2)}x Neglect Yield (+{pricing.daysDormant}d dormant)
-                            </span>
-                          </div>
-                        )}
-
-                        <h4 className="text-sm font-semibold text-slate-100 leading-snug">
-                          {item.title}
-                        </h4>
-
-                        {item.description && (
-                          <p className="text-xs text-slate-400 line-clamp-2">
-                            {item.description}
-                          </p>
-                        )}
-
-                        <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-500">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-slate-400">
-                              {item.assignee ? `@${item.assignee}` : 'Unassigned'}
-                            </span>
-                            <span className="text-slate-600">·</span>
-                            <span className="flex items-center gap-1 text-[11px] text-slate-400 font-mono">
-                              <Clock className="w-3 h-3 text-slate-500" />
-                              {pricing.estimatedHours.toFixed(1)} hrs est.
-                            </span>
-                          </div>
-                          {item.metadata?.pr_url ? (
-                            <a
-                              href={item.metadata.pr_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-purple-400 hover:text-purple-300 flex items-center gap-1 font-mono text-[11px]"
-                            >
-                              <GitPullRequest className="w-3 h-3" /> PR
-                            </a>
-                          ) : (
-                            <span className="text-[11px] font-mono text-emerald-400/80 flex items-center gap-1">
-                              <ShieldCheck className="w-3 h-3 text-emerald-400" /> Proof Req.
-                            </span>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </section>
+      <BountyGatewayBoard
+        items={items}
+        projectEfficiencyMap={projectEfficiencyMap}
+        locale={locale}
+      />
     </main>
   );
 }

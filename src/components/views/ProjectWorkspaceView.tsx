@@ -2988,11 +2988,39 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         setBulkToast(`Failed to change project: ${res.error || 'Server rejected migration'}`);
         setTimeout(() => setBulkToast(null), 4000);
       } else {
+        // Optimistically remove migrated items and their descendants from local state
+        const { getDescendantIds } = await import('@/lib/tree');
+        const allDescendantIds = new Set<string>();
+        for (const id of selectedIds) {
+          getDescendantIds(items, id).forEach((d) => allDescendantIds.add(d));
+        }
+        const removeSet = new Set([...selectedIds, ...allDescendantIds]);
+        setItems((prev) => prev.filter((it) => !removeSet.has(it.id)));
+
         const movedCount = res.updatedCount || selectedIds.length;
         setBulkToast(`Moved ${movedCount} items to ${targetProjectName}.`);
         setTimeout(() => setBulkToast(null), 3000);
         setSelectedItemIds(new Set());
         fetchData();
+
+        const selectedProjectIds = Array.from(
+          new Set(
+            items
+              .filter((it) => selectedItemIds.has(it.id) && it.project_id)
+              .map((it) => it.project_id)
+          )
+        );
+        if (currentProjectId && !selectedProjectIds.includes(currentProjectId)) {
+          selectedProjectIds.push(currentProjectId);
+        }
+
+        broadcastItemMutation({
+          type: 'ITEMS_REFRESH',
+          tenantSlug,
+          projectId: targetProjectId,
+          sourceProjectId: currentProjectId || selectedProjectIds[0],
+          sourceProjectIds: selectedProjectIds,
+        });
       }
     } catch (err: any) {
       setBulkToast(`Error changing project: ${err?.message || 'Failed to communicate with server'}`);
@@ -3989,6 +4017,19 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                       tenantInfo?.metadata?.live_dashboard_settings ||
                       null
                     }
+                    efficiencyDashboardSettings={
+                      tenantInfo?.settings?.efficiency_dashboard_settings ||
+                      tenantInfo?.metadata?.efficiency_dashboard_settings ||
+                      null
+                    }
+                    userDashboardPreferences={
+                      (currentUser as any)?.efficiency_dashboard_preferences_map?.[tenantSlug] ??
+                      (currentUser as any)?.efficiency_dashboard_preferences ??
+                      null
+                    }
+                    profileLoaded={Boolean(currentUser?.id)}
+                    canSaveWorkspaceDefault={!isReadOnly}
+                    syncToProfile={Boolean(currentUser?.id)}
                     initialPivot={typeof searchParams?.pivot === 'string' ? searchParams.pivot : null}
                     selectedItemRef={
                       selectedDrawerItem
@@ -4133,6 +4174,9 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   handleTreeUpdateAssignee={handleTreeUpdateAssignee}
                   handleTreeCreateChild={handleTreeCreateChild}
                   setEditingItem={selectDrawerItem}
+                  tenantSlug={tenantSlug}
+                  projectSlug={projectSlug}
+                  allProjects={allProjects}
                 />
               )}
 
@@ -4179,8 +4223,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                   isAllProjects={isAllProjects}
                   allProjects={allProjects}
                   handleUpdateStatus={handleUpdateStatus}
+                  handleUpdateAssignee={handleTreeUpdateAssignee}
                   handleUpdateItemSprint={handleUpdateItemSprint}
+                  members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
                   onLazyLoadSprint={handleLazyLoadSprint}
+                  tenantSlug={tenantSlug}
+                  projectSlug={projectSlug}
                 />
               )}
 

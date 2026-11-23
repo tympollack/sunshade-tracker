@@ -8,6 +8,16 @@ import {
   DEFAULT_LIVE_DASHBOARD_SETTINGS,
   resolveLiveDashboardSettings,
 } from '@/types/tracker';
+import type {
+  EfficiencyDashboardSchema,
+  ResolvedEfficiencyDashboardConfig,
+} from '@/types/efficiency-dashboard';
+import {
+  mergeEfficiencyDashboardSchemas,
+  mergeSparseEfficiencyDashboardSchemas,
+  resolveEfficiencyDashboardConfig,
+  validateEfficiencyDashboardSchema,
+} from '@/lib/efficiency-dashboard-schema';
 
 export interface ProjectVelocityOverride {
   projectId: string;
@@ -396,6 +406,265 @@ export async function updateLiveDashboardSettingsAction(
       success: false,
       settings: resolveLiveDashboardSettings(null),
       error: err.message || 'Failed to update live dashboard settings.',
+    };
+  }
+}
+
+export interface EfficiencyDashboardSchemaResult {
+  success: boolean;
+  schema: EfficiencyDashboardSchema;
+  resolved: ResolvedEfficiencyDashboardConfig;
+  error: string | null;
+}
+
+/**
+ * Server action to resolve workspace-level declarative efficiency & telemetry dashboard schema
+ * from tracker.tenants.settings.efficiency_dashboard_settings.
+ */
+export async function getEfficiencyDashboardSchemaAction(
+  tenantSlug: string
+): Promise<EfficiencyDashboardSchemaResult> {
+  const fallbackResolved = resolveEfficiencyDashboardConfig();
+  const fallbackSchema = mergeEfficiencyDashboardSchemas(null);
+
+  try {
+    const cleanSlug = tenantSlug.replace(/^@/, '').trim();
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, slug, tier, owner_id, settings, metadata')
+      .eq('slug', cleanSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (tenantErr || !tenant) {
+      return {
+        success: false,
+        schema: fallbackSchema,
+        resolved: fallbackResolved,
+        error: tenantErr?.message || `Workspace "@${cleanSlug}" not found.`,
+      };
+    }
+
+    const isPublicWorkspace =
+      tenant.slug === 'sunshade' ||
+      tenant.tier === 'demo' ||
+      Boolean(tenant.metadata?.is_public);
+
+    if (!isPublicWorkspace) {
+      const supabase = await createServerClient();
+      const authRes = await supabase?.auth?.getUser?.();
+      const user = authRes?.data?.user;
+
+      if (!user) {
+        return {
+          success: false,
+          schema: fallbackSchema,
+          resolved: fallbackResolved,
+          error: 'Unauthorized: Session required to view private workspace settings.',
+        };
+      }
+
+      if (tenant.owner_id !== user.id) {
+        const { data: member, error: memberErr } = await supabaseAdmin
+          .from('tenant_members')
+          .select('role')
+          .eq('tenant_id', tenant.id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (memberErr || !member) {
+          return {
+            success: false,
+            schema: fallbackSchema,
+            resolved: fallbackResolved,
+            error: 'Forbidden: You do not have membership access to this workspace.',
+          };
+        }
+      }
+    }
+
+    const workspaceSettings =
+      tenant.settings?.efficiency_dashboard_settings ||
+      tenant.metadata?.efficiency_dashboard_settings ||
+      null;
+    const liveDashboardSettings =
+      tenant.settings?.live_dashboard_settings ||
+      tenant.metadata?.live_dashboard_settings ||
+      null;
+
+    const resolved = resolveEfficiencyDashboardConfig({
+      workspaceSettings,
+      liveDashboardSettings,
+    });
+    const schema = mergeEfficiencyDashboardSchemas(workspaceSettings);
+
+    return {
+      success: true,
+      schema,
+      resolved,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      schema: fallbackSchema,
+      resolved: fallbackResolved,
+      error: err.message || 'Failed to load efficiency dashboard schema.',
+    };
+  }
+}
+
+/**
+ * Server action to update workspace-level declarative efficiency & telemetry dashboard schema
+ * in tracker.tenants.settings.efficiency_dashboard_settings.
+ */
+export async function updateEfficiencyDashboardSchemaAction(
+  tenantSlug: string,
+  updates: Partial<EfficiencyDashboardSchema>
+): Promise<EfficiencyDashboardSchemaResult> {
+  const fallbackResolved = resolveEfficiencyDashboardConfig();
+  const fallbackSchema = mergeEfficiencyDashboardSchemas(null);
+
+  try {
+    const validation = validateEfficiencyDashboardSchema(updates);
+    if (!validation.valid) {
+      return {
+        success: false,
+        schema: fallbackSchema,
+        resolved: fallbackResolved,
+        error: validation.errors.map((e) => `${e.path}: ${e.message}`).join('; '),
+      };
+    }
+
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const cleanSlug = tenantSlug.replace(/^@/, '').trim();
+    const { data: tenant, error: tenantErr } = await supabaseAdmin
+      .from('tenants')
+      .select('id, slug, owner_id, settings')
+      .eq('slug', cleanSlug)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (tenantErr || !tenant) {
+      return {
+        success: false,
+        schema: fallbackSchema,
+        resolved: fallbackResolved,
+        error: `Workspace "@${cleanSlug}" not found.`,
+      };
+    }
+
+    const existingSettings = tenant.settings || {};
+
+    if (!user) {
+      return {
+        success: false,
+        schema: fallbackSchema,
+        resolved: fallbackResolved,
+        error: 'Unauthorized: Session required to modify workspace settings.',
+      };
+    }
+
+    if (tenant.owner_id !== user.id) {
+      const { data: member, error: memberErr } = await supabaseAdmin
+        .from('tenant_members')
+        .select('role')
+        .eq('tenant_id', tenant.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (memberErr || !member || member.role === 'viewer') {
+        return {
+          success: false,
+          schema: fallbackSchema,
+          resolved: fallbackResolved,
+          error: 'Forbidden: You do not have permissions to edit workspace settings.',
+        };
+      }
+    }
+
+    const existingResolved = resolveEfficiencyDashboardConfig({
+      workspaceSettings: existingSettings.efficiency_dashboard_settings,
+      liveDashboardSettings: existingSettings.live_dashboard_settings,
+    });
+    const existingSchema = mergeSparseEfficiencyDashboardSchemas(
+      existingSettings.efficiency_dashboard_settings
+    );
+
+    const mergedSchema = mergeSparseEfficiencyDashboardSchemas(
+      existingSettings.efficiency_dashboard_settings,
+      updates
+    );
+
+    const nextLiveSettings = updates.default_views?.telemetry
+      ? resolveLiveDashboardSettings({
+          live_dashboard_settings: {
+            ...(existingSettings.live_dashboard_settings || DEFAULT_LIVE_DASHBOARD_SETTINGS),
+            ...(updates.default_views.telemetry.defaultPivot
+              ? { default_pivot: updates.default_views.telemetry.defaultPivot }
+              : {}),
+            ...(typeof updates.default_views.telemetry.defaultRefreshIntervalMs === 'number'
+              ? {
+                  default_refresh_interval_ms:
+                    updates.default_views.telemetry.defaultRefreshIntervalMs,
+                }
+              : {}),
+          },
+        })
+      : existingSettings.live_dashboard_settings;
+
+    const updatedTenantSettings = {
+      ...existingSettings,
+      efficiency_dashboard_settings: mergedSchema,
+      ...(nextLiveSettings ? { live_dashboard_settings: nextLiveSettings } : {}),
+    };
+
+    const { error: updateErr } = await supabaseAdmin
+      .from('tenants')
+      .update({
+        settings: updatedTenantSettings,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tenant.id);
+
+    if (updateErr) {
+      return {
+        success: false,
+        schema: existingSchema,
+        resolved: existingResolved,
+        error: `Failed to update efficiency dashboard schema: ${updateErr.message}`,
+      };
+    }
+
+    try {
+      revalidatePath(`/${cleanSlug}/all`);
+      revalidatePath(`/${cleanSlug}/settings/efficiency`);
+      revalidatePath(`/${cleanSlug}/statements`);
+    } catch {
+      // Safe catch outside request context
+    }
+
+    const resolved = resolveEfficiencyDashboardConfig({
+      workspaceSettings: mergedSchema,
+      liveDashboardSettings: nextLiveSettings,
+    });
+
+    return {
+      success: true,
+      schema: mergedSchema,
+      resolved,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      schema: fallbackSchema,
+      resolved: fallbackResolved,
+      error: err.message || 'Failed to update efficiency dashboard schema.',
     };
   }
 }

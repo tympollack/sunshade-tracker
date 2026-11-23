@@ -23,6 +23,7 @@ import {
   StatementDateStepper,
   StatementTimeframe,
 } from './StatementDateStepper';
+import type { LiveDashboardSettings } from '@/types/tracker';
 import { ProjectFocusAccordion } from './ProjectFocusAccordion';
 import { VelocitySettingsPopover } from './VelocitySettingsPopover';
 import { EstimationCalibrationPayload } from '@/lib/services/estimationCalibrationService';
@@ -33,6 +34,12 @@ import {
   getQuarterRange,
   getYearRange,
 } from '@/lib/utils/dateRanges';
+import type { EfficiencyDashboardSchema } from '@/types/efficiency-dashboard';
+import { useEfficiencyDashboardConfig } from '@/hooks/useEfficiencyDashboardConfig';
+import {
+  CustomizeDashboardButton,
+  CustomizeDashboardDrawer,
+} from '@/components/efficiency/CustomizeDashboardDrawer';
 
 export type { StatementTimeframe };
 
@@ -40,6 +47,13 @@ export interface StatementGeneratorProps {
   tenantSlug: string;
   initialData?: EfficiencyMetricsPayload | null;
   onDataChange?: (data: EfficiencyMetricsPayload) => void;
+  workspaceSchema?: Partial<EfficiencyDashboardSchema> | null;
+  liveDashboardSettings?: Partial<LiveDashboardSettings> | null;
+  userOverrides?: Partial<EfficiencyDashboardSchema> | null;
+  isConfigReady?: boolean;
+  profileLoaded?: boolean;
+  canSaveWorkspaceDefault?: boolean;
+  syncToProfile?: boolean;
   className?: string;
 }
 
@@ -47,9 +61,32 @@ export function StatementGenerator({
   tenantSlug,
   initialData,
   onDataChange,
+  workspaceSchema,
+  liveDashboardSettings,
+  userOverrides,
+  isConfigReady = true,
+  profileLoaded = false,
+  canSaveWorkspaceDefault = false,
+  syncToProfile = false,
   className = '',
 }: StatementGeneratorProps) {
-  const [timeframe, setTimeframe] = useState<StatementTimeframe>('month');
+  const dashboardConfig = useEfficiencyDashboardConfig({
+    tenantSlug,
+    surface: 'statements',
+    workspaceSchema,
+    liveDashboardSettings,
+    initialUserOverrides: userOverrides,
+    profileLoaded,
+    syncToProfile,
+  });
+
+  const configuredDefaultTimeframe =
+    dashboardConfig.resolved.default_views.statements.defaultTimeframe;
+  const expandProjectAccordions =
+    dashboardConfig.resolved.default_views.statements.expandProjectAccordions;
+
+  const [timeframe, setTimeframe] = useState<StatementTimeframe>(configuredDefaultTimeframe);
+  const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
 
   // Date range inputs (YYYY-MM-DD for standard HTML date input)
   const initialMonth = getMonthRange();
@@ -201,9 +238,10 @@ export function StatementGenerator({
     [tenantSlug, onDataChange, fetchCalibration]
   );
 
-  // Initialize from URL search parameters on mount if available, or fetch initial preset if no initialData
+  // Initialize from URL search parameters once config is ready, or fetch configured preset if no initialData
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (!isConfigReady) return;
     if (isInitialMountDoneRef.current && prevTenantSlugRef.current === tenantSlug) {
       return;
     }
@@ -227,18 +265,38 @@ export function StatementGenerator({
         }
         return;
       }
+      if (tfParam !== 'custom') {
+        const { start, end } = getPresetDates(tfParam);
+        setCustomStartDate(start);
+        setCustomEndDate(end);
+        if (!initialData) {
+          fetchStatement(tfParam, start, end);
+        } else {
+          fetchCalibration(start, end);
+        }
+        return;
+      }
     }
 
     if (!initialData) {
-      const { start, end } = getPresetDates('month');
+      const { start, end } = getPresetDates(configuredDefaultTimeframe);
+      setTimeframe(configuredDefaultTimeframe);
       setCustomStartDate(start);
       setCustomEndDate(end);
-      fetchStatement('month', start, end);
+      fetchStatement(configuredDefaultTimeframe, start, end);
     } else {
-      const { start, end } = getPresetDates('month');
+      const { start, end } = getPresetDates(configuredDefaultTimeframe);
       fetchCalibration(start, end);
     }
-  }, [tenantSlug, fetchStatement, fetchCalibration, getPresetDates, initialData]);
+  }, [
+    tenantSlug,
+    isConfigReady,
+    fetchStatement,
+    fetchCalibration,
+    getPresetDates,
+    initialData,
+    configuredDefaultTimeframe,
+  ]);
 
   // Listen to popstate for browser navigation (forward/back)
   useEffect(() => {
@@ -377,6 +435,11 @@ export function StatementGenerator({
             <FileCode className="w-3.5 h-3.5 text-sky-400" />
             <span className="hidden sm:inline">JSON</span>
           </button>
+          <CustomizeDashboardButton
+            onClick={() => setIsCustomizerOpen(true)}
+            isCustomized={dashboardConfig.isSurfaceCustomized}
+            label="Customize"
+          />
         </div>
       </div>
 
@@ -437,7 +500,7 @@ export function StatementGenerator({
       )}
 
       {/* Loading state */}
-      {loading && (
+      {(loading || (!isConfigReady && !data)) && (
         <div className="py-12 flex items-center justify-center space-x-2 text-slate-400" data-testid="statement-loading">
           <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
           <span className="text-sm">Calculating dynamic statement metrics...</span>
@@ -455,116 +518,197 @@ export function StatementGenerator({
       {/* Statement Presentation */}
       {!loading && !error && data && (
         <div className="space-y-6" data-testid="statement-content">
-          {/* Header Snapshot Card */}
-          <div className="p-6 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800/80 shadow-xl space-y-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-4">
-              <div>
-                <h3 className="text-xl font-bold text-white tracking-tight" data-testid="statement-period-label">
-                  {data.dateRange.periodLabel}
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Workspace: <span className="text-slate-200 font-semibold">{data.tenant.name}</span> ({data.tenant.tier} Tier)
-                </p>
-              </div>
-              <div className="text-right text-xs text-slate-400 font-mono">
-                <span>
-                  {new Date(data.dateRange.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  {' – '}
-                  {new Date(data.dateRange.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
-              </div>
-            </div>
+          {(() => {
+            const visibleKpis = dashboardConfig.getWidgets('kpi', { visibleOnly: true });
+            const visibleModules = dashboardConfig.getWidgets('module', { visibleOnly: true });
 
-            {/* Top Metrics Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Hours Reclaimed
-                </span>
-                <div className="text-2xl font-black text-emerald-400 font-mono" data-testid="kpi-hours-reclaimed">
-                  {data.kpis.totalHoursReclaimed.toFixed(1)} hrs
+            const renderKpi = (widgetId: string) => {
+              if (widgetId === 'stmt_kpi_hours_reclaimed') {
+                return (
+                  <div key={widgetId} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      Hours Reclaimed
+                    </span>
+                    <div className="text-2xl font-black text-emerald-400 font-mono" data-testid="kpi-hours-reclaimed">
+                      {data.kpis.totalHoursReclaimed.toFixed(1)} hrs
+                    </div>
+                    <p className="text-[10px] text-slate-500">Administrative drag eliminated</p>
+                  </div>
+                );
+              }
+              if (widgetId === 'stmt_kpi_realized_value') {
+                return (
+                  <div key={widgetId} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      Realized Value
+                    </span>
+                    <div className="text-2xl font-black text-emerald-400 font-mono" data-testid="kpi-realized-value">
+                      ${data.kpis.grossRealizedValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                    <p className="text-[10px] text-slate-500">Based on ${data.kpis.hourlyRate}/hr rate</p>
+                  </div>
+                );
+              }
+              if (widgetId === 'stmt_kpi_completed_items') {
+                return (
+                  <div key={widgetId} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      Completed Items
+                    </span>
+                    <div className="text-2xl font-black text-white font-mono" data-testid="kpi-completed-items">
+                      {data.kpis.completedItemsCount}
+                    </div>
+                    <p className="text-[10px] text-slate-500">Shipped within timeframe</p>
+                  </div>
+                );
+              }
+              if (widgetId === 'stmt_kpi_active_projects') {
+                return (
+                  <div key={widgetId} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      Active Projects
+                    </span>
+                    <div className="text-2xl font-black text-white font-mono" data-testid="kpi-active-projects">
+                      {data.kpis.activeProjectsCount}
+                    </div>
+                    <p className="text-[10px] text-slate-500">Projects with activity</p>
+                  </div>
+                );
+              }
+              return null;
+            };
+
+            if (visibleModules.length === 0) {
+              return (
+                <div
+                  data-testid="statements-empty-modules"
+                  className="p-8 rounded-2xl bg-slate-900/50 border border-dashed border-slate-800 text-center space-y-3"
+                >
+                  <p className="text-sm font-semibold text-slate-300">
+                    All statement dashboard modules are currently hidden.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomizerOpen(true)}
+                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Open Customize Dashboard
+                  </button>
                 </div>
-                <p className="text-[10px] text-slate-500">Administrative drag eliminated</p>
-              </div>
+              );
+            }
 
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Realized Value
-                </span>
-                <div className="text-2xl font-black text-emerald-400 font-mono" data-testid="kpi-realized-value">
-                  ${data.kpis.grossRealizedValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </div>
-                <p className="text-[10px] text-slate-500">Based on ${data.kpis.hourlyRate}/hr rate</p>
-              </div>
+            return visibleModules.map((mod) => {
+              if (mod.id === 'stmt_mod_summary_kpis') {
+                return (
+                  <div
+                    key={mod.id}
+                    data-testid="statement-module-summary-kpis"
+                    className="p-6 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800/80 shadow-xl space-y-4"
+                  >
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-white tracking-tight" data-testid="statement-period-label">
+                          {data.dateRange.periodLabel}
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Workspace: <span className="text-slate-200 font-semibold">{data.tenant.name}</span> ({data.tenant.tier} Tier)
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-slate-400 font-mono">
+                        <span>
+                          {new Date(data.dateRange.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          {' – '}
+                          {new Date(data.dateRange.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      </div>
+                    </div>
 
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Completed Items
-                </span>
-                <div className="text-2xl font-black text-white font-mono" data-testid="kpi-completed-items">
-                  {data.kpis.completedItemsCount}
-                </div>
-                <p className="text-[10px] text-slate-500">Shipped within timeframe</p>
-              </div>
+                    {visibleKpis.length > 0 && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {visibleKpis.map((kpi) => renderKpi(kpi.id))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
 
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Active Projects
-                </span>
-                <div className="text-2xl font-black text-white font-mono" data-testid="kpi-active-projects">
-                  {data.kpis.activeProjectsCount}
-                </div>
-                <p className="text-[10px] text-slate-500">Projects with activity</p>
-              </div>
-            </div>
-          </div>
+              if (mod.id === 'stmt_mod_project_calibration') {
+                if (!calibrationData?.projects || calibrationData.projects.length === 0) {
+                  return null;
+                }
+                return (
+                  <ProjectFocusAccordion
+                    key={mod.id}
+                    projects={calibrationData.projects}
+                    tenantSlug={tenantSlug}
+                    targetVelocityRatio={calibrationData.defaultVelocityRatio}
+                    defaultExpanded={expandProjectAccordions}
+                  />
+                );
+              }
 
-          {/* Project Workload Focus & Estimation Calibration Accordion */}
-          {calibrationData?.projects && calibrationData.projects.length > 0 && (
-            <ProjectFocusAccordion
-              projects={calibrationData.projects}
-              tenantSlug={tenantSlug}
-              targetVelocityRatio={calibrationData.defaultVelocityRatio}
-            />
-          )}
+              if (mod.id === 'stmt_mod_itemized_breakdown') {
+                return (
+                  <div
+                    key={mod.id}
+                    data-testid="statement-module-itemized-breakdown"
+                    className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 space-y-4"
+                  >
+                    <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
+                      Itemized Yield Breakdown
+                    </h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 text-[11px] uppercase tracking-wider">
+                            <th className="pb-2">Friction Point</th>
+                            <th className="pb-2">Metric Tracked</th>
+                            <th className="pb-2 text-right">Hours Reclaimed</th>
+                            <th className="pb-2 text-right">Realized Value</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/50">
+                          {data.itemizedYields.map((yieldItem) => (
+                            <tr key={yieldItem.id} className="hover:bg-slate-800/30">
+                              <td className="py-3 pr-4">
+                                <span className="font-semibold text-slate-100 block">{yieldItem.frictionPoint}</span>
+                                <span className="text-[11px] text-slate-400 block mt-0.5">{yieldItem.description}</span>
+                              </td>
+                              <td className="py-3 pr-4 text-slate-300 font-mono">{yieldItem.metric}</td>
+                              <td className="py-3 pr-4 text-right text-emerald-400 font-mono font-medium">
+                                {yieldItem.hoursReclaimed.toFixed(2)} hrs
+                              </td>
+                              <td className="py-3 text-right text-emerald-400 font-mono font-bold">
+                                ${yieldItem.realizedValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              }
 
-          {/* Itemized Yield Table */}
-          <div className="p-6 rounded-2xl bg-slate-900/40 border border-slate-800/80 space-y-4">
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-              Itemized Yield Breakdown
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 text-[11px] uppercase tracking-wider">
-                    <th className="pb-2">Friction Point</th>
-                    <th className="pb-2">Metric Tracked</th>
-                    <th className="pb-2 text-right">Hours Reclaimed</th>
-                    <th className="pb-2 text-right">Realized Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {data.itemizedYields.map((yieldItem) => (
-                    <tr key={yieldItem.id} className="hover:bg-slate-800/30">
-                      <td className="py-3 pr-4">
-                        <span className="font-semibold text-slate-100 block">{yieldItem.frictionPoint}</span>
-                        <span className="text-[11px] text-slate-400 block mt-0.5">{yieldItem.description}</span>
-                      </td>
-                      <td className="py-3 pr-4 text-slate-300 font-mono">{yieldItem.metric}</td>
-                      <td className="py-3 pr-4 text-right text-emerald-400 font-mono font-medium">
-                        {yieldItem.hoursReclaimed.toFixed(2)} hrs
-                      </td>
-                      <td className="py-3 text-right text-emerald-400 font-mono font-bold">
-                        ${yieldItem.realizedValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+              return null;
+            });
+          })()}
         </div>
       )}
+
+      <CustomizeDashboardDrawer
+        isOpen={isCustomizerOpen}
+        onClose={() => setIsCustomizerOpen(false)}
+        activeSurface="statements"
+        config={dashboardConfig}
+        canSaveWorkspaceDefault={canSaveWorkspaceDefault}
+        onDefaultViewApplied={(event) => {
+          if (event.surface === 'statements' && event.updates.defaultTimeframe) {
+            handleTimeframeChange(event.updates.defaultTimeframe);
+          }
+        }}
+      />
     </div>
   );
 }

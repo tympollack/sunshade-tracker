@@ -1,6 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, createServiceClient } from '@/lib/supabase-server';
 import { getSessionUser } from '@/lib/auth-claims';
+import {
+  validateEfficiencyDashboardSchema,
+  WIDGET_CATALOG_MAP,
+} from '@/lib/efficiency-dashboard-schema';
+
+function isFlatDashboardSchema(val: any): boolean {
+  return Boolean(
+    val &&
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      ('schema_version' in val || 'widgets' in val || 'default_views' in val)
+  );
+}
+
+function normalizeDashboardPrefsMap(
+  raw: any,
+  fallbackSlug?: string
+): Record<string, any> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  if (isFlatDashboardSchema(raw)) {
+    return fallbackSlug ? { [fallbackSlug]: raw } : {};
+  }
+  const map: Record<string, any> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      map[k] = v;
+    }
+  }
+  return map;
+}
+
+function resolveScopedDashboardPrefs(raw: any, tenantSlug: string): any {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (isFlatDashboardSchema(raw)) return raw;
+  return raw[tenantSlug] || null;
+}
+
+function mergeSurfacePreferences(
+  existing: any,
+  incoming: any,
+  targetSurface: string
+): any {
+  if (!existing && !incoming) return null;
+  const prevWidgets = Array.isArray(existing?.widgets) ? existing.widgets : [];
+  const otherWidgets = prevWidgets.filter((w: any) => {
+    const def = WIDGET_CATALOG_MAP.get(w?.id);
+    return def && def.surface !== targetSurface;
+  });
+
+  const incomingWidgets = Array.isArray(incoming?.widgets) ? incoming.widgets : [];
+  const incomingSurfaceWidgets = incomingWidgets.filter((w: any) => {
+    const def = WIDGET_CATALOG_MAP.get(w?.id);
+    return def && def.surface === targetSurface;
+  });
+
+  const mergedWidgets = [...otherWidgets, ...incomingSurfaceWidgets];
+
+  const prevViews =
+    existing?.default_views && typeof existing.default_views === 'object'
+      ? { ...existing.default_views }
+      : {};
+
+  if (
+    incoming?.default_views &&
+    typeof incoming.default_views === 'object' &&
+    incoming.default_views[targetSurface]
+  ) {
+    prevViews[targetSurface] = incoming.default_views[targetSurface];
+  } else if (!incoming || !incoming.default_views?.[targetSurface]) {
+    delete prevViews[targetSurface];
+  }
+
+  const hasViews = Object.keys(prevViews).length > 0;
+  if (mergedWidgets.length === 0 && !hasViews) {
+    return null;
+  }
+
+  return {
+    schema_version: incoming?.schema_version || existing?.schema_version || '1.0',
+    ...(mergedWidgets.length > 0 ? { widgets: mergedWidgets } : {}),
+    ...(hasViews ? { default_views: prevViews } : {}),
+  };
+}
 
 /**
  * GET /api/v1/tenants/me
@@ -147,6 +230,14 @@ export async function GET(req: NextRequest) {
                 notify_on_status_change: true,
                 ...(user.user_metadata?.notification_preferences || {}),
               },
+              efficiency_dashboard_preferences: resolveScopedDashboardPrefs(
+                user.user_metadata?.efficiency_dashboard_preferences,
+                tenantSlugHint || 'sunshade'
+              ),
+              efficiency_dashboard_preferences_map: normalizeDashboardPrefsMap(
+                user.user_metadata?.efficiency_dashboard_preferences,
+                tenantSlugHint || 'sunshade'
+              ),
             },
             workspaces: [publicWs],
             primary_workspace: publicWs,
@@ -290,7 +381,17 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const userMetadata = user.user_metadata || {};
+    let userMetadata = user.user_metadata || {};
+    try {
+      if (typeof service.auth?.admin?.getUserById === 'function') {
+        const { data: freshUser } = await service.auth.admin.getUserById(user.id);
+        if (freshUser?.user?.user_metadata) {
+          userMetadata = freshUser.user.user_metadata;
+        }
+      }
+    } catch {
+      // Non-fatal, use token user_metadata
+    }
     const notificationPreferences = {
       notify_in_app: true,
       notify_email: true,
@@ -305,6 +406,14 @@ export async function GET(req: NextRequest) {
         email: user.email,
         full_name: currentFullName,
         notification_preferences: notificationPreferences,
+        efficiency_dashboard_preferences: resolveScopedDashboardPrefs(
+          userMetadata.efficiency_dashboard_preferences,
+          tenantSlugHint || workspaces[0]?.slug || 'default'
+        ),
+        efficiency_dashboard_preferences_map: normalizeDashboardPrefsMap(
+          userMetadata.efficiency_dashboard_preferences,
+          tenantSlugHint || workspaces[0]?.slug || 'default'
+        ),
       },
       workspaces,
       // Convenience: the first (primary) workspace
@@ -333,7 +442,19 @@ export async function PATCH(req: NextRequest) {
     }
 
     const body = await req.json();
-    const currentMeta = user.user_metadata || {};
+    const service = createServiceClient();
+    let currentMeta = user.user_metadata || {};
+    try {
+      if (typeof service?.auth?.admin?.getUserById === 'function') {
+        const { data: freshUser } = await service.auth.admin.getUserById(user.id);
+        if (freshUser?.user?.user_metadata) {
+          currentMeta = freshUser.user.user_metadata;
+        }
+      }
+    } catch {
+      // Fallback to session user_metadata
+    }
+
     const currentPrefs = {
       notify_in_app: true,
       notify_email: true,
@@ -364,10 +485,72 @@ export async function PATCH(req: NextRequest) {
       ...sanitizedIncoming,
     };
 
+    const rawTenantSlug =
+      (typeof body.tenant_slug === 'string' && body.tenant_slug.trim()) ||
+      req.headers.get('x-tenant-slug') ||
+      req.nextUrl.searchParams.get('tenant_slug') ||
+      'default';
+    const cleanTenantSlug = rawTenantSlug.replace(/^@/, '').trim() || 'default';
+
+    let updatedDashboardPrefsMap = normalizeDashboardPrefsMap(
+      currentMeta.efficiency_dashboard_preferences
+    );
+    if ('efficiency_dashboard_preferences' in body) {
+      const incomingDash = body.efficiency_dashboard_preferences;
+      const targetSurface =
+        typeof body.surface === 'string' && body.surface.trim() ? body.surface.trim() : undefined;
+
+      if (incomingDash === null && (!targetSurface || targetSurface === 'all')) {
+        delete updatedDashboardPrefsMap[cleanTenantSlug];
+      } else {
+        if (incomingDash !== null) {
+          const incomingValidation = validateEfficiencyDashboardSchema(incomingDash);
+          if (!incomingValidation.valid) {
+            return NextResponse.json(
+              {
+                error: `Invalid efficiency_dashboard_preferences: ${incomingValidation.errors
+                  .map((e) => `${e.path}: ${e.message}`)
+                  .join('; ')}`,
+              },
+              { status: 400 }
+            );
+          }
+        }
+
+        const existingWorkspacePref = updatedDashboardPrefsMap[cleanTenantSlug] || null;
+        if (targetSurface && targetSurface !== 'all' && existingWorkspacePref) {
+          const merged = mergeSurfacePreferences(existingWorkspacePref, incomingDash, targetSurface);
+          if (merged === null) {
+            delete updatedDashboardPrefsMap[cleanTenantSlug];
+          } else {
+            const mergedValidation = validateEfficiencyDashboardSchema(merged);
+            if (!mergedValidation.valid) {
+              return NextResponse.json(
+                {
+                  error: `Invalid efficiency_dashboard_preferences: ${mergedValidation.errors
+                    .map((e) => `${e.path}: ${e.message}`)
+                    .join('; ')}`,
+                },
+                { status: 400 }
+              );
+            }
+            updatedDashboardPrefsMap[cleanTenantSlug] = merged;
+          }
+        } else if (incomingDash === null) {
+          delete updatedDashboardPrefsMap[cleanTenantSlug];
+        } else {
+          updatedDashboardPrefsMap[cleanTenantSlug] = incomingDash;
+        }
+      }
+    }
+
+    const scopedDashboardPrefs = updatedDashboardPrefsMap[cleanTenantSlug] || null;
+
     const { error: updateErr } = await supabase.auth.updateUser({
       data: {
         ...currentMeta,
         notification_preferences: updatedPrefs,
+        efficiency_dashboard_preferences: updatedDashboardPrefsMap,
       },
     });
 
@@ -378,10 +561,14 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       success: true,
       notification_preferences: updatedPrefs,
+      efficiency_dashboard_preferences: scopedDashboardPrefs,
+      efficiency_dashboard_preferences_map: updatedDashboardPrefsMap,
       user: {
         id: user.id,
         email: user.email,
         notification_preferences: updatedPrefs,
+        efficiency_dashboard_preferences: scopedDashboardPrefs,
+        efficiency_dashboard_preferences_map: updatedDashboardPrefsMap,
       },
     });
   } catch (err: any) {

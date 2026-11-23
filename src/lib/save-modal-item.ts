@@ -91,6 +91,13 @@ export async function saveModalItem({
     const childCount = Math.max(0, (moveResult.updatedCount ?? 1) - 1);
     setBulkToast(`Moved item and ${childCount} child task${childCount !== 1 ? 's' : ''} to ${destProject?.name || 'new project'}`);
     setTimeout(() => setBulkToast(null), 4000);
+
+    // Optimistically remove migrated item and its descendants from local project state
+    const { getDescendantIds } = await import('@/lib/tree');
+    const descendantIds = new Set(getDescendantIds(items, itemId));
+    const removedIdSet = new Set([itemId, ...descendantIds]);
+    setItems((prev) => prev.filter((it) => !removedIdSet.has(it.id)));
+
     fetchData();
     broadcastMutationFn({
       type: 'ITEMS_REFRESH',

@@ -149,7 +149,7 @@ describe('Hierarchy UX - TASK-TRK-HIER-BRANCH-COLLAPSE', () => {
 });
 
 describe('Hierarchy UX - TASK-TRK-HIER-INLINE-EDIT', () => {
-  it('updates status directly through inline select without opening full modal', async () => {
+  it('updates status directly through compact status glyph popover without opening full modal', async () => {
     const onUpdateStatus = vi.fn();
     const item = buildTree([mockItem({ id: 'story-1', title: 'Story Test', status: 'not_started' })])[0];
 
@@ -163,14 +163,15 @@ describe('Hierarchy UX - TASK-TRK-HIER-INLINE-EDIT', () => {
       />
     );
 
-    const statusSelect = screen.getByTestId('status-select-story-1');
-    expect(statusSelect).toHaveValue('not_started');
+    const statusBtn = screen.getByTestId('status-icon-btn-story-1');
+    expect(statusBtn).toHaveAttribute('title', 'Status: Not Started');
 
-    fireEvent.change(statusSelect, { target: { value: 'in_progress' } });
+    fireEvent.click(statusBtn);
+    fireEvent.click(screen.getByTestId('status-option-in_progress'));
     expect(onUpdateStatus).toHaveBeenCalledWith('story-1', 'in_progress');
   });
 
-  it('updates assignee directly through inline select without modal', async () => {
+  it('updates assignee directly through compact avatar popover without modal', async () => {
     const onUpdateAssignee = vi.fn();
     const item = buildTree([mockItem({ id: 'story-1', title: 'Story Test', assignee: null })])[0];
 
@@ -184,10 +185,11 @@ describe('Hierarchy UX - TASK-TRK-HIER-INLINE-EDIT', () => {
       />
     );
 
-    const assigneeSelect = screen.getByTestId('assignee-select-story-1');
-    expect(assigneeSelect).toHaveValue('');
+    const assigneeBtn = screen.getByTestId('assignee-avatar-btn-story-1');
+    expect(assigneeBtn).toHaveAttribute('title', 'Unassigned');
 
-    fireEvent.change(assigneeSelect, { target: { value: 'Alice Smith' } });
+    fireEvent.click(assigneeBtn);
+    fireEvent.click(screen.getByTestId('assignee-option-user-1'));
     expect(onUpdateAssignee).toHaveBeenCalledWith('story-1', 'Alice Smith');
   });
 
@@ -205,8 +207,8 @@ describe('Hierarchy UX - TASK-TRK-HIER-INLINE-EDIT', () => {
     );
 
     expect(screen.getByTestId('immutable-lock-badge')).toBeInTheDocument();
-    expect(screen.getByTestId('status-select-locked-1')).toBeDisabled();
-    expect(screen.getByTestId('assignee-select-locked-1')).toBeDisabled();
+    expect(screen.getByTestId('status-icon-btn-locked-1')).toBeDisabled();
+    expect(screen.getByTestId('assignee-avatar-btn-locked-1')).toBeDisabled();
     expect(screen.queryByTestId('add-child-btn-locked-1')).not.toBeInTheDocument();
 
     const card = screen.getByTestId('tree-node-card-locked-1');

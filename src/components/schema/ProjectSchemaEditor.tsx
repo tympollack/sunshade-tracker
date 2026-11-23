@@ -9,9 +9,11 @@ import {
   WorkItem,
   WorkMetricConfig,
   getWorkMetricConfig,
+  getProcessEfficiencyFactor,
   normalizeCustomField,
 } from '@/types/tracker';
 import { getDefaultLevelHex } from '@/lib/hierarchy-colors';
+import { formatNumber, t } from '@/lib/i18n';
 import { ProjectSettingsSchema, lintProjectSettings } from '@/lib/project-settings-schema';
 import {
   isLateInflowEnforced,
@@ -24,6 +26,7 @@ import { TaxonomyConfigEditor } from './TaxonomyConfigEditor';
 import { StatusTaxonomyEditor } from './StatusTaxonomyEditor';
 import { TransitionGuardsEditor } from './TransitionGuardsEditor';
 import { AutomationPipelineEditor } from './AutomationPipelineEditor';
+import { RowColumnsConfigEditor } from './RowColumnsConfigEditor';
 
 export {
   ProjectSettingsSchema,
@@ -40,6 +43,7 @@ export interface ProjectSchemaEditorProps {
   activeItems?: WorkItem[];
   readOnly?: boolean;
   hideValidationBanner?: boolean;
+  locale?: string;
 }
 
 export function ProjectSchemaEditor({
@@ -48,7 +52,10 @@ export function ProjectSchemaEditor({
   activeItems = [],
   readOnly = false,
   hideValidationBanner = false,
+  locale,
 }: ProjectSchemaEditorProps) {
+  const effectiveLocale =
+    locale || (typeof navigator !== 'undefined' ? navigator.language : undefined);
   const lintResult = useMemo(() => lintProjectSettings(settings), [settings]);
   // Active work metric configuration
   const currentMetricConfig = useMemo(() => getWorkMetricConfig(settings), [settings]);
@@ -192,6 +199,30 @@ export function ProjectSchemaEditor({
   const handleGithubRepoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
     onChange({ ...settings, github_repo: e.target.value });
+  };
+
+  // Update Process Efficiency Factor
+  const effectiveProcessEfficiency = useMemo(
+    () => getProcessEfficiencyFactor(settings),
+    [settings]
+  );
+
+  const handleProcessEfficiencyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
+    const raw = e.target.value;
+    if (raw.trim() === '') {
+      const next = { ...settings };
+      delete next.process_efficiency_factor;
+      onChange(next);
+      return;
+    }
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      onChange({
+        ...settings,
+        process_efficiency_factor: parsed,
+      });
+    }
   };
 
   return (
@@ -432,6 +463,44 @@ export function ProjectSchemaEditor({
                 </div>
               </div>
 
+              <div className="space-y-1 pt-1 border-t border-slate-900">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="process-efficiency-factor-input" className="text-[11px] font-medium text-slate-400">
+                    {t('schema.processEfficiency.title', undefined, effectiveLocale)}
+                  </label>
+                  <span className="text-[10px] font-mono text-slate-500">process_efficiency_factor</span>
+                </div>
+                <input
+                  id="process-efficiency-factor-input"
+                  type="number"
+                  step="0.05"
+                  min="0.1"
+                  max="5.0"
+                  aria-label={t('schema.processEfficiency.ariaLabel', undefined, effectiveLocale)}
+                  value={settings.process_efficiency_factor ?? ''}
+                  disabled={readOnly}
+                  onChange={handleProcessEfficiencyChange}
+                  placeholder="1.0"
+                  className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-emerald-300 text-xs font-mono focus:outline-none focus:border-emerald-500 disabled:opacity-50"
+                />
+                <div className="flex items-center justify-between text-[10px] text-slate-500">
+                  <span>{t('schema.processEfficiency.help', undefined, effectiveLocale)}</span>
+                  <span className="font-mono text-amber-300">
+                    {t(
+                      'schema.processEfficiency.ratePreview',
+                      {
+                        factor: effectiveProcessEfficiency.toFixed(2),
+                        tokensPerHour: formatNumber(
+                          Math.round(60000 * effectiveProcessEfficiency),
+                          effectiveLocale
+                        ),
+                      },
+                      effectiveLocale
+                    )}
+                  </span>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between pt-1 text-[10px] text-slate-500">
                 <span>Drives rollups, burn rates &amp; capacity.</span>
                 <span className="font-mono text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-900/40">
@@ -490,7 +559,15 @@ export function ProjectSchemaEditor({
         </div>
       </div>
 
-      {/* 4. Visual Transition Guardrails Editor */}
+      {/* 4. Configurable Row & Table Columns Editor */}
+      <RowColumnsConfigEditor
+        settings={settings}
+        onChange={onChange}
+        activeItems={activeItems}
+        readOnly={readOnly}
+      />
+
+      {/* 5. Visual Transition Guardrails Editor */}
       <TransitionGuardsEditor
         settings={settings}
         onChange={onChange}

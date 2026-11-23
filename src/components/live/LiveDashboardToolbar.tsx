@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Zap,
 } from 'lucide-react';
+import { CustomizeDashboardButton } from '@/components/efficiency/CustomizeDashboardDrawer';
 
 export type LivePivotMode = 'stage_flow' | 'project_swimlanes';
 export type PollingCadenceMs = 30000 | 60000 | 120000 | 0;
@@ -23,6 +24,8 @@ export interface LiveDashboardToolbarProps {
   lastSyncedAt?: string | null;
   isSyncing?: boolean;
   onManualRefresh?: () => void;
+  onOpenCustomizer?: () => void;
+  isDashboardCustomized?: boolean;
 }
 
 export const POLLING_CADENCE_OPTIONS: Array<{ value: PollingCadenceMs; label: string }> = [
@@ -42,6 +45,8 @@ export function LiveDashboardToolbar({
   lastSyncedAt,
   isSyncing = false,
   onManualRefresh,
+  onOpenCustomizer,
+  isDashboardCustomized = false,
 }: LiveDashboardToolbarProps) {
   const handleSelectPivot = (nextPivot: LivePivotMode) => {
     if (typeof window !== 'undefined') {
@@ -169,6 +174,14 @@ export function LiveDashboardToolbar({
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : ''}`} />
           </button>
+        )}
+
+        {onOpenCustomizer && (
+          <CustomizeDashboardButton
+            onClick={onOpenCustomizer}
+            isCustomized={isDashboardCustomized}
+            label="Customize"
+          />
         )}
 
         {/* Full-Screen Kiosk Toggle */}
