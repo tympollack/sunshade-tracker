@@ -5,6 +5,7 @@ import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLev
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
 import { TreeNode } from '@/components/TreeNode';
+import { StickyTreeProjectHeader } from '@/components/tree/StickyTreeProjectHeader';
 import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
 import { useRowColumns } from '@/hooks/useRowColumns';
@@ -113,6 +114,69 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
   } = props;
 
   const rowColumns = useRowColumns(projectSettings, 'tree', projectSlug, items, tenantSlug);
+
+  const projectGroups = React.useMemo(() => {
+    if (treeItems.length === 0) return [];
+    const resolveProj = (projectId?: string | null) =>
+      allProjects.find((p) => p.id === projectId || p.slug === projectId);
+
+    if (isAllProjects) {
+      const groups: Array<{
+        key: string;
+        projectId: string | null | undefined;
+        projectName: string;
+        nodes: WorkItemNode[];
+        rollupPoints: number;
+      }> = [];
+
+      treeItems.forEach((node, idx) => {
+        const prevGroup = groups[groups.length - 1];
+        if (prevGroup && prevGroup.projectId === node.project_id) {
+          prevGroup.nodes.push(node);
+          prevGroup.rollupPoints += node.rollupPoints ?? 0;
+        } else {
+          const proj = resolveProj(node.project_id);
+          groups.push({
+            key: `${node.project_id || 'unknown'}-${idx}`,
+            projectId: node.project_id,
+            projectName: proj?.name || 'Project',
+            nodes: [node],
+            rollupPoints: node.rollupPoints ?? 0,
+          });
+        }
+      });
+      return groups;
+    }
+
+    const currentProject = allProjects.find(
+      (p) => p.slug === projectSlug || p.id === projectSlug
+    );
+    if (currentProject) {
+      return [
+        {
+          key: currentProject.id,
+          projectId: currentProject.id,
+          projectName: currentProject.name,
+          nodes: treeItems,
+          rollupPoints: treeItems.reduce((sum, n) => sum + (n.rollupPoints ?? 0), 0),
+        },
+      ];
+    }
+
+    return [
+      {
+        key: 'default-group',
+        projectId: null,
+        projectName: '',
+        nodes: treeItems,
+        rollupPoints: 0,
+      },
+    ];
+  }, [treeItems, isAllProjects, allProjects, projectSlug]);
+
+  const showStickyProjectHeaders =
+    isAllProjects ||
+    Boolean(allProjects.find((p) => p.slug === projectSlug || p.id === projectSlug));
 
   return (
     <div className="p-3 sm:p-4 md:p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 space-y-4 max-w-full">
@@ -235,7 +299,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
         </div>
       </div>
 
-      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x" data-testid="tree-scroll-container">
+      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x md:overflow-x-visible" data-testid="tree-scroll-container">
         <div className="space-y-3 min-w-[600px] md:min-w-0 w-full">
           {/* Root Drop Zone for unnesting */}
           {!isReadOnly && (
@@ -292,38 +356,74 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
               No items in project. Ingest work items using Gemini Spark or the quick add form.
             </div>
           ) : (
-            treeItems.map((rootNode, idx) => (
-              <TreeNode
-                key={rootNode.id}
-                item={rootNode}
-                isLastChild={idx === treeItems.length - 1}
-                ancestorRails={[]}
-                getStatusColor={getStatusColor}
-                deviations={deviations}
-                onOpenReconciliation={(dev) => onOpenReconciliation(dev)}
-                statuses={getItemStatuses(rootNode)}
-                hierarchy={getItemHierarchy(rootNode)}
-                getItemStatuses={getItemStatuses}
-                getItemHierarchy={getItemHierarchy}
-                isFilteredBySprint={selectedSprint !== 'all'}
-                pointMode={pointMode}
-                members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
-                isImmutable={(it) => isReadOnly || isItemImmutableDueToCompletedSprint(it, getItemProjectSettings(it), availableSprintDefs)}
-                collapsedNodeIds={collapsedTreeNodes}
-                onToggleCollapse={handleToggleCollapseTreeNode}
-                onUpdateStatus={handleUpdateStatus}
-                onUpdateAssignee={handleTreeUpdateAssignee}
-                onCreateChild={handleTreeCreateChild}
-                onReparentItem={handleTreeReparent}
-                onEditItem={(item) => setEditingItem(item)}
-                isDraggingItemId={treeDraggedItemId}
-                onDragStartNode={(e, item) => !isReadOnly && setTreeDraggedItemId(item.id)}
-                onDragEndNode={() => setTreeDraggedItemId(null)}
-                unit={getWorkMetricConfig(getItemProjectSettings(rootNode) || projectSettings).unit_label || 'pts'}
-                projectSettings={getItemProjectSettings(rootNode) || projectSettings}
-                visibleColumns={rowColumns.effectiveColumns}
-                allProjects={allProjects}
-              />
+            projectGroups.map((group) => (
+              <section
+                key={group.key}
+                data-testid={
+                  showStickyProjectHeaders
+                    ? `tree-project-group-${group.projectId || 'unknown'}`
+                    : undefined
+                }
+                className="space-y-1"
+              >
+                {showStickyProjectHeaders && (
+                  <StickyTreeProjectHeader
+                    projectId={group.projectId}
+                    projectName={group.projectName}
+                    itemCount={group.nodes.length}
+                    rollupPoints={group.rollupPoints}
+                    unitLabel={
+                      getWorkMetricConfig(
+                        (group.nodes[0] && getItemProjectSettings(group.nodes[0])) || projectSettings
+                      ).unit_label || 'pts'
+                    }
+                  />
+                )}
+                {group.nodes.map((rootNode, idx) => (
+                  <TreeNode
+                    key={rootNode.id}
+                    item={rootNode}
+                    isLastChild={idx === group.nodes.length - 1}
+                    ancestorRails={[]}
+                    getStatusColor={getStatusColor}
+                    deviations={deviations}
+                    onOpenReconciliation={(dev) => onOpenReconciliation(dev)}
+                    statuses={getItemStatuses(rootNode)}
+                    hierarchy={getItemHierarchy(rootNode)}
+                    getItemStatuses={getItemStatuses}
+                    getItemHierarchy={getItemHierarchy}
+                    isFilteredBySprint={selectedSprint !== 'all'}
+                    pointMode={pointMode}
+                    members={workspaceMembers.map((m) => ({ id: m.user_id, name: m.full_name }))}
+                    isImmutable={(it) =>
+                      isReadOnly ||
+                      isItemImmutableDueToCompletedSprint(
+                        it,
+                        getItemProjectSettings(it),
+                        availableSprintDefs
+                      )
+                    }
+                    collapsedNodeIds={collapsedTreeNodes}
+                    onToggleCollapse={handleToggleCollapseTreeNode}
+                    onUpdateStatus={handleUpdateStatus}
+                    onUpdateAssignee={handleTreeUpdateAssignee}
+                    onCreateChild={handleTreeCreateChild}
+                    onReparentItem={handleTreeReparent}
+                    onEditItem={(item) => setEditingItem(item)}
+                    isDraggingItemId={treeDraggedItemId}
+                    onDragStartNode={(e, item) => !isReadOnly && setTreeDraggedItemId(item.id)}
+                    onDragEndNode={() => setTreeDraggedItemId(null)}
+                    unit={
+                      getWorkMetricConfig(getItemProjectSettings(rootNode) || projectSettings)
+                        .unit_label || 'pts'
+                    }
+                    projectSettings={getItemProjectSettings(rootNode) || projectSettings}
+                    visibleColumns={rowColumns.effectiveColumns}
+                    allProjects={allProjects}
+                    stickyTopOffset={showStickyProjectHeaders ? 'top-9' : 'top-0'}
+                  />
+                ))}
+              </section>
             ))
           )}
         </div>

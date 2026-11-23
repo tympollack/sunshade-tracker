@@ -3912,7 +3912,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
               className={
                 isKioskMode && activeTab === 'live'
                   ? 'flex-1 p-0 max-w-none h-[100dvh] w-full max-w-full overflow-x-hidden'
-                  : 'flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-hidden'
+                  : 'flex-1 p-3 sm:p-4 md:p-6 main-mobile-clearance max-w-[1700px] mx-auto w-full max-w-full overflow-x-clip'
               }
             >
               <ProjectViewErrorBoundary onResetToDefault={handleResetSchemaToDefault}>

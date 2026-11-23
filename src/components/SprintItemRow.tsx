@@ -47,6 +47,7 @@ export interface SprintItemRowProps {
   visibleColumns?: ResolvedRowColumn[];
   isCollapsed?: boolean;
   onToggleCollapse?: (itemId: string) => void;
+  stickyHeaderClass?: string;
 }
 
 export const SprintItemRow: React.FC<SprintItemRowProps> = ({
@@ -77,6 +78,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   visibleColumns,
   isCollapsed = false,
   onToggleCollapse,
+  stickyHeaderClass,
 }) => {
   const itemHierarchy = getItemHierarchy(item);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
@@ -95,11 +97,14 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   return (
     <div
       onDoubleClick={() => onEditItem(item)}
-      className={`p-3 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-1.5 md:gap-3 group relative min-w-0 w-full ${
+      className={`p-3 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-1.5 md:gap-3 group min-w-0 w-full ${
+        stickyHeaderClass || 'relative'
+      } ${
         isSelected
           ? 'bg-emerald-950/30 border-l-2 border-emerald-400'
           : 'hover:bg-slate-800/30'
       }`}
+      data-sticky-header={stickyHeaderClass ? 'true' : undefined}
       style={
         isTreeMode && depth > 0
           ? {

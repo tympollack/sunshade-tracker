@@ -31,6 +31,17 @@ export function NavTreeNode({
   unit = 'pts',
 }: NavTreeNodeProps) {
   const hasChildren = node.children && node.children.length > 0;
+  const isStickyGroupHeader =
+    hasChildren &&
+    isExpanded &&
+    (depth === 0 ||
+      node.type === 'project' ||
+      (node.type === 'item' && node.itemType?.toLowerCase() === 'epic'));
+  const stickyClass = isStickyGroupHeader
+    ? depth === 0
+      ? 'sticky top-0 z-10 bg-slate-950/95 backdrop-blur-sm'
+      : 'sticky top-7 z-[5] bg-slate-950/95 backdrop-blur-sm'
+    : '';
 
   // Determine whether this node is currently active in filter scope
   const isSelected = Boolean(
@@ -113,7 +124,7 @@ export function NavTreeNode({
         aria-expanded={hasChildren ? isExpanded : undefined}
         aria-selected={isSelected}
         onClick={handleClickRow}
-        className={`flex items-center gap-1.5 py-1 px-1.5 rounded-md text-xs cursor-pointer transition-colors min-w-0 w-full ${
+        className={`flex items-center gap-1.5 py-1 px-1.5 rounded-md text-xs cursor-pointer transition-colors min-w-0 w-full ${stickyClass} ${
           isSelected
             ? 'bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30'
             : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'

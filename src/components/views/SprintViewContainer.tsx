@@ -226,9 +226,15 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     const isNodeSelected = selectedItemIds.has(node.id);
     const isNodeIndeterminate = !isNodeSelected && selectedDescendantsCount > 0;
     const isNodeCollapsed = collapsedSprintTreeNodes.has(node.id);
+    const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
+    const stickyHeaderClass = isStickyRootEpic
+      ? showProjectGroups
+        ? 'md:sticky md:top-[88px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        : 'md:sticky md:top-[58px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+      : undefined;
 
-    return (
-      <React.Fragment key={node.id}>
+    const branchContent = (
+      <>
         <SprintItemRow
           item={node}
           depth={depth}
@@ -260,13 +266,28 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           visibleColumns={rowColumns.effectiveColumns}
           isCollapsed={isNodeCollapsed}
           onToggleCollapse={toggleSprintTreeNode}
+          stickyHeaderClass={stickyHeaderClass}
         />
         {!isNodeCollapsed &&
           (node.children || []).map((child) =>
             renderSprintTreeBranch(child, poolItems, currentSprintName, depth + 1)
           )}
-      </React.Fragment>
+      </>
     );
+
+    if (depth === 0) {
+      return (
+        <div
+          key={node.id}
+          className="divide-y divide-slate-800/50"
+          data-testid={`sprint-tree-branch-${node.id}`}
+        >
+          {branchContent}
+        </div>
+      );
+    }
+
+    return <React.Fragment key={node.id}>{branchContent}</React.Fragment>;
   };
 
   // Renders a project boundary divider when the project changes between adjacent rows
@@ -543,9 +564,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             >
               {/* Sprint Header */}
               <div
-                className={`p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 relative has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
-                  activeSprintPopover === sprintName ? '!z-30' : 'z-10'
-                } ${isCollapsed ? 'rounded-xl border-b-0' : 'rounded-t-xl'}`}
+                className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
+                  activeSprintPopover === sprintName ? '!z-30' : 'z-20'
+                } ${isCollapsed ? 'relative rounded-xl border-b-0' : 'sticky top-0 rounded-t-xl'}`}
               >
                 <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <button
@@ -676,7 +697,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar">
+                <div className="overflow-x-auto custom-scrollbar md:overflow-x-visible">
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
@@ -814,10 +835,14 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
           return (
             <div
-              className="rounded-xl bg-slate-900/40 border border-slate-800/80 overflow-hidden shadow-sm"
+              className="rounded-xl bg-slate-900/40 border border-slate-800/80 shadow-sm relative"
               data-testid="backlog-swimlane"
             >
-              <div className="p-4 bg-slate-950/60 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+              <div
+                className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
+                  isBacklogCollapsed ? 'rounded-xl border-b-0' : 'sticky top-0 z-20 rounded-t-xl'
+                }`}
+              >
                 <div className="flex items-center space-x-3">
                   <button
                     type="button"
@@ -871,7 +896,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isBacklogCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar">
+                <div className="overflow-x-auto custom-scrollbar md:overflow-x-visible">
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader
