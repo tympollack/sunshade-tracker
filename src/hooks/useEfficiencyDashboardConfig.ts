@@ -20,6 +20,7 @@ import {
   resolveEfficiencyDashboardConfig,
   toggleWidgetInOverride,
   updateDefaultViewInOverride,
+  WIDGET_CATALOG_MAP,
 } from '@/lib/efficiency-dashboard-schema';
 
 export function getEfficiencyDashboardStorageKey(tenantSlug: string = 'default'): string {
@@ -171,34 +172,43 @@ export function useEfficiencyDashboardConfig({
   );
 
   const persistUserOverrides = useCallback(
-    (next: EfficiencyDashboardSchema | null) => {
+    (next: EfficiencyDashboardSchema | null, targetSurface?: DashboardSurface | 'all') => {
       hasLocalEditRef.current = true;
       setUserOverrides(next);
       writeStoredOverrides(storageKey, next);
 
       if (syncToProfile && typeof fetch === 'function') {
+        const payload: Record<string, any> = {
+          tenant_slug: cleanTenantSlug,
+          efficiency_dashboard_preferences: next,
+        };
+        if (targetSurface === 'all') {
+          payload.surface = 'all';
+        } else if (targetSurface || surface) {
+          payload.surface = targetSurface || surface;
+        }
+
         fetch('/api/v1/tenants/me', {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
             'x-tenant-slug': cleanTenantSlug,
           },
-          body: JSON.stringify({
-            tenant_slug: cleanTenantSlug,
-            efficiency_dashboard_preferences: next,
-          }),
+          body: JSON.stringify(payload),
         }).catch(() => {});
       }
     },
-    [storageKey, syncToProfile, cleanTenantSlug]
+    [storageKey, syncToProfile, cleanTenantSlug, surface]
   );
 
   const toggleWidget = useCallback(
     (widgetId: string) => {
+      const def = WIDGET_CATALOG_MAP.get(widgetId);
+      const widgetSurface = def?.surface || surface;
       const next = toggleWidgetInOverride(userOverridesRef.current, resolved, widgetId);
-      persistUserOverrides(next);
+      persistUserOverrides(next, widgetSurface);
     },
-    [resolved, persistUserOverrides]
+    [resolved, surface, persistUserOverrides]
   );
 
   const moveWidget = useCallback(
@@ -216,7 +226,7 @@ export function useEfficiencyDashboardConfig({
         widgetId,
         direction
       );
-      persistUserOverrides(next);
+      persistUserOverrides(next, targetSurface);
     },
     [resolved, surface, persistUserOverrides]
   );
@@ -227,7 +237,7 @@ export function useEfficiencyDashboardConfig({
       updates: Partial<EfficiencyDefaultViews[S]>
     ) => {
       const next = updateDefaultViewInOverride(userOverridesRef.current, targetSurface, updates);
-      persistUserOverrides(next);
+      persistUserOverrides(next, targetSurface);
     },
     [persistUserOverrides]
   );
@@ -235,13 +245,13 @@ export function useEfficiencyDashboardConfig({
   const resetSurface = useCallback(
     (targetSurface: DashboardSurface = surface) => {
       const next = clearSurfaceOverride(userOverridesRef.current, targetSurface);
-      persistUserOverrides(next);
+      persistUserOverrides(next, targetSurface);
     },
     [surface, persistUserOverrides]
   );
 
   const resetAll = useCallback(() => {
-    persistUserOverrides(null);
+    persistUserOverrides(null, 'all');
   }, [persistUserOverrides]);
 
   const saveAsWorkspaceDefault = useCallback(

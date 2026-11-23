@@ -719,7 +719,7 @@ export async function GET(req: NextRequest) {
   const clientTimestamp = updatedSince || ifModifiedSince;
   if (clientTimestamp) {
     const clientTime = new Date(clientTimestamp).getTime();
-    const compareTime = updatedSince ? itemUpdatedAt : maxTouchMs;
+    const compareTime = maxTouchMs;
     if (!isNaN(clientTime) && compareTime <= clientTime && compareTime > 0) {
       return new Response(null, {
         status: 304,
@@ -756,6 +756,33 @@ export async function GET(req: NextRequest) {
 
     const allRows = ((rawDeltaRows || []) as any[]).map(mapThinCard);
     const deleted_ids = allRows.filter((r) => r.deleted_at).map((r) => r.id);
+
+    // If project metadata or item assignments were updated, discover items moved out of this project
+    const updatedSinceTime = new Date(updatedSince).getTime();
+    if (!isNaN(updatedSinceTime) && projectUpdatedAt > updatedSinceTime) {
+      try {
+        const auditTable = supabaseAdmin.from('audit_logs');
+        if (auditTable && typeof auditTable.select === 'function') {
+          let auditQuery: any = auditTable
+            .select('item_id, changes')
+            .eq('tenant_id', authCtx.tenant.id);
+          if (typeof auditQuery.gt === 'function') {
+            auditQuery = auditQuery.gt('created_at', updatedSince);
+          }
+          const { data: moveLogs } = await auditQuery;
+          if (Array.isArray(moveLogs)) {
+            for (const log of moveLogs) {
+              const beforeProj = log.changes?.project_id?.before;
+              if (beforeProj === project.id && log.item_id && !deleted_ids.includes(log.item_id)) {
+                deleted_ids.push(log.item_id);
+              }
+            }
+          }
+        }
+      } catch {
+        // Fallback: non-fatal
+      }
+    }
     let items: WorkItem[] = [];
 
     if (!includeColdArchive) {
@@ -1684,6 +1711,13 @@ export async function PATCH(req: NextRequest) {
         .from('audit_logs')
         .update({ project_id: project_id })
         .in('item_id', allAffectedIds)
+        .eq('tenant_id', authCtx.tenant.id);
+
+      // Invalidate project HTTP freshness cache timestamps for source and destination projects
+      await supabaseAdmin
+        .from('projects')
+        .update({ updated_at: new Date().toISOString() })
+        .in('id', [existingItem.project_id, project_id])
         .eq('tenant_id', authCtx.tenant.id);
     }
 
