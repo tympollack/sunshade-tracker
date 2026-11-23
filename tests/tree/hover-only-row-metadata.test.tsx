@@ -207,9 +207,9 @@ describe('TASK-TRK-HOVER-ONLY-ROW-METADATA', () => {
       />
     );
 
-    // Sprint settings trigger deferred to row hover
+    // Sprint settings trigger deferred to row hover on hover-capable devices, visible on touch
     const settingsBtn = screen.getByLabelText('Sprint Settings');
-    expect(settingsBtn).toHaveClass('opacity-0', 'group-hover/row:opacity-100');
+    expect(settingsBtn).toHaveClass('opacity-0', '[@media(hover:none)]:opacity-70', 'group-hover/row:opacity-100');
 
     // Sprint-level rollup points stay visible
     expect(screen.getByText('10 pts')).not.toHaveClass('opacity-0');

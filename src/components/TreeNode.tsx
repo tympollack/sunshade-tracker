@@ -330,7 +330,14 @@ export function TreeNode({
       )}
 
       {/* Node Content Container with ancestor guide rails */}
-      <div className="relative flex flex-col">
+      <div
+        className={`relative flex flex-col ${
+          isStickyTopLevelGroup
+            ? `sticky ${stickyTopOffset} z-10 bg-[#0b1120]/95 backdrop-blur-md rounded-lg`
+            : ''
+        }`}
+        data-sticky-header={isStickyTopLevelGroup ? 'true' : undefined}
+      >
         <TreeNodeBranchRails
           ancestorRails={ancestorRails}
           isLastChild={isLastChild}
@@ -338,12 +345,7 @@ export function TreeNode({
         />
 
         <div
-          className={`flex items-center gap-3 transition-all group tree-branch-row ${
-            isStickyTopLevelGroup
-              ? `sticky ${stickyTopOffset} z-10 bg-[#0b1120]/95 backdrop-blur-md rounded-lg`
-              : ''
-          }`}
-          data-sticky-header={isStickyTopLevelGroup ? 'true' : undefined}
+          className="flex items-center gap-3 transition-all group tree-branch-row"
           style={{ marginLeft: `${item.depth * INDENT_STEP}px`, ['--node-depth' as any]: item.depth }}
         >
           <TreeNodeBranchConnector isLastChild={isLastChild} depth={item.depth} />

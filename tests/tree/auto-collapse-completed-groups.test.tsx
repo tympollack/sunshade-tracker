@@ -4,6 +4,7 @@ import { render, screen, fireEvent, renderHook, act } from '@testing-library/rea
 import {
   getDefaultCollapsedTreeNodeIds,
   getDefaultCollapsedSprintNames,
+  flattenVisibleTreeNodes,
   TREE_COLLAPSE_STORAGE_PREFIX,
   SPRINT_COLLAPSE_STORAGE_PREFIX,
 } from '@/lib/tree-collapse';
@@ -261,5 +262,140 @@ describe('TASK-TRK-AUTO-COLLAPSE-COMPLETED-GROUPS', () => {
     // Expanding the completed epic reveals its child task
     fireEvent.click(screen.getByTestId('sprint-tree-collapse-toggle-epic-done'));
     expect(screen.getByText('Hidden Completed Child Task')).toBeInTheDocument();
+  });
+
+  it('keeps transiently expanded parent open when treeItems rebuild after dropping a child inside it (BUG_0004)', () => {
+    const storageKey = `${TREE_COLLAPSE_STORAGE_PREFIX}proj-dnd`;
+    const initialItems: WorkItem[] = [
+      makeItem({ id: 'epic-1', item_type: 'epic', status: 'in_progress', title: 'Active Epic' }),
+      makeItem({ id: 'task-1', item_type: 'task', parent_id: 'epic-1', status: 'not_started', title: 'Existing Child' }),
+      makeItem({ id: 'story-moved', item_type: 'story', status: 'in_progress', title: 'Moved Story' }),
+    ];
+    const initialTree = buildTree(initialItems);
+
+    const { result, rerender } = renderHook(
+      ({ tree, keyName }) => useAutoCollapsedTreeNodes(keyName, tree, () => mockStatuses),
+      { initialProps: { tree: initialTree, keyName: storageKey } }
+    );
+
+    // User manually collapses epic-1
+    act(() => {
+      result.current.toggleNode('epic-1');
+    });
+    expect(result.current.collapsedIds.has('epic-1')).toBe(true);
+
+    // User drops story-moved inside epic-1 -> rebuilds treeItems & transiently expands epic-1
+    const rebuiltTree = buildTree(
+      initialItems.map((it) => (it.id === 'story-moved' ? { ...it, parent_id: 'epic-1' } : it))
+    );
+    act(() => {
+      result.current.expandNode('epic-1');
+    });
+    rerender({ tree: rebuiltTree, keyName: storageKey });
+
+    // epic-1 stays expanded after tree rebuild
+    expect(result.current.collapsedIds.has('epic-1')).toBe(false);
+
+    // User manually toggles epic-1 again -> collapses and clears transient state
+    act(() => {
+      result.current.toggleNode('epic-1');
+    });
+    expect(result.current.collapsedIds.has('epic-1')).toBe(true);
+  });
+
+  it('excludes collapsed descendants from visible shift-click range selection pool in SprintViewContainer (BUG_0001)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'task-a',
+        item_type: 'task',
+        status: 'in_progress',
+        order_index: 1000,
+        title: 'Task A',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+      makeItem({
+        id: 'story-done',
+        item_type: 'story',
+        status: 'complete',
+        order_index: 2000,
+        title: 'Done Story',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+      makeItem({
+        id: 'task-hidden',
+        item_type: 'task',
+        parent_id: 'story-done',
+        status: 'in_progress',
+        order_index: 3000,
+        title: 'Hidden Mutable Task',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+      makeItem({
+        id: 'task-d',
+        item_type: 'task',
+        status: 'in_progress',
+        order_index: 4000,
+        title: 'Task D',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+    ];
+
+    const visiblePool = flattenVisibleTreeNodes(buildTree(items), new Set(['story-done']));
+    expect(visiblePool.map((n) => n.id)).toEqual(['task-a', 'story-done', 'task-d']);
+
+    const handleToggleSelectItem = vi.fn();
+
+    render(
+      <SprintViewContainer
+        items={items}
+        projectSettings={baseSettings}
+        isReadOnly={false}
+        pointMode="granular"
+        handlePointModeChange={vi.fn()}
+        sprintViewMode="tree"
+        setSprintViewMode={vi.fn()}
+        handleToggleCollapseAllSprints={vi.fn()}
+        collapsedSprints={new Set()}
+        toggleSprintCollapse={vi.fn()}
+        handleToggleHideCompletedSprints={vi.fn()}
+        hideCompletedSprints={false}
+        hiddenCompletedSprintsCount={0}
+        statusFilterOptions={[]}
+        effectiveSprintStatuses={['not_started', 'in_progress', 'complete']}
+        setSprintSelectedStatuses={vi.fn()}
+        levelFilterOptions={[]}
+        effectiveSprintLevels={['epic', 'story', 'task']}
+        setSprintSelectedLevels={vi.fn()}
+        sprintSortBy="order_index"
+        setSprintSortBy={vi.fn()}
+        setIsManageSprintsOpen={vi.fn()}
+        visibleSprints={['Sprint 2026-Q4']}
+        availableSprints={['Sprint 2026-Q4']}
+        filterSprintItems={(list) => list}
+        sprintComparator={(a, b) => a.order_index - b.order_index}
+        selectedItemIds={new Set()}
+        handleToggleSelectItem={handleToggleSelectItem}
+        handleSelectAllInPool={vi.fn()}
+        activeSprintPopover={null}
+        setActiveSprintPopover={vi.fn()}
+        setEditingItem={vi.fn()}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+        deviations={[]}
+        setFocusedDeviationId={vi.fn()}
+        setIsReconciliationModalOpen={vi.fn()}
+        isAllProjects={false}
+        allProjects={[]}
+        handleUpdateStatus={vi.fn()}
+        handleUpdateAssignee={vi.fn()}
+        handleUpdateItemSprint={vi.fn()}
+        projectSlug="range-pool-proj"
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('sprint-item-checkbox-task-d'), { shiftKey: true });
+    expect(handleToggleSelectItem).toHaveBeenCalledTimes(1);
+    const passedPool = handleToggleSelectItem.mock.calls[0][2] as WorkItem[];
+    expect(passedPool.map((it) => it.id)).toEqual(['task-a', 'story-done', 'task-d']);
   });
 });

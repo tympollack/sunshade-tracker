@@ -23,7 +23,10 @@ import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
 import { useRowColumns } from '@/hooks/useRowColumns';
 import { useAutoCollapsedTreeNodes } from '@/hooks/useAutoCollapseState';
-import { SPRINT_TREE_COLLAPSE_STORAGE_PREFIX } from '@/lib/tree-collapse';
+import {
+  SPRINT_TREE_COLLAPSE_STORAGE_PREFIX,
+  flattenVisibleTreeNodes,
+} from '@/lib/tree-collapse';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
 import { ProjectGroupDivider } from '@/components/sprint/ProjectGroupDivider';
 import { isProjectSort } from '@/lib/utils/sortUtils';
@@ -229,8 +232,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
     const stickyHeaderClass = isStickyRootEpic
       ? showProjectGroups
-        ? 'md:sticky md:top-[88px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
-        : 'md:sticky md:top-[58px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        ? 'md:sticky md:top-8 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        : 'md:sticky md:top-0 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
       : undefined;
 
     const branchContent = (
@@ -697,7 +700,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar md:overflow-x-visible">
+                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid={`sprint-body-scroll-${sprintName}`}>
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
@@ -739,12 +742,25 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       </div>
                     )
                   ) : sprintViewMode === 'tree' ? (
-                    buildTree(sprintItems, null, 0, new Set(), sprintComparator).map((node, idx, arr) => (
-                      <React.Fragment key={node.id}>
-                        {renderProjectDivider(node, arr[idx - 1], sprintItems)}
-                        {renderSprintTreeBranch(node, sprintItems, sprintName)}
-                      </React.Fragment>
-                    ))
+                    (() => {
+                      const sprintTreeRoots = buildTree(
+                        sprintItems,
+                        null,
+                        0,
+                        new Set(),
+                        sprintComparator
+                      );
+                      const visibleSprintPool = flattenVisibleTreeNodes(
+                        sprintTreeRoots,
+                        collapsedSprintTreeNodes
+                      );
+                      return sprintTreeRoots.map((node, idx, arr) => (
+                        <React.Fragment key={node.id}>
+                          {renderProjectDivider(node, arr[idx - 1], sprintItems)}
+                          {renderSprintTreeBranch(node, visibleSprintPool, sprintName)}
+                        </React.Fragment>
+                      ));
+                    })()
                   ) : (
                     sprintItems.map((item, itemIdx) => {
                       const isImmutable =
@@ -896,7 +912,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isBacklogCollapsed && (
-                <div className="overflow-x-auto custom-scrollbar md:overflow-x-visible">
+                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid="backlog-body-scroll">
                 <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader
@@ -912,12 +928,25 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       Backlog is empty! All items are assigned to active sprints.
                     </div>
                   ) : sprintViewMode === 'tree' ? (
-                    buildTree(backlogItems, null, 0, new Set(), sprintComparator).map((node, idx, arr) => (
-                      <React.Fragment key={node.id}>
-                        {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
-                        {renderSprintTreeBranch(node, backlogItems, '__none__')}
-                      </React.Fragment>
-                    ))
+                    (() => {
+                      const backlogTreeRoots = buildTree(
+                        backlogItems,
+                        null,
+                        0,
+                        new Set(),
+                        sprintComparator
+                      );
+                      const visibleBacklogPool = flattenVisibleTreeNodes(
+                        backlogTreeRoots,
+                        collapsedSprintTreeNodes
+                      );
+                      return backlogTreeRoots.map((node, idx, arr) => (
+                        <React.Fragment key={node.id}>
+                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
+                          {renderSprintTreeBranch(node, visibleBacklogPool, '__none__')}
+                        </React.Fragment>
+                      ));
+                    })()
                   ) : (
                     backlogItems.map((item, itemIdx) => {
                       const isImmutable =

@@ -5,6 +5,8 @@ import { ChevronDown, ChevronRight, Calendar, Folder, FileText, CheckCircle2, Se
 import { PivotTreeNode, TreeFilterScope } from '@/hooks/usePivotTree';
 import { WorkItem } from '@/types/tracker';
 
+const STICKY_ROW_HEIGHT_PX = 28;
+
 export interface NavTreeNodeProps {
   node: PivotTreeNode;
   depth?: number;
@@ -16,6 +18,8 @@ export interface NavTreeNodeProps {
   onSelectSprint?: (sprintName: string) => void;
   expandedNodes: Set<string>;
   unit?: string;
+  stickyTopPx?: number;
+  inItemSubtree?: boolean;
 }
 
 export function NavTreeNode({
@@ -29,19 +33,19 @@ export function NavTreeNode({
   onSelectSprint,
   expandedNodes,
   unit = 'pts',
+  stickyTopPx = 0,
+  inItemSubtree = false,
 }: NavTreeNodeProps) {
   const hasChildren = node.children && node.children.length > 0;
+  const isTopLevelItemGroup = node.type === 'item' && !inItemSubtree;
   const isStickyGroupHeader =
     hasChildren &&
     isExpanded &&
-    (depth === 0 ||
-      node.type === 'project' ||
-      (node.type === 'item' && node.itemType?.toLowerCase() === 'epic'));
-  const stickyClass = isStickyGroupHeader
-    ? depth === 0
-      ? 'sticky top-0 z-10 bg-slate-950/95 backdrop-blur-sm'
-      : 'sticky top-7 z-[5] bg-slate-950/95 backdrop-blur-sm'
-    : '';
+    (depth === 0 || node.type === 'project' || node.type === 'sprint' || isTopLevelItemGroup);
+  const stickyZIndex = Math.max(5, 20 - Math.floor(stickyTopPx / STICKY_ROW_HEIGHT_PX) * 5);
+  const stickyClass = isStickyGroupHeader ? 'sticky bg-slate-950/95 backdrop-blur-sm' : '';
+  const nextStickyTopPx = isStickyGroupHeader ? stickyTopPx + STICKY_ROW_HEIGHT_PX : stickyTopPx;
+  const nextInItemSubtree = inItemSubtree || node.type === 'item';
 
   // Determine whether this node is currently active in filter scope
   const isSelected = Boolean(
@@ -124,12 +128,16 @@ export function NavTreeNode({
         aria-expanded={hasChildren ? isExpanded : undefined}
         aria-selected={isSelected}
         onClick={handleClickRow}
+        data-sticky-header={isStickyGroupHeader ? 'true' : undefined}
         className={`group/row flex items-center gap-1.5 py-1 px-1.5 rounded-md text-xs cursor-pointer transition-colors min-w-0 w-full ${stickyClass} ${
           isSelected
             ? 'bg-emerald-500/15 text-emerald-300 font-medium border border-emerald-500/30'
             : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
         }`}
-        style={{ paddingLeft: `${depth * 14 + 4}px` }}
+        style={{
+          paddingLeft: `${depth * 14 + 4}px`,
+          ...(isStickyGroupHeader ? { top: `${stickyTopPx}px`, zIndex: stickyZIndex } : {}),
+        }}
       >
         {/* Disclosure Toggle Arrow */}
         <button
@@ -223,7 +231,7 @@ export function NavTreeNode({
                   e.stopPropagation();
                   onSelectSprint(node.sprintName || node.title);
                 }}
-                className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-all opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100"
+                className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-all opacity-0 [@media(hover:none)]:opacity-70 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100"
                 title="Open Sprint Lifecycle Settings"
                 aria-label="Sprint Settings"
               >
@@ -253,6 +261,8 @@ export function NavTreeNode({
               onSelectSprint={onSelectSprint}
               expandedNodes={expandedNodes}
               unit={unit}
+              stickyTopPx={nextStickyTopPx}
+              inItemSubtree={nextInItemSubtree}
             />
           ))}
         </div>

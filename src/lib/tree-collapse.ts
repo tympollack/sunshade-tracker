@@ -94,3 +94,24 @@ export function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
   }
   return true;
 }
+
+/**
+ * Flattens a tree into depth-first order excluding descendants of collapsed nodes,
+ * so Shift-click range selection only spans currently visible rows.
+ */
+export function flattenVisibleTreeNodes(
+  nodes: WorkItemNode[],
+  collapsedIds: Set<string>
+): WorkItemNode[] {
+  const visible: WorkItemNode[] = [];
+  const walk = (branch: WorkItemNode[]) => {
+    for (const node of branch) {
+      visible.push(node);
+      if (!collapsedIds.has(node.id) && node.children && node.children.length > 0) {
+        walk(node.children);
+      }
+    }
+  };
+  walk(nodes);
+  return visible;
+}

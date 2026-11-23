@@ -133,11 +133,23 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     expect(betaHeader).toHaveClass('sticky', 'top-0');
     expect(betaHeader).toHaveTextContent('Project Beta');
 
+    // Scroll container supports both horizontal & vertical scroll so sticky headers work
+    const scrollContainer = screen.getByTestId('tree-scroll-container');
+    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto');
+    scrollContainer.scrollTop = 250;
+    fireEvent.scroll(scrollContainer);
+
     // Expanded top-level epics inside project groups have sticky header offset below project header
     const alphaGroup = screen.getByTestId('tree-project-group-proj-a');
     const stickyEpicRow = alphaGroup.querySelector('[data-sticky-header="true"]');
     expect(stickyEpicRow).not.toBeNull();
     expect(stickyEpicRow).toHaveClass('sticky', 'top-9');
+    // Sticky header is a direct child of tree-node so its containing block spans children-container
+    const treeNodeWrapper = stickyEpicRow!.parentElement;
+    expect(treeNodeWrapper).toHaveAttribute('data-testid', 'tree-node');
+    expect(
+      treeNodeWrapper!.querySelector('[data-testid="children-container-epic-a"]')
+    ).not.toBeNull();
   });
 
   it('applies sticky header only to expanded root parent nodes in TreeNode, not collapsed or child nodes', () => {
@@ -239,11 +251,63 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
       />
     );
 
+    const sprintBodyScroll = screen.getByTestId('sprint-body-scroll-Sprint 2026-Q4');
+    expect(sprintBodyScroll).toHaveClass('overflow-x-auto', 'overflow-y-auto');
+    sprintBodyScroll.scrollTop = 180;
+    fireEvent.scroll(sprintBodyScroll);
+
     const branch = screen.getByTestId('sprint-tree-branch-epic-s1');
     const rows = within(branch).getAllByTestId('sprint-item-row');
     expect(rows[0]).toHaveAttribute('data-sticky-header', 'true');
-    expect(rows[0]).toHaveClass('md:sticky');
+    expect(rows[0]).toHaveClass('md:sticky', 'md:top-0');
     expect(rows[1]).not.toHaveAttribute('data-sticky-header', 'true');
+  });
+
+  it('accumulates non-overlapping sticky offsets in NavTreeNode for Sprint > Project > custom top-level Initiative (BUG_0006 & ANALYSIS_0004)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'init-lhn',
+        project_id: 'proj-1',
+        item_type: 'initiative',
+        title: 'LHN Initiative',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+      makeItem({
+        id: 'task-lhn',
+        project_id: 'proj-1',
+        parent_id: 'init-lhn',
+        item_type: 'task',
+        title: 'LHN Child Task',
+        metadata: { sprint: 'Sprint 2026-Q4' },
+      }),
+    ];
+    const projects = [{ id: 'proj-1', slug: 'tracker', name: 'Tracker Project' }];
+
+    localStorage.setItem(
+      'sunshade_tree_state_pym-energy',
+      JSON.stringify(['sprint:Sprint 2026-Q4', 'sprint:Sprint 2026-Q4:project:proj-1', 'item:init-lhn'])
+    );
+
+    const { container } = render(
+      <LeftHandNavTree
+        items={items}
+        projects={projects}
+        tenantSlug="pym-energy"
+      />
+    );
+
+    const treeContainer = screen.getByRole('tree', { name: 'Work Items File Tree' });
+    treeContainer.scrollTop = 120;
+    fireEvent.scroll(treeContainer);
+
+    const treeItems = Array.from(container.querySelectorAll('[role="treeitem"]'));
+    const sprintRow = treeItems.find((el) => el.textContent?.includes('Sprint 2026-Q4')) as HTMLElement;
+    const projectRow = treeItems.find((el) => el.textContent?.includes('Tracker Project')) as HTMLElement;
+    const initiativeRow = treeItems.find((el) => el.textContent?.includes('LHN Initiative')) as HTMLElement;
+
+    expect(sprintRow).toHaveStyle({ top: '0px', zIndex: '20' });
+    expect(projectRow).toHaveStyle({ top: '28px', zIndex: '15' });
+    expect(initiativeRow).toHaveStyle({ top: '56px', zIndex: '10' });
   });
 
   it('makes expanded Project and Epic nodes sticky inside LeftHandNavTree', () => {
@@ -273,9 +337,11 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
 
     const treeItems = container.querySelectorAll('[role="treeitem"]');
     const projectRow = Array.from(treeItems).find((el) => el.textContent?.includes('Tracker Project'));
-    expect(projectRow).toHaveClass('sticky', 'top-0');
+    expect(projectRow).toHaveClass('sticky');
+    expect(projectRow).toHaveStyle({ top: '0px' });
 
     const epicRow = Array.from(treeItems).find((el) => el.textContent?.includes('LHN Sticky Epic'));
-    expect(epicRow).toHaveClass('sticky', 'top-7');
+    expect(epicRow).toHaveClass('sticky');
+    expect(epicRow).toHaveStyle({ top: '56px' });
   });
 });

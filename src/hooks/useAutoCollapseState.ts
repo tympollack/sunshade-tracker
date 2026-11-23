@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SprintDefinition, StatusDefinition, WorkItem, WorkItemNode } from '@/types/tracker';
 import {
   areSetsEqual,
@@ -14,6 +14,8 @@ import {
  * Manages collapsed node IDs for a hierarchy tree with localStorage persistence.
  * When no user preference is stored for the storageKey, completed parent groups
  * (epics, stories, etc. with children) default to collapsed on load.
+ * Transient expansions (e.g. dropping an item into a collapsed parent) are tracked
+ * separately so tree rebuilds never re-collapse the target container.
  */
 export function useAutoCollapsedTreeNodes(
   storageKey: string,
@@ -23,11 +25,12 @@ export function useAutoCollapsedTreeNodes(
   const [hasUserOverride, setHasUserOverride] = useState<boolean>(
     () => readStoredCollapseSet(storageKey) !== null
   );
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => {
+  const [baseCollapsedIds, setBaseCollapsedIds] = useState<Set<string>>(() => {
     const stored = readStoredCollapseSet(storageKey);
     if (stored !== null) return stored;
     return getDefaultCollapsedTreeNodeIds(treeItems, getStatuses);
   });
+  const [transientExpandedIds, setTransientExpandedIds] = useState<Set<string>>(() => new Set());
 
   const prevStorageKeyRef = useRef<string>(storageKey);
   const getStatusesRef = useRef(getStatuses);
@@ -38,9 +41,13 @@ export function useAutoCollapsedTreeNodes(
     const keyChanged = prevStorageKeyRef.current !== storageKey;
     prevStorageKeyRef.current = storageKey;
 
+    if (keyChanged) {
+      setTransientExpandedIds(new Set());
+    }
+
     if (stored !== null) {
       setHasUserOverride(true);
-      setCollapsedIds((prev) => (keyChanged || !areSetsEqual(prev, stored) ? stored : prev));
+      setBaseCollapsedIds((prev) => (keyChanged || !areSetsEqual(prev, stored) ? stored : prev));
       return;
     }
 
@@ -50,16 +57,33 @@ export function useAutoCollapsedTreeNodes(
 
     if (keyChanged || !hasUserOverride) {
       const defaults = getDefaultCollapsedTreeNodeIds(treeItems, getStatusesRef.current);
-      setCollapsedIds((prev) => (areSetsEqual(prev, defaults) ? prev : defaults));
+      setBaseCollapsedIds((prev) => (areSetsEqual(prev, defaults) ? prev : defaults));
     }
   }, [storageKey, treeItems, hasUserOverride]);
+
+  const collapsedIds = useMemo(() => {
+    if (transientExpandedIds.size === 0) return baseCollapsedIds;
+    const next = new Set(baseCollapsedIds);
+    transientExpandedIds.forEach((id) => next.delete(id));
+    return next;
+  }, [baseCollapsedIds, transientExpandedIds]);
 
   const toggleNode = useCallback(
     (nodeId: string) => {
       setHasUserOverride(true);
-      setCollapsedIds((prev) => {
+      const currentlyCollapsed = collapsedIds.has(nodeId);
+      setTransientExpandedIds((prev) => {
+        if (!prev.has(nodeId)) return prev;
         const next = new Set(prev);
-        if (next.has(nodeId)) {
+        next.delete(nodeId);
+        return next;
+      });
+      setBaseCollapsedIds((prev) => {
+        const next = new Set(prev);
+        transientExpandedIds.forEach((id) => {
+          if (id !== nodeId) next.delete(id);
+        });
+        if (currentlyCollapsed) {
           next.delete(nodeId);
         } else {
           next.add(nodeId);
@@ -68,21 +92,32 @@ export function useAutoCollapsedTreeNodes(
         return next;
       });
     },
-    [storageKey]
+    [storageKey, collapsedIds, transientExpandedIds]
   );
 
   const expandNode = useCallback(
     (nodeId: string, persist: boolean = false) => {
       if (persist) {
         setHasUserOverride(true);
-      }
-      setCollapsedIds((prev) => {
-        if (!prev.has(nodeId)) return prev;
-        const next = new Set(prev);
-        next.delete(nodeId);
-        if (persist) {
+        setTransientExpandedIds((prev) => {
+          if (!prev.has(nodeId)) return prev;
+          const next = new Set(prev);
+          next.delete(nodeId);
+          return next;
+        });
+        setBaseCollapsedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(nodeId);
           writeStoredCollapseSet(storageKey, next);
-        }
+          return next;
+        });
+        return;
+      }
+
+      setTransientExpandedIds((prev) => {
+        if (prev.has(nodeId)) return prev;
+        const next = new Set(prev);
+        next.add(nodeId);
         return next;
       });
     },
@@ -91,14 +126,16 @@ export function useAutoCollapsedTreeNodes(
 
   const expandAll = useCallback(() => {
     setHasUserOverride(true);
+    setTransientExpandedIds(new Set());
     const empty = new Set<string>();
-    setCollapsedIds(empty);
+    setBaseCollapsedIds(empty);
     writeStoredCollapseSet(storageKey, empty);
   }, [storageKey]);
 
   const collapseAll = useCallback(
     (nodesToCollect: WorkItemNode[] = treeItems) => {
       setHasUserOverride(true);
+      setTransientExpandedIds(new Set());
       const parentIds = new Set<string>();
       const collectParents = (nodes: WorkItemNode[]) => {
         for (const n of nodes) {
@@ -109,7 +146,7 @@ export function useAutoCollapsedTreeNodes(
         }
       };
       collectParents(nodesToCollect);
-      setCollapsedIds(parentIds);
+      setBaseCollapsedIds(parentIds);
       writeStoredCollapseSet(storageKey, parentIds);
     },
     [storageKey, treeItems]
