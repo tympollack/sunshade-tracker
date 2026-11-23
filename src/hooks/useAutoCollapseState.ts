@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SprintDefinition, StatusDefinition, WorkItem, WorkItemNode } from '@/types/tracker';
 import {
+  SprintCollapseOptions,
   areSetsEqual,
   getDefaultCollapsedSprintNames,
   getDefaultCollapsedTreeNodeIds,
@@ -14,8 +15,8 @@ import {
  * Manages collapsed node IDs for a hierarchy tree with localStorage persistence.
  * When no user preference is stored for the storageKey, completed parent groups
  * (epics, stories, etc. with children) default to collapsed on load.
- * Transient expansions (e.g. dropping an item into a collapsed parent) are tracked
- * separately so tree rebuilds never re-collapse the target container.
+ * Transient expansions (e.g. dropping or quick-adding an item under a parent) are tracked
+ * separately so tree rebuilds keep the target open without disabling future auto-collapse defaults.
  */
 export function useAutoCollapsedTreeNodes(
   storageKey: string,
@@ -97,8 +98,10 @@ export function useAutoCollapsedTreeNodes(
 
   const expandNode = useCallback(
     (nodeId: string, persist: boolean = false) => {
-      if (persist) {
-        setHasUserOverride(true);
+      // If the user has an explicit persisted override and this node is collapsed in it,
+      // update the persisted override; otherwise use transient expansion so we never
+      // suppress automatic completion collapse defaults for other groups.
+      if (persist && hasUserOverride) {
         setTransientExpandedIds((prev) => {
           if (!prev.has(nodeId)) return prev;
           const next = new Set(prev);
@@ -106,6 +109,7 @@ export function useAutoCollapsedTreeNodes(
           return next;
         });
         setBaseCollapsedIds((prev) => {
+          if (!prev.has(nodeId)) return prev;
           const next = new Set(prev);
           next.delete(nodeId);
           writeStoredCollapseSet(storageKey, next);
@@ -121,7 +125,7 @@ export function useAutoCollapsedTreeNodes(
         return next;
       });
     },
-    [storageKey]
+    [storageKey, hasUserOverride]
   );
 
   const expandAll = useCallback(() => {
@@ -168,7 +172,8 @@ export function useAutoCollapsedTreeNodes(
 export function useAutoCollapsedSprints(
   storageKey: string,
   sprintNames: string[],
-  sprintDefs: SprintDefinition[]
+  sprintDefs: SprintDefinition[],
+  options?: SprintCollapseOptions
 ) {
   const [hasUserOverride, setHasUserOverride] = useState<boolean>(
     () => readStoredCollapseSet(storageKey) !== null
@@ -176,10 +181,12 @@ export function useAutoCollapsedSprints(
   const [collapsedSprints, setCollapsedSprints] = useState<Set<string>>(() => {
     const stored = readStoredCollapseSet(storageKey);
     if (stored !== null) return stored;
-    return getDefaultCollapsedSprintNames(sprintNames, sprintDefs);
+    return getDefaultCollapsedSprintNames(sprintNames, sprintDefs, options);
   });
 
   const prevStorageKeyRef = useRef<string>(storageKey);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   useEffect(() => {
     const stored = readStoredCollapseSet(storageKey);
@@ -197,10 +204,14 @@ export function useAutoCollapsedSprints(
     }
 
     if (keyChanged || !hasUserOverride) {
-      const defaults = getDefaultCollapsedSprintNames(sprintNames, sprintDefs);
+      const defaults = getDefaultCollapsedSprintNames(
+        sprintNames,
+        sprintDefs,
+        optionsRef.current
+      );
       setCollapsedSprints((prev) => (areSetsEqual(prev, defaults) ? prev : defaults));
     }
-  }, [storageKey, sprintNames, sprintDefs, hasUserOverride]);
+  }, [storageKey, sprintNames, sprintDefs, options?.isAllProjects, options?.items, hasUserOverride]);
 
   const toggleSprint = useCallback(
     (sprintKey: string) => {

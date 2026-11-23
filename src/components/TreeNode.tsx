@@ -9,6 +9,12 @@ import { TreeNodeBranchRails, TreeNodeBranchConnector } from '@/components/tree/
 import { TreeNodeQuickChildForm } from '@/components/tree/TreeNodeQuickChildForm';
 import { ResolvedRowColumn } from '@/lib/row-columns';
 
+export interface TreeChildDraft {
+  isOpen: boolean;
+  title: string;
+  itemType?: string;
+}
+
 export interface TreeNodeProps {
   item: WorkItemNode;
   getStatusColor?: (status: string) => string;
@@ -48,6 +54,11 @@ export interface TreeNodeProps {
   visibleColumns?: ResolvedRowColumn[];
   allProjects?: Array<{ id: string; slug?: string; name: string; settings?: any }>;
   stickyTopOffset?: string;
+  childDrafts?: Record<string, TreeChildDraft>;
+  onChangeChildDraft?: (
+    parentId: string,
+    updater: (prev: TreeChildDraft | undefined) => TreeChildDraft | undefined
+  ) => void;
 }
 
 export const INDENT_STEP = 20;
@@ -166,12 +177,14 @@ export function TreeNode({
   visibleColumns,
   allProjects,
   stickyTopOffset = 'top-0',
+  childDrafts,
+  onChangeChildDraft,
 }: TreeNodeProps) {
   const nodeIsImmutable =
     typeof isImmutable === 'function' ? isImmutable(item) : Boolean(isImmutable);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
-  const [isCreatingChild, setIsCreatingChild] = useState(false);
-  const [childTitle, setChildTitle] = useState('');
+  const [localIsCreatingChild, setLocalIsCreatingChild] = useState(false);
+  const [localChildTitle, setLocalChildTitle] = useState('');
   const [isSubmittingChild, setIsSubmittingChild] = useState(false);
   const [childError, setChildError] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
@@ -220,13 +233,59 @@ export function TreeNode({
     );
   }, [effectiveHierarchy, item.item_type]);
 
-  const [childType, setChildType] = useState(() => validChildTypes[0]?.type || 'task');
+  const [localChildType, setLocalChildType] = useState(() => validChildTypes[0]?.type || 'task');
+
+  const isControlledDraft = Boolean(childDrafts && onChangeChildDraft);
+  const controlledDraft = isControlledDraft ? childDrafts![item.id] : undefined;
+  const isCreatingChild = isControlledDraft ? Boolean(controlledDraft?.isOpen) : localIsCreatingChild;
+  const childTitle = isControlledDraft ? (controlledDraft?.title ?? '') : localChildTitle;
+  const rawChildType = isControlledDraft ? (controlledDraft?.itemType ?? (validChildTypes[0]?.type || 'task')) : localChildType;
+  const childType =
+    validChildTypes.length > 0 && !validChildTypes.some((t) => t.type === rawChildType)
+      ? validChildTypes[0].type
+      : rawChildType;
+
+  const setIsCreatingChild: React.Dispatch<React.SetStateAction<boolean>> = (action) => {
+    if (isControlledDraft) {
+      onChangeChildDraft!(item.id, (prev) => {
+        const nextOpen = typeof action === 'function' ? action(Boolean(prev?.isOpen)) : action;
+        if (!nextOpen) return undefined;
+        return { isOpen: true, title: prev?.title ?? '', itemType: prev?.itemType };
+      });
+    } else {
+      setLocalIsCreatingChild(action);
+    }
+  };
+
+  const setChildTitle = (nextTitle: string) => {
+    if (isControlledDraft) {
+      onChangeChildDraft!(item.id, (prev) => ({
+        isOpen: prev?.isOpen ?? true,
+        title: nextTitle,
+        itemType: prev?.itemType,
+      }));
+    } else {
+      setLocalChildTitle(nextTitle);
+    }
+  };
+
+  const setChildType = (nextType: string) => {
+    if (isControlledDraft) {
+      onChangeChildDraft!(item.id, (prev) => ({
+        isOpen: prev?.isOpen ?? true,
+        title: prev?.title ?? '',
+        itemType: nextType,
+      }));
+    } else {
+      setLocalChildType(nextType);
+    }
+  };
 
   React.useEffect(() => {
-    if (validChildTypes.length > 0 && !validChildTypes.some((t) => t.type === childType)) {
-      setChildType(validChildTypes[0].type);
+    if (!isControlledDraft && validChildTypes.length > 0 && !validChildTypes.some((t) => t.type === localChildType)) {
+      setLocalChildType(validChildTypes[0].type);
     }
-  }, [validChildTypes, childType]);
+  }, [isControlledDraft, validChildTypes, localChildType]);
 
   // Quick Child Submission
   const handleChildSubmit = async (e: React.FormEvent) => {
@@ -239,8 +298,12 @@ export function TreeNode({
       if (onCreateChild) {
         await onCreateChild(item.id, childTitle.trim(), childType);
       }
-      setChildTitle('');
-      setIsCreatingChild(false);
+      if (isControlledDraft) {
+        onChangeChildDraft!(item.id, () => undefined);
+      } else {
+        setLocalChildTitle('');
+        setLocalIsCreatingChild(false);
+      }
     } catch (err: any) {
       setChildError(err?.message || 'Failed to create child item');
     } finally {
@@ -382,6 +445,7 @@ export function TreeNode({
             effectiveStatuses={effectiveStatuses}
             sanitizedTitle={sanitizedTitle}
             isCollapsed={isCollapsed}
+            suppressInlineDescription={isStickyTopLevelGroup}
             isDescExpanded={isDescExpanded}
             setIsDescExpanded={setIsDescExpanded}
             pointMode={pointMode}
@@ -419,8 +483,8 @@ export function TreeNode({
           />
         )}
 
-        {/* Inline Child Creation Form */}
-        {isCreatingChild && (
+        {/* Inline Child Creation Form (kept inside rails for nested non-sticky nodes) */}
+        {!isStickyTopLevelGroup && isCreatingChild && (
           <TreeNodeQuickChildForm
             depth={item.depth}
             childTitle={childTitle}
@@ -438,6 +502,36 @@ export function TreeNode({
           />
         )}
       </div>
+
+      {/* Expanded Details for Sticky Root Groups (rendered outside sticky header so scrolling descendants keep viewport space) */}
+      {isStickyTopLevelGroup && item.description && isDescExpanded && (
+        <div
+          data-testid={`tree-node-description-${item.id}`}
+          title={item.description}
+          onClick={(e) => e.stopPropagation()}
+          className="ml-8 mr-1 mb-1 px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-800/80 text-xs text-slate-400 leading-relaxed break-words"
+        >
+          {item.description}
+        </div>
+      )}
+
+      {isStickyTopLevelGroup && isCreatingChild && (
+        <TreeNodeQuickChildForm
+          depth={item.depth}
+          childTitle={childTitle}
+          childType={childType}
+          validChildTypes={validChildTypes}
+          isSubmitting={isSubmittingChild}
+          error={childError}
+          onTitleChange={setChildTitle}
+          onTypeChange={setChildType}
+          onSubmit={handleChildSubmit}
+          onCancel={() => {
+            setIsCreatingChild(false);
+            setChildError(null);
+          }}
+        />
+      )}
 
       {/* Render Nested Children (Collapsible) */}
       {!isCollapsed && item.children && item.children.length > 0 && (
@@ -481,6 +575,8 @@ export function TreeNode({
                 metricKey={metricKey}
                 visibleColumns={visibleColumns}
                 allProjects={allProjects}
+                childDrafts={childDrafts}
+                onChangeChildDraft={onChangeChildDraft}
               />
             );
           })}

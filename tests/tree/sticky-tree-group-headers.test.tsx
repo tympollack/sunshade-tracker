@@ -133,9 +133,9 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     expect(betaHeader).toHaveClass('sticky', 'top-0');
     expect(betaHeader).toHaveTextContent('Project Beta');
 
-    // Scroll container supports both horizontal & vertical scroll so sticky headers work
+    // Scroll container supports both horizontal & vertical touch/wheel scroll so sticky headers work
     const scrollContainer = screen.getByTestId('tree-scroll-container');
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto');
+    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto', 'touch-pan-x', 'touch-pan-y');
     scrollContainer.scrollTop = 250;
     fireEvent.scroll(scrollContainer);
 
@@ -343,5 +343,127 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     const epicRow = Array.from(treeItems).find((el) => el.textContent?.includes('LHN Sticky Epic'));
     expect(epicRow).toHaveClass('sticky');
     expect(epicRow).toHaveStyle({ top: '56px' });
+  });
+
+  it('preserves inline child creation drafts in TreeViewContainer when sorting reorders project groups (BUG_0004)', () => {
+    const items: WorkItem[] = [
+      makeItem({ id: 'epic-beta', project_id: 'proj-b', item_type: 'epic', title: 'Beta Epic', order_index: 1000 }),
+      makeItem({ id: 'epic-alpha', project_id: 'proj-a', item_type: 'epic', title: 'Alpha Epic', order_index: 2000 }),
+    ];
+    const allProjects = [
+      { id: 'proj-a', slug: 'alpha', name: 'Alpha Project' },
+      { id: 'proj-b', slug: 'beta', name: 'Beta Project' },
+    ];
+
+    const SortHarness = () => {
+      const [sortBy, setSortBy] = React.useState('order_index');
+      const sortedItems = React.useMemo(() => {
+        const copy = [...items];
+        if (sortBy === 'project_asc') {
+          return copy.reverse();
+        }
+        return copy;
+      }, [sortBy]);
+      const treeItems = React.useMemo(() => buildTree(sortedItems), [sortedItems]);
+
+      return (
+        <TreeViewContainer
+          handleExpandAllTreeNodes={vi.fn()}
+          handleCollapseAllTreeNodes={vi.fn()}
+          selectedSprint="all"
+          setSelectedSprint={vi.fn()}
+          availableSprints={[]}
+          statusFilterOptions={[]}
+          effectiveTreeStatuses={['not_started', 'in_progress', 'complete']}
+          setTreeSelectedStatuses={vi.fn()}
+          levelFilterOptions={[]}
+          effectiveTreeLevels={['epic', 'story', 'task']}
+          setTreeSelectedLevels={vi.fn()}
+          assigneeFilterOptions={[]}
+          effectiveTreeAssignees={[]}
+          setTreeSelectedAssignees={vi.fn()}
+          treeSortBy={sortBy}
+          isAllProjects={true}
+          setTreeSortBy={setSortBy}
+          pointMode="granular"
+          handlePointModeChange={vi.fn()}
+          treeFilteredItems={sortedItems}
+          projectSettings={baseSettings}
+          isReadOnly={false}
+          loading={false}
+          items={sortedItems}
+          treeItems={treeItems}
+          isTreeRootOver={false}
+          setIsTreeRootOver={vi.fn()}
+          treeDraggedItemId={null}
+          setTreeDraggedItemId={vi.fn()}
+          handleTreeReparent={vi.fn()}
+          getStatusColor={() => '#38bdf8'}
+          deviations={[]}
+          onOpenReconciliation={vi.fn()}
+          getItemStatuses={() => mockStatuses}
+          getItemHierarchy={() => mockHierarchy}
+          workspaceMembers={[]}
+          getItemProjectSettings={() => baseSettings}
+          collapsedTreeNodes={new Set()}
+          handleToggleCollapseTreeNode={vi.fn()}
+          handleUpdateStatus={vi.fn()}
+          handleTreeUpdateAssignee={vi.fn()}
+          handleTreeCreateChild={vi.fn()}
+          setEditingItem={vi.fn()}
+          projectSlug="all"
+          allProjects={allProjects}
+        />
+      );
+    };
+
+    render(<SortHarness />);
+
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-alpha'));
+    const draftInput = screen.getByTestId('inline-create-child-input');
+    fireEvent.change(draftInput, { target: { value: 'Unsaved Child Draft' } });
+
+    // Switch sort so Alpha moves from second section to first section
+    fireEvent.change(screen.getByTestId('tree-sort-by'), { target: { value: 'project_asc' } });
+
+    expect(screen.getByTestId('inline-create-child-input')).toHaveValue('Unsaved Child Draft');
+  });
+
+  it('keeps expanded description and quick child form outside the sticky header block on sticky root epics (ANALYSIS_0002)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'epic-root',
+        item_type: 'epic',
+        title: 'Root Epic',
+        description: 'Long epic description that should not stay pinned in sticky bar',
+      }),
+      makeItem({
+        id: 'task-child',
+        item_type: 'task',
+        parent_id: 'epic-root',
+        title: 'Child Task',
+      }),
+    ];
+    const tree = buildTree(items);
+
+    const { container } = render(
+      <TreeNode
+        item={tree[0]}
+        collapsedNodeIds={new Set()}
+        statuses={mockStatuses}
+        hierarchy={mockHierarchy}
+        onCreateChild={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('tree-expand-desc-btn-epic-root'));
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-root'));
+
+    const stickyBlock = container.querySelector('[data-sticky-header="true"]')!;
+    const descBox = screen.getByTestId('tree-node-description-epic-root');
+    const childForm = screen.getByTestId('inline-create-child-form');
+
+    expect(stickyBlock).not.toContainElement(descBox);
+    expect(stickyBlock).not.toContainElement(childForm);
   });
 });
