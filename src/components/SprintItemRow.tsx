@@ -3,6 +3,8 @@
 import React from 'react';
 import {
   CheckSquare,
+  ChevronDown,
+  ChevronRight,
   MinusSquare,
   Square,
   Lock,
@@ -43,6 +45,8 @@ export interface SprintItemRowProps {
   rollupPoints?: number;
   pointMode?: 'macro' | 'granular';
   visibleColumns?: ResolvedRowColumn[];
+  isCollapsed?: boolean;
+  onToggleCollapse?: (itemId: string) => void;
 }
 
 export const SprintItemRow: React.FC<SprintItemRowProps> = ({
@@ -71,6 +75,8 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   rollupPoints = 0,
   pointMode,
   visibleColumns,
+  isCollapsed = false,
+  onToggleCollapse,
 }) => {
   const itemHierarchy = getItemHierarchy(item);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
@@ -115,6 +121,30 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
               data-testid="tree-branch-connector"
               className="w-3.5 h-6 border-b-2 border-l-2 border-slate-700 -mt-3.5 rounded-bl-sm shrink-0"
             />
+          )}
+
+          {/* Tree Node Collapse Toggle (Sprint Hierarchy Mode) */}
+          {isTreeMode && onToggleCollapse && (
+            childCount > 0 ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleCollapse(item.id);
+                }}
+                className="p-0.5 rounded text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors shrink-0 cursor-pointer"
+                data-testid={`sprint-tree-collapse-toggle-${item.id}`}
+                aria-label={isCollapsed ? `Expand ${item.title}` : `Collapse ${item.title}`}
+              >
+                {isCollapsed ? (
+                  <ChevronRight className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            ) : (
+              <span className="w-[18px] shrink-0" aria-hidden="true" />
+            )
           )}
 
           {/* Selection Checkbox */}
