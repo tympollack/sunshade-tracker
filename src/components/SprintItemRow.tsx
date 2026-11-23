@@ -221,11 +221,11 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             </span>
           )}
 
-          {/* External Ref Tag */}
+          {/* External Ref Tag (deferred to hover on desktop) */}
           {showRefId && item.external_ref_id && (
             <CopyableRefId
               id={item.external_ref_id}
-              className="shrink-0 inline-flex items-center text-xs font-medium max-w-[70px] sm:max-w-none truncate whitespace-nowrap"
+              className="shrink-0 inline-flex items-center text-xs font-medium max-w-[70px] sm:max-w-none truncate whitespace-nowrap md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity"
             />
           )}
 
@@ -238,15 +238,15 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             {item.title}
           </span>
 
-          {/* Immutability Lock Badge */}
+          {/* Immutability Lock Badge (icon-only at rest, full pill on hover) */}
           {isImmutable && (
             <span
-              className="shrink-0 inline-flex items-center space-x-1 text-xs px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 font-sans whitespace-nowrap"
+              className="shrink-0 inline-flex items-center space-x-1 text-xs px-1.5 md:px-1 md:group-hover:px-1.5 py-0.5 rounded bg-purple-950/60 md:bg-transparent md:group-hover:bg-purple-950/60 text-purple-300 border border-purple-800/50 md:border-transparent md:group-hover:border-purple-800/50 font-sans whitespace-nowrap transition-all"
               title="Completed item in closed sprint (immutable)"
               data-testid="immutable-lock-badge"
             >
-              <Lock className="w-3 h-3 text-purple-400" />
-              <span>Locked</span>
+              <Lock className="w-3 h-3 text-purple-400/80" />
+              <span className="md:hidden md:group-hover:inline">Locked</span>
             </span>
           )}
         </div>
@@ -279,10 +279,10 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:shrink-0 md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
       >
-        {/* Desktop Subtasks Pill */}
+        {/* Desktop Subtasks Pill (deferred to hover to declutter dense tree rows) */}
         {isTreeMode && childCount > 0 && (
           <span
-            className="hidden md:inline-flex shrink-0 items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-800/50 whitespace-nowrap"
+            className="hidden md:inline-flex shrink-0 items-center text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-slate-800/50 text-slate-400 border border-slate-700/40 whitespace-nowrap md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity"
             title={`${childCount} child item(s)`}
             data-testid="tree-child-count-badge"
           >
@@ -340,7 +340,11 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             return (
               <div
                 key={col.key}
-                className="w-9 shrink-0 flex items-center justify-center"
+                className={`w-9 shrink-0 flex items-center justify-center transition-opacity ${
+                  !item.assignee
+                    ? 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
+                    : ''
+                }`}
                 data-testid="sprint-col-assignee"
               >
                 <CompactAssigneeCell
@@ -376,7 +380,11 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
             return (
               <div
                 key={col.key}
-                className={`${mdTrackWidth} shrink-0 flex items-center justify-end`}
+                className={`${mdTrackWidth} shrink-0 flex items-center justify-end transition-opacity ${
+                  currentSprintName
+                    ? 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
+                    : ''
+                }`}
                 data-testid={`row-cell-sprint-${item.id}`}
               >
                 <select
@@ -415,7 +423,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
           <button
             type="button"
             onClick={() => onEditItem(item)}
-            className="p-1 rounded text-slate-500 hover:text-white transition-colors hidden md:inline-flex shrink-0"
+            className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 transition-all hidden md:inline-flex shrink-0 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 cursor-pointer"
             title="Edit work item"
             data-testid={`edit-item-desktop-${item.id}`}
           >

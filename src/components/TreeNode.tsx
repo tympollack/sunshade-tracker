@@ -379,6 +379,7 @@ export function TreeNode({
             statusColor={statusColor}
             effectiveStatuses={effectiveStatuses}
             sanitizedTitle={sanitizedTitle}
+            isCollapsed={isCollapsed}
             isDescExpanded={isDescExpanded}
             setIsDescExpanded={setIsDescExpanded}
             pointMode={pointMode}

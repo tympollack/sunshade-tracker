@@ -87,7 +87,7 @@ export const RowFieldCell: React.FC<RowFieldCellProps> = ({
 
     return (
       <div
-        className={`${widthClass} shrink-0 max-sm:hidden flex items-center justify-end whitespace-nowrap`}
+        className={`${widthClass} shrink-0 max-sm:hidden flex items-center justify-end whitespace-nowrap md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity`}
         data-testid={`row-cell-github-${item.id}`}
       >
         {prUrl || commitHash ? (
@@ -123,10 +123,16 @@ export const RowFieldCell: React.FC<RowFieldCellProps> = ({
 
   const formatted = formatRowCellValue(item, column, { allProjects });
   const mdWidthClass = getResponsiveMdTrackWidthClass(column.width, column.key);
+  const isHoverDeferredMeta =
+    column.key === 'updated_at' || column.key === 'created_at';
 
   return (
     <div
-      className={`w-auto ${mdWidthClass} shrink-0 flex items-center md:justify-end overflow-hidden`}
+      className={`w-auto ${mdWidthClass} shrink-0 flex items-center md:justify-end overflow-hidden ${
+        isHoverDeferredMeta
+          ? 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity'
+          : ''
+      }`}
       data-testid={`row-cell-${column.key}-${item.id}`}
       title={formatted.rawText ? `${column.label}: ${formatted.rawText}` : `${column.label}: Empty`}
     >
