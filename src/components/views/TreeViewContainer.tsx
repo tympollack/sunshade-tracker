@@ -4,7 +4,7 @@ import React from 'react';
 import { WorkItem, WorkItemNode, ProjectSettings, StatusDefinition, HierarchyLevel, SprintDefinition, getWorkMetricConfig } from '@/types/tracker';
 import { FilterMultiSelect, FilterOption } from '@/components/FilterMultiSelect';
 import { PointModeSwitcher } from '@/components/PointModeSwitcher';
-import { TreeNode } from '@/components/TreeNode';
+import { TreeNode, TreeChildDraft } from '@/components/TreeNode';
 import { StickyTreeProjectHeader } from '@/components/tree/StickyTreeProjectHeader';
 import { RowColumnsPicker } from '@/components/common/RowColumnsPicker';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
@@ -114,6 +114,26 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
   } = props;
 
   const rowColumns = useRowColumns(projectSettings, 'tree', projectSlug, items, tenantSlug);
+  const [childDrafts, setChildDrafts] = React.useState<Record<string, TreeChildDraft>>({});
+
+  const handleChangeChildDraft = React.useCallback(
+    (
+      parentId: string,
+      updater: (prev: TreeChildDraft | undefined) => TreeChildDraft | undefined
+    ) => {
+      setChildDrafts((prev) => {
+        const nextDraft = updater(prev[parentId]);
+        if (!nextDraft) {
+          if (!(parentId in prev)) return prev;
+          const copy = { ...prev };
+          delete copy[parentId];
+          return copy;
+        }
+        return { ...prev, [parentId]: nextDraft };
+      });
+    },
+    []
+  );
 
   const projectGroups = React.useMemo(() => {
     if (treeItems.length === 0) return [];
@@ -128,16 +148,20 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
         nodes: WorkItemNode[];
         rollupPoints: number;
       }> = [];
+      const occurrenceByProject = new Map<string, number>();
 
-      treeItems.forEach((node, idx) => {
+      treeItems.forEach((node) => {
         const prevGroup = groups[groups.length - 1];
         if (prevGroup && prevGroup.projectId === node.project_id) {
           prevGroup.nodes.push(node);
           prevGroup.rollupPoints += node.rollupPoints ?? 0;
         } else {
           const proj = resolveProj(node.project_id);
+          const projKey = node.project_id || 'unknown';
+          const occ = (occurrenceByProject.get(projKey) || 0) + 1;
+          occurrenceByProject.set(projKey, occ);
           groups.push({
-            key: `${node.project_id || 'unknown'}-${idx}`,
+            key: `${projKey}#${occ}`,
             projectId: node.project_id,
             projectName: proj?.name || 'Project',
             nodes: [node],
@@ -299,7 +323,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
         </div>
       </div>
 
-      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x max-h-[75dvh] overflow-y-auto" data-testid="tree-scroll-container">
+      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x touch-pan-y touch-pinch-zoom max-h-[75dvh] overflow-y-auto" data-testid="tree-scroll-container">
         <div className="space-y-3 min-w-[600px] md:min-w-0 w-full">
           {/* Root Drop Zone for unnesting */}
           {!isReadOnly && (
@@ -421,6 +445,8 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
                     visibleColumns={rowColumns.effectiveColumns}
                     allProjects={allProjects}
                     stickyTopOffset={showStickyProjectHeaders ? 'top-9' : 'top-0'}
+                    childDrafts={childDrafts}
+                    onChangeChildDraft={handleChangeChildDraft}
                   />
                 ))}
               </section>

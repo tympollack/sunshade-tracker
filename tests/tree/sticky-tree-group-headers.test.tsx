@@ -6,6 +6,7 @@ import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { TreeNode } from '@/components/TreeNode';
 import { LeftHandNavTree } from '@/components/navigation/LeftHandNavTree';
 import { buildTree } from '@/lib/tree';
+import { createItemComparator } from '@/lib/utils/sortUtils';
 import {
   HierarchyLevel,
   ProjectSettings,
@@ -133,9 +134,9 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     expect(betaHeader).toHaveClass('sticky', 'top-0');
     expect(betaHeader).toHaveTextContent('Project Beta');
 
-    // Scroll container supports both horizontal & vertical scroll so sticky headers work
+    // Scroll container supports both horizontal & vertical touch/wheel scroll so sticky headers work
     const scrollContainer = screen.getByTestId('tree-scroll-container');
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto');
+    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto', 'touch-pan-x', 'touch-pan-y');
     scrollContainer.scrollTop = 250;
     fireEvent.scroll(scrollContainer);
 
@@ -343,5 +344,174 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     const epicRow = Array.from(treeItems).find((el) => el.textContent?.includes('LHN Sticky Epic'));
     expect(epicRow).toHaveClass('sticky');
     expect(epicRow).toHaveStyle({ top: '56px' });
+  });
+
+  it('preserves inline child creation drafts in TreeViewContainer when sorting reorders project groups (BUG_0004)', () => {
+    const items: WorkItem[] = [
+      makeItem({ id: 'epic-beta', project_id: 'proj-b', item_type: 'epic', title: 'Beta Epic', order_index: 1000 }),
+      makeItem({ id: 'epic-alpha', project_id: 'proj-a', item_type: 'epic', title: 'Alpha Epic', order_index: 2000 }),
+    ];
+    const allProjects = [
+      { id: 'proj-a', slug: 'alpha', name: 'Alpha Project' },
+      { id: 'proj-b', slug: 'beta', name: 'Beta Project' },
+    ];
+
+    const SortHarness = () => {
+      const [sortBy, setSortBy] = React.useState('order_index');
+      const comparator = React.useMemo(
+        () => createItemComparator(sortBy, allProjects),
+        [sortBy]
+      );
+      const treeItems = React.useMemo(
+        () => buildTree(items, null, 0, new Set(), comparator),
+        [comparator]
+      );
+
+      return (
+        <TreeViewContainer
+          handleExpandAllTreeNodes={vi.fn()}
+          handleCollapseAllTreeNodes={vi.fn()}
+          selectedSprint="all"
+          setSelectedSprint={vi.fn()}
+          availableSprints={[]}
+          statusFilterOptions={[]}
+          effectiveTreeStatuses={['not_started', 'in_progress', 'complete']}
+          setTreeSelectedStatuses={vi.fn()}
+          levelFilterOptions={[]}
+          effectiveTreeLevels={['epic', 'story', 'task']}
+          setTreeSelectedLevels={vi.fn()}
+          assigneeFilterOptions={[]}
+          effectiveTreeAssignees={[]}
+          setTreeSelectedAssignees={vi.fn()}
+          treeSortBy={sortBy}
+          isAllProjects={true}
+          setTreeSortBy={setSortBy}
+          pointMode="granular"
+          handlePointModeChange={vi.fn()}
+          treeFilteredItems={items}
+          projectSettings={baseSettings}
+          isReadOnly={false}
+          loading={false}
+          items={items}
+          treeItems={treeItems}
+          isTreeRootOver={false}
+          setIsTreeRootOver={vi.fn()}
+          treeDraggedItemId={null}
+          setTreeDraggedItemId={vi.fn()}
+          handleTreeReparent={vi.fn()}
+          getStatusColor={() => '#38bdf8'}
+          deviations={[]}
+          onOpenReconciliation={vi.fn()}
+          getItemStatuses={() => mockStatuses}
+          getItemHierarchy={() => mockHierarchy}
+          workspaceMembers={[]}
+          getItemProjectSettings={() => baseSettings}
+          collapsedTreeNodes={new Set()}
+          handleToggleCollapseTreeNode={vi.fn()}
+          handleUpdateStatus={vi.fn()}
+          handleTreeUpdateAssignee={vi.fn()}
+          handleTreeCreateChild={vi.fn()}
+          setEditingItem={vi.fn()}
+          projectSlug="all"
+          allProjects={allProjects}
+        />
+      );
+    };
+
+    const { container } = render(<SortHarness />);
+
+    // Initially Beta Project is first (order_index 1000 < 2000)
+    const initialGroups = container.querySelectorAll('[data-testid^="tree-project-group-"]');
+    expect(initialGroups[0]).toHaveAttribute('data-testid', 'tree-project-group-proj-b');
+
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-alpha'));
+    const draftInput = screen.getByTestId('inline-create-child-input');
+    fireEvent.change(draftInput, { target: { value: 'Unsaved Child Draft' } });
+
+    // Toggle form closed via Add Child button -> reopening preserves draft (PR 172 BUG_0001)
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-alpha'));
+    expect(screen.queryByTestId('inline-create-child-input')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-alpha'));
+    expect(screen.getByTestId('inline-create-child-input')).toHaveValue('Unsaved Child Draft');
+
+    // Switch sort so Alpha actually moves from second section to first section (PR 172 ANALYSIS_0001)
+    fireEvent.change(screen.getByTestId('tree-sort-by'), { target: { value: 'project_asc' } });
+
+    const reorderedGroups = container.querySelectorAll('[data-testid^="tree-project-group-"]');
+    expect(reorderedGroups[0]).toHaveAttribute('data-testid', 'tree-project-group-proj-a');
+    expect(screen.getByTestId('inline-create-child-input')).toHaveValue('Unsaved Child Draft');
+
+    // Explicit Cancel button discards the draft
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByTestId('inline-create-child-input')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-alpha'));
+    expect(screen.getByTestId('inline-create-child-input')).toHaveValue('');
+  });
+
+  it('keeps expanded description and quick child form outside sticky header and reveals offscreen description on expand (ANALYSIS_0002 & PR 172 BUG_0003)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'epic-root',
+        item_type: 'epic',
+        title: 'Root Epic',
+        description: 'Long epic description that should not stay pinned in sticky bar',
+      }),
+      makeItem({
+        id: 'task-child',
+        item_type: 'task',
+        parent_id: 'epic-root',
+        title: 'Child Task',
+      }),
+    ];
+    const tree = buildTree(items);
+
+    const { container } = render(
+      <div data-testid="tree-scroll-container">
+        <TreeNode
+          item={tree[0]}
+          collapsedNodeIds={new Set()}
+          statuses={mockStatuses}
+          hierarchy={mockHierarchy}
+          onCreateChild={vi.fn()}
+        />
+      </div>
+    );
+
+    const scrollContainer = screen.getByTestId('tree-scroll-container');
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    });
+
+    const stickyBlock = container.querySelector('[data-sticky-header="true"]')!;
+    Object.defineProperty(stickyBlock, 'getBoundingClientRect', {
+      value: () => ({ top: 100, bottom: 148, left: 0, right: 500, width: 500, height: 48 }),
+      configurable: true,
+    });
+
+    // Mock Element.prototype.getBoundingClientRect briefly for the soon-to-mount description element
+    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('data-testid') === 'tree-node-description-epic-root') {
+        return { top: 40, bottom: 80, left: 0, right: 500, width: 500, height: 40, x: 0, y: 40, toJSON: () => {} } as DOMRect;
+      }
+      if (this === stickyBlock) {
+        return { top: 100, bottom: 148, left: 0, right: 500, width: 500, height: 48, x: 0, y: 100, toJSON: () => {} } as DOMRect;
+      }
+      return origGetBCR.call(this);
+    });
+
+    fireEvent.click(screen.getByTestId('tree-expand-desc-btn-epic-root'));
+    fireEvent.click(screen.getByTestId('add-child-btn-epic-root'));
+
+    const descBox = screen.getByTestId('tree-node-description-epic-root');
+    const childForm = screen.getByTestId('inline-create-child-form');
+
+    expect(stickyBlock).not.toContainElement(descBox);
+    expect(stickyBlock).not.toContainElement(childForm);
+    // Scrolled back up by (148 - 40 + 8) = 116px -> 300 - 116 = 184
+    expect(scrollContainer.scrollTop).toBe(184);
+    spy.mockRestore();
   });
 });

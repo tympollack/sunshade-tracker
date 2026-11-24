@@ -1,9 +1,70 @@
 import { SprintDefinition, StatusDefinition, WorkItem, WorkItemNode } from '@/types/tracker';
 import { getCompletedStatusSet, isItemCompleted } from '@/lib/sprint-utils';
+import { getDescendantIds } from '@/lib/tree';
 
 export const TREE_COLLAPSE_STORAGE_PREFIX = 'tracker_collapsed_tree_nodes_';
 export const SPRINT_COLLAPSE_STORAGE_PREFIX = 'tracker_collapsed_sprints_';
 export const SPRINT_TREE_COLLAPSE_STORAGE_PREFIX = 'tracker_collapsed_sprint_tree_nodes_';
+
+/**
+ * Builds a versioned, workspace- and project-scoped localStorage key so preferences
+ * for shared slugs like 'all' never leak across different tenant workspaces and never
+ * collide with legacy slug-only keys containing underscores.
+ */
+export function buildCollapseStorageKey(
+  prefix: string,
+  tenantSlug: string = 'default',
+  projectSlug: string = 'default'
+): string {
+  const safeTenant = encodeURIComponent(tenantSlug || 'default');
+  const safeProject = encodeURIComponent(projectSlug || 'default');
+  return `${prefix}v2_${safeTenant}::${safeProject}`;
+}
+
+/**
+ * Builds the legacy slug-only storage key (used strictly for safe one-time migration
+ * of non-shared single-project slugs when ownership can be verified).
+ */
+export function buildLegacyCollapseStorageKey(prefix: string, projectSlug: string): string {
+  return `${prefix}${projectSlug}`;
+}
+
+/**
+ * Reads a persisted collapse Set from localStorage, safely migrating a legacy
+ * single-project entry when `legacyKey` is provided and ownership can be verified
+ * (empty array `[]` or intersects `ownedIds`). Never migrates shared slugs ('all', 'portfolio').
+ */
+export function readOrMigrateCollapseSet(
+  storageKey: string,
+  options?: {
+    legacyStorageKey?: string;
+    projectSlug?: string;
+    ownedIds?: Set<string>;
+  }
+): Set<string> | null {
+  const current = readStoredCollapseSet(storageKey);
+  if (current !== null) return current;
+
+  const { legacyStorageKey, projectSlug, ownedIds } = options || {};
+  if (!legacyStorageKey || !projectSlug || projectSlug === 'all' || projectSlug === 'portfolio') {
+    return null;
+  }
+
+  const legacy = readStoredCollapseSet(legacyStorageKey);
+  if (legacy === null) return null;
+
+  // Verify ownership before migrating: allow explicit empty ("Expand All") or matching IDs
+  const canMigrate =
+    legacy.size === 0 ||
+    (ownedIds !== undefined &&
+      ownedIds.size > 0 &&
+      Array.from(legacy).some((id) => ownedIds.has(id)));
+
+  if (!canMigrate) return null;
+
+  writeStoredCollapseSet(storageKey, legacy);
+  return legacy;
+}
 
 /**
  * Reads a persisted collapse Set from localStorage.
@@ -66,20 +127,45 @@ export function getDefaultCollapsedTreeNodeIds(
   return collapsed;
 }
 
+export interface SprintCollapseOptions {
+  isAllProjects?: boolean;
+  items?: WorkItem[];
+}
+
 /**
  * Computes default collapsed sprint names:
- * any sprint whose definition status is 'completed' defaults to collapsed on load.
+ * a sprint lane defaults to collapsed on load only when all matching project-scoped
+ * sprint definitions are completed (preventing active work in shared-name lanes from hiding).
  */
 export function getDefaultCollapsedSprintNames(
   sprintNames: string[],
-  sprintDefs: SprintDefinition[] = []
+  sprintDefs: SprintDefinition[] = [],
+  options?: SprintCollapseOptions
 ): Set<string> {
   const collapsed = new Set<string>();
   for (const name of sprintNames) {
-    const def = sprintDefs.find((s) => s.name === name || s.id === name);
-    if (def?.status?.toLowerCase().trim() === 'completed') {
-      collapsed.add(name);
+    const matches = sprintDefs.filter((s) => s.name === name || s.id === name);
+    if (matches.length === 0) continue;
+    const allMatchingCompleted = matches.every(
+      (def) => def.status?.toLowerCase().trim() === 'completed'
+    );
+    if (!allMatchingCompleted) continue;
+
+    if (options?.isAllProjects && options.items) {
+      const completedProjectIds = new Set(
+        matches.map((d) => d.project_id).filter((id): id is string => Boolean(id))
+      );
+      if (completedProjectIds.size > 0) {
+        const hasItemWithoutCompletedDef = options.items.some((it) => {
+          const itemSprint = it.metadata?.sprint;
+          if (itemSprint !== name && it.metadata?.sprint_id !== name) return false;
+          return Boolean(it.project_id && !completedProjectIds.has(it.project_id));
+        });
+        if (hasItemWithoutCompletedDef) continue;
+      }
     }
+
+    collapsed.add(name);
   }
   return collapsed;
 }
@@ -114,4 +200,69 @@ export function flattenVisibleTreeNodes(
   };
   walk(nodes);
   return visible;
+}
+
+/**
+ * Pure selection toggle logic for flat and hierarchy rows.
+ * In hierarchy mode (`cascade = true`), a Shift-click whose anchor is missing from
+ * the visible `pool` (e.g., inside a collapsed branch) falls back to toggling only
+ * `itemId` instead of cascading into hidden descendants.
+ */
+export function computeToggledSelection(params: {
+  prev: Set<string>;
+  itemId: string;
+  lastSelectedId: string | null;
+  isShiftKey: boolean;
+  pool: WorkItem[];
+  allItems: WorkItem[];
+  cascade: boolean;
+}): { next: Set<string>; nextLastSelectedId: string } {
+  const { prev, itemId, lastSelectedId, isShiftKey, pool, allItems, cascade } = params;
+  const next = new Set(prev);
+
+  if (isShiftKey) {
+    if (lastSelectedId) {
+      const lastIdx = pool.findIndex((it) => it.id === lastSelectedId);
+      const currIdx = pool.findIndex((it) => it.id === itemId);
+      if (lastIdx !== -1 && currIdx !== -1) {
+        const start = Math.min(lastIdx, currIdx);
+        const end = Math.max(lastIdx, currIdx);
+        for (let i = start; i <= end; i++) {
+          next.add(pool[i].id);
+        }
+        return { next, nextLastSelectedId: itemId };
+      }
+    }
+
+    if (cascade) {
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return { next, nextLastSelectedId: itemId };
+    }
+  }
+
+  const isCurrentlySelected = next.has(itemId);
+  const descendants = cascade ? getDescendantIds(allItems, itemId) : [];
+
+  if (isCurrentlySelected) {
+    next.delete(itemId);
+    if (cascade) {
+      descendants.forEach((dId) => next.delete(dId));
+      let parentId = allItems.find((it) => it.id === itemId)?.parent_id;
+      while (parentId) {
+        next.delete(parentId);
+        parentId = allItems.find((it) => it.id === parentId)?.parent_id;
+      }
+    }
+  } else {
+    next.add(itemId);
+    if (cascade) {
+      descendants.forEach((dId) => next.add(dId));
+    }
+  }
+
+  return { next, nextLastSelectedId: itemId };
 }

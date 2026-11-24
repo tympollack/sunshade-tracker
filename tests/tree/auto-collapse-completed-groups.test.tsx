@@ -5,6 +5,10 @@ import {
   getDefaultCollapsedTreeNodeIds,
   getDefaultCollapsedSprintNames,
   flattenVisibleTreeNodes,
+  buildCollapseStorageKey,
+  buildLegacyCollapseStorageKey,
+  readOrMigrateCollapseSet,
+  computeToggledSelection,
   TREE_COLLAPSE_STORAGE_PREFIX,
   SPRINT_COLLAPSE_STORAGE_PREFIX,
 } from '@/lib/tree-collapse';
@@ -397,5 +401,129 @@ describe('TASK-TRK-AUTO-COLLAPSE-COMPLETED-GROUPS', () => {
     expect(handleToggleSelectItem).toHaveBeenCalledTimes(1);
     const passedPool = handleToggleSelectItem.mock.calls[0][2] as WorkItem[];
     expect(passedPool.map((it) => it.id)).toEqual(['task-a', 'story-done', 'task-d']);
+  });
+
+  it('treats Shift-click without a visible anchor in computeToggledSelection as single-row selection without cascading hidden descendants (BUG_0002)', () => {
+    const allItems: WorkItem[] = [
+      makeItem({ id: 'parent-a', item_type: 'story', title: 'Parent A' }),
+      makeItem({ id: 'child-a1', item_type: 'task', parent_id: 'parent-a', title: 'Child A1' }),
+      makeItem({ id: 'parent-b', item_type: 'story', title: 'Parent B' }),
+      makeItem({ id: 'child-b1', item_type: 'task', parent_id: 'parent-b', title: 'Child B1' }),
+      makeItem({ id: 'child-b2', item_type: 'task', parent_id: 'parent-b', title: 'Child B2' }),
+    ];
+    // Both parent-a and parent-b are collapsed, so visiblePool excludes child-a1, child-b1, child-b2
+    const visiblePool = [allItems[0], allItems[2]];
+
+    // Anchor was child-a1 before parent-a was collapsed; now Shift-click parent-b
+    const shiftResult = computeToggledSelection({
+      prev: new Set(['child-a1']),
+      itemId: 'parent-b',
+      lastSelectedId: 'child-a1',
+      isShiftKey: true,
+      pool: visiblePool,
+      allItems,
+      cascade: true,
+    });
+
+    expect(Array.from(shiftResult.next)).toEqual(['child-a1', 'parent-b']);
+    expect(shiftResult.next.has('child-b1')).toBe(false);
+    expect(shiftResult.next.has('child-b2')).toBe(false);
+
+    // Ordinary click (non-shift) still cascades intentionally
+    const normalClick = computeToggledSelection({
+      prev: new Set(),
+      itemId: 'parent-b',
+      lastSelectedId: null,
+      isShiftKey: false,
+      pool: visiblePool,
+      allItems,
+      cascade: true,
+    });
+    expect(normalClick.next.has('parent-b')).toBe(true);
+    expect(normalClick.next.has('child-b1')).toBe(true);
+    expect(normalClick.next.has('child-b2')).toBe(true);
+  });
+
+  it('keeps shared-name sprint lanes expanded in All Projects unless all represented projects completed that sprint (BUG_0003)', () => {
+    const mixedDefs: SprintDefinition[] = [
+      { id: 's-alpha-1', project_id: 'proj-alpha', name: 'Sprint 1', status: 'completed' },
+      { id: 's-beta-1', project_id: 'proj-beta', name: 'Sprint 1', status: 'active' },
+      { id: 's-alpha-0', project_id: 'proj-alpha', name: 'Sprint 0', status: 'completed' },
+      { id: 's-beta-0', project_id: 'proj-beta', name: 'Sprint 0', status: 'completed' },
+    ];
+    const items: WorkItem[] = [
+      makeItem({ id: 'i1', project_id: 'proj-alpha', metadata: { sprint: 'Sprint 1' } }),
+      makeItem({ id: 'i2', project_id: 'proj-beta', metadata: { sprint: 'Sprint 1' } }),
+      makeItem({ id: 'i3', project_id: 'proj-alpha', metadata: { sprint: 'Sprint 0' } }),
+      makeItem({ id: 'i4', project_id: 'proj-beta', metadata: { sprint: 'Sprint 0' } }),
+    ];
+
+    const collapsed = getDefaultCollapsedSprintNames(['Sprint 0', 'Sprint 1'], mixedDefs, {
+      isAllProjects: true,
+      items,
+    });
+
+    expect(collapsed.has('Sprint 0')).toBe(true);
+    expect(collapsed.has('Sprint 1')).toBe(false);
+  });
+
+  it('scopes collapse storage keys in a versioned namespace without underscore collisions and safely migrates owned single-project entries (BUG_0005, BUG_0006 & PR 172 BUG_0002)', () => {
+    const keyAlpha = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'tenant-alpha', 'all');
+    const keyBeta = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'tenant-beta', 'all');
+    expect(keyAlpha).not.toBe(keyBeta);
+
+    // Versioned key for tenant 'design' + project 'mobile' never collides with legacy project 'design_mobile'
+    const designMobileScoped = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'design', 'mobile');
+    const legacyOtherProject = buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'design_mobile');
+    expect(designMobileScoped).not.toBe(legacyOtherProject);
+    localStorage.setItem(legacyOtherProject, JSON.stringify(['other-proj-epic']));
+
+    // Does NOT inherit legacy key when IDs are not owned by 'mobile'
+    expect(
+      readOrMigrateCollapseSet(designMobileScoped, {
+        legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'mobile'),
+        projectSlug: 'mobile',
+        ownedIds: new Set(['epic-active']),
+      })
+    ).toBeNull();
+
+    // Never migrates shared 'all' slug
+    localStorage.setItem(buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'all'), JSON.stringify([]));
+    expect(
+      readOrMigrateCollapseSet(keyAlpha, {
+        legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'all'),
+        projectSlug: 'all',
+        ownedIds: new Set(['epic-active']),
+      })
+    ).toBeNull();
+
+    // Migrates owned single-project preference when IDs match
+    const legacyMobile = buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'mobile');
+    localStorage.setItem(legacyMobile, JSON.stringify(['epic-active']));
+    const migrated = readOrMigrateCollapseSet(designMobileScoped, {
+      legacyStorageKey: legacyMobile,
+      projectSlug: 'mobile',
+      ownedIds: new Set(['epic-active']),
+    });
+    expect(migrated).toEqual(new Set(['epic-active']));
+    expect(JSON.parse(localStorage.getItem(designMobileScoped)!)).toEqual(['epic-active']);
+
+    const items: WorkItem[] = [
+      makeItem({ id: 'epic-active', item_type: 'epic', status: 'in_progress', title: 'Active Epic' }),
+      makeItem({ id: 'task-1', item_type: 'task', parent_id: 'epic-active', status: 'not_started', title: 'Task 1' }),
+    ];
+    const tree = buildTree(items);
+
+    const { result } = renderHook(() =>
+      useAutoCollapsedTreeNodes(keyAlpha, tree, () => mockStatuses)
+    );
+
+    // Quick-add child calls expandNode(parentId, true) while no user override exists
+    act(() => {
+      result.current.expandNode('epic-active', true);
+    });
+
+    // Does NOT persist a tree-wide override in localStorage
+    expect(localStorage.getItem(keyAlpha)).toBeNull();
   });
 });

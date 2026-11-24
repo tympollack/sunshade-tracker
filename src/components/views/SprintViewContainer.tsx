@@ -25,6 +25,7 @@ import { useRowColumns } from '@/hooks/useRowColumns';
 import { useAutoCollapsedTreeNodes } from '@/hooks/useAutoCollapseState';
 import {
   SPRINT_TREE_COLLAPSE_STORAGE_PREFIX,
+  buildCollapseStorageKey,
   flattenVisibleTreeNodes,
 } from '@/lib/tree-collapse';
 import { SprintProgressBar } from '@/components/sprint/SprintProgressBar';
@@ -156,7 +157,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     collapsedIds: collapsedSprintTreeNodes,
     toggleNode: toggleSprintTreeNode,
   } = useAutoCollapsedTreeNodes(
-    `${SPRINT_TREE_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    buildCollapseStorageKey(SPRINT_TREE_COLLAPSE_STORAGE_PREFIX, tenantSlug, projectSlug),
     sprintAllTreeRoots,
     getItemStatuses
   );

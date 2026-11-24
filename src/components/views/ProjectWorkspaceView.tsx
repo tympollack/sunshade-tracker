@@ -70,7 +70,14 @@ import { resolveTargetSprint, UUID_REGEX } from '@/lib/sprint-resolver';
 import { validateTransitionGuards, formatGuardRejectionMessage } from '@/lib/automation/guardEvaluator';
 import { GuardRejectionToast } from '@/components/board/TransitionGuardFeedback';
 import { useAutoCollapsedTreeNodes, useAutoCollapsedSprints } from '@/hooks/useAutoCollapseState';
-import { TREE_COLLAPSE_STORAGE_PREFIX, SPRINT_COLLAPSE_STORAGE_PREFIX } from '@/lib/tree-collapse';
+import {
+  TREE_COLLAPSE_STORAGE_PREFIX,
+  SPRINT_COLLAPSE_STORAGE_PREFIX,
+  buildCollapseStorageKey,
+  buildLegacyCollapseStorageKey,
+  computeToggledSelection,
+  getDefaultCollapsedSprintNames,
+} from '@/lib/tree-collapse';
 
 interface ProjectWorkspaceViewProps {
   tenantSlug: string;
@@ -836,24 +843,47 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return Array.from(map.values());
   }, [dbSprints, projectSettings.sprint_settings?.sprints, items, isAllProjects, currentProjectId]);
 
+  // Preserve project-scoped sprint definitions before name deduplication so All Projects
+  // only hides or auto-collapses shared sprint lanes when all represented projects' sprints are completed.
+  const rawSprintDefsForCollapse = useMemo<SprintDefinition[]>(() => {
+    const defs: SprintDefinition[] = [];
+    (dbSprints || []).forEach((s) => {
+      if (!isAllProjects && currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+        return;
+      }
+      defs.push(s);
+    });
+    if (isAllProjects) {
+      allProjects.forEach((proj) => {
+        (proj.settings?.sprint_settings?.sprints || []).forEach((s) => {
+          defs.push({ ...s, project_id: s.project_id || proj.id });
+        });
+      });
+    } else {
+      (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
+        defs.push({ ...s, project_id: s.project_id || currentProjectId });
+      });
+    }
+    return defs;
+  }, [dbSprints, isAllProjects, currentProjectId, allProjects, projectSettings.sprint_settings?.sprints]);
+
+  const completedSprintNameSet = useMemo(
+    () =>
+      getDefaultCollapsedSprintNames(availableSprints, rawSprintDefsForCollapse, {
+        isAllProjects,
+        items,
+      }),
+    [availableSprints, rawSprintDefsForCollapse, isAllProjects, items]
+  );
+
   const hiddenCompletedSprintsCount = useMemo(() => {
-    return availableSprints.filter((sprintName) => {
-      const sprintDef = availableSprintDefs.find(
-        (s: any) => s.name === sprintName || s.id === sprintName
-      );
-      return sprintDef?.status?.toLowerCase() === 'completed';
-    }).length;
-  }, [availableSprints, availableSprintDefs]);
+    return availableSprints.filter((sprintName) => completedSprintNameSet.has(sprintName)).length;
+  }, [availableSprints, completedSprintNameSet]);
 
   const visibleSprints = useMemo(() => {
     if (!hideCompletedSprints) return availableSprints;
-    return availableSprints.filter((sprintName) => {
-      const sprintDef = availableSprintDefs.find(
-        (s: any) => s.name === sprintName || s.id === sprintName
-      );
-      return sprintDef?.status?.toLowerCase() !== 'completed';
-    });
-  }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
+    return availableSprints.filter((sprintName) => !completedSprintNameSet.has(sprintName));
+  }, [availableSprints, hideCompletedSprints, completedSprintNameSet]);
 
   // Unified sprint resolution helper: delegates to pure resolveTargetSprint from @/lib/sprint-resolver.
   // Scopes sprint definitions and UUIDs strictly to the target project, avoiding cross-project UUID borrowing.
@@ -1047,9 +1077,13 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     expandAll: handleExpandAllTreeNodes,
     collapseAll: collapseAllTreeNodes,
   } = useAutoCollapsedTreeNodes(
-    `${TREE_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, tenantSlug, projectSlug),
     treeItems,
-    getItemStatuses
+    getItemStatuses,
+    {
+      legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, projectSlug),
+      projectSlug,
+    }
   );
 
   const handleCollapseAllTreeNodes = useCallback(() => {
@@ -1061,9 +1095,15 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     toggleSprint: toggleSprintCollapse,
     toggleAllSprints,
   } = useAutoCollapsedSprints(
-    `${SPRINT_COLLAPSE_STORAGE_PREFIX}${projectSlug}`,
+    buildCollapseStorageKey(SPRINT_COLLAPSE_STORAGE_PREFIX, tenantSlug, projectSlug),
     availableSprints,
-    availableSprintDefs
+    rawSprintDefsForCollapse,
+    {
+      isAllProjects,
+      items,
+      legacyStorageKey: buildLegacyCollapseStorageKey(SPRINT_COLLAPSE_STORAGE_PREFIX, projectSlug),
+      projectSlug,
+    }
   );
 
   const handleToggleCollapseAllSprints = useCallback(() => {
@@ -2618,46 +2658,21 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
       listContext?: WorkItem[],
       cascade = false
     ) => {
-      const isShiftKey = (e as React.MouseEvent)?.shiftKey;
+      const isShiftKey = Boolean((e as React.MouseEvent)?.shiftKey);
       const pool = listContext || items;
 
       setSelectedItemIds((prev) => {
-        const next = new Set(prev);
-        if (isShiftKey && lastSelectedIdRef.current) {
-          const lastIdx = pool.findIndex((it) => it.id === lastSelectedIdRef.current);
-          const currIdx = pool.findIndex((it) => it.id === itemId);
-          if (lastIdx !== -1 && currIdx !== -1) {
-            const start = Math.min(lastIdx, currIdx);
-            const end = Math.max(lastIdx, currIdx);
-            for (let i = start; i <= end; i++) {
-              next.add(pool[i].id);
-            }
-            lastSelectedIdRef.current = itemId;
-            return next;
-          }
-        }
-
-        const isCurrentlySelected = next.has(itemId);
-        const descendants = cascade ? getDescendantIds(items, itemId) : [];
-
-        if (isCurrentlySelected) {
-          next.delete(itemId);
-          if (cascade) {
-            descendants.forEach((dId) => next.delete(dId));
-            let parentId = items.find((it) => it.id === itemId)?.parent_id;
-            while (parentId) {
-              next.delete(parentId);
-              parentId = items.find((it) => it.id === parentId)?.parent_id;
-            }
-          }
-        } else {
-          next.add(itemId);
-          if (cascade) {
-            descendants.forEach((dId) => next.add(dId));
-          }
-        }
-        lastSelectedIdRef.current = itemId;
-        return next;
+        const result = computeToggledSelection({
+          prev,
+          itemId,
+          lastSelectedId: lastSelectedIdRef.current,
+          isShiftKey,
+          pool,
+          allItems: items,
+          cascade,
+        });
+        lastSelectedIdRef.current = result.nextLastSelectedId;
+        return result.next;
       });
     },
     [items]

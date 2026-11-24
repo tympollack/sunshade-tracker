@@ -35,6 +35,7 @@ interface TreeNodeCardProps {
   effectiveStatuses?: StatusDefinition[];
   sanitizedTitle: string;
   isCollapsed?: boolean;
+  suppressInlineDescription?: boolean;
   isDescExpanded: boolean;
   setIsDescExpanded: React.Dispatch<React.SetStateAction<boolean>>;
   pointMode?: 'macro' | 'granular';
@@ -74,6 +75,7 @@ export function TreeNodeCard({
   effectiveStatuses,
   sanitizedTitle,
   isCollapsed = false,
+  suppressInlineDescription = false,
   isDescExpanded,
   setIsDescExpanded,
   pointMode,
@@ -485,7 +487,7 @@ export function TreeNodeCard({
       </div>
 
       {/* Inline Description Accordion */}
-      {item.description && isDescExpanded && (
+      {!suppressInlineDescription && item.description && isDescExpanded && (
         <div
           data-testid={`tree-node-description-${item.id}`}
           title={item.description}
