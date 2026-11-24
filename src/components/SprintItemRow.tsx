@@ -99,7 +99,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   return (
     <div
       onDoubleClick={() => onEditItem(item)}
-      className={`p-3 transition-colors flex flex-col md:flex-row md:items-center @max-[860px]/central-stage:flex-col @max-[860px]/central-stage:items-start justify-between gap-1.5 md:gap-3 group min-w-0 w-full ${
+      className={`p-3 transition-colors sprint-item-row flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-1.5 md:gap-3 group min-w-0 w-full ${
         stickyHeaderClass || 'relative'
       } ${
         isSelected
@@ -122,7 +122,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
       data-testid="sprint-item-row"
     >
       {/* Primary Row (Tier 1 on mobile/narrow stage, left section on wide desktop) */}
-      <div className="flex items-center justify-between w-full md:w-auto md:flex-1 @max-[860px]/central-stage:w-full @max-[860px]/central-stage:flex-none min-w-0 gap-2">
+      <div className="sprint-item-row-tier1 flex items-center justify-between w-full md:w-auto md:flex-1 md:min-w-[200px] min-w-0 gap-2">
         {/* Left Section: Selection checkbox, type indicator, ref, title, lock */}
         <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
           {/* Tree Branch Connector */}
@@ -281,7 +281,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
 
       {/* Secondary Row (Tier 2 - Mobile/narrow stage stacked, Desktop: aligned tabular columns wrapping cleanly before clipping) */}
       <div
-        className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full max-w-full min-w-0 md:w-auto md:shrink-0 md:mt-0 md:pb-0 md:pl-0 md:flex-wrap md:justify-end md:ml-auto md:gap-2.5 @max-[860px]/central-stage:w-full @max-[860px]/central-stage:shrink @max-[860px]/central-stage:pl-8 @max-[860px]/central-stage:ml-0 @max-[860px]/central-stage:mt-1.5 @max-[860px]/central-stage:pb-1 @max-[860px]/central-stage:justify-start"
+        className="sprint-item-row-tier2 pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full max-w-full min-w-0 md:w-auto md:shrink-0 md:mt-0 md:pb-0 md:pl-0 md:flex-wrap md:justify-end md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
       >
         {/* Desktop Subtasks Pill */}

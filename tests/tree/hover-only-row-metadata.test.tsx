@@ -1,4 +1,6 @@
 import React from 'react';
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TreeNode } from '@/components/TreeNode';
@@ -284,11 +286,20 @@ describe('Always-visible row metadata and single-screen row fit', () => {
     expect(screen.getAllByText('User').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sts').length).toBeGreaterThan(0);
 
-    // Narrow central-stage container queries & wrapping keep Tier 2 controls reachable without clipping
+    // Narrow central-stage native @container rules & wrapping keep Tier 1/Tier 2 controls reachable without clipping
     const firstRow = container.querySelector('[data-testid="sprint-item-row"]');
+    const firstTier1 = firstRow?.querySelector('.sprint-item-row-tier1');
     const firstTier2 = container.querySelector('[data-testid="sprint-item-row-tier2"]');
-    expect(firstRow).toHaveClass('@max-[860px]/central-stage:flex-col');
-    expect(firstTier2).toHaveClass('md:flex-wrap', 'max-w-full', 'min-w-0');
+    const sprintHeaderStrip = container.querySelector('[data-testid="sprint-column-header-Sprint 2026-Q4"]');
+    expect(firstRow).toHaveClass('sprint-item-row', 'md:flex-wrap');
+    expect(firstTier1).toHaveClass('md:min-w-[200px]');
+    expect(firstTier2).toHaveClass('sprint-item-row-tier2', 'md:flex-wrap', 'max-w-full', 'min-w-0');
+    expect(sprintHeaderStrip).toHaveClass('sprint-column-header');
+
+    const globalsCss = fs.readFileSync(path.resolve(__dirname, '../../src/app/globals.css'), 'utf-8');
+    expect(globalsCss).toContain('@container central-stage (max-width: 860px)');
+    expect(globalsCss).toContain('.sprint-item-row-tier2');
+    expect(globalsCss).toContain('.sprint-column-header');
 
     // Custom work metric labels (e.g. Hours, AI Credits) preserve their configured name instead of 'Pts'
     const customMetricCols = getStaticRowColumns({
