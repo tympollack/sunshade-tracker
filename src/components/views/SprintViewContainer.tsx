@@ -163,6 +163,97 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
   );
 
   const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
+  const [headerHeights, setHeaderHeights] = React.useState<Map<string, number>>(() => new Map());
+  const [dividerHeights, setDividerHeights] = React.useState<Map<string, number>>(() => new Map());
+  const headerObserversRef = React.useRef<Map<string, ResizeObserver>>(new Map());
+  const headerRefCallbacksRef = React.useRef<Map<string, (el: HTMLDivElement | null) => void>>(new Map());
+  const dividerObserversRef = React.useRef<Map<string, ResizeObserver>>(new Map());
+  const dividerRefCallbacksRef = React.useRef<Map<string, (el: HTMLDivElement | null) => void>>(new Map());
+
+  React.useEffect(() => {
+    return () => {
+      headerObserversRef.current.forEach((obs) => obs.disconnect());
+      headerObserversRef.current.clear();
+      dividerObserversRef.current.forEach((obs) => obs.disconnect());
+      dividerObserversRef.current.clear();
+    };
+  }, []);
+
+  const getHeaderRefCallback = React.useCallback((key: string) => {
+    let cb = headerRefCallbacksRef.current.get(key);
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => {
+        const prevObs = headerObserversRef.current.get(key);
+        if (prevObs) {
+          prevObs.disconnect();
+          headerObserversRef.current.delete(key);
+        }
+        if (!el) return;
+
+        const updateHeight = () => {
+          const h = Math.ceil(el.offsetHeight || el.getBoundingClientRect().height || 0);
+          if (h > 0) {
+            setHeaderHeights((prev) => {
+              if (prev.get(key) === h) return prev;
+              const next = new Map(prev);
+              next.set(key, h);
+              return next;
+            });
+          }
+        };
+        updateHeight();
+
+        if (typeof ResizeObserver !== 'undefined') {
+          const obs = new ResizeObserver(updateHeight);
+          obs.observe(el);
+          headerObserversRef.current.set(key, obs);
+        }
+      };
+      headerRefCallbacksRef.current.set(key, cb);
+    }
+    return cb;
+  }, []);
+
+  const getDividerRefCallback = React.useCallback((key: string) => {
+    let cb = dividerRefCallbacksRef.current.get(key);
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => {
+        const prevObs = dividerObserversRef.current.get(key);
+        if (prevObs) {
+          prevObs.disconnect();
+          dividerObserversRef.current.delete(key);
+        }
+        if (!el) return;
+
+        const updateHeight = () => {
+          const h = Math.ceil(el.offsetHeight || el.getBoundingClientRect().height || 0);
+          if (h > 0) {
+            setDividerHeights((prev) => {
+              if (prev.get(key) === h) return prev;
+              const next = new Map(prev);
+              next.set(key, h);
+              return next;
+            });
+          }
+        };
+        updateHeight();
+
+        if (typeof ResizeObserver !== 'undefined') {
+          const obs = new ResizeObserver(updateHeight);
+          obs.observe(el);
+          dividerObserversRef.current.set(key, obs);
+        }
+      };
+      dividerRefCallbacksRef.current.set(key, cb);
+    }
+    return cb;
+  }, []);
+
+  const getHeaderStickyTopPx = (laneKey: string): number => {
+    const measured = headerHeights.get(laneKey);
+    if (measured && measured > 0) return measured;
+    return laneKey === 'lane:backlog' ? 62 : 98;
+  };
 
   const handleLazyLoadSprint = async (sprintIdentifier: string) => {
     if (!onLazyLoadSprint || loadingSprints.has(sprintIdentifier)) return;
@@ -208,6 +299,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     node: WorkItemNode,
     poolItems: WorkItem[],
     currentSprintName: string,
+    laneKey: string,
     depth = 0
   ): React.ReactNode => {
     const childCount = (node.children || []).length;
@@ -232,10 +324,11 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     const isNodeCollapsed = collapsedSprintTreeNodes.has(node.id);
     const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
     const stickyHeaderClass = isStickyRootEpic
-      ? showProjectGroups
-        ? 'md:sticky md:top-[88px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
-        : 'md:sticky md:top-[58px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+      ? 'md:sticky md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
       : undefined;
+    const dividerKey = `${laneKey}::proj:${node.project_id || 'none'}`;
+    const groupDividerHeight = showProjectGroups ? (dividerHeights.get(dividerKey) ?? 30) : 0;
+    const epicStickyTopPx = getHeaderStickyTopPx(laneKey) + groupDividerHeight;
 
     const branchContent = (
       <>
@@ -271,10 +364,11 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           isCollapsed={isNodeCollapsed}
           onToggleCollapse={toggleSprintTreeNode}
           stickyHeaderClass={stickyHeaderClass}
+          stickyStyle={isStickyRootEpic ? { top: `${epicStickyTopPx}px` } : undefined}
         />
         {!isNodeCollapsed &&
           (node.children || []).map((child) =>
-            renderSprintTreeBranch(child, poolItems, currentSprintName, depth + 1)
+            renderSprintTreeBranch(child, poolItems, currentSprintName, laneKey, depth + 1)
           )}
       </>
     );
@@ -299,7 +393,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     current: WorkItem,
     previous: WorkItem | undefined,
     pool: WorkItem[],
-    scopeLabel = 'in sprint'
+    scopeLabel = 'in sprint',
+    laneKey = 'lane:backlog'
   ): React.ReactNode => {
     if (!showProjectGroups) return null;
     if (previous && previous.project_id === current.project_id) return null;
@@ -311,6 +406,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
       pointMode === 'macro'
         ? calculateSprintMacroPoints(projectItems, settings)
         : calculateSprintLeafPoints(projectItems, settings);
+    const dividerKey = `${laneKey}::proj:${current.project_id || 'none'}`;
     return (
       <ProjectGroupDivider
         projectId={current.project_id}
@@ -318,7 +414,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
         points={points}
         unitLabel={getWorkMetricConfig(settings).unit_label || 'pts'}
         scopeLabel={scopeLabel}
-        topClass="top-[58px]"
+        topOffsetPx={getHeaderStickyTopPx(laneKey)}
+        innerRef={getDividerRefCallback(dividerKey)}
       />
     );
   };
@@ -559,6 +656,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           const someSprintSelected =
             !allSprintSelected && sprintItems.some((it) => selectedItemIds.has(it.id));
 
+          const sprintLaneKey = `sprint:${sprintName}`;
+
           return (
             <div
               key={sprintName}
@@ -569,6 +668,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             >
               {/* Sprint Header */}
               <div
+                ref={getHeaderRefCallback(sprintLaneKey)}
+                data-testid={`sprint-swimlane-header-${sprintName}`}
                 className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
                   activeSprintPopover === sprintName ? '!z-30' : 'z-20'
                 } ${isCollapsed ? 'relative rounded-xl border-b-0' : 'sticky top-0 rounded-t-xl'}`}
@@ -711,6 +812,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       gapClass="gap-2.5"
                       leftIndentPaddingClass="pl-10"
                       testId={`sprint-column-header-${sprintName}`}
+                      className="sprint-column-header"
                     />
                   )}
                   {sprintItems.length === 0 ? (
@@ -758,8 +860,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       );
                       return sprintTreeRoots.map((node, idx, arr) => (
                         <React.Fragment key={node.id}>
-                          {renderProjectDivider(node, arr[idx - 1], sprintItems)}
-                          {renderSprintTreeBranch(node, visibleSprintPool, sprintName)}
+                          {renderProjectDivider(node, arr[idx - 1], sprintItems, 'in sprint', sprintLaneKey)}
+                          {renderSprintTreeBranch(node, visibleSprintPool, sprintName, sprintLaneKey)}
                         </React.Fragment>
                       ));
                     })()
@@ -769,7 +871,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <React.Fragment key={item.id}>
-                        {renderProjectDivider(item, sprintItems[itemIdx - 1], sprintItems)}
+                        {renderProjectDivider(item, sprintItems[itemIdx - 1], sprintItems, 'in sprint', sprintLaneKey)}
                         <SprintItemRow
                           item={item}
                           isSelected={selectedItemIds.has(item.id)}
@@ -857,6 +959,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               data-testid="backlog-swimlane"
             >
               <div
+                ref={getHeaderRefCallback('lane:backlog')}
+                data-testid="backlog-swimlane-header"
                 className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
                   isBacklogCollapsed ? 'rounded-xl border-b-0' : 'sticky top-0 z-20 rounded-t-xl'
                 }`}
@@ -923,6 +1027,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       gapClass="gap-2.5"
                       leftIndentPaddingClass="pl-10"
                       testId="sprint-column-header-backlog"
+                      className="sprint-column-header"
                     />
                   )}
                   {backlogItems.length === 0 ? (
@@ -944,8 +1049,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       );
                       return backlogTreeRoots.map((node, idx, arr) => (
                         <React.Fragment key={node.id}>
-                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
-                          {renderSprintTreeBranch(node, visibleBacklogPool, '__none__')}
+                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog', 'lane:backlog')}
+                          {renderSprintTreeBranch(node, visibleBacklogPool, '__none__', 'lane:backlog')}
                         </React.Fragment>
                       ));
                     })()
@@ -955,7 +1060,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <React.Fragment key={item.id}>
-                        {renderProjectDivider(item, backlogItems[itemIdx - 1], backlogItems, 'in backlog')}
+                        {renderProjectDivider(item, backlogItems[itemIdx - 1], backlogItems, 'in backlog', 'lane:backlog')}
                         <SprintItemRow
                           item={item}
                           isSelected={selectedItemIds.has(item.id)}

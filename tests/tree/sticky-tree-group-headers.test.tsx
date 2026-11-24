@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, act } from '@testing-library/react';
 import { TreeViewContainer } from '@/components/views/TreeViewContainer';
 import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { TreeNode } from '@/components/TreeNode';
@@ -258,7 +258,8 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     const branch = screen.getByTestId('sprint-tree-branch-epic-s1');
     const rows = within(branch).getAllByTestId('sprint-item-row');
     expect(rows[0]).toHaveAttribute('data-sticky-header', 'true');
-    expect(rows[0]).toHaveClass('md:sticky', 'md:top-[58px]');
+    expect(rows[0]).toHaveClass('md:sticky');
+    expect(rows[0]).toHaveStyle({ top: '98px' });
     expect(rows[1]).not.toHaveAttribute('data-sticky-header', 'true');
   });
 
@@ -511,5 +512,294 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     // Scrolled back up by (148 - 40 + 8) = 116px -> 300 - 116 = 184
     expect(scrollContainer.scrollTop).toBe(184);
     spy.mockRestore();
+  });
+
+  it('scrolls the outer WorkspaceShell vertical container when tree-scroll-container does not overflow vertically (BUG_0003)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'epic-outer',
+        item_type: 'epic',
+        title: 'Outer Canvas Epic',
+        description: 'Description scrolled above sticky bar',
+      }),
+      makeItem({
+        id: 'task-outer-child',
+        item_type: 'task',
+        parent_id: 'epic-outer',
+        title: 'Child Task',
+      }),
+    ];
+    const tree = buildTree(items);
+
+    const { container } = render(
+      <div
+        data-testid="outer-workspace-scroll"
+        style={{ overflowY: 'auto' }}
+      >
+        <div
+          data-testid="tree-scroll-container"
+          className="overflow-x-auto md:overflow-x-clip"
+        >
+          <TreeNode
+            item={tree[0]}
+            collapsedNodeIds={new Set()}
+            statuses={mockStatuses}
+            hierarchy={mockHierarchy}
+          />
+        </div>
+      </div>
+    );
+
+    const outerScroll = screen.getByTestId('outer-workspace-scroll');
+    const innerWrapper = screen.getByTestId('tree-scroll-container');
+    Object.defineProperty(outerScroll, 'scrollHeight', { value: 1800, configurable: true });
+    Object.defineProperty(outerScroll, 'clientHeight', { value: 800, configurable: true });
+    Object.defineProperty(outerScroll, 'scrollTop', { value: 400, writable: true, configurable: true });
+    Object.defineProperty(innerWrapper, 'scrollHeight', { value: 1800, configurable: true });
+    Object.defineProperty(innerWrapper, 'clientHeight', { value: 1800, configurable: true });
+    Object.defineProperty(innerWrapper, 'scrollTop', { value: 0, writable: true, configurable: true });
+
+    const stickyBlock = container.querySelector('[data-sticky-header="true"]')!;
+    const origGetBCR = HTMLElement.prototype.getBoundingClientRect;
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('data-testid') === 'tree-node-description-epic-outer') {
+        return { top: 40, bottom: 80, left: 0, right: 500, width: 500, height: 40, x: 0, y: 40, toJSON: () => {} } as DOMRect;
+      }
+      if (this === stickyBlock) {
+        return { top: 100, bottom: 148, left: 0, right: 500, width: 500, height: 48, x: 0, y: 100, toJSON: () => {} } as DOMRect;
+      }
+      return origGetBCR.call(this);
+    });
+
+    fireEvent.click(screen.getByTestId('tree-expand-desc-btn-epic-outer'));
+
+    expect(outerScroll.scrollTop).toBe(284);
+    expect(innerWrapper.scrollTop).toBe(0);
+    spy.mockRestore();
+  });
+
+  it('derives sticky offsets dynamically from rendered Sprint/Backlog header and ProjectGroupDivider heights (BUG_0002)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'epic-dyn',
+        project_id: 'proj-a',
+        item_type: 'epic',
+        title: 'Sprint Epic Dynamic',
+        metadata: { sprint: 'Sprint 2026-Q4', story_points: 5 },
+      }),
+      makeItem({
+        id: 'task-dyn',
+        project_id: 'proj-a',
+        parent_id: 'epic-dyn',
+        item_type: 'task',
+        title: 'Sprint Child Dynamic',
+        metadata: { sprint: 'Sprint 2026-Q4', story_points: 3 },
+      }),
+    ];
+
+    let resizeCallbacks: Array<() => void> = [];
+    const OriginalRO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class MockRO {
+      private cb: () => void;
+      constructor(cb: () => void) {
+        this.cb = cb;
+        resizeCallbacks.push(cb);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      render(
+        <SprintViewContainer
+          items={items}
+          projectSettings={baseSettings}
+          isReadOnly={false}
+          pointMode="granular"
+          handlePointModeChange={vi.fn()}
+          sprintViewMode="tree"
+          setSprintViewMode={vi.fn()}
+          handleToggleCollapseAllSprints={vi.fn()}
+          collapsedSprints={new Set()}
+          toggleSprintCollapse={vi.fn()}
+          handleToggleHideCompletedSprints={vi.fn()}
+          hideCompletedSprints={false}
+          hiddenCompletedSprintsCount={0}
+          statusFilterOptions={[]}
+          effectiveSprintStatuses={['not_started', 'in_progress', 'complete']}
+          setSprintSelectedStatuses={vi.fn()}
+          levelFilterOptions={[]}
+          effectiveSprintLevels={['epic', 'story', 'task']}
+          setSprintSelectedLevels={vi.fn()}
+          sprintSortBy="project_asc"
+          setSprintSortBy={vi.fn()}
+          setIsManageSprintsOpen={vi.fn()}
+          visibleSprints={['Sprint 2026-Q4']}
+          availableSprints={['Sprint 2026-Q4']}
+          filterSprintItems={(list) => list}
+          sprintComparator={(a, b) => a.order_index - b.order_index}
+          selectedItemIds={new Set()}
+          handleToggleSelectItem={vi.fn()}
+          handleSelectAllInPool={vi.fn()}
+          activeSprintPopover={null}
+          setActiveSprintPopover={vi.fn()}
+          setEditingItem={vi.fn()}
+          getItemHierarchy={() => mockHierarchy}
+          getItemStatuses={() => mockStatuses}
+          deviations={[]}
+          setFocusedDeviationId={vi.fn()}
+          setIsReconciliationModalOpen={vi.fn()}
+          isAllProjects={true}
+          allProjects={[{ id: 'proj-a', slug: 'alpha', name: 'Project Alpha' }]}
+          handleUpdateStatus={vi.fn()}
+          handleUpdateAssignee={vi.fn()}
+          handleUpdateItemSprint={vi.fn()}
+          projectSlug="all"
+        />
+      );
+
+      const headerEl = screen.getByTestId('sprint-swimlane-header-Sprint 2026-Q4');
+      const dividerEl = screen.getByTestId('project-group-divider-proj-a');
+      Object.defineProperty(headerEl, 'offsetHeight', { value: 114, configurable: true });
+      Object.defineProperty(dividerEl, 'offsetHeight', { value: 34, configurable: true });
+
+      act(() => {
+        resizeCallbacks.forEach((cb) => cb());
+      });
+
+      const branch = screen.getByTestId('sprint-tree-branch-epic-dyn');
+      const rows = within(branch).getAllByTestId('sprint-item-row');
+      expect(dividerEl).toHaveStyle({ top: '114px' });
+      expect(rows[0]).toHaveStyle({ top: '148px' });
+    } finally {
+      globalThis.ResizeObserver = OriginalRO;
+    }
+  });
+
+  it('uses prototype-safe Map storage for sprint names matching Object.prototype (valueOf) and isolates divider heights when backlog collapses (PR 175 BUG_0002 & BUG_0003)', () => {
+    const items: WorkItem[] = [
+      makeItem({
+        id: 'epic-valof',
+        project_id: 'proj-a',
+        item_type: 'epic',
+        title: 'Sprint Epic ValueOf',
+        metadata: { sprint: 'valueOf', story_points: 5 },
+      }),
+      makeItem({
+        id: 'task-valof',
+        project_id: 'proj-a',
+        parent_id: 'epic-valof',
+        item_type: 'task',
+        title: 'Sprint Child ValueOf',
+        metadata: { sprint: 'valueOf', story_points: 3 },
+      }),
+      makeItem({
+        id: 'epic-backlog',
+        project_id: 'proj-a',
+        item_type: 'epic',
+        title: 'Backlog Epic',
+        metadata: {},
+      }),
+      makeItem({
+        id: 'task-backlog',
+        project_id: 'proj-a',
+        parent_id: 'epic-backlog',
+        item_type: 'task',
+        title: 'Backlog Child',
+        metadata: {},
+      }),
+    ];
+
+    const resizeCallbacks: Array<() => void> = [];
+    const OriginalRO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class MockRO {
+      constructor(cb: () => void) {
+        resizeCallbacks.push(cb);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      const baseProps = {
+        items,
+        projectSettings: baseSettings,
+        isReadOnly: false,
+        pointMode: 'granular' as const,
+        handlePointModeChange: vi.fn(),
+        sprintViewMode: 'tree' as const,
+        setSprintViewMode: vi.fn(),
+        handleToggleCollapseAllSprints: vi.fn(),
+        toggleSprintCollapse: vi.fn(),
+        handleToggleHideCompletedSprints: vi.fn(),
+        hideCompletedSprints: false,
+        hiddenCompletedSprintsCount: 0,
+        statusFilterOptions: [],
+        effectiveSprintStatuses: ['not_started', 'in_progress', 'complete'],
+        setSprintSelectedStatuses: vi.fn(),
+        levelFilterOptions: [],
+        effectiveSprintLevels: ['epic', 'story', 'task'],
+        setSprintSelectedLevels: vi.fn(),
+        sprintSortBy: 'project_asc',
+        setSprintSortBy: vi.fn(),
+        setIsManageSprintsOpen: vi.fn(),
+        visibleSprints: ['valueOf'],
+        availableSprints: ['valueOf'],
+        filterSprintItems: (list: WorkItem[]) => list,
+        sprintComparator: (a: WorkItem, b: WorkItem) => a.order_index - b.order_index,
+        selectedItemIds: new Set<string>(),
+        handleToggleSelectItem: vi.fn(),
+        handleSelectAllInPool: vi.fn(),
+        activeSprintPopover: null,
+        setActiveSprintPopover: vi.fn(),
+        setEditingItem: vi.fn(),
+        getItemHierarchy: () => mockHierarchy,
+        getItemStatuses: () => mockStatuses,
+        deviations: [],
+        setFocusedDeviationId: vi.fn(),
+        setIsReconciliationModalOpen: vi.fn(),
+        isAllProjects: true,
+        allProjects: [{ id: 'proj-a', slug: 'alpha', name: 'Project Alpha' }],
+        handleUpdateStatus: vi.fn(),
+        handleUpdateAssignee: vi.fn(),
+        handleUpdateItemSprint: vi.fn(),
+        projectSlug: 'all',
+      };
+
+      const { rerender } = render(
+        <SprintViewContainer {...baseProps} collapsedSprints={new Set()} />
+      );
+
+      const sprintHeader = screen.getByTestId('sprint-swimlane-header-valueOf');
+      const backlogHeader = screen.getByTestId('backlog-swimlane-header');
+      Object.defineProperty(sprintHeader, 'offsetHeight', { value: 100, configurable: true });
+      Object.defineProperty(backlogHeader, 'offsetHeight', { value: 64, configurable: true });
+
+      const dividers = screen.getAllByTestId('project-group-divider-proj-a');
+      expect(dividers).toHaveLength(2);
+      // Wrapped sprint divider (47px) vs normal backlog divider (29px)
+      Object.defineProperty(dividers[0], 'offsetHeight', { value: 47, configurable: true });
+      Object.defineProperty(dividers[1], 'offsetHeight', { value: 29, configurable: true });
+
+      act(() => {
+        resizeCallbacks.forEach((cb) => cb());
+      });
+
+      const sprintEpicRow = within(screen.getByTestId('sprint-tree-branch-epic-valof')).getAllByTestId('sprint-item-row')[0];
+      const backlogEpicRow = within(screen.getByTestId('sprint-tree-branch-epic-backlog')).getAllByTestId('sprint-item-row')[0];
+      expect(sprintEpicRow).toHaveStyle({ top: '147px' });
+      expect(backlogEpicRow).toHaveStyle({ top: '93px' });
+
+      // Collapsing backlog keeps the sprint divider height (100 + 47 = 147px) intact
+      rerender(
+        <SprintViewContainer {...baseProps} collapsedSprints={new Set(['__backlog__'])} />
+      );
+      const sprintEpicAfterCollapse = within(screen.getByTestId('sprint-tree-branch-epic-valof')).getAllByTestId('sprint-item-row')[0];
+      expect(sprintEpicAfterCollapse).toHaveStyle({ top: '147px' });
+    } finally {
+      globalThis.ResizeObserver = OriginalRO;
+    }
   });
 });

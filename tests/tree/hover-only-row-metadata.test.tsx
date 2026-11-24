@@ -1,4 +1,6 @@
 import React from 'react';
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TreeNode } from '@/components/TreeNode';
@@ -6,7 +8,7 @@ import { SprintItemRow } from '@/components/SprintItemRow';
 import { NavTreeNode } from '@/components/navigation/NavTreeNode';
 import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
-import { getStaticRowColumns } from '@/lib/row-columns';
+import { getStaticRowColumns, getColumnTrackWidthClass } from '@/lib/row-columns';
 import { buildTree } from '@/lib/tree';
 import { HierarchyLevel, ProjectSettings, StatusDefinition, WorkItem } from '@/types/tracker';
 import { PivotTreeNode } from '@/hooks/usePivotTree';
@@ -283,5 +285,32 @@ describe('Always-visible row metadata and single-screen row fit', () => {
     expect(screen.getAllByText('Pts').length).toBeGreaterThan(0);
     expect(screen.getAllByText('User').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sts').length).toBeGreaterThan(0);
+
+    // Narrow central-stage native @container rules & wrapping keep Tier 1/Tier 2 controls reachable without clipping
+    const firstRow = container.querySelector('[data-testid="sprint-item-row"]');
+    const firstTier1 = firstRow?.querySelector('.sprint-item-row-tier1');
+    const firstTier2 = container.querySelector('[data-testid="sprint-item-row-tier2"]');
+    const sprintHeaderStrip = container.querySelector('[data-testid="sprint-column-header-Sprint 2026-Q4"]');
+    expect(firstRow).toHaveClass('sprint-item-row', 'md:flex-wrap');
+    expect(firstTier1).toHaveClass('md:min-w-[200px]');
+    expect(firstTier2).toHaveClass('sprint-item-row-tier2', 'md:flex-wrap', 'max-w-full', 'min-w-0');
+    expect(sprintHeaderStrip).toHaveClass('sprint-column-header');
+
+    const globalsCss = fs.readFileSync(path.resolve(__dirname, '../../src/app/globals.css'), 'utf-8');
+    expect(globalsCss).toContain('@container central-stage (max-width: 860px)');
+    expect(globalsCss).toContain('.sprint-item-row-tier2');
+    expect(globalsCss).toContain('.sprint-column-header');
+
+    // Custom work metric labels (e.g. Hours, AI Credits) preserve their configured name instead of 'Pts'
+    const customMetricCols = getStaticRowColumns({
+      ...projectSettings,
+      work_metric_config: { field_key: 'hours', label: 'Hours', unit_label: 'hrs' },
+    });
+    render(<RowColumnHeader columns={customMetricCols} testId="custom-metric-header" />);
+    expect(screen.getByTestId('custom-metric-header')).toHaveTextContent('Hours');
+
+    // Explicit github column width overrides are honored while default remains lg (w-36)
+    expect(getColumnTrackWidthClass('lg', 'github')).toBe('w-36');
+    expect(getColumnTrackWidthClass('sm', 'github')).toBe('w-24');
   });
 });

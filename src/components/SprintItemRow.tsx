@@ -48,6 +48,7 @@ export interface SprintItemRowProps {
   isCollapsed?: boolean;
   onToggleCollapse?: (itemId: string) => void;
   stickyHeaderClass?: string;
+  stickyStyle?: React.CSSProperties;
 }
 
 export const SprintItemRow: React.FC<SprintItemRowProps> = ({
@@ -79,6 +80,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   isCollapsed = false,
   onToggleCollapse,
   stickyHeaderClass,
+  stickyStyle,
 }) => {
   const itemHierarchy = getItemHierarchy(item);
   const lvlColor = getHierarchyLevelColor(item.item_type, itemHierarchy);
@@ -97,7 +99,7 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
   return (
     <div
       onDoubleClick={() => onEditItem(item)}
-      className={`p-3 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-1.5 md:gap-3 group min-w-0 w-full ${
+      className={`p-3 transition-colors sprint-item-row flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-1.5 md:gap-3 group min-w-0 w-full ${
         stickyHeaderClass || 'relative'
       } ${
         isSelected
@@ -111,13 +113,16 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
               marginLeft: `${depth * 24}px`,
               width: `calc(100% - ${depth * 24}px)`,
               maxWidth: `calc(100% - ${depth * 24}px)`,
+              ...(stickyHeaderClass ? stickyStyle : undefined),
             }
+          : stickyHeaderClass
+          ? stickyStyle
           : undefined
       }
       data-testid="sprint-item-row"
     >
-      {/* Primary Row (Tier 1 on mobile, left section on desktop) */}
-      <div className="flex items-center justify-between w-full md:w-auto md:flex-1 min-w-0 gap-2">
+      {/* Primary Row (Tier 1 on mobile/narrow stage, left section on wide desktop) */}
+      <div className="sprint-item-row-tier1 flex items-center justify-between w-full md:w-auto md:flex-1 md:min-w-[200px] min-w-0 gap-2">
         {/* Left Section: Selection checkbox, type indicator, ref, title, lock */}
         <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
           {/* Tree Branch Connector */}
@@ -274,9 +279,9 @@ export const SprintItemRow: React.FC<SprintItemRowProps> = ({
         </div>
       </div>
 
-      {/* Secondary Row (Tier 2 - Mobile Only: pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1; Desktop: aligned tabular columns flush right) */}
+      {/* Secondary Row (Tier 2 - Mobile/narrow stage stacked, Desktop: aligned tabular columns wrapping cleanly before clipping) */}
       <div
-        className="pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full md:w-auto md:mt-0 md:pb-0 md:pl-0 md:flex-nowrap md:shrink-0 md:ml-auto md:gap-2.5"
+        className="sprint-item-row-tier2 pl-8 flex flex-wrap items-center gap-2 mt-1.5 pb-1 w-full max-w-full min-w-0 md:w-auto md:shrink-0 md:mt-0 md:pb-0 md:pl-0 md:flex-wrap md:justify-end md:ml-auto md:gap-2.5"
         data-testid="sprint-item-row-tier2"
       >
         {/* Desktop Subtasks Pill */}
