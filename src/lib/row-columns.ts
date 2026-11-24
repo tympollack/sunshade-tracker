@@ -173,7 +173,7 @@ export function getStaticRowColumns(projectSettings?: ProjectSettings | null): R
     { key: 'assignee', label: 'Assignee', source: 'static', width: 'xs', placement: 'right' },
     { key: 'status', label: 'Status', source: 'static', width: 'xs', placement: 'right' },
     { key: 'sprint', label: 'Sprint', source: 'static', width: 'md', placement: 'right' },
-    { key: 'github', label: 'GitHub', source: 'static', width: 'md', placement: 'right' },
+    { key: 'github', label: 'GitHub', source: 'static', width: 'lg', placement: 'right' },
     { key: 'project', label: 'Project', source: 'static', width: 'sm', placement: 'right' },
     { key: 'updated_at', label: 'Updated', source: 'static', width: 'sm', placement: 'right' },
     { key: 'created_at', label: 'Created', source: 'static', width: 'sm', placement: 'right' },

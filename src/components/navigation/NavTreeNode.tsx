@@ -205,14 +205,10 @@ export function NavTreeNode({
               </span>
             )}
 
-            {/* Story Point Rollup Badge (deferred to hover on item rows) */}
+            {/* Story Point Rollup Badge */}
             {node.rollupPoints > 0 && (
               <span
-                className={`text-[10px] font-medium text-emerald-400/90 bg-emerald-950/40 px-1 py-0.2 rounded border border-emerald-800/40 shrink-0 font-mono whitespace-nowrap transition-opacity ${
-                  node.type === 'item'
-                    ? 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100'
-                    : ''
-                }`}
+                className="text-[10px] font-medium text-emerald-400/90 bg-emerald-950/40 px-1 py-0.2 rounded border border-emerald-800/40 shrink-0 font-mono whitespace-nowrap"
                 title={`${node.rollupPoints} ${unit}`}
               >
                 {node.rollupPoints} {unit}
@@ -231,7 +227,7 @@ export function NavTreeNode({
                   e.stopPropagation();
                   onSelectSprint(node.sprintName || node.title);
                 }}
-                className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-all opacity-0 [@media(hover:none)]:opacity-70 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100"
+                className="p-0.5 rounded text-slate-500 hover:text-amber-300 hover:bg-slate-800 shrink-0 transition-colors"
                 title="Open Sprint Lifecycle Settings"
                 aria-label="Sprint Settings"
               >

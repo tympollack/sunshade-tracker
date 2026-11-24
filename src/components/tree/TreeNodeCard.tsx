@@ -108,10 +108,6 @@ export function TreeNodeCard({
     visibleColumns ?? resolveEffectiveRowColumns(projectSettings, 'tree');
   const showRefId = effectiveColumns.some((c) => c.key === 'ref_id');
   const rightColumns = effectiveColumns.filter((c) => c.placement === 'right');
-  const visibleColumnKeys = new Set(effectiveColumns.map((c) => c.key));
-  const hoverPriority = !visibleColumnKeys.has('priority') ? item.metadata?.priority : undefined;
-  const hoverSprint = !visibleColumnKeys.has('sprint') ? item.metadata?.sprint : undefined;
-  const hasHoverSummaryMeta = Boolean(hoverPriority || hoverSprint);
 
   return (
     <div
@@ -229,11 +225,7 @@ export function TreeNodeCard({
               }
               data-testid={`tree-expand-desc-btn-${item.id}`}
               title={item.description}
-              className={`p-1 -my-1 text-slate-500 hover:text-slate-300 rounded transition-all shrink-0 cursor-pointer hover:bg-slate-800 touch-manipulation ${
-                isDescExpanded
-                  ? 'opacity-100'
-                  : 'opacity-70 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100'
-              }`}
+              className="p-1 -my-1 text-slate-500 hover:text-slate-300 rounded transition-colors shrink-0 cursor-pointer hover:bg-slate-800 touch-manipulation"
             >
               <ChevronDown
                 className={`w-3 h-3 transition-transform duration-200 ${
@@ -245,7 +237,7 @@ export function TreeNodeCard({
 
           {showRefId && item.external_ref_id && (
             <span
-              className="shrink-0 max-w-[140px] truncate central-stage-ref-id md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity"
+              className="shrink-0 max-w-[140px] truncate central-stage-ref-id"
               title={item.external_ref_id}
               data-testid={`tree-node-ref-id-${item.id}`}
             >
@@ -257,27 +249,23 @@ export function TreeNodeCard({
             </span>
           )}
 
-          {/* Immutability Lock Badge (icon-only at rest, full pill on hover) */}
+          {/* Immutability Lock Badge */}
           {nodeIsImmutable && (
             <span
               data-testid="immutable-lock-badge"
-              className="flex items-center space-x-1 text-[10px] px-1.5 md:px-1 md:group-hover:px-1.5 py-0.5 rounded bg-purple-950/60 md:bg-transparent md:group-hover:bg-purple-950/60 text-purple-300 border border-purple-800/50 md:border-transparent md:group-hover:border-purple-800/50 shrink-0 whitespace-nowrap font-sans transition-all"
+              className="flex items-center space-x-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/50 shrink-0 whitespace-nowrap font-sans"
               title="Completed item in closed sprint (immutable)"
             >
-              <Lock className="w-3 h-3 text-purple-400/80" />
-              <span className="md:hidden md:group-hover:inline">Locked</span>
+              <Lock className="w-3 h-3 text-purple-400" />
+              <span>Locked</span>
             </span>
           )}
 
-          {/* Recursive Rollup Badges (visible when collapsed; deferred to hover when expanded) */}
+          {/* Recursive Rollup Badges */}
           {item.descendantCount !== undefined && item.descendantCount > 0 && (
             <span
               data-testid="tree-node-subtasks-badge"
-              className={`text-slate-400 text-xs font-mono shrink-0 whitespace-nowrap transition-opacity ${
-                isCollapsed
-                  ? 'opacity-75 group-hover:opacity-100'
-                  : 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
-              }`}
+              className="text-slate-400 text-xs font-mono shrink-0 whitespace-nowrap"
               title={
                 isFilteredBySprint
                   ? `${item.descendantCount} descendant item(s) (sprint filtered)`
@@ -285,18 +273,6 @@ export function TreeNodeCard({
               }
             >
               ({item.descendantCount})
-            </span>
-          )}
-
-          {/* Consolidated Hover Metadata Chip (unrendered sprint/priority surfaced on hover) */}
-          {hasHoverSummaryMeta && (
-            <span
-              data-testid={`tree-hover-meta-summary-${item.id}`}
-              className="hidden md:inline-flex items-center gap-1.5 text-[10px] font-mono text-slate-400 bg-slate-800/70 border border-slate-700/60 px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity"
-            >
-              {[hoverPriority ? String(hoverPriority) : null, hoverSprint ? String(hoverSprint) : null]
-                .filter(Boolean)
-                .join(' · ')}
             </span>
           )}
         </div>
@@ -389,11 +365,7 @@ export function TreeNodeCard({
               return (
                 <div
                   key={col.key}
-                  className={`w-9 shrink-0 hidden md:flex items-center justify-center central-stage-track-assignee transition-opacity ${
-                    !item.assignee
-                      ? 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100'
-                      : ''
-                  }`}
+                  className="w-9 shrink-0 hidden md:flex items-center justify-center central-stage-track-assignee"
                   data-testid="col-assignee"
                 >
                   <CompactAssigneeCell
