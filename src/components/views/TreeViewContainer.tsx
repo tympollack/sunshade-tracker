@@ -323,7 +323,7 @@ export function TreeViewContainer(props: TreeViewContainerProps) {
         </div>
       </div>
 
-      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x touch-pan-y touch-pinch-zoom max-h-[75dvh] overflow-y-auto" data-testid="tree-scroll-container">
+      <div className="pt-2 max-w-full overflow-x-auto custom-scrollbar pb-2 touch-pan-x touch-pan-y touch-pinch-zoom md:overflow-x-clip" data-testid="tree-scroll-container">
         <div className="space-y-3 min-w-[600px] md:min-w-0 w-full">
           {/* Root Drop Zone for unnesting */}
           {!isReadOnly && (

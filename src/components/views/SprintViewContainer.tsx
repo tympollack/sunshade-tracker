@@ -233,8 +233,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
     const stickyHeaderClass = isStickyRootEpic
       ? showProjectGroups
-        ? 'md:sticky md:top-8 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
-        : 'md:sticky md:top-0 md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        ? 'md:sticky md:top-[88px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+        : 'md:sticky md:top-[58px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
       : undefined;
 
     const branchContent = (
@@ -318,6 +318,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
         points={points}
         unitLabel={getWorkMetricConfig(settings).unit_label || 'pts'}
         scopeLabel={scopeLabel}
+        topClass="top-[58px]"
       />
     );
   };
@@ -701,7 +702,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isCollapsed && (
-                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid={`sprint-body-scroll-${sprintName}`}>
+                <div className="overflow-x-auto md:overflow-x-clip custom-scrollbar" data-testid={`sprint-body-scroll-${sprintName}`}>
                 <div className="divide-y divide-slate-800/50 w-full min-w-0">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
@@ -913,7 +914,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               </div>
 
               {!isBacklogCollapsed && (
-                <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid="backlog-body-scroll">
+                <div className="overflow-x-auto md:overflow-x-clip custom-scrollbar" data-testid="backlog-body-scroll">
                 <div className="divide-y divide-slate-800/50 w-full min-w-0">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader

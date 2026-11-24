@@ -268,10 +268,14 @@ describe('Always-visible row metadata and single-screen row fit', () => {
     );
 
     const sprintBodyScroll = container.querySelector('[data-testid="sprint-body-scroll-Sprint 2026-Q4"]');
+    expect(sprintBodyScroll).toHaveClass('md:overflow-x-clip');
+    expect(sprintBodyScroll).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
     expect(sprintBodyScroll?.firstElementChild).toHaveClass('w-full', 'min-w-0');
     expect(sprintBodyScroll?.firstElementChild).not.toHaveClass('md:w-max');
 
     const backlogBodyScroll = container.querySelector('[data-testid="backlog-body-scroll"]');
+    expect(backlogBodyScroll).toHaveClass('md:overflow-x-clip');
+    expect(backlogBodyScroll).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
     expect(backlogBodyScroll?.firstElementChild).toHaveClass('w-full', 'min-w-0');
     expect(backlogBodyScroll?.firstElementChild).not.toHaveClass('md:w-max');
 
