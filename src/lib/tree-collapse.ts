@@ -7,15 +7,63 @@ export const SPRINT_COLLAPSE_STORAGE_PREFIX = 'tracker_collapsed_sprints_';
 export const SPRINT_TREE_COLLAPSE_STORAGE_PREFIX = 'tracker_collapsed_sprint_tree_nodes_';
 
 /**
- * Builds a workspace- and project-scoped localStorage key so preferences for
- * shared slugs like 'all' never leak across different tenant workspaces.
+ * Builds a versioned, workspace- and project-scoped localStorage key so preferences
+ * for shared slugs like 'all' never leak across different tenant workspaces and never
+ * collide with legacy slug-only keys containing underscores.
  */
 export function buildCollapseStorageKey(
   prefix: string,
   tenantSlug: string = 'default',
   projectSlug: string = 'default'
 ): string {
-  return `${prefix}${tenantSlug || 'default'}_${projectSlug || 'default'}`;
+  const safeTenant = encodeURIComponent(tenantSlug || 'default');
+  const safeProject = encodeURIComponent(projectSlug || 'default');
+  return `${prefix}v2_${safeTenant}::${safeProject}`;
+}
+
+/**
+ * Builds the legacy slug-only storage key (used strictly for safe one-time migration
+ * of non-shared single-project slugs when ownership can be verified).
+ */
+export function buildLegacyCollapseStorageKey(prefix: string, projectSlug: string): string {
+  return `${prefix}${projectSlug}`;
+}
+
+/**
+ * Reads a persisted collapse Set from localStorage, safely migrating a legacy
+ * single-project entry when `legacyKey` is provided and ownership can be verified
+ * (empty array `[]` or intersects `ownedIds`). Never migrates shared slugs ('all', 'portfolio').
+ */
+export function readOrMigrateCollapseSet(
+  storageKey: string,
+  options?: {
+    legacyStorageKey?: string;
+    projectSlug?: string;
+    ownedIds?: Set<string>;
+  }
+): Set<string> | null {
+  const current = readStoredCollapseSet(storageKey);
+  if (current !== null) return current;
+
+  const { legacyStorageKey, projectSlug, ownedIds } = options || {};
+  if (!legacyStorageKey || !projectSlug || projectSlug === 'all' || projectSlug === 'portfolio') {
+    return null;
+  }
+
+  const legacy = readStoredCollapseSet(legacyStorageKey);
+  if (legacy === null) return null;
+
+  // Verify ownership before migrating: allow explicit empty ("Expand All") or matching IDs
+  const canMigrate =
+    legacy.size === 0 ||
+    (ownedIds !== undefined &&
+      ownedIds.size > 0 &&
+      Array.from(legacy).some((id) => ownedIds.has(id)));
+
+  if (!canMigrate) return null;
+
+  writeStoredCollapseSet(storageKey, legacy);
+  return legacy;
 }
 
 /**

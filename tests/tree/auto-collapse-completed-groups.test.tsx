@@ -6,6 +6,8 @@ import {
   getDefaultCollapsedSprintNames,
   flattenVisibleTreeNodes,
   buildCollapseStorageKey,
+  buildLegacyCollapseStorageKey,
+  readOrMigrateCollapseSet,
   computeToggledSelection,
   TREE_COLLAPSE_STORAGE_PREFIX,
   SPRINT_COLLAPSE_STORAGE_PREFIX,
@@ -465,10 +467,46 @@ describe('TASK-TRK-AUTO-COLLAPSE-COMPLETED-GROUPS', () => {
     expect(collapsed.has('Sprint 1')).toBe(false);
   });
 
-  it('scopes collapse storage keys by both tenantSlug and projectSlug and keeps quick-add expansion transient when no override exists (BUG_0005 & BUG_0006)', () => {
+  it('scopes collapse storage keys in a versioned namespace without underscore collisions and safely migrates owned single-project entries (BUG_0005, BUG_0006 & PR 172 BUG_0002)', () => {
     const keyAlpha = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'tenant-alpha', 'all');
     const keyBeta = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'tenant-beta', 'all');
     expect(keyAlpha).not.toBe(keyBeta);
+
+    // Versioned key for tenant 'design' + project 'mobile' never collides with legacy project 'design_mobile'
+    const designMobileScoped = buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'design', 'mobile');
+    const legacyOtherProject = buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'design_mobile');
+    expect(designMobileScoped).not.toBe(legacyOtherProject);
+    localStorage.setItem(legacyOtherProject, JSON.stringify(['other-proj-epic']));
+
+    // Does NOT inherit legacy key when IDs are not owned by 'mobile'
+    expect(
+      readOrMigrateCollapseSet(designMobileScoped, {
+        legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'mobile'),
+        projectSlug: 'mobile',
+        ownedIds: new Set(['epic-active']),
+      })
+    ).toBeNull();
+
+    // Never migrates shared 'all' slug
+    localStorage.setItem(buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'all'), JSON.stringify([]));
+    expect(
+      readOrMigrateCollapseSet(keyAlpha, {
+        legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'all'),
+        projectSlug: 'all',
+        ownedIds: new Set(['epic-active']),
+      })
+    ).toBeNull();
+
+    // Migrates owned single-project preference when IDs match
+    const legacyMobile = buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, 'mobile');
+    localStorage.setItem(legacyMobile, JSON.stringify(['epic-active']));
+    const migrated = readOrMigrateCollapseSet(designMobileScoped, {
+      legacyStorageKey: legacyMobile,
+      projectSlug: 'mobile',
+      ownedIds: new Set(['epic-active']),
+    });
+    expect(migrated).toEqual(new Set(['epic-active']));
+    expect(JSON.parse(localStorage.getItem(designMobileScoped)!)).toEqual(['epic-active']);
 
     const items: WorkItem[] = [
       makeItem({ id: 'epic-active', item_type: 'epic', status: 'in_progress', title: 'Active Epic' }),

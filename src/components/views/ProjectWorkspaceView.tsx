@@ -74,7 +74,9 @@ import {
   TREE_COLLAPSE_STORAGE_PREFIX,
   SPRINT_COLLAPSE_STORAGE_PREFIX,
   buildCollapseStorageKey,
+  buildLegacyCollapseStorageKey,
   computeToggledSelection,
+  getDefaultCollapsedSprintNames,
 } from '@/lib/tree-collapse';
 
 interface ProjectWorkspaceViewProps {
@@ -841,24 +843,47 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     return Array.from(map.values());
   }, [dbSprints, projectSettings.sprint_settings?.sprints, items, isAllProjects, currentProjectId]);
 
+  // Preserve project-scoped sprint definitions before name deduplication so All Projects
+  // only hides or auto-collapses shared sprint lanes when all represented projects' sprints are completed.
+  const rawSprintDefsForCollapse = useMemo<SprintDefinition[]>(() => {
+    const defs: SprintDefinition[] = [];
+    (dbSprints || []).forEach((s) => {
+      if (!isAllProjects && currentProjectId && s.project_id && s.project_id !== currentProjectId) {
+        return;
+      }
+      defs.push(s);
+    });
+    if (isAllProjects) {
+      allProjects.forEach((proj) => {
+        (proj.settings?.sprint_settings?.sprints || []).forEach((s) => {
+          defs.push({ ...s, project_id: s.project_id || proj.id });
+        });
+      });
+    } else {
+      (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
+        defs.push({ ...s, project_id: s.project_id || currentProjectId });
+      });
+    }
+    return defs;
+  }, [dbSprints, isAllProjects, currentProjectId, allProjects, projectSettings.sprint_settings?.sprints]);
+
+  const completedSprintNameSet = useMemo(
+    () =>
+      getDefaultCollapsedSprintNames(availableSprints, rawSprintDefsForCollapse, {
+        isAllProjects,
+        items,
+      }),
+    [availableSprints, rawSprintDefsForCollapse, isAllProjects, items]
+  );
+
   const hiddenCompletedSprintsCount = useMemo(() => {
-    return availableSprints.filter((sprintName) => {
-      const sprintDef = availableSprintDefs.find(
-        (s: any) => s.name === sprintName || s.id === sprintName
-      );
-      return sprintDef?.status?.toLowerCase() === 'completed';
-    }).length;
-  }, [availableSprints, availableSprintDefs]);
+    return availableSprints.filter((sprintName) => completedSprintNameSet.has(sprintName)).length;
+  }, [availableSprints, completedSprintNameSet]);
 
   const visibleSprints = useMemo(() => {
     if (!hideCompletedSprints) return availableSprints;
-    return availableSprints.filter((sprintName) => {
-      const sprintDef = availableSprintDefs.find(
-        (s: any) => s.name === sprintName || s.id === sprintName
-      );
-      return sprintDef?.status?.toLowerCase() !== 'completed';
-    });
-  }, [availableSprints, hideCompletedSprints, availableSprintDefs]);
+    return availableSprints.filter((sprintName) => !completedSprintNameSet.has(sprintName));
+  }, [availableSprints, hideCompletedSprints, completedSprintNameSet]);
 
   // Unified sprint resolution helper: delegates to pure resolveTargetSprint from @/lib/sprint-resolver.
   // Scopes sprint definitions and UUIDs strictly to the target project, avoiding cross-project UUID borrowing.
@@ -1054,36 +1079,16 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   } = useAutoCollapsedTreeNodes(
     buildCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, tenantSlug, projectSlug),
     treeItems,
-    getItemStatuses
+    getItemStatuses,
+    {
+      legacyStorageKey: buildLegacyCollapseStorageKey(TREE_COLLAPSE_STORAGE_PREFIX, projectSlug),
+      projectSlug,
+    }
   );
 
   const handleCollapseAllTreeNodes = useCallback(() => {
     collapseAllTreeNodes(treeItems);
   }, [collapseAllTreeNodes, treeItems]);
-
-  // Preserve project-scoped sprint definitions before name deduplication so All Projects
-  // only auto-collapses shared sprint lanes when all represented projects' sprints are completed.
-  const rawSprintDefsForCollapse = useMemo<SprintDefinition[]>(() => {
-    const defs: SprintDefinition[] = [];
-    (dbSprints || []).forEach((s) => {
-      if (!isAllProjects && currentProjectId && s.project_id && s.project_id !== currentProjectId) {
-        return;
-      }
-      defs.push(s);
-    });
-    if (isAllProjects) {
-      allProjects.forEach((proj) => {
-        (proj.settings?.sprint_settings?.sprints || []).forEach((s) => {
-          defs.push({ ...s, project_id: s.project_id || proj.id });
-        });
-      });
-    } else {
-      (projectSettings.sprint_settings?.sprints || []).forEach((s) => {
-        defs.push({ ...s, project_id: s.project_id || currentProjectId });
-      });
-    }
-    return defs;
-  }, [dbSprints, isAllProjects, currentProjectId, allProjects, projectSettings.sprint_settings?.sprints]);
 
   const {
     collapsedSprints,
@@ -1093,7 +1098,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
     buildCollapseStorageKey(SPRINT_COLLAPSE_STORAGE_PREFIX, tenantSlug, projectSlug),
     availableSprints,
     rawSprintDefsForCollapse,
-    { isAllProjects, items }
+    {
+      isAllProjects,
+      items,
+      legacyStorageKey: buildLegacyCollapseStorageKey(SPRINT_COLLAPSE_STORAGE_PREFIX, projectSlug),
+      projectSlug,
+    }
   );
 
   const handleToggleCollapseAllSprints = useCallback(() => {

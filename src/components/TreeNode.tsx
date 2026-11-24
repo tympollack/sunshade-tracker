@@ -189,6 +189,9 @@ export function TreeNode({
   const [childError, setChildError] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
   const dragLeaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stickyHeaderRef = React.useRef<HTMLDivElement | null>(null);
+  const descRef = React.useRef<HTMLDivElement | null>(null);
+  const prevDescExpandedRef = React.useRef<boolean>(false);
 
   React.useEffect(() => {
     return () => {
@@ -249,12 +252,25 @@ export function TreeNode({
     if (isControlledDraft) {
       onChangeChildDraft!(item.id, (prev) => {
         const nextOpen = typeof action === 'function' ? action(Boolean(prev?.isOpen)) : action;
-        if (!nextOpen) return undefined;
-        return { isOpen: true, title: prev?.title ?? '', itemType: prev?.itemType };
+        return {
+          isOpen: nextOpen,
+          title: prev?.title ?? '',
+          itemType: prev?.itemType,
+        };
       });
     } else {
       setLocalIsCreatingChild(action);
     }
+  };
+
+  const handleCancelChildForm = () => {
+    if (isControlledDraft) {
+      onChangeChildDraft!(item.id, () => undefined);
+    } else {
+      setLocalIsCreatingChild(false);
+      setLocalChildTitle('');
+    }
+    setChildError(null);
   };
 
   const setChildTitle = (nextTitle: string) => {
@@ -286,6 +302,27 @@ export function TreeNode({
       setLocalChildType(validChildTypes[0].type);
     }
   }, [isControlledDraft, validChildTypes, localChildType]);
+
+  React.useEffect(() => {
+    const justExpanded = isDescExpanded && !prevDescExpandedRef.current;
+    prevDescExpandedRef.current = isDescExpanded;
+    if (!justExpanded || !isStickyTopLevelGroup || !descRef.current) return;
+
+    const descEl = descRef.current;
+    const scrollContainer = descEl.closest('[data-testid="tree-scroll-container"]') as HTMLElement | null;
+    if (!scrollContainer) return;
+
+    const stickyBottom = stickyHeaderRef.current
+      ? stickyHeaderRef.current.getBoundingClientRect().bottom
+      : scrollContainer.getBoundingClientRect().top;
+    const descRect = descEl.getBoundingClientRect();
+    if (descRect.top < stickyBottom) {
+      scrollContainer.scrollTop = Math.max(
+        0,
+        scrollContainer.scrollTop - (stickyBottom - descRect.top + 8)
+      );
+    }
+  }, [isDescExpanded, isStickyTopLevelGroup]);
 
   // Quick Child Submission
   const handleChildSubmit = async (e: React.FormEvent) => {
@@ -394,6 +431,7 @@ export function TreeNode({
 
       {/* Node Content Container with ancestor guide rails */}
       <div
+        ref={stickyHeaderRef}
         className={`relative flex flex-col ${
           isStickyTopLevelGroup
             ? `sticky ${stickyTopOffset} z-10 bg-[#0b1120]/95 backdrop-blur-md rounded-lg`
@@ -495,10 +533,7 @@ export function TreeNode({
             onTitleChange={setChildTitle}
             onTypeChange={setChildType}
             onSubmit={handleChildSubmit}
-            onCancel={() => {
-              setIsCreatingChild(false);
-              setChildError(null);
-            }}
+            onCancel={handleCancelChildForm}
           />
         )}
       </div>
@@ -506,6 +541,7 @@ export function TreeNode({
       {/* Expanded Details for Sticky Root Groups (rendered outside sticky header so scrolling descendants keep viewport space) */}
       {isStickyTopLevelGroup && item.description && isDescExpanded && (
         <div
+          ref={descRef}
           data-testid={`tree-node-description-${item.id}`}
           title={item.description}
           onClick={(e) => e.stopPropagation()}
@@ -526,10 +562,7 @@ export function TreeNode({
           onTitleChange={setChildTitle}
           onTypeChange={setChildType}
           onSubmit={handleChildSubmit}
-          onCancel={() => {
-            setIsCreatingChild(false);
-            setChildError(null);
-          }}
+          onCancel={handleCancelChildForm}
         />
       )}
 

@@ -7,9 +7,26 @@ import {
   areSetsEqual,
   getDefaultCollapsedSprintNames,
   getDefaultCollapsedTreeNodeIds,
-  readStoredCollapseSet,
+  readOrMigrateCollapseSet,
   writeStoredCollapseSet,
 } from '@/lib/tree-collapse';
+
+export interface CollapseMigrationOptions {
+  legacyStorageKey?: string;
+  projectSlug?: string;
+}
+
+function collectTreeNodeIds(nodes: WorkItemNode[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (branch: WorkItemNode[]) => {
+    for (const n of branch) {
+      ids.add(n.id);
+      if (n.children && n.children.length > 0) walk(n.children);
+    }
+  };
+  walk(nodes);
+  return ids;
+}
 
 /**
  * Manages collapsed node IDs for a hierarchy tree with localStorage persistence.
@@ -21,13 +38,22 @@ import {
 export function useAutoCollapsedTreeNodes(
   storageKey: string,
   treeItems: WorkItemNode[],
-  getStatuses?: (item: WorkItem) => StatusDefinition[] | undefined
+  getStatuses?: (item: WorkItem) => StatusDefinition[] | undefined,
+  migration?: CollapseMigrationOptions
 ) {
+  const ownedNodeIds = useMemo(() => collectTreeNodeIds(treeItems), [treeItems]);
   const [hasUserOverride, setHasUserOverride] = useState<boolean>(
-    () => readStoredCollapseSet(storageKey) !== null
+    () =>
+      readOrMigrateCollapseSet(storageKey, {
+        ...migration,
+        ownedIds: ownedNodeIds,
+      }) !== null
   );
   const [baseCollapsedIds, setBaseCollapsedIds] = useState<Set<string>>(() => {
-    const stored = readStoredCollapseSet(storageKey);
+    const stored = readOrMigrateCollapseSet(storageKey, {
+      ...migration,
+      ownedIds: ownedNodeIds,
+    });
     if (stored !== null) return stored;
     return getDefaultCollapsedTreeNodeIds(treeItems, getStatuses);
   });
@@ -36,9 +62,14 @@ export function useAutoCollapsedTreeNodes(
   const prevStorageKeyRef = useRef<string>(storageKey);
   const getStatusesRef = useRef(getStatuses);
   getStatusesRef.current = getStatuses;
+  const migrationRef = useRef(migration);
+  migrationRef.current = migration;
 
   useEffect(() => {
-    const stored = readStoredCollapseSet(storageKey);
+    const stored = readOrMigrateCollapseSet(storageKey, {
+      ...migrationRef.current,
+      ownedIds: ownedNodeIds,
+    });
     const keyChanged = prevStorageKeyRef.current !== storageKey;
     prevStorageKeyRef.current = storageKey;
 
@@ -60,7 +91,7 @@ export function useAutoCollapsedTreeNodes(
       const defaults = getDefaultCollapsedTreeNodeIds(treeItems, getStatusesRef.current);
       setBaseCollapsedIds((prev) => (areSetsEqual(prev, defaults) ? prev : defaults));
     }
-  }, [storageKey, treeItems, hasUserOverride]);
+  }, [storageKey, treeItems, ownedNodeIds, hasUserOverride]);
 
   const collapsedIds = useMemo(() => {
     if (transientExpandedIds.size === 0) return baseCollapsedIds;
@@ -173,13 +204,23 @@ export function useAutoCollapsedSprints(
   storageKey: string,
   sprintNames: string[],
   sprintDefs: SprintDefinition[],
-  options?: SprintCollapseOptions
+  options?: SprintCollapseOptions & CollapseMigrationOptions
 ) {
+  const ownedSprintIds = useMemo(() => new Set(sprintNames), [sprintNames]);
   const [hasUserOverride, setHasUserOverride] = useState<boolean>(
-    () => readStoredCollapseSet(storageKey) !== null
+    () =>
+      readOrMigrateCollapseSet(storageKey, {
+        legacyStorageKey: options?.legacyStorageKey,
+        projectSlug: options?.projectSlug,
+        ownedIds: ownedSprintIds,
+      }) !== null
   );
   const [collapsedSprints, setCollapsedSprints] = useState<Set<string>>(() => {
-    const stored = readStoredCollapseSet(storageKey);
+    const stored = readOrMigrateCollapseSet(storageKey, {
+      legacyStorageKey: options?.legacyStorageKey,
+      projectSlug: options?.projectSlug,
+      ownedIds: ownedSprintIds,
+    });
     if (stored !== null) return stored;
     return getDefaultCollapsedSprintNames(sprintNames, sprintDefs, options);
   });
@@ -189,7 +230,11 @@ export function useAutoCollapsedSprints(
   optionsRef.current = options;
 
   useEffect(() => {
-    const stored = readStoredCollapseSet(storageKey);
+    const stored = readOrMigrateCollapseSet(storageKey, {
+      legacyStorageKey: optionsRef.current?.legacyStorageKey,
+      projectSlug: optionsRef.current?.projectSlug,
+      ownedIds: ownedSprintIds,
+    });
     const keyChanged = prevStorageKeyRef.current !== storageKey;
     prevStorageKeyRef.current = storageKey;
 
@@ -211,7 +256,7 @@ export function useAutoCollapsedSprints(
       );
       setCollapsedSprints((prev) => (areSetsEqual(prev, defaults) ? prev : defaults));
     }
-  }, [storageKey, sprintNames, sprintDefs, options?.isAllProjects, options?.items, hasUserOverride]);
+  }, [storageKey, sprintNames, ownedSprintIds, sprintDefs, options?.isAllProjects, options?.items, hasUserOverride]);
 
   const toggleSprint = useCallback(
     (sprintKey: string) => {
