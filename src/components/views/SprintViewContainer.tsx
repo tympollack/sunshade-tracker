@@ -702,7 +702,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
               {!isCollapsed && (
                 <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid={`sprint-body-scroll-${sprintName}`}>
-                <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
+                <div className="divide-y divide-slate-800/50 w-full min-w-0">
                   {sprintItems.length > 0 && (
                     <RowColumnHeader
                       columns={rowColumns.effectiveColumns}
@@ -914,7 +914,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
 
               {!isBacklogCollapsed && (
                 <div className="overflow-x-auto overflow-y-auto max-h-[75dvh] custom-scrollbar" data-testid="backlog-body-scroll">
-                <div className="divide-y divide-slate-800/50 md:min-w-full md:w-max">
+                <div className="divide-y divide-slate-800/50 w-full min-w-0">
                   {backlogItems.length > 0 && (
                     <RowColumnHeader
                       columns={rowColumns.effectiveColumns}

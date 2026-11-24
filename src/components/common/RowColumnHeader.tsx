@@ -47,7 +47,7 @@ export const RowColumnHeader: React.FC<RowColumnHeaderProps> = ({
               title={col.label}
               className={`${widthClass} shrink-0 truncate ${alignClass}`}
             >
-              {col.key === 'assignee' ? 'User' : col.key === 'status' ? 'State' : col.label}
+              {col.key === 'assignee' ? 'User' : col.key === 'status' ? 'Sts' : col.key === 'points' ? 'Pts' : col.label}
             </div>
           );
         })}
