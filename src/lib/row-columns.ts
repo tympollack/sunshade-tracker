@@ -128,7 +128,6 @@ export function inferColumnType(key: string): CustomFieldType {
 export function getColumnTrackWidthClass(width: RowColumnWidth = 'sm', key?: string): string {
   if (key === 'points') return 'w-28';
   if (key === 'assignee' || key === 'status') return 'w-9';
-  if (key === 'github') return 'w-36';
   switch (width) {
     case 'xs':
       return 'w-16';
@@ -146,7 +145,6 @@ export function getColumnTrackWidthClass(width: RowColumnWidth = 'sm', key?: str
 export function getResponsiveMdTrackWidthClass(width: RowColumnWidth = 'sm', key?: string): string {
   if (key === 'points') return 'md:w-28';
   if (key === 'assignee' || key === 'status') return 'md:w-9';
-  if (key === 'github') return 'md:w-36';
   switch (width) {
     case 'xs':
       return 'md:w-16';
@@ -175,7 +173,7 @@ export function getStaticRowColumns(projectSettings?: ProjectSettings | null): R
     { key: 'assignee', label: 'Assignee', source: 'static', width: 'xs', placement: 'right' },
     { key: 'status', label: 'Status', source: 'static', width: 'xs', placement: 'right' },
     { key: 'sprint', label: 'Sprint', source: 'static', width: 'md', placement: 'right' },
-    { key: 'github', label: 'GitHub', source: 'static', width: 'md', placement: 'right' },
+    { key: 'github', label: 'GitHub', source: 'static', width: 'lg', placement: 'right' },
     { key: 'project', label: 'Project', source: 'static', width: 'sm', placement: 'right' },
     { key: 'updated_at', label: 'Updated', source: 'static', width: 'sm', placement: 'right' },
     { key: 'created_at', label: 'Created', source: 'static', width: 'sm', placement: 'right' },

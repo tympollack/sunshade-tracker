@@ -6,7 +6,7 @@ import { SprintItemRow } from '@/components/SprintItemRow';
 import { NavTreeNode } from '@/components/navigation/NavTreeNode';
 import { SprintViewContainer } from '@/components/views/SprintViewContainer';
 import { RowColumnHeader } from '@/components/common/RowColumnHeader';
-import { getStaticRowColumns } from '@/lib/row-columns';
+import { getStaticRowColumns, getColumnTrackWidthClass } from '@/lib/row-columns';
 import { buildTree } from '@/lib/tree';
 import { HierarchyLevel, ProjectSettings, StatusDefinition, WorkItem } from '@/types/tracker';
 import { PivotTreeNode } from '@/hooks/usePivotTree';
@@ -283,5 +283,23 @@ describe('Always-visible row metadata and single-screen row fit', () => {
     expect(screen.getAllByText('Pts').length).toBeGreaterThan(0);
     expect(screen.getAllByText('User').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Sts').length).toBeGreaterThan(0);
+
+    // Narrow central-stage container queries & wrapping keep Tier 2 controls reachable without clipping
+    const firstRow = container.querySelector('[data-testid="sprint-item-row"]');
+    const firstTier2 = container.querySelector('[data-testid="sprint-item-row-tier2"]');
+    expect(firstRow).toHaveClass('@max-[860px]/central-stage:flex-col');
+    expect(firstTier2).toHaveClass('md:flex-wrap', 'max-w-full', 'min-w-0');
+
+    // Custom work metric labels (e.g. Hours, AI Credits) preserve their configured name instead of 'Pts'
+    const customMetricCols = getStaticRowColumns({
+      ...projectSettings,
+      work_metric_config: { field_key: 'hours', label: 'Hours', unit_label: 'hrs' },
+    });
+    render(<RowColumnHeader columns={customMetricCols} testId="custom-metric-header" />);
+    expect(screen.getByTestId('custom-metric-header')).toHaveTextContent('Hours');
+
+    // Explicit github column width overrides are honored while default remains lg (w-36)
+    expect(getColumnTrackWidthClass('lg', 'github')).toBe('w-36');
+    expect(getColumnTrackWidthClass('sm', 'github')).toBe('w-24');
   });
 });

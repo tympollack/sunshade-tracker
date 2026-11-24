@@ -8,6 +8,7 @@ import { TreeNodeCard } from '@/components/tree/TreeNodeCard';
 import { TreeNodeBranchRails, TreeNodeBranchConnector } from '@/components/tree/TreeNodeBranchRails';
 import { TreeNodeQuickChildForm } from '@/components/tree/TreeNodeQuickChildForm';
 import { ResolvedRowColumn } from '@/lib/row-columns';
+import { findScrollableVerticalAncestor } from '@/lib/scroll-utils';
 
 export interface TreeChildDraft {
   isOpen: boolean;
@@ -309,7 +310,7 @@ export function TreeNode({
     if (!justExpanded || !isStickyTopLevelGroup || !descRef.current) return;
 
     const descEl = descRef.current;
-    const scrollContainer = descEl.closest('[data-testid="tree-scroll-container"]') as HTMLElement | null;
+    const scrollContainer = findScrollableVerticalAncestor(descEl);
     if (!scrollContainer) return;
 
     const stickyBottom = stickyHeaderRef.current

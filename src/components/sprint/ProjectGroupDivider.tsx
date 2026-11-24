@@ -8,6 +8,8 @@ export interface ProjectGroupDividerProps {
   unitLabel?: string;
   scopeLabel?: string;
   topClass?: string;
+  topOffsetPx?: number;
+  innerRef?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -20,10 +22,14 @@ export function ProjectGroupDivider({
   unitLabel = 'pts',
   scopeLabel = 'in sprint',
   topClass = 'top-0',
+  topOffsetPx,
+  innerRef,
 }: ProjectGroupDividerProps) {
   return (
     <div
-      className={`sticky ${topClass} z-[15] bg-slate-900/95 backdrop-blur-md border-y border-slate-800/80 px-3 py-1.5 text-xs text-slate-300 font-medium flex items-center justify-between`}
+      ref={innerRef}
+      style={topOffsetPx !== undefined ? { top: `${topOffsetPx}px` } : undefined}
+      className={`sticky ${topOffsetPx === undefined ? topClass : ''} z-[15] bg-slate-900/95 backdrop-blur-md border-y border-slate-800/80 px-3 py-1.5 text-xs text-slate-300 font-medium flex items-center justify-between`}
       data-testid={`project-group-divider-${projectId || 'none'}`}
     >
       <span className="flex items-center space-x-1.5">

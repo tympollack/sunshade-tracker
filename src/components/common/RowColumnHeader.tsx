@@ -30,7 +30,7 @@ export const RowColumnHeader: React.FC<RowColumnHeaderProps> = ({
   return (
     <div
       data-testid={testId}
-      className={`hidden md:flex items-center justify-between gap-3 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-800/70 bg-slate-950/40 select-none ${className}`}
+      className={`hidden md:flex @max-[860px]/central-stage:hidden items-center justify-between gap-3 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-800/70 bg-slate-950/40 select-none ${className}`}
     >
       <div className={`flex-1 min-w-0 truncate ${leftIndentPaddingClass}`}>
         Work Item
@@ -47,7 +47,13 @@ export const RowColumnHeader: React.FC<RowColumnHeaderProps> = ({
               title={col.label}
               className={`${widthClass} shrink-0 truncate ${alignClass}`}
             >
-              {col.key === 'assignee' ? 'User' : col.key === 'status' ? 'Sts' : col.key === 'points' ? 'Pts' : col.label}
+              {col.key === 'assignee'
+                ? 'User'
+                : col.key === 'status'
+                ? 'Sts'
+                : col.key === 'points' && (!col.label || /^(story\s*)?points$/i.test(col.label.trim()))
+                ? 'Pts'
+                : col.label}
             </div>
           );
         })}

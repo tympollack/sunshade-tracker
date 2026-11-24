@@ -163,6 +163,75 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
   );
 
   const [loadingSprints, setLoadingSprints] = React.useState<Set<string>>(new Set());
+  const [headerHeights, setHeaderHeights] = React.useState<Record<string, number>>({});
+  const [dividerHeight, setDividerHeight] = React.useState<number>(30);
+  const headerObserversRef = React.useRef<Record<string, ResizeObserver>>({});
+  const headerRefCallbacksRef = React.useRef<Record<string, (el: HTMLDivElement | null) => void>>({});
+  const dividerObserverRef = React.useRef<ResizeObserver | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      Object.values(headerObserversRef.current).forEach((obs) => obs.disconnect());
+      headerObserversRef.current = {};
+      dividerObserverRef.current?.disconnect();
+      dividerObserverRef.current = null;
+    };
+  }, []);
+
+  const getHeaderRefCallback = React.useCallback((key: string) => {
+    if (!headerRefCallbacksRef.current[key]) {
+      headerRefCallbacksRef.current[key] = (el: HTMLDivElement | null) => {
+        if (headerObserversRef.current[key]) {
+          headerObserversRef.current[key].disconnect();
+          delete headerObserversRef.current[key];
+        }
+        if (!el) return;
+
+        const updateHeight = () => {
+          const h = Math.ceil(el.offsetHeight || el.getBoundingClientRect().height || 0);
+          if (h > 0) {
+            setHeaderHeights((prev) => (prev[key] === h ? prev : { ...prev, [key]: h }));
+          }
+        };
+        updateHeight();
+
+        if (typeof ResizeObserver !== 'undefined') {
+          const obs = new ResizeObserver(updateHeight);
+          obs.observe(el);
+          headerObserversRef.current[key] = obs;
+        }
+      };
+    }
+    return headerRefCallbacksRef.current[key];
+  }, []);
+
+  const measureDividerRef = React.useCallback((el: HTMLDivElement | null) => {
+    if (dividerObserverRef.current) {
+      dividerObserverRef.current.disconnect();
+      dividerObserverRef.current = null;
+    }
+    if (!el) return;
+
+    const updateHeight = () => {
+      const h = Math.ceil(el.offsetHeight || el.getBoundingClientRect().height || 0);
+      if (h > 0) {
+        setDividerHeight((prev) => (prev === h ? prev : h));
+      }
+    };
+    updateHeight();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const obs = new ResizeObserver(updateHeight);
+      obs.observe(el);
+      dividerObserverRef.current = obs;
+    }
+  }, []);
+
+  const getHeaderStickyTopPx = (key: string): number => {
+    const measured = headerHeights[key];
+    if (measured && measured > 0) return measured;
+    return key === '__none__' ? 62 : 98;
+  };
 
   const handleLazyLoadSprint = async (sprintIdentifier: string) => {
     if (!onLazyLoadSprint || loadingSprints.has(sprintIdentifier)) return;
@@ -232,10 +301,10 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     const isNodeCollapsed = collapsedSprintTreeNodes.has(node.id);
     const isStickyRootEpic = depth === 0 && childCount > 0 && !isNodeCollapsed;
     const stickyHeaderClass = isStickyRootEpic
-      ? showProjectGroups
-        ? 'md:sticky md:top-[88px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
-        : 'md:sticky md:top-[58px] md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
+      ? 'md:sticky md:z-10 md:bg-slate-900/95 md:backdrop-blur-md border-b border-slate-800/80'
       : undefined;
+    const epicStickyTopPx =
+      getHeaderStickyTopPx(currentSprintName) + (showProjectGroups ? dividerHeight : 0);
 
     const branchContent = (
       <>
@@ -271,6 +340,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
           isCollapsed={isNodeCollapsed}
           onToggleCollapse={toggleSprintTreeNode}
           stickyHeaderClass={stickyHeaderClass}
+          stickyStyle={isStickyRootEpic ? { top: `${epicStickyTopPx}px` } : undefined}
         />
         {!isNodeCollapsed &&
           (node.children || []).map((child) =>
@@ -299,7 +369,9 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
     current: WorkItem,
     previous: WorkItem | undefined,
     pool: WorkItem[],
-    scopeLabel = 'in sprint'
+    scopeLabel = 'in sprint',
+    headerKey = '__none__',
+    attachMeasureRef = false
   ): React.ReactNode => {
     if (!showProjectGroups) return null;
     if (previous && previous.project_id === current.project_id) return null;
@@ -318,7 +390,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
         points={points}
         unitLabel={getWorkMetricConfig(settings).unit_label || 'pts'}
         scopeLabel={scopeLabel}
-        topClass="top-[58px]"
+        topOffsetPx={getHeaderStickyTopPx(headerKey)}
+        innerRef={attachMeasureRef ? measureDividerRef : undefined}
       />
     );
   };
@@ -569,6 +642,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
             >
               {/* Sprint Header */}
               <div
+                ref={getHeaderRefCallback(sprintName)}
+                data-testid={`sprint-swimlane-header-${sprintName}`}
                 className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 has-[[data-testid=sprint-progress-breakdown]]:!z-30 ${
                   activeSprintPopover === sprintName ? '!z-30' : 'z-20'
                 } ${isCollapsed ? 'relative rounded-xl border-b-0' : 'sticky top-0 rounded-t-xl'}`}
@@ -758,7 +833,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       );
                       return sprintTreeRoots.map((node, idx, arr) => (
                         <React.Fragment key={node.id}>
-                          {renderProjectDivider(node, arr[idx - 1], sprintItems)}
+                          {renderProjectDivider(node, arr[idx - 1], sprintItems, 'in sprint', sprintName, idx === 0)}
                           {renderSprintTreeBranch(node, visibleSprintPool, sprintName)}
                         </React.Fragment>
                       ));
@@ -769,7 +844,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <React.Fragment key={item.id}>
-                        {renderProjectDivider(item, sprintItems[itemIdx - 1], sprintItems)}
+                        {renderProjectDivider(item, sprintItems[itemIdx - 1], sprintItems, 'in sprint', sprintName, itemIdx === 0)}
                         <SprintItemRow
                           item={item}
                           isSelected={selectedItemIds.has(item.id)}
@@ -857,6 +932,8 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
               data-testid="backlog-swimlane"
             >
               <div
+                ref={getHeaderRefCallback('__none__')}
+                data-testid="backlog-swimlane-header"
                 className={`p-4 bg-slate-950/95 backdrop-blur-md border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 ${
                   isBacklogCollapsed ? 'rounded-xl border-b-0' : 'sticky top-0 z-20 rounded-t-xl'
                 }`}
@@ -944,7 +1021,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                       );
                       return backlogTreeRoots.map((node, idx, arr) => (
                         <React.Fragment key={node.id}>
-                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog')}
+                          {renderProjectDivider(node, arr[idx - 1], backlogItems, 'in backlog', '__none__', idx === 0)}
                           {renderSprintTreeBranch(node, visibleBacklogPool, '__none__')}
                         </React.Fragment>
                       ));
@@ -955,7 +1032,7 @@ export function SprintViewContainer(props: SprintViewContainerProps) {
                         isItemImmutableDueToCompletedSprint(item, projectSettings, availableSprintDefs) || isReadOnly;
                       return (
                         <React.Fragment key={item.id}>
-                        {renderProjectDivider(item, backlogItems[itemIdx - 1], backlogItems, 'in backlog')}
+                        {renderProjectDivider(item, backlogItems[itemIdx - 1], backlogItems, 'in backlog', '__none__', itemIdx === 0)}
                         <SprintItemRow
                           item={item}
                           isSelected={selectedItemIds.has(item.id)}
