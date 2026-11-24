@@ -4,8 +4,11 @@ import { render, screen } from '@testing-library/react';
 import { TreeNode } from '@/components/TreeNode';
 import { SprintItemRow } from '@/components/SprintItemRow';
 import { NavTreeNode } from '@/components/navigation/NavTreeNode';
+import { SprintViewContainer } from '@/components/views/SprintViewContainer';
+import { RowColumnHeader } from '@/components/common/RowColumnHeader';
+import { getStaticRowColumns } from '@/lib/row-columns';
 import { buildTree } from '@/lib/tree';
-import { HierarchyLevel, StatusDefinition, WorkItem } from '@/types/tracker';
+import { HierarchyLevel, ProjectSettings, StatusDefinition, WorkItem } from '@/types/tracker';
 import { PivotTreeNode } from '@/hooks/usePivotTree';
 
 const mockHierarchy: HierarchyLevel[] = [
@@ -25,9 +28,9 @@ function makeItem(overrides: Partial<WorkItem> = {}): WorkItem {
     id: 'item-hover-1',
     tenant_id: 't-1',
     project_id: 'p-1',
-    title: 'Hover Metadata Declutter Target',
+    title: 'Always Visible Row Metadata Target',
     description: 'Detailed item notes',
-    external_ref_id: 'TASK-HOVER-1',
+    external_ref_id: 'TASK-VIS-1',
     item_type: 'story',
     status: 'in_progress',
     order_index: 1000,
@@ -44,8 +47,8 @@ function makeItem(overrides: Partial<WorkItem> = {}): WorkItem {
   };
 }
 
-describe('TASK-TRK-HOVER-ONLY-ROW-METADATA', () => {
-  it('defers secondary metadata (ref_id, desc toggle, unassigned assignee, consolidated priority/sprint, actions) to hover in TreeNode', () => {
+describe('Always-visible row metadata and single-screen row fit', () => {
+  it('keeps secondary metadata and empty states visible at rest in TreeNode', () => {
     const items = [
       makeItem({ id: 'epic-1', item_type: 'epic', title: 'Parent Epic' }),
       makeItem({ id: 'task-1', item_type: 'task', parent_id: 'epic-1', title: 'Child Task' }),
@@ -64,33 +67,24 @@ describe('TASK-TRK-HOVER-ONLY-ROW-METADATA', () => {
       />
     );
 
-    // Ref ID deferred to hover
     const refContainer = screen.getByTestId('tree-node-ref-id-epic-1');
-    expect(refContainer).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(refContainer).not.toHaveClass('md:opacity-0');
 
-    // Description chevron deferred to hover when not expanded
     const descBtn = screen.getByTestId('tree-expand-desc-btn-epic-1');
-    expect(descBtn).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(descBtn).not.toHaveClass('md:opacity-0');
 
-    // Consolidated hover metadata chip surfaces unrendered priority & sprint on hover
-    const hoverChip = screen.getByTestId('tree-hover-meta-summary-epic-1');
-    expect(hoverChip).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
-    expect(hoverChip).toHaveTextContent('High · Sprint 2026-Q4');
+    expect(screen.queryByTestId('tree-hover-meta-summary-epic-1')).toBeNull();
 
-    // Lock badge consolidates text to hover on desktop
     const lockBadges = screen.getAllByTestId('immutable-lock-badge');
     const lockText = lockBadges[0].querySelector('span');
-    expect(lockText).toHaveClass('md:hidden', 'md:group-hover:inline');
+    expect(lockText).not.toHaveClass('md:hidden');
 
-    // Expanded parent defers (n) subtask count to hover
     const expandedSubtasks = screen.getByTestId('tree-node-subtasks-badge');
-    expect(expandedSubtasks).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(expandedSubtasks).not.toHaveClass('md:opacity-0');
 
-    // Unassigned assignee deferred to hover
     const assigneeCols = screen.getAllByTestId('col-assignee');
-    expect(assigneeCols[0]).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(assigneeCols[0]).not.toHaveClass('md:opacity-0');
 
-    // Collapsed parent keeps (n) softly visible
     rerender(
       <TreeNode
         item={tree[0]}
@@ -101,79 +95,78 @@ describe('TASK-TRK-HOVER-ONLY-ROW-METADATA', () => {
       />
     );
     const collapsedSubtasks = screen.getByTestId('tree-node-subtasks-badge');
-    expect(collapsedSubtasks).toHaveClass('opacity-75', 'group-hover:opacity-100');
     expect(collapsedSubtasks).not.toHaveClass('md:opacity-0');
   });
 
-  it('keeps assigned assignee avatar visible at rest in TreeNode and SprintItemRow', () => {
-    const assignedItem = makeItem({ id: 'assigned-1', assignee: 'Tymz' });
-    const tree = buildTree([assignedItem]);
+  it('keeps row metadata, empty indicators, clamped widths, and overflow guards visible at rest in SprintItemRow', () => {
+    const populatedItem = makeItem({ id: 'sprint-row-1', assignee: null });
+    const emptyItem = makeItem({
+      id: 'sprint-row-empty',
+      external_ref_id: 'TASK-VERY-LONG-REF-IDENTIFIER-12345',
+      assignee: null,
+      metadata: {},
+    });
 
     render(
-      <TreeNode
-        item={tree[0]}
-        statuses={mockStatuses}
-        hierarchy={mockHierarchy}
-      />
+      <>
+        <SprintItemRow
+          item={populatedItem}
+          isSelected={false}
+          onToggleSelect={vi.fn()}
+          isImmutable={true}
+          onEditItem={vi.fn()}
+          getItemHierarchy={() => mockHierarchy}
+          getItemStatuses={() => mockStatuses}
+          availableSprints={['Sprint 2026-Q4']}
+          currentSprintName="Sprint 2026-Q4"
+          isTreeMode={true}
+          childCount={3}
+          rollupPoints={12}
+        />
+        <SprintItemRow
+          item={emptyItem}
+          isSelected={false}
+          onToggleSelect={vi.fn()}
+          isImmutable={false}
+          onEditItem={vi.fn()}
+          getItemHierarchy={() => mockHierarchy}
+          getItemStatuses={() => mockStatuses}
+          availableSprints={['Sprint 2026-Q4']}
+        />
+      </>
     );
 
-    expect(screen.getByTestId('col-assignee')).not.toHaveClass('md:opacity-0');
+    const refEl = screen.getByTestId('copyable-ref-id-TASK-VIS-1');
+    expect(refEl).not.toHaveClass('md:opacity-0');
+    expect(refEl).toHaveClass('sm:max-w-[110px]');
 
-    render(
-      <SprintItemRow
-        item={assignedItem}
-        isSelected={false}
-        onToggleSelect={vi.fn()}
-        isImmutable={false}
-        onEditItem={vi.fn()}
-        getItemHierarchy={() => mockHierarchy}
-        getItemStatuses={() => mockStatuses}
-      />
-    );
-
-    expect(screen.getByTestId('sprint-col-assignee')).not.toHaveClass('md:opacity-0');
-  });
-
-  it('defers secondary metadata (ref_id, subtasks pill, sprint select, github cluster, edit action, unassigned assignee) to hover in SprintItemRow', () => {
-    const item = makeItem({ id: 'sprint-row-1', assignee: null });
-
-    render(
-      <SprintItemRow
-        item={item}
-        isSelected={false}
-        onToggleSelect={vi.fn()}
-        isImmutable={true}
-        onEditItem={vi.fn()}
-        getItemHierarchy={() => mockHierarchy}
-        getItemStatuses={() => mockStatuses}
-        availableSprints={['Sprint 2026-Q4']}
-        currentSprintName="Sprint 2026-Q4"
-        isTreeMode={true}
-        childCount={3}
-        rollupPoints={12}
-      />
-    );
-
-    const refEl = screen.getByTestId('copyable-ref-id-TASK-HOVER-1');
-    expect(refEl).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    const longRefEl = screen.getByTestId('copyable-ref-id-TASK-VERY-LONG-REF-IDENTIFIER-12345');
+    expect(longRefEl).toHaveClass('sm:max-w-[110px]', 'truncate');
 
     const subtasksPill = screen.getByTestId('tree-child-count-badge');
-    expect(subtasksPill).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(subtasksPill).not.toHaveClass('md:opacity-0');
 
     const sprintCell = screen.getByTestId('row-cell-sprint-sprint-row-1');
-    expect(sprintCell).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(sprintCell).not.toHaveClass('md:opacity-0');
+    expect(sprintCell).toHaveClass('overflow-hidden');
 
     const githubCell = screen.getByTestId('row-cell-github-sprint-row-1');
-    expect(githubCell).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(githubCell).not.toHaveClass('md:opacity-0');
+    expect(githubCell).toHaveClass('w-36', 'overflow-hidden');
 
-    const assigneeCell = screen.getByTestId('sprint-col-assignee');
-    expect(assigneeCell).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    // Empty github cell stays visible so missing fields show an empty indicator at rest
+    const emptyGithubCell = screen.getByTestId('row-cell-github-sprint-row-empty');
+    expect(emptyGithubCell).not.toHaveClass('md:opacity-0');
+    expect(emptyGithubCell).toHaveTextContent('—');
+
+    const assigneeCells = screen.getAllByTestId('sprint-col-assignee');
+    expect(assigneeCells[0]).not.toHaveClass('md:opacity-0');
 
     const editBtn = screen.getByTestId('edit-item-desktop-sprint-row-1');
-    expect(editBtn).toHaveClass('md:opacity-0', 'md:group-hover:opacity-100');
+    expect(editBtn).not.toHaveClass('md:opacity-0');
   });
 
-  it('defers item-level rollup points and sprint settings trigger to row hover in NavTreeNode', () => {
+  it('keeps item-level rollup points and sprint settings visible at rest in NavTreeNode', () => {
     const sprintNode: PivotTreeNode = {
       id: 'sprint:S1',
       title: 'Sprint 1',
@@ -207,14 +200,88 @@ describe('TASK-TRK-HOVER-ONLY-ROW-METADATA', () => {
       />
     );
 
-    // Sprint settings trigger deferred to row hover on hover-capable devices, visible on touch
     const settingsBtn = screen.getByLabelText('Sprint Settings');
-    expect(settingsBtn).toHaveClass('opacity-0', '[@media(hover:none)]:opacity-70', 'group-hover/row:opacity-100');
+    expect(settingsBtn).not.toHaveClass('opacity-0');
 
-    // Sprint-level rollup points stay visible
     expect(screen.getByText('10 pts')).not.toHaveClass('opacity-0');
+    expect(screen.getByText('5 pts')).not.toHaveClass('opacity-0');
+  });
 
-    // Item-level rollup points deferred to row hover
-    expect(screen.getByText('5 pts')).toHaveClass('opacity-0', 'group-hover/row:opacity-100');
+  it('fits SprintViewContainer rows within a single screen width and uses compact column headers', () => {
+    const item = makeItem({
+      id: 'sprint-fit-1',
+      title: 'Extremely Long Autonomous Execution Control Plane Title That Should Truncate Instead Of Overflowing',
+    });
+
+    const projectSettings: ProjectSettings = {
+      schema_version: '1.0',
+      hierarchy: mockHierarchy,
+      statuses: mockStatuses,
+      custom_fields: [],
+      sprints: [{ name: 'Sprint 2026-Q4', start_date: '2026-10-01', end_date: '2026-12-31' }],
+    };
+
+    const { container } = render(
+      <SprintViewContainer
+        items={[item]}
+        projectSettings={projectSettings}
+        isReadOnly={false}
+        pointMode="macro"
+        handlePointModeChange={vi.fn()}
+        sprintViewMode="flat"
+        setSprintViewMode={vi.fn()}
+        handleToggleCollapseAllSprints={vi.fn()}
+        collapsedSprints={new Set()}
+        toggleSprintCollapse={vi.fn()}
+        handleToggleHideCompletedSprints={vi.fn()}
+        hideCompletedSprints={false}
+        hiddenCompletedSprintsCount={0}
+        statusFilterOptions={[]}
+        effectiveSprintStatuses={[]}
+        setSprintSelectedStatuses={vi.fn()}
+        levelFilterOptions={[]}
+        effectiveSprintLevels={[]}
+        setSprintSelectedLevels={vi.fn()}
+        sprintSortBy="manual"
+        setSprintSortBy={vi.fn()}
+        setIsManageSprintsOpen={vi.fn()}
+        visibleSprints={['Sprint 2026-Q4']}
+        availableSprints={['Sprint 2026-Q4']}
+        filterSprintItems={(list) => list}
+        sprintComparator={() => 0}
+        selectedItemIds={new Set()}
+        handleToggleSelectItem={vi.fn()}
+        handleSelectAllInPool={vi.fn()}
+        activeSprintPopover={null}
+        setActiveSprintPopover={vi.fn()}
+        setEditingItem={vi.fn()}
+        getItemHierarchy={() => mockHierarchy}
+        getItemStatuses={() => mockStatuses}
+        deviations={[]}
+        setFocusedDeviationId={vi.fn()}
+        setIsReconciliationModalOpen={vi.fn()}
+        isAllProjects={false}
+        allProjects={[]}
+        handleUpdateStatus={vi.fn()}
+        handleUpdateItemSprint={vi.fn()}
+      />
+    );
+
+    const sprintBodyScroll = container.querySelector('[data-testid="sprint-body-scroll-Sprint 2026-Q4"]');
+    expect(sprintBodyScroll).toHaveClass('md:overflow-x-clip');
+    expect(sprintBodyScroll).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
+    expect(sprintBodyScroll?.firstElementChild).toHaveClass('w-full', 'min-w-0');
+    expect(sprintBodyScroll?.firstElementChild).not.toHaveClass('md:w-max');
+
+    const backlogBodyScroll = container.querySelector('[data-testid="backlog-body-scroll"]');
+    expect(backlogBodyScroll).toHaveClass('md:overflow-x-clip');
+    expect(backlogBodyScroll).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
+    expect(backlogBodyScroll?.firstElementChild).toHaveClass('w-full', 'min-w-0');
+    expect(backlogBodyScroll?.firstElementChild).not.toHaveClass('md:w-max');
+
+    render(<RowColumnHeader columns={getStaticRowColumns(projectSettings)} />);
+    expect(screen.getAllByText('Pts').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('User').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Sts').length).toBeGreaterThan(0);
   });
 });

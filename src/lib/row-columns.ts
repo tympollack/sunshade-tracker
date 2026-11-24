@@ -128,6 +128,7 @@ export function inferColumnType(key: string): CustomFieldType {
 export function getColumnTrackWidthClass(width: RowColumnWidth = 'sm', key?: string): string {
   if (key === 'points') return 'w-28';
   if (key === 'assignee' || key === 'status') return 'w-9';
+  if (key === 'github') return 'w-36';
   switch (width) {
     case 'xs':
       return 'w-16';
@@ -145,6 +146,7 @@ export function getColumnTrackWidthClass(width: RowColumnWidth = 'sm', key?: str
 export function getResponsiveMdTrackWidthClass(width: RowColumnWidth = 'sm', key?: string): string {
   if (key === 'points') return 'md:w-28';
   if (key === 'assignee' || key === 'status') return 'md:w-9';
+  if (key === 'github') return 'md:w-36';
   switch (width) {
     case 'xs':
       return 'md:w-16';

@@ -134,11 +134,10 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     expect(betaHeader).toHaveClass('sticky', 'top-0');
     expect(betaHeader).toHaveTextContent('Project Beta');
 
-    // Scroll container supports both horizontal & vertical touch/wheel scroll so sticky headers work
+    // Main canvas handles vertical scrolling without a nested max-h vertical box; md:overflow-x-clip keeps sticky headers un-trapped
     const scrollContainer = screen.getByTestId('tree-scroll-container');
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'overflow-y-auto', 'touch-pan-x', 'touch-pan-y');
-    scrollContainer.scrollTop = 250;
-    fireEvent.scroll(scrollContainer);
+    expect(scrollContainer).toHaveClass('overflow-x-auto', 'touch-pan-x', 'touch-pan-y', 'md:overflow-x-clip');
+    expect(scrollContainer).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
 
     // Expanded top-level epics inside project groups have sticky header offset below project header
     const alphaGroup = screen.getByTestId('tree-project-group-proj-a');
@@ -253,14 +252,13 @@ describe('TASK-TRK-STICKY-TREE-GROUP-HEADERS', () => {
     );
 
     const sprintBodyScroll = screen.getByTestId('sprint-body-scroll-Sprint 2026-Q4');
-    expect(sprintBodyScroll).toHaveClass('overflow-x-auto', 'overflow-y-auto');
-    sprintBodyScroll.scrollTop = 180;
-    fireEvent.scroll(sprintBodyScroll);
+    expect(sprintBodyScroll).toHaveClass('overflow-x-auto', 'md:overflow-x-clip');
+    expect(sprintBodyScroll).not.toHaveClass('max-h-[75dvh]', 'overflow-y-auto');
 
     const branch = screen.getByTestId('sprint-tree-branch-epic-s1');
     const rows = within(branch).getAllByTestId('sprint-item-row');
     expect(rows[0]).toHaveAttribute('data-sticky-header', 'true');
-    expect(rows[0]).toHaveClass('md:sticky', 'md:top-0');
+    expect(rows[0]).toHaveClass('md:sticky', 'md:top-[58px]');
     expect(rows[1]).not.toHaveAttribute('data-sticky-header', 'true');
   });
 
