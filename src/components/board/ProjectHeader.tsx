@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Eye,
   Radio,
+  PanelLeft,
 } from 'lucide-react';
 import { SunShadeLogo } from '@/components/SunShadeLogo';
 import { NavToolsDropdown } from '@/components/NavToolsDropdown';
@@ -50,6 +51,7 @@ export interface ProjectHeaderProps {
   currentUser: { email?: string; full_name?: string } | null;
   tenantInfo: WorkspaceItem | null;
   onArchiveProject: () => void;
+  onToggleMobileNav?: () => void;
 }
 
 export function ProjectHeader(props: ProjectHeaderProps) {
@@ -73,6 +75,7 @@ export function ProjectHeader(props: ProjectHeaderProps) {
     currentUser,
     tenantInfo,
     onArchiveProject,
+    onToggleMobileNav,
   } = props;
 
   const handleTabChange = onTabChange;
@@ -80,6 +83,17 @@ export function ProjectHeader(props: ProjectHeaderProps) {
   return (
     <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
       <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink-0">
+        {onToggleMobileNav && (
+          <button
+            type="button"
+            onClick={onToggleMobileNav}
+            className="md:hidden inline-flex items-center justify-center min-w-[36px] min-h-[36px] w-9 h-9 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            aria-label="Open project navigation"
+            data-testid="header-mobile-nav-toggle"
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
+        )}
         <SunShadeLogo variant="horizontal" size="xs" href="/" className="mr-0.5 sm:mr-1 shrink-0" hideTextOnMobile hideTextBelowLg />
       </div>
 

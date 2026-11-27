@@ -105,7 +105,13 @@ interface ProjectInfo {
 
 export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
   const router = useRouter();
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const { tenantSlug, projectSlug, searchParams = {} } = props;
+
+  // Auto-close the mobile LHN drawer on route / project change
+  useEffect(() => {
+    setIsMobileNavOpen(false);
+  }, [tenantSlug, projectSlug]);
   const requestedSprint = typeof searchParams?.sprint === 'string' ? searchParams.sprint : null;
   const { activeTab, handleTabChange, setActiveTab } = useTabUrlSync({
     initialTab: typeof searchParams?.tab === 'string' ? searchParams.tab : null,
@@ -3809,6 +3815,8 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
         isKioskMode={isKioskMode && activeTab === 'live'}
         isLeftCollapsed={isLhnCollapsed}
         onToggleLeftCollapse={() => setIsLhnCollapsed((prev) => !prev)}
+        isMobileLeftOpen={isMobileNavOpen}
+        onToggleMobileLeft={() => setIsMobileNavOpen((prev) => !prev)}
         isRightOpen={Boolean((isDesktopOrTablet && selectedDrawerItem) || selectedSprintForEdit)}
         onCloseRight={() => {
           closeDrawer();
@@ -3841,6 +3849,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             currentUser={currentUser}
             tenantInfo={tenantInfo}
             onArchiveProject={() => setIsArchiveModalOpen(true)}
+            onToggleMobileNav={() => setIsMobileNavOpen((prev) => !prev)}
           />
         }
         leftPane={
@@ -3857,6 +3866,7 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
             onToggleCollapse={() => setIsLhnCollapsed((prev) => !prev)}
             projectSettings={projectSettings}
             onScopeFilter={(scope) => {
+              setIsMobileNavOpen(false);
               if (scope.sprintName !== undefined) {
                 if (!scope.sprintName) {
                   setSelectedSprint('all');
@@ -3878,8 +3888,12 @@ export function ProjectWorkspaceView(props: ProjectWorkspaceViewProps) {
                 if (found) selectDrawerItem(found);
               }
             }}
-            onSelectItem={(item) => selectDrawerItem(item)}
+            onSelectItem={(item) => {
+              setIsMobileNavOpen(false);
+              selectDrawerItem(item);
+            }}
             onSelectSprint={(sprintName) => {
+              setIsMobileNavOpen(false);
               if (
                 !sprintName ||
                 sprintName === 'No Sprint' ||
