@@ -1,0 +1,38 @@
+name: UI Audit
+
+on:
+  pull_request:
+    branches: [staging, main]
+    paths:
+      - 'src/**'
+      - 'app/**'
+      - 'components/**'
+
+env:
+  # Placeholder public config: the audit only renders public pages, so no real
+  # Supabase project is needed. BYPASS_AUTH keeps /login local instead of redirecting to Hub.
+  NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  NEXT_PUBLIC_BYPASS_AUTH: 'true'
+
+jobs:
+  dod-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start app and run dod:ui
+        run: |
+          npx next start -p 3000 &
+          npx --yes wait-on http://localhost:3000/login --timeout 60000
+          npm run dod:ui
+        env:
+          UI_AUDIT_BASE_URL: http://localhost:3000
