@@ -1,159 +1,85 @@
-# ⛱️ SunShade Tracker (`sunshade-tracker`)
+# SunShade Tracker
 
-> **Multi-tenant, schemaless Project Tracker utility service and headless AI ingest pipeline for the SunShade Digital Ecosystem.**
+SunShade Tracker is a multi-tenant project tracking service for the SunShade ecosystem.
 
----
+Teams use it to plan work, manage dynamic project workflows, reorder priorities, track sprints, and review operational metrics.
 
-## 🌟 Architectural Overview
+Agents and CI systems use it to ingest work items, read execution context, and update implementation status without direct database access.
 
-SunShade Tracker is designed to provide project management, polymorphic work item tracking, dynamic hierarchy validation, and headless programmatic ingestion for automated AI pipelines (such as Gemini Spark) across all SunShade applications (`hub`, `cozy`, `patchwork`, etc.).
+## Canonical documentation
 
-### Key Design Tenets
-- **Schemaless & Polymorphic (No Rigid DB ENUMs)**: All item types, column statuses, hierarchy levels, and metadata keys are stored as flexible `text` and validated dynamically against JSON schemas defined in `tracker.projects.settings`.
-- **Headless AI Ingestion (`POST /api/v1/items/ingest`)**: Autonomous agents can programmatically create, nest, and update work items using `external_ref_id` and `parent_ref_id` without direct database access.
-- **Tenant Isolation & Security**: Workspaces and projects are isolated using multi-tenant schemas, API keys (`tk_live_...`), and PostgreSQL Row Level Security (RLS).
-- **Fractional Indexing**: Midpoint floating-point calculations allow items to be reordered without cascading table locks.
+The Fumadocs-ready source for the ecosystem documentation portal lives in `docs/`.
 
----
+| Document | Purpose |
+| --- | --- |
+| [docs/index.mdx](docs/index.mdx) | Plain-language overview, hostnames, capabilities, and ecosystem relationships. |
+| [docs/architecture.mdx](docs/architecture.mdx) | System boundaries, schema ownership, authentication, API contracts, and off-limits rules. |
+| [docs/setup.mdx](docs/setup.mdx) | Local setup, zero-secret smoke testing, environment variables, and verification commands. |
+| [AGENTS.md](AGENTS.md) | Contributor and AI-agent rules for this repository. |
 
-## 🏗️ Repository Layout
+The running application also exposes product help at `/docs`.
 
-```
-sunshade-tracker/
-├── src/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── health/route.ts                # Serverless health endpoint
-│   │   │   └── v1/
-│   │   │       ├── items/
-│   │   │       │   ├── ingest/route.ts        # Headless ingest endpoint (Gemini Spark)
-│   │   │       │   └── route.ts               # Work item CRUD, board & tree views
-│   │   │       └── projects/
-│   │   │           ├── route.ts               # Projects list & creation
-│   │   │           └── [projectId]/
-│   │   │               ├── route.ts           # Project get/update
-│   │   │               └── settings/route.ts  # Export/Import JSON Schema
-│   │   ├── (auth)/login/page.tsx              # Workspace login & API key entry
-│   │   ├── (dashboard)/[tenantSlug]/[projectSlug]/page.tsx # Interactive Tracker UI
-│   │   ├── layout.tsx
-│   │   ├── page.tsx                           # Landing page & API spec
-│   │   └── globals.css
-│   ├── lib/
-│   │   ├── db.ts                              # Supabase Admin / Service Role client
-│   │   ├── auth-guard.ts                      # API Key / Tenant validator
-│   │   └── fractional-index.ts                # Midpoint calculation math
-│   └── types/
-│       └── tracker.ts                         # Schemaless JSON and DB types
-├── .env.example
-├── tsconfig.json
-├── package.json
-└── README.md
-```
+That in-app page is separate from the portable `docs/` directory used by the documentation portal.
 
----
+## Hostnames
 
-## 🤖 Gemini Spark Ingestion Specification
+| Environment | Tracker URL | Hub URL |
+| --- | --- | --- |
+| Production | `https://track.sunshade.icu` | `https://hub.sunshade.icu` |
+| Staging | `https://track-stag.sunshade.icu` | `https://hub-stag.sunshade.icu` |
+| Local development | `http://localhost:3000` | Local bypass or staging Hub |
 
-External LLMs and autonomous agents ingest tasks without querying the database directly.
+## Quickstart
 
-### Request Endpoint
-`POST https://track.sunshade.icu/api/v1/items/ingest` (or `http://localhost:3000/api/v1/items/ingest`)
+Use Node.js 22 and npm.
 
-### Headers
-```http
-Authorization: Bearer tk_live_sunshade_master_key
-Content-Type: application/json
-```
-
-### Ingestion Payload Schema
-```json
-{
-  "project_slug": "portfolio",
-  "items": [
-    {
-      "external_ref_id": "SPEC-HUB-11",
-      "title": "Deploy Sovereign Event Bus to PatchWork",
-      "description": "Auto-generate maintenance tasks from citizen reports.",
-      "item_type": "story",
-      "status": "in_progress",
-      "assignee": "tympollack",
-      "metadata": {
-        "complexity": 3,
-        "priority": "High",
-        "origin_agent": "Gemini Spark"
-      }
-    },
-    {
-      "external_ref_id": "TASK-HUB-11-A",
-      "parent_ref_id": "SPEC-HUB-11",
-      "title": "Implement POST /api/events Webhook Route",
-      "item_type": "task",
-      "status": "planned",
-      "metadata": {
-        "complexity": 1
-      }
-    }
-  ]
-}
-```
-
-### Ingest Behavior
-1. **Dynamic Defaults**: If `item_type` or `status` are omitted, the endpoint defaults to the project's default type (`task`) and first status (`not_started`).
-2. **Parent Resolution**: `parent_ref_id` is automatically resolved to the parent work item's UUID, even if created in the exact same batch.
-3. **Upsert Semantics**: If an item provides an `external_ref_id`, subsequent calls will update the existing work item instead of creating duplicates (`ON CONFLICT (project_id, external_ref_id)`).
-4. **Order Indexing**: New items automatically receive sequential fractional order indexes (`last_order + 1000.0`).
-
----
-
-## 🗄️ Database Migration (`sunshade-db-platform`)
-
-The schema migration is located in `sunshade-db-platform/supabase/migrations/20260904000002_create_tracker_multitenant_schema.sql`.
-
-### Core Tables
-1. **`tracker.tenants`**: Multi-tenant workspaces with generated API keys (`tk_live_...`).
-2. **`tracker.projects`**: Projects configured with dynamic `settings` JSONB schema.
-3. **`tracker.work_items`**: Polymorphic items referencing `project_id`, optional `parent_id`, and `external_ref_id`.
-
----
-
-## 🚀 Quickstart & Local Development
-
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env.local`:
-```bash
-cp .env.example .env.local
-```
-
-Populate:
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-```
-
-### 3. Run Development Server
-```bash
+```powershell
+npm ci
+Copy-Item .env.example .env.local -Force
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the landing page and dashboard.
+Open `http://localhost:3000`.
 
----
+The example environment uses placeholder Supabase values for zero-secret public-page smoke tests.
 
-## 📡 REST API Reference
+Replace those placeholders with real Supabase credentials before using sign-in, workspace mutations, or live API data.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/health` | Serverless health check |
-| `POST` | `/api/v1/items/ingest` | Headless AI ingest & upsert pipeline |
-| `GET` | `/api/v1/items` | List items (`?format=flat\|tree\|board`) |
-| `POST` | `/api/v1/items` | Create single work item |
-| `PATCH` | `/api/v1/items` | Update or reorder item |
-| `GET` | `/api/v1/projects` | List tenant projects |
-| `POST` | `/api/v1/projects` | Create new project |
-| `GET` | `/api/v1/projects/:projectId/settings` | Export project JSON Schema |
-| `PUT` | `/api/v1/projects/:projectId/settings` | Update dynamic schema rules |
+See [docs/setup.mdx](docs/setup.mdx) for the full environment variable table and zero-secret smoke test.
+
+## Verification
+
+Run these commands before review:
+
+```powershell
+npx tsc --noEmit
+npm test
+npm run build
+```
+
+Target pull requests at `staging` unless a maintainer explicitly approves another target.
+
+## API entry points
+
+| Methods | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/health` | Service health check. |
+| POST | `/api/v1/items/ingest` | Batch ingest and upsert work items from headless agents. |
+| GET, POST, PATCH, DELETE | `/api/v1/items` | Work item reads and mutations. |
+| GET | `/api/v1/items/[id]/context` | Agent execution context in JSON or Markdown. |
+| GET, POST, DELETE | `/api/v1/projects` | Project list, creation, and soft deletion. |
+| GET, PUT | `/api/v1/projects/[projectId]/settings` | Dynamic project schema settings. |
+| GET, POST | `/api/v1/sprints` | Relational sprint list and creation. |
+| GET | `/api/v1/telemetry/live` | Live in-flight telemetry with delta polling. |
+| POST | `/api/v1/webhooks/ecosystem` | Signed PatchWork and Project Valerie event ingestion. |
+
+The complete verified API surface is documented in [docs/architecture.mdx](docs/architecture.mdx).
+
+## Repository boundaries
+
+- Database migrations belong in `sunshade-db-platform`, not this repository.
+- The application queries the Supabase `tracker` schema for core data.
+- Dynamic statuses, hierarchy levels, fields, automations, and templates live in `tracker.projects.settings`.
+- Server-only secrets must never enter browser code or git.
+- Workspace viewers and public demo guests are read-only.
+- Do not use fake runtime data in the application, tests, documentation, or examples.
