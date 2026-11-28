@@ -10,6 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "lint:filesize": "node scripts/lint-filesize.mjs",
+    "dod:ui": "node scripts/dod-ui-check.mjs",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:dom": "vitest run --project dom",
@@ -47,6 +48,8 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.1",
+    "@playwright/test": "^1.65.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",

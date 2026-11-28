@@ -115,7 +115,7 @@ export const SprintGuardrailModal: React.FC<SprintGuardrailModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
-        className="w-full max-w-xl rounded-2xl bg-[#090d16] border border-red-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-xl rounded-2xl bg-[#090d16] border border-red-500/30 shadow-2xl overflow-hidden flex flex-col max-h-[85dvh]"
         role="dialog"
         aria-modal="true"
       >

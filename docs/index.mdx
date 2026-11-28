@@ -1,8 +1,57 @@
 ---
-title: Overview
-description: Plain-language product brief and system boundaries for sunshade-tracker.
+title: SunShade Tracker overview
+description: Plain-language overview of SunShade Tracker, its hostnames, capabilities, and ecosystem relationships.
 ---
 
-# sunshade-tracker
+# SunShade Tracker
 
-Document what this service does in one breath, its schema ownership in `sunshade-db-platform`, and local sandbox setup.
+SunShade Tracker is a multi-tenant project tracking service for the SunShade ecosystem.
+
+Teams use it to plan work, reorder priorities, manage sprints, review flow metrics, and track value statements.
+
+Agents and CI systems use it to create work items, update statuses, and read task context without direct database access.
+
+## Canonical hostnames
+
+| Environment | Tracker URL | Hub URL |
+| --- | --- | --- |
+| Production | `https://track.sunshade.icu` | `https://hub.sunshade.icu` |
+| Staging | `https://track-stag.sunshade.icu` | `https://hub-stag.sunshade.icu` |
+| Local development | `http://localhost:3000` | Derived by the local auth bypass or staging Hub configuration |
+
+## Core capabilities
+
+- Workspaces isolate projects, members, roles, and API keys.
+- Projects define their own statuses, hierarchy levels, custom fields, templates, automations, and sprint rules.
+- Work items support nested parents, fractional ordering, soft deletion, bulk operations, comments, audit logs, and external reference IDs.
+- The ingest API accepts batch work from headless agents and upserts items by external reference ID.
+- Sprint tools support relational sprints, burndown snapshots, scope diffs, cumulative flow data, velocity analytics, and calibration reports.
+- The live telemetry endpoint supplies delta polling for the in-flight control deck.
+- Webhooks accept ecosystem incidents, CI failures, deployment events, observability alerts, and GitHub pull request verification events.
+- The MCP server and CLI let agents fetch assignments, read task specifications, create items, and update execution status.
+
+## Ecosystem relationships
+
+| System | Direction | Verified relationship |
+| --- | --- | --- |
+| SunShade Hub | Upstream dependency | Hub authenticates users and sends them back to `/auth/callback`. |
+| Supabase | Upstream dependency | Supabase provides Auth, Postgres, PostgREST, and the `tracker` schema. |
+| `sunshade-db-platform` | Schema authority | It owns database migrations. This repository does not own migration files. |
+| `@digitalcanopy/ui` | Upstream package | Tracker uses its `Modal` and `Skeleton` primitives in the interface. |
+| `@digitalcanopy/supabase` | Upstream package | Tracker declares and transpiles it. Source files currently use `@supabase/ssr` and `@supabase/supabase-js` directly. |
+| Gemini Spark and other headless agents | Downstream consumer | Agents call the REST ingest and item APIs with workspace API keys. |
+| MCP clients | Downstream consumer | Clients use `fetch_assigned_tasks`, `get_task_spec`, `create_work_item`, and `update_task_status`. |
+| `sunshade-cli` | Downstream consumer | The CLI uses Tracker REST APIs for runner workflows. |
+| PatchWork and Project Valerie | Upstream event producers | They send signed ecosystem events to `/api/v1/webhooks/ecosystem`. |
+| GitHub, Vercel, and Cloudflare Pages | Upstream event producers | They send deployment or pull request events to deployment and bounty webhooks. |
+| Axiom, Better Stack, and Sentry | Upstream event producers | They send observability alerts to `/api/v1/webhooks/observability`. |
+| CI runners | Upstream event producers | They send build and test failure events to `/api/v1/webhooks/ci-runner`. |
+| Resend | External delivery dependency | Tracker calls the Resend API for optional notification email delivery. |
+| External automation receivers | Downstream consumers | Project automations can send signed webhook events to configured external URLs. |
+
+No `@sunshade/*` npm package is declared in this repository.
+
+## Read next
+
+- [Architecture](./architecture.mdx) explains data ownership, authentication, API contracts, and off-limits boundaries.
+- [Setup](./setup.mdx) gives local installation, zero-secret smoke test, and verification commands.

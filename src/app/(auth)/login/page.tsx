@@ -77,7 +77,7 @@ export default async function LoginPage({
 
         <LoginForm hubLoginUrl={hubLoginUrl} isDevMode={isBypass} returnUrl={nextParam} />
 
-        <p className="text-center text-xs text-slate-500">
+        <p className="text-center text-xs text-slate-400">
           Protected by Row-Level Security & SunShade Hub SSO
         </p>
       </div>

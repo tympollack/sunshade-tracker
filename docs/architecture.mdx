@@ -1,0 +1,331 @@
+---
+title: SunShade Tracker architecture
+description: System boundaries, data ownership, authentication, API contracts, and contributor safety rules for SunShade Tracker.
+---
+
+# Architecture
+
+SunShade Tracker is a Next.js App Router service with a Supabase-backed multi-tenant data plane.
+
+The service exposes browser pages, REST route handlers, server actions, an MCP server, and a CLI client.
+
+## System boundaries
+
+Tracker owns the application logic for workspaces, projects, work items, sprints, notifications, analytics, automation, and agent context.
+
+Tracker does not own database migrations.
+
+The `sunshade-db-platform` repository owns the physical schema migration files and database rollout process.
+
+Tracker reads and writes the `tracker` schema through Supabase clients.
+
+Tracker also integrates with selected `public` schema tables and RPC functions for ecosystem value accounting.
+
+## Runtime shape
+
+| Layer | Location | Responsibility |
+| --- | --- | --- |
+| Browser and server UI | `src/app` and `src/components` | Landing page, login, onboarding, workspace dashboards, settings, analytics, statements, sprint views, and public bounty views. |
+| REST API | `src/app/api` | Health, auth, tenant, project, item, sprint, analytics, statement, telemetry, notification, and webhook endpoints. |
+| Server actions | `src/app/actions` | Privileged browser mutations for tracker data, comments, settings, and sprints. |
+| Supabase clients | `src/lib/supabase-server.ts` and `src/lib/supabase-browser.ts` | Cookie-aware SSR clients and server-only service clients. |
+| Domain services | `src/lib` | Dynamic schema validation, fractional indexing, audit logs, notifications, automation, sprint analytics, statements, and webhook security. |
+| MCP server | `src/mcp` | Agent-facing tools and project resources. |
+| CLI | `bin/sunshade-cli.ts` | Runner workflows for claiming, completing, and logging work. |
+
+The application uses Next.js 15 and React 19.
+
+Vercel builds it with `npm run build` and applies permissive API CORS headers from `vercel.json`.
+
+## Primary data flow
+
+1. A user signs in through SunShade Hub.
+2. Hub returns the browser to `/auth/callback` with an auth code or token pair.
+3. Tracker stores the Supabase session in cookies.
+4. Middleware refreshes the session and protects workspace routes.
+5. Browser pages call REST endpoints or server actions.
+6. REST endpoints resolve the tenant through the session or a workspace API key.
+7. Server code queries the `tracker` schema with the service client.
+8. Responses return JSON data or a JSON error object.
+9. Audit and notification side effects record meaningful work item mutations.
+10. Automation rules can create child items, patch metadata, or dispatch signed webhooks.
+
+Headless agents skip the browser flow.
+
+They call REST endpoints directly with `Authorization: Bearer tk_live_...` or the `x-api-key` header.
+
+## Database schema ownership
+
+### `tracker` schema tables queried by this application
+
+The service client is created with `db: { schema: 'tracker' }`.
+
+| Table | How Tracker uses it |
+| --- | --- |
+| `tenants` | Workspace identity, slug, tier, owner reference, settings, metadata, API key material, and soft-delete state. |
+| `tenant_members` | Workspace membership and roles such as owner, admin, member, and viewer. |
+| `projects` | Project identity, slug, dynamic settings, ordering, archival state, and soft-delete state. |
+| `work_items` | Polymorphic work records with type, status, parent, sprint, external reference, ordering, assignee, metadata, and soft-delete state. |
+| `work_item_comments` | Comment rows for work item discussions. |
+| `work_item_time_logs` | Time entries used by estimation calibration. |
+| `audit_logs` | Create, update, delete, and restore history for work items. |
+| `notifications` | In-app notification rows for workspace users. |
+| `sprints` | Relational sprint records. |
+| `sprint_events` | Sprint analytics and scope event history. |
+| `sprint_snapshots` | Burndown and sprint snapshot data. |
+| `ai_usage_logs` | AI compute cost rows read during efficiency statement minting. |
+
+### `public` schema integration surface
+
+These objects are not Tracker-owned core tables.
+
+Tracker uses them only through the existing efficiency and patronage services.
+
+| Object | How Tracker uses it |
+| --- | --- |
+| `efficiency_mint_attestations` | Reads and writes idempotency records for efficiency minting. |
+| `hub_tokens_ledger` | Inserts ecosystem upkeep ledger entries. |
+| `infrastructure_artifacts` | Reads and updates artifact usage counters. |
+| `patronage_boost_allocations` | Reads directed patronage boost allocations. |
+| `v_builder_patronage_summary` | Reads builder patronage summary data. |
+
+Tracker also calls these `public` RPC functions:
+
+- `attest_and_mint_efficiency_yield`
+- `mint_attributed_efficiency_upkeep`
+- `apply_directed_patron_boost`
+
+### Schema authority rules
+
+- Put schema changes in `sunshade-db-platform`.
+- Do not add `supabase/migrations` to this repository.
+- Treat `tracker.projects.settings` as the dynamic project schema configuration surface.
+- Do not hardcode project-specific statuses, hierarchy types, or custom taxonomy into core interfaces.
+- Treat cross-schema `public` objects as integration boundaries, not as Tracker-owned tables.
+- Preserve soft-delete filters when querying tenants, projects, and work items.
+- Check the returned `error` object from every Supabase call before using returned data.
+
+## Dynamic project schema model
+
+Each project stores a `settings` JSON document.
+
+Important keys include:
+
+- `schema_version`
+- `hierarchy`
+- `statuses`
+- `custom_fields`
+- `custom_metadata_fields`
+- `sprint_settings`
+- `metric_rules`
+- `automations`
+- `transition_guards`
+- `templates`
+
+The onboarding templates are software, marketing, operations, and custom.
+
+The software template uses an epic, story, task, and subtask hierarchy.
+
+Work item types and statuses remain text values in the database.
+
+Application code validates them against project settings.
+
+Fractional ordering uses midpoint values between neighboring `order_index` values.
+
+This lets users reorder cards without rewriting the full table ordering.
+
+## Authentication and tenant isolation
+
+### Hub SSO browser flow
+
+1. `/login` builds a Hub login URL.
+2. Production uses `https://hub.sunshade.icu` by default.
+3. Staging and local-style hosts use `https://hub-stag.sunshade.icu`.
+4. `NEXT_PUBLIC_HUB_URL` is honored only when the host is not classified as staging.
+5. Hub returns the user to `/auth/callback`.
+6. The callback exchanges `code` for a Supabase session or accepts an access token and refresh token pair.
+7. Tracker redirects the user to the requested workspace, the first available workspace, or onboarding.
+
+The auth cookie uses `SameSite=lax`.
+
+The cookie is secure in production outside local development.
+
+The cookie domain is `.sunshade.icu` only when the request host is `sunshade.icu` or a SunShade subdomain.
+
+Do not broaden that cookie domain logic.
+
+### Middleware access rules
+
+Middleware refreshes the Supabase session on each matched request.
+
+Public routes include the landing page, login, auth callbacks, API routes, public demo workspace reads, and public bounty boards.
+
+Protected workspace routes redirect unauthenticated users to `/login` with a `next` path.
+
+The `/@tenantSlug` alias redirects to `/tenantSlug`.
+
+A workspace is public for guest reads when its slug is `sunshade`, its tier is `demo`, or its metadata marks it public.
+
+Guest and viewer access is read-only.
+
+### API authentication
+
+Most API routes use dual authentication:
+
+1. Workspace API keys authenticate headless clients.
+2. Supabase session cookies authenticate dashboard users.
+
+API key lookup prefers the SHA-256 `api_key_hash` value.
+
+A legacy plaintext `api_key` lookup remains as a compatibility fallback.
+
+Session requests resolve tenant context from the `x-tenant-slug` header, the `tenant_slug` query parameter, or the user's first workspace.
+
+Viewer roles can read but cannot write.
+
+API-key-authenticated calls have no user ID and are treated as workspace machine clients.
+
+This repository does not implement an application-level authentication rate limiter.
+
+Do not claim that one exists in client contracts or threat models.
+
+## API contract surface
+
+Most authenticated endpoints return JSON and use a top-level `error` string for failures.
+
+Webhook and cron endpoints use their own signatures or bearer secrets instead of end-user sessions.
+
+### Health and auth
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/health` | Returns service name, version, timestamp, and process uptime. |
+| GET | `/auth/callback` | Completes Hub SSO and redirects to the correct workspace destination. |
+| GET | `/api/auth/logout` | Clears the local Supabase session and redirects to Hub logout. |
+
+### Tenants and workspace settings
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/v1/tenants/onboard` | Creates a tenant, owner membership, first project, and one-time API key for an authenticated Hub user. |
+| GET, PATCH | `/api/v1/tenants/me` | Lists workspace memberships and updates current user settings such as notification preferences. |
+| PATCH | `/api/v1/tenants/[tenantId]` | Lets owners and admins update workspace settings such as name and public visibility. |
+| POST | `/api/v1/tenants/[tenantId]/transfer` | Transfers workspace ownership to another Hub user. |
+| POST | `/api/v1/tenants/api-key` | Regenerates the workspace API key for owners and admins. |
+| GET | `/api/v1/tenants/efficiency` | Returns workspace efficiency metrics or CSV output. |
+| GET, PATCH | `/api/v1/tenants/efficiency-schema` | Reads or updates workspace efficiency dashboard configuration. |
+
+### Projects and dynamic schemas
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| GET, POST, DELETE | `/api/v1/projects` | Lists, creates, and soft-deletes projects. Archived listing requires owner or admin access. |
+| POST, PATCH, PUT | `/api/v1/projects/reorder` | Reorders projects within a workspace. |
+| POST | `/api/v1/projects/restore` | Restores a soft-deleted project. |
+| GET, PUT | `/api/v1/projects/[projectId]/settings` | Reads or replaces project hierarchy, statuses, fields, automation, and template settings. |
+| GET | `/api/v1/projects/[projectId]/analytics/cfd` | Returns cumulative flow data for a bounded date range. |
+| GET | `/api/v1/projects/[projectId]/analytics/snapshots` | Returns sprint burndown snapshots for a project. |
+
+### Work items and agent context
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| GET, POST, PATCH, DELETE | `/api/v1/items` | Lists, creates, updates, reorders, moves, and soft-deletes work items. GET supports flat, tree, board, portfolio, delta, and archive-aware reads. |
+| GET, PATCH | `/api/v1/items/[id]` | Reads or updates one item by UUID or external reference ID. |
+| GET | `/api/v1/items/[id]/context` | Builds agent execution context in JSON or Markdown format. |
+| POST | `/api/v1/items/ingest` | Batch upserts headless agent work items by external reference ID. |
+| GET, POST, PATCH, DELETE | `/api/v1/items/bulk` | Reads, creates, updates, and deletes multiple items. POST also supports action-based update and delete payloads. |
+| POST, PATCH, PUT | `/api/v1/items/bulk-update` | Applies multi-item updates with admin-gated sprint governance bypass handling. |
+| GET | `/api/v1/audit-logs` | Returns audit history for one work item. |
+
+The ingest body requires `project_slug` and a non-empty `items` array.
+
+Each item requires `title`.
+
+Optional item fields include `external_ref_id`, `parent_ref_id`, `item_type`, `status`, `assignee`, `description`, `order_index`, and `metadata`.
+
+The endpoint validates dynamic types and statuses against the target project settings.
+
+It resolves same-batch parent references before writing children.
+
+It uses external reference IDs for idempotent upserts.
+
+### Sprints, analytics, statements, and telemetry
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| GET, POST | `/api/v1/sprints` | Lists and creates relational sprints. |
+| GET, PATCH, DELETE | `/api/v1/sprints/[sprintId]` | Reads, updates, or deletes one sprint. |
+| GET | `/api/v1/sprints/[sprintId]/diff` | Compares sprint baseline and live or snapshot scope. |
+| GET | `/api/v1/sprints/analytics` | Returns sprint velocity, scope churn, predictability, and lead-time analytics. |
+| GET | `/api/v1/statements` | Returns dynamic value realization statements in JSON or CSV form. |
+| GET | `/api/v1/statements/calibration` | Compares estimates with cycle time and logged hours. |
+| GET | `/api/v1/telemetry/live` | Returns live in-flight telemetry with delta polling and ETag support. |
+
+### Notifications
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| GET, PATCH | `/api/v1/notifications` | Lists notifications and marks one, many, or all as read. |
+| GET | `/api/v1/notifications/unread-count` | Returns unread count and delta status without hydrating notification rows. |
+
+### Cron and inbound webhooks
+
+| Methods | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/cron/burndown-rollup` | Uses `CRON_SECRET` to write sprint burndown rollups. |
+| POST | `/api/v1/bounties/verify` | Verifies GitHub pull request events for active bounty items. |
+| POST | `/api/v1/webhooks/ci-runner` | Accepts signed or bearer-authenticated CI failure events. |
+| POST | `/api/v1/webhooks/deployments` | Accepts signed deployment events and updates matching work items. |
+| POST | `/api/v1/webhooks/ecosystem` | Accepts signed PatchWork and Project Valerie events. |
+| POST | `/api/v1/webhooks/observability` | Accepts signed observability alerts and creates or updates triage defects. |
+
+## Webhook and automation security
+
+Inbound webhook verification uses HMAC SHA-256 signatures and constant-time comparison.
+
+Supported signature headers include `x-hub-signature-256`, `x-sunshade-signature`, and `x-signature` where each route accepts them.
+
+Tenant-specific webhook secrets take precedence over platform secrets for protected workspaces.
+
+Outbound automation webhooks have these constraints:
+
+- Only `http` and `https` URLs are allowed.
+- Loopback, private network, link-local, metadata, and single-label internal hosts are blocked.
+- Redirects use manual mode so a target cannot redirect the service into a private network.
+- Requests time out after 5000 milliseconds.
+- Signed payloads use `X-Tracker-Signature` and `X-Hub-Signature-256` when a secret exists.
+
+`ALLOW_LOCAL_WEBHOOKS` is a local development escape hatch.
+
+Do not enable it in production.
+
+## Do not touch boundaries
+
+These rules apply to contributors and AI agents.
+
+- Do not edit `supabase/migrations` here or create that directory for schema changes.
+- Do not expose `SUPABASE_SERVICE_ROLE_KEY` to browser code.
+- Do not import server-only Supabase modules into client components.
+- Do not bypass tenant isolation by trusting a tenant slug without resolving it against the authenticated workspace.
+- Do not allow viewers or public demo guests to mutate workspace data.
+- Do not store new secrets in git, tests, docs, or example payloads.
+- Do not invent runtime metrics, tenant rows, project rows, or fake production data.
+- Do not hardcode local operating system paths in documentation or scripts.
+- Do not weaken HMAC verification, SSRF protections, cookie settings, or soft-delete filters.
+- Do not mutate `public` schema integration tables outside the existing efficiency and patronage service paths.
+- Do not target `main` for normal feature or fix pull requests. Target `staging` unless a maintainer explicitly says otherwise.
+
+## Verification contract
+
+Before review, run these commands:
+
+```text
+npx tsc --noEmit
+npm test
+npm run build
+```
+
+Run `npm run dod:ui` against a local production server before review.
+
+See [setup](./setup.mdx) for the exact local commands.

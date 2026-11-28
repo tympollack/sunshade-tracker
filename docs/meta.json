@@ -1,6 +1,4 @@
 {
-  "title": "sunshade-tracker",
-  "pages": [
-    "index"
-  ]
+  "title": "SunShade Tracker",
+  "pages": ["index", "architecture", "setup"]
 }
