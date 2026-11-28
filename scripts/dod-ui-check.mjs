@@ -21,15 +21,27 @@ const VIEWPORTS = {
   desktop: { width: 1280, height: 800 },
 };
 
-const routes = [{ path: '/', auth: false }, { path: '/login', auth: false }];
+const routes = [
+  { path: '/', auth: false },
+  { path: '/login', auth: false },
+];
 if (STORAGE_STATE) {
   if (!existsSync(STORAGE_STATE)) {
     console.error(`UI_AUDIT_STORAGE_STATE not found: ${STORAGE_STATE}`);
     process.exit(1);
   }
-  if (TENANT && PROJECT) routes.push({ path: `/${TENANT}/${PROJECT}`, auth: true });
-  else console.warn('[dod:ui] storage state set but UI_AUDIT_TENANT_SLUG/PROJECT_SLUG missing; skipping authenticated route');
+  if (TENANT && PROJECT) {
+    routes.push({
+      path: `/${TENANT}/${PROJECT}`,
+      auth: true,
+      waitForSelector: '[data-testid="workspace-shell"]',
+    });
+  } else {
+    console.warn('[dod:ui] storage state set but UI_AUDIT_TENANT_SLUG/PROJECT_SLUG missing; skipping authenticated route');
+  }
 }
+
+const normalizePath = (p) => (p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p);
 
 /** Runs inside the page. */
 function domChecks() {
@@ -46,9 +58,23 @@ function domChecks() {
   });
   const name = (el) =>
     `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}[${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}]`;
+  const isInsideHorizontalScroller = (el) => {
+    let cur = el.parentElement;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const cs = getComputedStyle(cur);
+      if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && cur.scrollWidth > cur.clientWidth + 1) {
+        const cr = cur.getBoundingClientRect();
+        if (cr.left >= -1 && cr.right <= vw + 1) return true;
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  };
   for (const el of visible) {
     const r = el.getBoundingClientRect();
-    if (r.left < -1 || r.right > vw + 1) problems.push(`clipped control: ${name(el)} (${Math.round(r.left)}..${Math.round(r.right)})`);
+    if ((r.left < -1 || r.right > vw + 1) && !isInsideHorizontalScroller(el)) {
+      problems.push(`clipped control: ${name(el)} (${Math.round(r.left)}..${Math.round(r.right)})`);
+    }
   }
   if (vw < 768) {
     const rects = visible.map((el) => ({ el, r: el.getBoundingClientRect() }));
@@ -90,7 +116,18 @@ for (const route of routes) {
     const page = await context.newPage();
     const label = `${route.path} @ ${vpName} (${viewport.width}x${viewport.height})`;
     try {
-      await page.goto(new URL(route.path, BASE_URL).toString(), { waitUntil: 'networkidle' });
+      const targetUrl = new URL(route.path, BASE_URL);
+      const response = await page.goto(targetUrl.toString(), { waitUntil: 'networkidle' });
+      if (!response || !response.ok()) {
+        throw new Error(`HTTP ${response ? response.status() : 'no response'} loading ${route.path}`);
+      }
+      const finalUrl = new URL(page.url());
+      if (finalUrl.origin !== targetUrl.origin || normalizePath(finalUrl.pathname) !== normalizePath(targetUrl.pathname)) {
+        throw new Error(`Unexpected redirect from ${route.path} to ${finalUrl.toString()}`);
+      }
+      if (route.waitForSelector) {
+        await page.locator(route.waitForSelector).first().waitFor({ state: 'visible', timeout: 15000 });
+      }
       const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
       const blocking = axe.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
       const dom = await page.evaluate(domChecks);

@@ -39,6 +39,10 @@ interface UsePivotTreeOptions {
   scopedProjectSlug?: string;
   projectSettings?: ProjectSettings;
   onScopeFilter?: (scope: TreeFilterScope) => void;
+  pivotMode?: PivotMode;
+  onPivotModeChange?: (mode: PivotMode) => void;
+  activeScope?: TreeFilterScope;
+  onActiveScopeChange?: (scope: TreeFilterScope) => void;
 }
 
 function convertItemNodeToPivotNode(
@@ -81,9 +85,39 @@ export function usePivotTree({
   scopedProjectSlug,
   projectSettings,
   onScopeFilter,
+  pivotMode: controlledPivotMode,
+  onPivotModeChange,
+  activeScope: controlledActiveScope,
+  onActiveScopeChange,
 }: UsePivotTreeOptions) {
-  const [pivotMode, setPivotMode] = useState<PivotMode>('sprint');
-  const [activeScope, setActiveScope] = useState<TreeFilterScope>({});
+  const [internalPivotMode, setInternalPivotMode] = useState<PivotMode>('sprint');
+  const [internalActiveScope, setInternalActiveScope] = useState<TreeFilterScope>({});
+
+  const pivotMode = controlledPivotMode ?? internalPivotMode;
+  const activeScope = controlledActiveScope ?? internalActiveScope;
+
+  const setPivotMode = useCallback(
+    (action: PivotMode | ((prev: PivotMode) => PivotMode)) => {
+      if (onPivotModeChange) {
+        const next = typeof action === 'function' ? action(pivotMode) : action;
+        onPivotModeChange(next);
+      } else {
+        setInternalPivotMode(action);
+      }
+    },
+    [onPivotModeChange, pivotMode]
+  );
+
+  const updateActiveScope = useCallback(
+    (scope: TreeFilterScope) => {
+      if (onActiveScopeChange) {
+        onActiveScopeChange(scope);
+      } else {
+        setInternalActiveScope(scope);
+      }
+    },
+    [onActiveScopeChange]
+  );
 
   // LocalStorage key for persisting collapsed/expanded node IDs
   const storageKey = `sunshade_tree_state_${tenantSlug}`;
@@ -418,21 +452,21 @@ export function usePivotTree({
 
   const selectScope = useCallback(
     (scope: TreeFilterScope) => {
-      setActiveScope(scope);
+      updateActiveScope(scope);
       if (onScopeFilter) {
         onScopeFilter(scope);
       }
     },
-    [onScopeFilter]
+    [updateActiveScope, onScopeFilter]
   );
 
   const clearScope = useCallback(() => {
     const empty: TreeFilterScope = {};
-    setActiveScope(empty);
+    updateActiveScope(empty);
     if (onScopeFilter) {
       onScopeFilter(empty);
     }
-  }, [onScopeFilter]);
+  }, [updateActiveScope, onScopeFilter]);
 
   return {
     pivotMode,

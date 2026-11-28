@@ -82,7 +82,7 @@ export function ProjectHeader(props: ProjectHeaderProps) {
 
   return (
     <header className="h-14 min-h-[56px] max-h-[56px] shrink-0 w-full flex items-center justify-between px-2 sm:px-4 overflow-hidden border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
-      <div className="flex items-center space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink-0">
+      <div className="flex items-center space-x-1 sm:space-x-2 flex-nowrap whitespace-nowrap min-w-0 shrink-0">
         {onToggleMobileNav && (
           <button
             type="button"
@@ -214,14 +214,19 @@ export function ProjectHeader(props: ProjectHeaderProps) {
         {loading ? (
           <div className="w-20 h-7 bg-slate-900/60 rounded-lg animate-pulse shrink-0" />
         ) : currentUser === null ? (
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold shrink-0">
-              <Eye className="w-3.5 h-3.5" />
-              <span>Read-Only Demo</span>
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+            <span
+              data-testid="header-demo-badge"
+              title="Read-Only Demo"
+              aria-label="Read-Only Demo"
+              className="flex items-center space-x-1 px-2 sm:px-2.5 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-semibold shrink-0"
+            >
+              <Eye className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Read-Only Demo</span>
             </span>
             <Link
               href={`/login?next=/${tenantSlug}/${projectSlug}`}
-              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shrink-0 whitespace-nowrap"
+              className="inline-flex items-center min-h-[32px] text-xs px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-medium transition-colors shrink-0 whitespace-nowrap"
             >
               Sign In
             </Link>

@@ -7,12 +7,18 @@ on:
       - 'src/**'
       - 'app/**'
       - 'components/**'
+      - 'scripts/dod-ui-check.mjs'
+      - '.github/workflows/ui-audit.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tailwind.config.*'
+      - 'postcss.config.*'
 
 env:
-  # Placeholder public config: the audit only renders public pages, so no real
-  # Supabase project is needed. BYPASS_AUTH keeps /login local instead of redirecting to Hub.
-  NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+  # Default to placeholder public config when secrets are unset so public routes
+  # render locally without redirecting /login to Hub.
+  NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
   NEXT_PUBLIC_APP_URL: http://localhost:3000
   NEXT_PUBLIC_BYPASS_AUTH: 'true'
 
@@ -31,8 +37,15 @@ jobs:
       - run: npm run build
       - name: Start app and run dod:ui
         run: |
+          if [ -n "$STORAGE_STATE_JSON" ]; then
+            printf '%s' "$STORAGE_STATE_JSON" > /tmp/ui-audit-storage.json
+            export UI_AUDIT_STORAGE_STATE=/tmp/ui-audit-storage.json
+          fi
           npx next start -p 3000 &
           npx --yes wait-on http://localhost:3000/login --timeout 60000
           npm run dod:ui
         env:
           UI_AUDIT_BASE_URL: http://localhost:3000
+          STORAGE_STATE_JSON: ${{ secrets.UI_AUDIT_STORAGE_STATE }}
+          UI_AUDIT_TENANT_SLUG: ${{ vars.UI_AUDIT_TENANT_SLUG || secrets.UI_AUDIT_TENANT_SLUG }}
+          UI_AUDIT_PROJECT_SLUG: ${{ vars.UI_AUDIT_PROJECT_SLUG || secrets.UI_AUDIT_PROJECT_SLUG }}
