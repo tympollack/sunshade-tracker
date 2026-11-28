@@ -219,6 +219,17 @@ export function WorkspaceShell({
     }
   };
 
+  // Dismiss the mobile LHN drawer on Escape
+  useEffect(() => {
+    if (!isMobileLeftOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleToggleMobileLeft();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobileLeftOpen, externalOnToggleMobileLeft]);
+
   return (
     <div
       data-testid="workspace-shell"

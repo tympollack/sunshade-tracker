@@ -483,7 +483,7 @@ export function SchemaReconciliationModal({
     >
       <div
         data-modal-content="true"
-        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col max-h-[85dvh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

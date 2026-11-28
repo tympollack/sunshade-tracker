@@ -43,6 +43,10 @@ export interface LeftHandNavTreeProps {
   onSelectItem?: (item: WorkItem) => void;
   onSelectSprint?: (sprintName: string) => void;
   onNewSprint?: () => void;
+  pivotMode?: PivotMode;
+  onPivotModeChange?: (mode: PivotMode) => void;
+  activeScope?: TreeFilterScope;
+  onActiveScopeChange?: (scope: TreeFilterScope) => void;
   className?: string;
 }
 
@@ -62,6 +66,10 @@ export function LeftHandNavTree({
   onSelectItem,
   onSelectSprint,
   onNewSprint,
+  pivotMode: controlledPivotMode,
+  onPivotModeChange,
+  activeScope: controlledActiveScope,
+  onActiveScopeChange,
   className = '',
 }: LeftHandNavTreeProps) {
   const {
@@ -83,6 +91,10 @@ export function LeftHandNavTree({
     scopedProjectSlug: currentProjectSlug,
     projectSettings,
     onScopeFilter,
+    pivotMode: controlledPivotMode,
+    onPivotModeChange,
+    activeScope: controlledActiveScope,
+    onActiveScopeChange,
   });
 
   // Active Workspace info

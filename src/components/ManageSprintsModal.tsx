@@ -215,7 +215,7 @@ export const ManageSprintsModal: React.FC<ManageSprintsModalProps> = ({
     >
       <div
         data-modal-content="true"
-        className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[85dvh]"
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">

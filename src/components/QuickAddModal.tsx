@@ -312,10 +312,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
     >
       <div
         data-modal-content="true"
-        className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col"
+        className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden flex flex-col max-h-[85dvh]"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/50">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/50">
           <div className="flex items-center space-x-2">
             <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
               <Plus className="w-4 h-4" />
@@ -355,7 +355,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({
             e.preventDefault();
             handleSubmit(false);
           }}
-          className="p-6 space-y-4 max-h-[85vh] overflow-y-auto pb-6"
+          className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto overscroll-contain pb-6"
         >
           {/* Project Selector (Portfolio / All Projects mode) */}
           {isAllProjects && allProjects.length > 0 && (

@@ -184,7 +184,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
     >
       <div
         data-modal-content="true"
-        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[85dvh] overflow-hidden"
       >
         <WorkItemModalHeader
           item={item}
@@ -203,7 +203,7 @@ export function WorkItemModal(props: WorkItemModalProps) {
           onRefreshAuditLogs={fetchAuditLogs}
         />
 
-        <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar flex-1">
+        <div className="p-6 space-y-5 overflow-y-auto overscroll-contain custom-scrollbar flex-1 min-h-0">
           {isAssociatedTab ? (
             <AssociatedItemsTab
               item={item}
