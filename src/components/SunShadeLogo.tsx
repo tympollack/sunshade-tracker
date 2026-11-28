@@ -233,7 +233,7 @@ export function SunShadeLogo({
     return (
       <Link
         href={href}
-        className="group inline-flex items-center focus:outline-none shrink-0 min-w-0"
+        className="group inline-flex items-center min-h-[32px] focus:outline-none shrink-0 min-w-0"
         aria-label="SunShade Tracker"
       >
         {content}

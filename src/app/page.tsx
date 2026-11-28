@@ -18,19 +18,19 @@ export default function LandingPage() {
           <div className="flex items-center space-x-4">
             <Link
               href="/docs"
-              className="text-sm text-slate-300 hover:text-white transition-colors"
+              className="hidden sm:inline-flex items-center min-h-[32px] text-sm text-slate-300 hover:text-white transition-colors"
             >
               Documentation
             </Link>
             <Link
               href="/sunshade/portfolio"
-              className="text-sm text-slate-300 hover:text-white transition-colors"
+              className="hidden sm:inline-flex items-center min-h-[32px] text-sm text-slate-300 hover:text-white transition-colors"
             >
               Demo Workspace
             </Link>
             <Link
               href="/login"
-              className="text-sm px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all shadow-lg shadow-emerald-950/50"
+              className="inline-flex items-center min-h-[36px] text-sm px-4 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-medium transition-all shadow-lg shadow-emerald-950/50"
             >
               Sign In
             </Link>
@@ -116,7 +116,7 @@ export default function LandingPage() {
             <p className="text-sm text-slate-400">
               External pipelines authenticate with their tenant API key and pass batch payloads. Parents are resolved dynamically via <code className="text-emerald-300 bg-slate-800 px-1 py-0.5 rounded">parent_ref_id</code>:
             </p>
-            <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
+            <pre tabIndex={0} className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
 {`// Headers:
 // Authorization: Bearer tk_live_sunshade_master_key
 // Content-Type: application/json
@@ -161,13 +161,13 @@ POST https://track.sunshade.icu/api/v1/items/ingest
           <div className="flex items-center space-x-4">
             <span>&copy; {new Date().getFullYear()} SunShade Digital Canopy. All rights reserved.</span>
             <span className="text-slate-700">|</span>
-            <Link href="/docs" className="hover:text-slate-200 transition-colors">
+            <Link href="/docs" className="inline-flex items-center min-h-[32px] hover:text-slate-200 transition-colors">
               Documentation
             </Link>
-            <Link href="/workspaces" className="hover:text-slate-200 transition-colors">
+            <Link href="/workspaces" className="inline-flex items-center min-h-[32px] hover:text-slate-200 transition-colors">
               Workspaces
             </Link>
-            <Link href="/sunshade/portfolio" className="hover:text-slate-200 transition-colors">
+            <Link href="/sunshade/portfolio" className="inline-flex items-center min-h-[32px] hover:text-slate-200 transition-colors">
               Demo Board
             </Link>
           </div>
