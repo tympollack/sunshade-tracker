@@ -158,6 +158,20 @@ Open a second PowerShell terminal and confirm the public pages return HTTP 200.
 
 Both commands should print `200`.
 
+Run the Playwright and axe-core UI audit in the second terminal.
+
+```powershell
+npm run dod:ui
+```
+
+The audit checks `/` and `/login` at mobile (`375x667`) and desktop (`1280x800`) sizes.
+
+It fails for serious or critical accessibility violations, horizontal overflow, clipped controls, small mobile tap targets, overlapping controls, and broken visible images.
+
+Set `UI_AUDIT_BASE_URL` when the server uses a different origin.
+
+Set `UI_AUDIT_STORAGE_STATE`, `UI_AUDIT_TENANT_SLUG`, and `UI_AUDIT_PROJECT_SLUG` when auditing an authenticated workspace route.
+
 ## Pre-review verification
 
 Run these commands before opening or updating a pull request.
@@ -168,6 +182,8 @@ npm test
 npm run build
 ```
 
+Run `npm run dod:ui` against a local production server before review as described in the zero-secret smoke test.
+
 Target pull requests at `staging` unless a maintainer explicitly approves another target.
 
 ## Troubleshooting
@@ -176,4 +192,4 @@ Target pull requests at `staging` unless a maintainer explicitly approves anothe
 - If API routes report missing Supabase configuration, confirm `.env.local` exists in the repository root.
 - If workspace mutations fail with placeholder values, replace the placeholders with real Supabase credentials.
 - If the service role key appears in browser output, remove it immediately, rotate it, and inspect the client/server import boundary.
-- If port 3000 is already occupied, start Next.js on another port and use that port in the smoke-test URLs.
+- If port 3000 is already occupied, start Next.js on another port, use that port in the smoke-test URLs, and set `UI_AUDIT_BASE_URL` to that origin before running `npm run dod:ui`.

@@ -57,6 +57,8 @@ npm test
 npm run build
 ```
 
+Run `npm run dod:ui` against a local production server before review. See [docs/setup.mdx](docs/setup.mdx) for the zero-secret production-server flow.
+
 Target pull requests at `staging` unless a maintainer explicitly approves another target.
 
 ## API entry points
