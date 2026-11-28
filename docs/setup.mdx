@@ -1,0 +1,195 @@
+---
+title: SunShade Tracker setup
+description: Local installation, environment variables, zero-secret smoke testing, and pre-review verification commands for SunShade Tracker.
+---
+
+# Setup
+
+This guide uses workspace-relative paths and PowerShell-compatible commands.
+
+Run commands from the repository root unless a step says otherwise.
+
+## Prerequisites
+
+- Node.js 22, matching the CI workflow.
+- npm.
+- Git.
+- Access to the shared SunShade Supabase project when you need real workspace data.
+
+You do not need real secrets for the zero-secret build and public-page smoke test.
+
+You do need real Supabase credentials for sign-in, workspace mutations, API queries, and webhook processing.
+
+## Install and configure
+
+Clone the repository and enter it.
+
+```powershell
+git clone https://github.com/tympollack/sunshade-tracker.git
+cd sunshade-tracker
+```
+
+Install locked dependencies.
+
+```powershell
+npm ci
+```
+
+Copy the example environment file.
+
+```powershell
+Copy-Item .env.example .env.local -Force
+```
+
+On macOS or Linux, use this copy command instead.
+
+```bash
+cp .env.example .env.local
+```
+
+Start the development server.
+
+```powershell
+npm run dev
+```
+
+Open `http://localhost:3000` for the landing page.
+
+Open `http://localhost:3000/api/health` for the health endpoint.
+
+## Core environment variables
+
+`.env.local` is gitignored.
+
+Never commit real keys or tokens.
+
+| Variable | Required for real runtime | Purpose | Local zero-secret value |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Browser and server Supabase URL. | `https://placeholder.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Browser-safe Supabase anonymous key. It remains subject to Row Level Security. | `placeholder-anon-key` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only service key for workspace provisioning, API-key resolution, and privileged mutations. Never expose it to browser code. | `placeholder-service-role-key` |
+| `NEXT_PUBLIC_APP_URL` | Yes for deployed SSO | Absolute Tracker origin used to build Hub callback URLs. | `http://localhost:3000` |
+| `NEXT_PUBLIC_ENVIRONMENT` | Recommended | Environment tag used for staging detection. Use `development`, `staging`, or `production`. | `development` |
+| `NEXT_PUBLIC_BYPASS_AUTH` | No | Local auth bypass. Development already enables bypass behavior when this is unset. Never enable it in production. | `true` |
+| `NEXT_PUBLIC_HUB_URL` | No | Production Hub override. Staging hosts automatically use `https://hub-stag.sunshade.icu`. | Leave unset or use `https://hub-stag.sunshade.icu` |
+
+Placeholder values are only smoke-test values.
+
+They prove that public rendering, type checking, tests, and build wiring do not require secret material.
+
+They cannot authenticate users or query real workspace rows.
+
+## Optional integration variables
+
+Configure these only when you use the related integration.
+
+| Variable | Purpose |
+| --- | --- |
+| `CRON_SECRET` | Bearer secret for `POST /api/cron/burndown-rollup`. |
+| `RESEND_API_KEY` | Enables transactional email delivery through Resend. Without it, email sending is skipped. |
+| `RESEND_FROM_EMAIL` | Overrides the default notification sender. |
+| `TRACKER_WEBHOOK_SECRET` | Signs outbound automation webhooks when the action does not provide its own secret. |
+| `GITHUB_WEBHOOK_SECRET` | Verifies GitHub bounty pull request webhooks. |
+| `BOUNTY_WEBHOOK_SECRET` | Fallback secret for bounty pull request webhooks. |
+| `DEPLOYMENT_WEBHOOK_SECRET` | Verifies deployment webhooks. |
+| `OBSERVABILITY_WEBHOOK_SECRET` | Verifies observability alert webhooks. |
+| `CI_RUNNER_WEBHOOK_SECRET` | Verifies CI runner webhooks. |
+| `WEBHOOK_SIGNING_SECRET` | CI runner webhook secret alias checked before `CI_RUNNER_WEBHOOK_SECRET`. |
+| `SUNSHADE_ECOSYSTEM_WEBHOOK_SECRET` | Shared ecosystem webhook secret and fallback for several inbound webhook routes. |
+| `SUNSHADE_WEBHOOK_SECRET` | Shared webhook fallback secret. |
+| `ALLOW_LOCAL_WEBHOOKS` | Local-only escape hatch that lets outbound automation webhooks target local or private hosts. Never enable it in production. |
+
+Several webhook routes also accept tenant-specific secrets stored in workspace metadata.
+
+Tenant-specific secrets take precedence over shared platform secrets for protected workspaces.
+
+## Optional CI failure bridge variables
+
+The CI failure reporter uses these values when it creates Tracker work items for failed typecheck or test runs.
+
+| Variable | Purpose |
+| --- | --- |
+| `SUNSHADE_TRACKER_TOKEN` | Workspace API key used by the CI failure reporter. The reporter falls back to `SUNSHADE_API_KEY` when this is unset. |
+| `SUNSHADE_TRACKER_URL` | Tracker base URL used by the CI failure reporter. Use `https://track-stag.sunshade.icu` for staging. |
+
+## Optional CLI and MCP variables
+
+These variables configure the CLI or MCP API client.
+
+They do not replace the server-side Supabase variables.
+
+| Variable | Alias | Purpose |
+| --- | --- | --- |
+| `SUNSHADE_API_KEY` | `TRACKER_API_KEY` | Workspace API key used by the CLI or MCP client. |
+| `SUNSHADE_BASE_URL` | `TRACKER_BASE_URL` | Tracker base URL. Use `https://track-stag.sunshade.icu` for staging. |
+| `SUNSHADE_TENANT` | `TRACKER_TENANT` | Workspace slug used by the client. |
+| `SUNSHADE_PROJECT` | `TRACKER_PROJECT` | Project slug used by the client. |
+| `SUNSHADE_RUNNER_ID` | None | Runner identity written to the assignee field when the CLI claims a task. |
+| `AGENT_NAME` | None | Fallback runner identity when `SUNSHADE_RUNNER_ID` is unset. |
+
+## Zero-secret production smoke test
+
+Use this flow when you need to verify public pages without Hub SSO or real Supabase data.
+
+In the first PowerShell terminal, set public build values and build the app.
+
+```powershell
+$env:NEXT_PUBLIC_SUPABASE_URL="https://placeholder.supabase.co"
+$env:NEXT_PUBLIC_SUPABASE_ANON_KEY="placeholder-anon-key"
+$env:NEXT_PUBLIC_APP_URL="http://localhost:3000"
+$env:NEXT_PUBLIC_BYPASS_AUTH="true"
+npm run build
+```
+
+Start the production server in the same terminal.
+
+```powershell
+npx next start -p 3000
+```
+
+Leave that server running.
+
+Open a second PowerShell terminal and confirm the public pages return HTTP 200.
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing http://localhost:3000/).StatusCode
+(Invoke-WebRequest -UseBasicParsing http://localhost:3000/login).StatusCode
+```
+
+Both commands should print `200`.
+
+Run the Playwright and axe-core UI audit in the second terminal.
+
+```powershell
+npm run dod:ui
+```
+
+The audit checks `/` and `/login` at mobile (`375x667`) and desktop (`1280x800`) sizes.
+
+It fails for serious or critical accessibility violations, horizontal overflow, clipped controls, small mobile tap targets, overlapping controls, and broken visible images.
+
+Set `UI_AUDIT_BASE_URL` when the server uses a different origin.
+
+Set `UI_AUDIT_STORAGE_STATE`, `UI_AUDIT_TENANT_SLUG`, and `UI_AUDIT_PROJECT_SLUG` when auditing an authenticated workspace route.
+
+## Pre-review verification
+
+Run these commands before opening or updating a pull request.
+
+```powershell
+npx tsc --noEmit
+npm test
+npm run build
+```
+
+Run `npm run dod:ui` against a local production server before review as described in the zero-secret smoke test.
+
+Target pull requests at `staging` unless a maintainer explicitly approves another target.
+
+## Troubleshooting
+
+- If `/login` redirects to Hub during a local smoke test, confirm `NEXT_PUBLIC_BYPASS_AUTH` and `NEXT_PUBLIC_APP_URL` are set before `npm run build`.
+- If API routes report missing Supabase configuration, confirm `.env.local` exists in the repository root.
+- If workspace mutations fail with placeholder values, replace the placeholders with real Supabase credentials.
+- If the service role key appears in browser output, remove it immediately, rotate it, and inspect the client/server import boundary.
+- If port 3000 is already occupied, start Next.js on another port, use that port in the smoke-test URLs, and set `UI_AUDIT_BASE_URL` to that origin before running `npm run dod:ui`.
